@@ -7,6 +7,7 @@ export default defineConfig({
     "src/events/index.ts",
     "src/types/index.ts",
     "src/sse/index.ts",
+    "src/telemetry/index.ts",
     "src/auth/index.ts",
     "src/auth/browser.ts",
     "src/resilience/index.ts",

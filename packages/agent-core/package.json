@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Core transport interfaces, event utilities, auth, SSE parsing, and resilience primitives for talking to Tangle agents",
   "type": "module",
   "license": "MIT",
@@ -42,6 +42,10 @@
     "./computer-use": {
       "import": "./dist/computer-use/index.js",
       "types": "./src/computer-use/index.ts"
+    },
+    "./telemetry": {
+      "import": "./dist/telemetry/index.js",
+      "types": "./src/telemetry/index.ts"
     }
   },
   "typesVersions": {
@@ -145,6 +149,11 @@
         "import": "./dist/computer-use/index.js",
         "types": "./dist/computer-use/index.d.ts",
         "default": "./dist/computer-use/index.js"
+      },
+      "./telemetry": {
+        "import": "./dist/telemetry/index.js",
+        "types": "./dist/telemetry/index.d.ts",
+        "default": "./dist/telemetry/index.js"
       }
     }
   },

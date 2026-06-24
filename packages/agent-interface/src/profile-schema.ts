@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { AgentProfile } from "./agent-profile.js";
+import {
+  SANDBOX_SIZE_PRESET_NAMES,
+  type SandboxSizePreset,
+} from "./sandbox-size.js";
 
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
@@ -158,3 +162,30 @@ const _agentProfileSchemaMatchesInterface: MutuallyAssignable<
   AgentProfile
 > = true;
 void _agentProfileSchemaMatchesInterface;
+
+/**
+ * A registered capability: a stable id paired with its canonical
+ * {@link AgentProfile}. `definition` is the full profile (prompt/model/tools/
+ * mcp/permissions), so a capability carries the whole agent shape, not just a
+ * system prompt. The platform capability registry validates and stores these.
+ */
+export interface Capability {
+  /** Stable, deterministic id — the key a workflow's `agent.run.profile` names. */
+  id: string;
+  /** The canonical agent profile (prompt/model/tools/mcp/permissions). */
+  definition: AgentProfile;
+  /**
+   * Recommended compute tier for a sandbox running this capability. A dispatcher
+   * uses it as the size DEFAULT when the caller does not pick one — so a
+   * capability that only ever does thin work defaults to a small box instead of
+   * a maxed one. The caller may always override it per dispatch. Omitted → the
+   * dispatcher's own default tier.
+   */
+  recommendedSize?: SandboxSizePreset;
+}
+
+export const capabilitySchema: z.ZodType<Capability> = z.object({
+  id: z.string().min(1),
+  definition: agentProfileSchema as z.ZodType<AgentProfile>,
+  recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
+});

@@ -314,6 +314,13 @@ export type ToolInvocation = {
   toolName: string;
   input: unknown;
   result?: unknown;
+  /**
+   * True when the tool call failed (errored, timed out, or was rejected).
+   * Failed tools are recorded — not dropped — so the run outcome can reflect
+   * them. Consumers deriving success must treat any `isError: true` invocation
+   * as a failure signal.
+   */
+  isError?: boolean;
 };
 
 export type TokenUsage = {
@@ -785,3 +792,5 @@ export * from "./agent-profile.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
 export * from "./profile-schema.js";
+export * from "./profile-security.js";
+export * from "./sandbox-size.js";

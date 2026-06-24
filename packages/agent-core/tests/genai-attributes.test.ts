@@ -7,6 +7,9 @@ import {
   GEN_AI_USAGE_INPUT_TOKENS,
   GEN_AI_USAGE_OUTPUT_TOKENS,
   genAiUsageAttributes,
+  readTokenCostUsd,
+  readTokenUsage,
+  TOKEN_USAGE_COST_KEYS,
   TOKEN_USAGE_INPUT_KEYS,
   TOKEN_USAGE_OUTPUT_KEYS,
 } from "../src/index.js";
@@ -73,10 +76,28 @@ describe("tokenUsage field-name vocabulary", () => {
       "completionTokens",
       "completion_tokens",
     ]);
+    expect(TOKEN_USAGE_COST_KEYS).toEqual([
+      "totalCostUsd",
+      "costUsd",
+      "total_cost_usd",
+      "cost_usd",
+      "cost",
+    ]);
   });
 
   it("freezes the arrays so the shared vocabulary cannot be mutated", () => {
     expect(Object.isFrozen(TOKEN_USAGE_INPUT_KEYS)).toBe(true);
     expect(Object.isFrozen(TOKEN_USAGE_OUTPUT_KEYS)).toBe(true);
+    expect(Object.isFrozen(TOKEN_USAGE_COST_KEYS)).toBe(true);
+  });
+
+  it("normalizes terminal event usage and cost shapes", () => {
+    expect(
+      readTokenUsage({
+        tokenUsage: { prompt_tokens: "12", completion_tokens: 3.8 },
+      }),
+    ).toEqual({ inputTokens: 12, outputTokens: 3 });
+    expect(readTokenCostUsd({ totalCostUsd: "0.0125" })).toBe(0.0125);
+    expect(readTokenCostUsd({ tokenUsage: { cost_usd: 0.004 } })).toBe(0.004);
   });
 });

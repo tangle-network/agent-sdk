@@ -30,3 +30,116 @@ export const TOKEN_USAGE_OUTPUT_KEYS: readonly string[] = Object.freeze([
   "completionTokens",
   "completion_tokens",
 ]);
+
+export const TOKEN_USAGE_COST_KEYS: readonly string[] = Object.freeze([
+  "totalCostUsd",
+  "costUsd",
+  "total_cost_usd",
+  "cost_usd",
+  "cost",
+]);
+
+export interface TokenUsageCounts {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export function tokenCount(value: unknown): number | undefined {
+  if (typeof value === "boolean") return undefined;
+  let n: number;
+  if (typeof value === "number") {
+    n = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    n = trimmed === "" ? Number.NaN : Number(trimmed);
+  } else {
+    n = Number.NaN;
+  }
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.trunc(n);
+}
+
+export function firstTokenCount(
+  source: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): number | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const count = tokenCount(source[key]);
+    if (count !== undefined) return count;
+  }
+  return undefined;
+}
+
+function finiteNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value === "boolean") return undefined;
+  let n: number;
+  if (typeof value === "number") {
+    n = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    n = trimmed === "" ? Number.NaN : Number(trimmed);
+  } else {
+    n = Number.NaN;
+  }
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+export function firstUsageCostUsd(
+  source: Record<string, unknown> | undefined,
+  keys: readonly string[] = TOKEN_USAGE_COST_KEYS,
+): number | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const cost = finiteNonNegativeNumber(source[key]);
+    if (cost !== undefined) return cost;
+  }
+  return undefined;
+}
+
+export function tokenUsageSource(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (data.tokenUsage && typeof data.tokenUsage === "object") {
+    return data.tokenUsage as Record<string, unknown>;
+  }
+  if (data.usage && typeof data.usage === "object") {
+    return data.usage as Record<string, unknown>;
+  }
+  return data;
+}
+
+export function readTokenUsage(
+  data: Record<string, unknown>,
+): TokenUsageCounts | undefined {
+  const source = tokenUsageSource(data);
+  const inputTokens = firstTokenCount(source, TOKEN_USAGE_INPUT_KEYS);
+  const outputTokens = firstTokenCount(source, TOKEN_USAGE_OUTPUT_KEYS);
+  if (inputTokens === undefined && outputTokens === undefined) {
+    return undefined;
+  }
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+  };
+}
+
+export function readTokenCostUsd(
+  data: Record<string, unknown>,
+): number | undefined {
+  const direct = firstUsageCostUsd(data);
+  if (direct !== undefined) return direct;
+  return firstUsageCostUsd(tokenUsageSource(data));
+}
+
+export function addTokenUsage(
+  current: TokenUsageCounts | undefined,
+  next: TokenUsageCounts,
+): TokenUsageCounts {
+  return current
+    ? {
+        inputTokens: current.inputTokens + next.inputTokens,
+        outputTokens: current.outputTokens + next.outputTokens,
+      }
+    : next;
+}
