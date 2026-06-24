@@ -217,7 +217,13 @@ const JWT_HEADER_EDDSA = base64UrlEncode(
  * Adding a new capability: extend this union, then update the enforcement
  * policy (route maps + authorization check) in the sidecar-auth package.
  */
-export type SidecarCapability = "computer_use" | "read" | "debug" | "terminal";
+export type SidecarCapability =
+  | "computer_use"
+  | "read"
+  | "debug"
+  | "terminal"
+  | "control"
+  | "raw_input";
 
 /**
  * Generate an Ed25519 key pair for per-session JWT signing.
