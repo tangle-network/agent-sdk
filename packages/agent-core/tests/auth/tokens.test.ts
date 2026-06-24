@@ -7,7 +7,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  authorizeSidecarToken,
   decodeToken,
   generateApiKey,
   generateSigningSecret,
@@ -15,7 +14,6 @@ import {
   hashApiKey,
   issueReadToken,
   isTokenExpiringSoon,
-  READ_CAPABILITY_ROUTES,
   verifyApiKey,
   verifyReadToken,
 } from "../../src/auth/tokens.js";
@@ -675,163 +673,5 @@ describe("API Key Utilities", () => {
     it("returns false for keys of different lengths", () => {
       expect(verifyApiKey("short", "longer-key")).toBe(false);
     });
-  });
-});
-
-describe("authorizeSidecarToken — capability scope", () => {
-  describe("master tokens (cap=undefined)", () => {
-    it("permits non-capability-gated routes", () => {
-      expect(authorizeSidecarToken({}, "/agents/sessions", "GET")).toBe(true);
-      expect(authorizeSidecarToken({}, "/exec", "POST")).toBe(true);
-      expect(authorizeSidecarToken({}, "/files/write", "POST")).toBe(true);
-    });
-
-    it("denies capability-gated routes (computer_use)", () => {
-      expect(authorizeSidecarToken({}, "/mcp", "POST")).toBe(false);
-      expect(authorizeSidecarToken({}, "/computer-use/click", "POST")).toBe(
-        false,
-      );
-    });
-  });
-
-  // Issue #2142: the dashboard Logs tab reads the sidecar log buffer
-  // through the orchestrator's master-token proxy. `/logs` must stay
-  // ungated so that proxy reaches it, while the operator-only `/debug/*`
-  // surface (the original, unreachable wiring) stays capability-gated.
-  describe("sandbox logs surface (Issue #2142)", () => {
-    it("permits the master-token proxy to reach the ungated /logs reader", () => {
-      expect(authorizeSidecarToken({}, "/logs", "GET")).toBe(true);
-      expect(authorizeSidecarToken({}, "/logs", "POST")).toBe(true);
-    });
-
-    it("keeps the operator /debug surface unreachable by master tokens", () => {
-      expect(authorizeSidecarToken({}, "/debug/logs", "GET")).toBe(false);
-      expect(authorizeSidecarToken({}, "/debug", "GET")).toBe(false);
-      expect(authorizeSidecarToken({}, "/debug/processes", "GET")).toBe(false);
-    });
-  });
-
-  describe("computer_use tokens", () => {
-    it("permits the computer_use surface and only that surface", () => {
-      const token = { cap: ["computer_use" as const] };
-      expect(authorizeSidecarToken(token, "/mcp", "POST")).toBe(true);
-      expect(authorizeSidecarToken(token, "/computer-use/click", "POST")).toBe(
-        true,
-      );
-      expect(authorizeSidecarToken(token, "/exec", "POST")).toBe(false);
-      expect(authorizeSidecarToken(token, "/files/write", "POST")).toBe(false);
-    });
-  });
-
-  describe("read-cap consumer tokens (Issue #913 Gap 1)", () => {
-    const token = { cap: ["read" as const] };
-
-    it("permits GET on the documented read allow-list", () => {
-      expect(authorizeSidecarToken(token, "/agents/sessions", "GET")).toBe(
-        true,
-      );
-      expect(
-        authorizeSidecarToken(token, "/agents/sessions/sess_x", "GET"),
-      ).toBe(true);
-      expect(
-        authorizeSidecarToken(token, "/agents/sessions/sess_x/messages", "GET"),
-      ).toBe(true);
-      expect(authorizeSidecarToken(token, "/agents/events", "GET")).toBe(true);
-      expect(authorizeSidecarToken(token, "/health", "GET")).toBe(true);
-      expect(authorizeSidecarToken(token, "/privacy", "GET")).toBe(true);
-      expect(
-        authorizeSidecarToken(token, "/computer-use/screenshot", "GET"),
-      ).toBe(true);
-    });
-
-    it("DENIES write methods on the read allow-list (read-only by design)", () => {
-      // POST creates a session, DELETE removes one, PATCH mutates,
-      // POST /abort cancels — all require master, not read-cap.
-      expect(authorizeSidecarToken(token, "/agents/sessions", "POST")).toBe(
-        false,
-      );
-      expect(
-        authorizeSidecarToken(token, "/agents/sessions/sess_x", "DELETE"),
-      ).toBe(false);
-      expect(
-        authorizeSidecarToken(token, "/agents/sessions/sess_x", "PATCH"),
-      ).toBe(false);
-      expect(
-        authorizeSidecarToken(token, "/agents/sessions/sess_x/abort", "POST"),
-      ).toBe(false);
-      expect(
-        authorizeSidecarToken(
-          token,
-          "/agents/sessions/sess_x/messages",
-          "POST",
-        ),
-      ).toBe(false);
-      expect(
-        authorizeSidecarToken(token, "/computer-use/screenshot", "POST"),
-      ).toBe(false);
-      expect(authorizeSidecarToken(token, "/computer-use/action", "GET")).toBe(
-        false,
-      );
-    });
-
-    it("DENIES every admin route — privilege escalation guard", () => {
-      // The R1 finding from /harden 2026-04-27. Read-cap tokens MUST
-      // NOT reach `/exec`, `/files`, `/process`, `/snapshots`, `/git`,
-      // `/terminals`, regardless of method.
-      for (const path of [
-        "/exec",
-        "/files",
-        "/files/write",
-        "/files/read",
-        "/process",
-        "/process/spawn",
-        "/snapshots",
-        "/snapshots/create",
-        "/git/status",
-        "/terminals",
-        "/terminals/foo",
-        "/fs/upload",
-      ]) {
-        for (const method of ["GET", "POST", "PUT", "DELETE", "PATCH"]) {
-          expect(
-            authorizeSidecarToken(token, path, method),
-            `read-cap token reached ${method} ${path}`,
-          ).toBe(false);
-        }
-      }
-    });
-
-    it("DENIES capability-gated routes (computer_use surface)", () => {
-      expect(authorizeSidecarToken(token, "/mcp", "GET")).toBe(false);
-      expect(authorizeSidecarToken(token, "/computer-use/click", "POST")).toBe(
-        false,
-      );
-    });
-
-    it("DENIES when method is not provided (fail-closed)", () => {
-      // Pre-method-aware callers can't satisfy the read allow-list.
-      expect(authorizeSidecarToken(token, "/agents/sessions")).toBe(false);
-      expect(authorizeSidecarToken(token, "/health")).toBe(false);
-    });
-  });
-
-  describe("empty-cap tokens (cap: [])", () => {
-    it("denies every route — empty scope is never authorized", () => {
-      const token = { cap: [] as const };
-      expect(authorizeSidecarToken(token, "/agents/sessions", "GET")).toBe(
-        false,
-      );
-      expect(authorizeSidecarToken(token, "/exec", "POST")).toBe(false);
-      expect(authorizeSidecarToken(token, "/mcp", "POST")).toBe(false);
-    });
-  });
-
-  it("READ_CAPABILITY_ROUTES is GET-only on every entry (read-only invariant)", () => {
-    // Pin the design invariant — a future PR that adds POST/DELETE to
-    // any of these prefixes turns the read-cap into a write capability
-    // for that route. This test fails before that ships.
-    for (const entry of READ_CAPABILITY_ROUTES) {
-      expect(entry.methods).toEqual(["GET"]);
-    }
   });
 });

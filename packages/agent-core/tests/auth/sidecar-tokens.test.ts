@@ -1,10 +1,8 @@
 import { sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  authorizeSidecarToken,
   generateSidecarKeyPair,
   issueSidecarAccessToken,
-  requiredCapabilityForPath,
   verifySidecarToken,
 } from "../../src/auth/tokens.js";
 
@@ -321,112 +319,6 @@ describe("Ed25519 Sidecar Token Auth", () => {
         fullContainerId,
       );
       expect(result?.cap).toEqual(["computer_use"]);
-    });
-
-    it("authorizes a computer_use token on /mcp and /computer-use only", () => {
-      expect(authorizeSidecarToken({ cap: ["computer_use"] }, "/mcp")).toBe(
-        true,
-      );
-      expect(
-        authorizeSidecarToken({ cap: ["computer_use"] }, "/mcp/anything"),
-      ).toBe(true);
-      expect(
-        authorizeSidecarToken(
-          { cap: ["computer_use"] },
-          "/computer-use/screenshot",
-        ),
-      ).toBe(true);
-      expect(
-        authorizeSidecarToken(
-          { cap: ["computer_use"] },
-          "/computer-use/action",
-        ),
-      ).toBe(true);
-      expect(authorizeSidecarToken({ cap: ["computer_use"] }, "/exec")).toBe(
-        false,
-      );
-      expect(authorizeSidecarToken({ cap: ["computer_use"] }, "/files")).toBe(
-        false,
-      );
-    });
-
-    it("lets read tokens watch desktop screenshots without input control", () => {
-      expect(
-        authorizeSidecarToken(
-          { cap: ["read"] },
-          "/computer-use/screenshot",
-          "GET",
-        ),
-      ).toBe(true);
-      expect(
-        authorizeSidecarToken(
-          { cap: ["read"] },
-          "/computer-use/screenshot",
-          "POST",
-        ),
-      ).toBe(false);
-      expect(
-        authorizeSidecarToken({ cap: ["read"] }, "/computer-use/action", "GET"),
-      ).toBe(false);
-    });
-
-    it("gates /a11y on computer_use like its /computer-use sibling", () => {
-      // /a11y performs real input dispatch — a computer_use-scoped JWT must be
-      // able to drive it, and a full-scope master token must be kept off it.
-      expect(requiredCapabilityForPath("/a11y")).toBe("computer_use");
-      expect(authorizeSidecarToken({ cap: ["computer_use"] }, "/a11y")).toBe(
-        true,
-      );
-      expect(
-        authorizeSidecarToken({ cap: ["computer_use"] }, "/a11y/click"),
-      ).toBe(true);
-      expect(authorizeSidecarToken({}, "/a11y")).toBe(false);
-      expect(authorizeSidecarToken({ cap: [] }, "/a11y")).toBe(false);
-    });
-
-    it("treats absent cap as full scope (legacy)", () => {
-      expect(authorizeSidecarToken({}, "/exec")).toBe(true);
-      expect(authorizeSidecarToken({}, "/files")).toBe(true);
-      // BUT: legacy full-scope tokens MUST NOT reach capability-gated
-      // routes — those require an explicit cap claim. Enforces the
-      // "master token cannot be presented as an MCP credential" rule
-      // and the same applies to /computer-use (no master token on the
-      // direct computer-use HTTP shim).
-      expect(authorizeSidecarToken({}, "/mcp")).toBe(false);
-      expect(authorizeSidecarToken({}, "/computer-use/action")).toBe(false);
-    });
-
-    // Regression: harden 2026-04-26 PoC.
-    //
-    // An explicit empty `cap` array used to be treated identically to a
-    // missing `cap` claim — i.e. legacy full scope — so a token of
-    // shape `{ cap: [] }` authorized /exec, /files, etc. The orchestrator
-    // mint path validates against this upstream, but the authorization
-    // primitive itself was fail-OPEN. Now an empty array means
-    // "scoped to no capability" and rejects everything, matching the
-    // documented contract.
-    it("treats explicit empty cap as scoped-to-nothing (fail-closed)", () => {
-      expect(authorizeSidecarToken({ cap: [] }, "/exec")).toBe(false);
-      expect(authorizeSidecarToken({ cap: [] }, "/files")).toBe(false);
-      expect(authorizeSidecarToken({ cap: [] }, "/mcp")).toBe(false);
-      expect(authorizeSidecarToken({ cap: [] }, "/mcp/sub")).toBe(false);
-      expect(authorizeSidecarToken({ cap: [] }, "/computer-use/action")).toBe(
-        false,
-      );
-    });
-
-    it("maps capability-gated routes to computer_use capability", () => {
-      expect(requiredCapabilityForPath("/mcp")).toBe("computer_use");
-      expect(requiredCapabilityForPath("/mcp/sub")).toBe("computer_use");
-      expect(requiredCapabilityForPath("/computer-use")).toBe("computer_use");
-      expect(requiredCapabilityForPath("/computer-use/screenshot")).toBe(
-        "computer_use",
-      );
-      expect(requiredCapabilityForPath("/computer-use/action")).toBe(
-        "computer_use",
-      );
-      expect(requiredCapabilityForPath("/exec")).toBeNull();
-      expect(requiredCapabilityForPath("/files/read")).toBeNull();
     });
   });
 });

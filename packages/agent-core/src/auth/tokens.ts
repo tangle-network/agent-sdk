@@ -207,181 +207,17 @@ const JWT_HEADER_EDDSA = base64UrlEncode(
 );
 
 /**
- * Capability strings carried in a sidecar token's `cap` claim. The
- * sidecar route allowlist (SIDECAR_CAPABILITY_ROUTES) maps each path
- * prefix to the capability required to access it. Tokens with a `cap`
- * claim are strictly limited to those capabilities; tokens without a
- * `cap` claim are full-scope (legacy orchestrator-internal use).
+ * Capability strings carried in a sidecar token's `cap` claim. This is the
+ * shared vocabulary the crypto layer stamps into the JWT (issueSidecarAccessToken)
+ * and reads back out (verifySidecarToken). The route→capability authorization
+ * policy that enforces these claims lives in the sidecar layer, not here.
+ * Tokens with a `cap` claim are strictly limited to those capabilities; tokens
+ * without a `cap` claim are full-scope (legacy orchestrator-internal use).
  *
- * Adding a new capability:
- *   1. Extend this union.
- *   2. Add the path prefix → capability mapping in SIDECAR_CAPABILITY_ROUTES.
- *   3. Mint tokens with the new capability via `issueSidecarAccessToken`.
+ * Adding a new capability: extend this union, then update the enforcement
+ * policy (route maps + authorization check) in the sidecar-auth package.
  */
 export type SidecarCapability = "computer_use" | "read" | "debug" | "terminal";
-
-/**
- * Public ↔ capability binding. The sidecar's auth middleware uses this
- * to enforce: a token with a `cap` claim can only call routes whose
- * required capability is in the token's `cap` list. Routes not listed
- * here implicitly require full scope (no `cap` claim, i.e. legacy
- * orchestrator-internal tokens).
- *
- * Order matters — longest prefix wins so `/mcp/x` matches before `/`.
- */
-export const SIDECAR_CAPABILITY_ROUTES: ReadonlyArray<{
-  prefix: string;
-  capability: SidecarCapability;
-}> = [
-  { prefix: "/mcp", capability: "computer_use" },
-  // /computer-use is the direct HTTP shim for Anthropic claude-code's
-  // `computer` tool and the OpenAI Responses translator. Gating it on
-  // the same capability as /mcp keeps master tokens off this surface
-  // and lets the OpenAI dispatcher use cap-scoped JWTs end-to-end.
-  { prefix: "/computer-use", capability: "computer_use" },
-  // /a11y performs real input dispatch (click-by-ref, type-into-ref via the
-  // ComputerUseTool) — the same trust surface as /computer-use. Gate it on the
-  // same capability so a computer_use-scoped JWT can drive it end-to-end and
-  // full-scope master tokens stay off the input surface. Without this entry the
-  // boundary was inverted: the scoped JWT was rejected and the master accepted.
-  { prefix: "/a11y", capability: "computer_use" },
-  // /debug surfaces process listings, log buffers, port-watcher state,
-  // and runtime config. The previous SIDECAR_DEBUG_ENABLED env gate is
-  // a deploy-time switch — once set, every authenticated caller (every
-  // sandbox-api proxy, every browser read-token) could fingerprint the
-  // sidecar. Putting /debug behind a `debug` capability means an
-  // operator must mint a scoped token explicitly for diagnostic
-  // sessions, and master tokens never see the surface.
-  { prefix: "/debug", capability: "debug" },
-];
-
-/**
- * Pattern-gated routes, for capabilities that must bind to a SPECIFIC path
- * shape rather than a whole prefix. The terminal/ssh WebSocket upgrade paths
- * are the raw-input interactive surface (keystrokes straight to a PTY / SSH
- * tunnel) — the highest-trust action in the box — so they require a `terminal`
- * capability, while the sibling REST route `/terminals/commands` (one-shot
- * command exec, called by the public SDK + artifact queue) deliberately stays
- * OUT of the gate so a prefix match does not break those callers.
- *
- * Adding a pattern: anchor it (`^…$`) so it cannot over-match a sibling path.
- */
-export const SIDECAR_CAPABILITY_ROUTE_PATTERNS: ReadonlyArray<{
-  pattern: RegExp;
-  capability: SidecarCapability;
-}> = [
-  // GET /terminals/{connectionId}/ws — the terminal framebuffer + keystroke WS.
-  { pattern: /^\/terminals\/[^/]+\/ws$/, capability: "terminal" },
-  // GET /ssh (optional trailing slash) — the raw SSH transport tunnel.
-  { pattern: /^\/ssh\/?$/, capability: "terminal" },
-];
-
-/**
- * Routes a token with `cap: ["read"]` is allowed to call, with the HTTP
- * methods permitted on each. Used by `box.mintScopedToken({scope:
- * "read-only" | "project" | "session"})` (Issue #913 Gap 1).
- *
- * The "read" capability is intentionally NOT in
- * `SIDECAR_CAPABILITY_ROUTES` — that table maps gated routes that ONLY
- * the matching cap can access. "read" is *additive*: it grants a token
- * access to a narrow allow-list of read routes WITHOUT also denying
- * those same routes to master tokens. Master tokens (cap=undefined)
- * keep reaching every non-gated route as before.
- *
- * Adding a route here: keep it GET-only by default. Mutating methods
- * on a read-token would defeat the "read-only" promise customers rely
- * on when handing the token to browser code.
- */
-export const READ_CAPABILITY_ROUTES: ReadonlyArray<{
-  prefix: string;
-  methods: ReadonlyArray<string>;
-}> = [
-  // Session reads: list, get, message-read. POST/DELETE/PATCH excluded
-  // — those create or destroy state and must use the master bearer.
-  { prefix: "/agents/sessions", methods: ["GET"] },
-  // SSE event stream — what most browser clients are after.
-  { prefix: "/agents/events", methods: ["GET"] },
-  // Health + privacy posture — safe meta-introspection.
-  { prefix: "/health", methods: ["GET"] },
-  { prefix: "/privacy", methods: ["GET"] },
-  // Read-only desktop observation. Input dispatch remains gated on
-  // `computer_use`; read tokens can only fetch the current framebuffer.
-  { prefix: "/computer-use/screenshot", methods: ["GET"] },
-];
-
-function isReadCapAllowed(path: string, method: string | undefined): boolean {
-  if (!method) return false;
-  const m = method.toUpperCase();
-  for (const entry of READ_CAPABILITY_ROUTES) {
-    if (path === entry.prefix || path.startsWith(`${entry.prefix}/`)) {
-      return entry.methods.includes(m);
-    }
-  }
-  return false;
-}
-
-/**
- * Returns the capability required to access `path`, or `null` if the
- * route requires full scope (no `cap` claim).
- */
-export function requiredCapabilityForPath(
-  path: string,
-): SidecarCapability | null {
-  for (const { pattern, capability } of SIDECAR_CAPABILITY_ROUTE_PATTERNS) {
-    if (pattern.test(path)) return capability;
-  }
-  for (const { prefix, capability } of SIDECAR_CAPABILITY_ROUTES) {
-    if (path === prefix || path.startsWith(`${prefix}/`)) return capability;
-  }
-  return null;
-}
-
-/**
- * Authorize a verified sidecar token for `path` (and optionally
- * `method`). Returns true iff one of:
- *   - the token has NO `cap` claim (legacy full-scope master) AND the
- *     path is not capability-gated;
- *   - the path is capability-gated and the token's `cap` claim
- *     includes the required capability;
- *   - the token has `cap: ["read"]` (Issue #913 Gap 1 consumer
- *     scoped tokens) AND the path is in `READ_CAPABILITY_ROUTES`
- *     with the request method on the allow-list.
- *
- * Fail-closed semantics:
- *   - An explicit `cap` claim is a scope assertion. Even an empty
- *     array (`cap: []`) means "scoped to no capability" → reject every
- *     request, including admin routes (see harden report 2026-04-26).
- *   - A capability-scoped token CANNOT access non-capability-gated
- *     routes outside its explicit allow-list.
- *
- * `method` defaults to undefined for backwards compatibility — callers
- * that don't pass it will fail-closed for the read-cap allow-list,
- * which matches the old behavior (read-cap didn't exist).
- */
-export function authorizeSidecarToken(
-  payload: { cap?: readonly SidecarCapability[] },
-  path: string,
-  method?: string,
-): boolean {
-  const required = requiredCapabilityForPath(path);
-  if (payload.cap !== undefined) {
-    // "read" cap follows a method-aware allow-list (consumer-scoped
-    // tokens for browser code). It does NOT participate in the gated-
-    // route table — that table is fail-closed and reserved for
-    // capabilities like computer_use.
-    if (payload.cap.includes("read") && isReadCapAllowed(path, method)) {
-      return true;
-    }
-    // Explicit scope claim — only authorize capability-gated routes whose
-    // required capability is present in the claim (exact match). Empty array
-    // → never authorized.
-    return required !== null && payload.cap.includes(required);
-  }
-  // No `cap` claim: legacy full-scope orchestrator-internal token.
-  // Capability-gated routes still reject these (the master token must
-  // never be presented as a capability credential).
-  return required === null;
-}
 
 /**
  * Generate an Ed25519 key pair for per-session JWT signing.
@@ -420,8 +256,8 @@ export function issueSidecarAccessToken(
     sid?: string;
     /**
      * Capability allowlist. When present, the token is restricted to
-     * routes whose required capability is in this list (see
-     * SIDECAR_CAPABILITY_ROUTES). Absent = full scope (legacy
+     * routes whose required capability is in this list, as enforced by the
+     * sidecar-auth policy layer. Absent = full scope (legacy
      * orchestrator-internal tokens).
      */
     cap?: SidecarCapability[];
