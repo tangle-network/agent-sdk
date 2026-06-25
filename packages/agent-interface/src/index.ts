@@ -5,6 +5,8 @@
  * This package defines the contract between the sidecar and provider implementations.
  */
 
+import type { InteractionRequest, InteractionResponse } from "./interaction.js";
+
 // Capabilities describe what a provider supports
 export type BackendCapabilities = {
   streaming: boolean;
@@ -12,6 +14,12 @@ export type BackendCapabilities = {
   reasoning: boolean;
   multimodal: boolean;
   contextWindow: number;
+  /**
+   * Interaction kinds this provider can originate (e.g. `["question",
+   * "permission"]`). Empty/undefined means the provider never asks the user.
+   * Consumers use this to decide what human-in-the-loop UI to offer.
+   */
+  interactions?: string[];
 };
 
 /**
@@ -300,6 +308,20 @@ export type StreamEvent =
       time?: { created?: number; updated?: number };
     }
   // === INTERACTIVE EVENTS ===
+  /** Agent asks the user; answered via `respondToInteraction`. The generalized
+   * human-in-the-loop event (question, permission, plan, …). */
+  | {
+      type: "interaction";
+      request: InteractionRequest;
+    }
+  /** Agent withdraws an outstanding interaction (no longer needs the answer). */
+  | {
+      type: "interaction.cancel";
+      id: string;
+      reason?: string;
+    }
+  /** @deprecated Use the `interaction` event with `kind: "question"`. Retained
+   * so existing emitters/consumers keep working during migration. */
   | {
       type: "question";
       questionId: string;
@@ -785,9 +807,19 @@ export interface SdkProviderAdapter {
   ): Promise<unknown>;
   listArtifacts?(sessionId: string): Promise<BackendArtifact[]>;
   downloadArtifact?(sessionId: string, path: string): Promise<Uint8Array>;
-  // Optional question/answer for interactive prompts
+  /**
+   * Respond to an outstanding interaction (question, permission, …). The
+   * generalized inbound channel; the adapter translates the response into the
+   * provider's native control call to unblock the agent.
+   */
+  respondToInteraction?(response: InteractionResponse): Promise<void>;
+  /**
+   * @deprecated Use `respondToInteraction`. Retained for back-compat; an
+   * adapter implementing only this still answers `kind: "question"` asks.
+   */
   submitQuestionAnswer?(answers: Record<string, string[]>): Promise<void>;
 }
+export * from "./interaction.js";
 export * from "./agent-profile.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
