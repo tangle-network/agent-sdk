@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.13.0
+
+### Minor Changes
+
+- 5d8d8ec: BREAKING: remove the deprecated `question` stream event and `submitQuestionAnswer` adapter method. Use the generalized `interaction` event (`kind: "question"`) and `respondToInteraction` introduced in 0.12.0.
+
 ## 0.12.0
 
 ### Minor Changes
