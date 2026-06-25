@@ -319,17 +319,6 @@ export type StreamEvent =
       type: "interaction.cancel";
       id: string;
       reason?: string;
-    }
-  /** @deprecated Use the `interaction` event with `kind: "question"`. Retained
-   * so existing emitters/consumers keep working during migration. */
-  | {
-      type: "question";
-      questionId: string;
-      questions: Array<{
-        question: string;
-        options?: Array<{ label: string; description?: string }>;
-        multiSelect?: boolean;
-      }>;
     };
 
 export type ToolInvocation = {
@@ -813,11 +802,6 @@ export interface SdkProviderAdapter {
    * provider's native control call to unblock the agent.
    */
   respondToInteraction?(response: InteractionResponse): Promise<void>;
-  /**
-   * @deprecated Use `respondToInteraction`. Retained for back-compat; an
-   * adapter implementing only this still answers `kind: "question"` asks.
-   */
-  submitQuestionAnswer?(answers: Record<string, string[]>): Promise<void>;
 }
 export * from "./interaction.js";
 export * from "./agent-profile.js";
