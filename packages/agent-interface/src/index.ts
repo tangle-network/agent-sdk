@@ -6,6 +6,7 @@
  */
 
 import type { InteractionRequest, InteractionResponse } from "./interaction.js";
+export type * from "./environment-provider.js";
 
 // Capabilities describe what a provider supports
 export type BackendCapabilities = {
