@@ -65,7 +65,7 @@ export interface SandboxSessionLike {
   cancel(): Promise<void>;
 }
 
-export interface TangleSandboxProviderOptions {
+export interface TangleProviderOptions {
   client: SandboxClientLike;
   name?: string;
   defaultBackend?: BackendType;
@@ -74,8 +74,8 @@ export interface TangleSandboxProviderOptions {
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
 }
 
-export function createTangleSandboxProvider(
-  options: TangleSandboxProviderOptions,
+export function createTangleProvider(
+  options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
   return {

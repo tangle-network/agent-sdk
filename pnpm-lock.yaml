@@ -144,7 +144,7 @@ importers:
         specifier: 'catalog:'
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(vite@8.1.0(@types/node@25.6.0)(yaml@2.9.0))
 
-  packages/agent-provider-sandbox:
+  packages/agent-provider-tangle:
     dependencies:
       '@tangle-network/agent-interface':
         specifier: workspace:*

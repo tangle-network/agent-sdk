@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
 import type { CreateSandboxOptions, SandboxEvent } from "@tangle-network/sandbox";
 import {
-  createTangleSandboxProvider,
+  createTangleProvider,
   type SandboxClientLike,
   type SandboxInstanceLike,
 } from "./index.js";
 
-describe("createTangleSandboxProvider", () => {
+describe("createTangleProvider", () => {
   it("maps create options, stream events, workspace methods, and dispatch sessions", async () => {
     let createOptions: CreateSandboxOptions | undefined;
     const files = new Map<string, string>();
@@ -39,7 +39,7 @@ describe("createTangleSandboxProvider", () => {
       },
       describePlacement: () => ({ kind: "sibling", sandboxId: "sbx-1" }),
     };
-    const provider = createTangleSandboxProvider({ client });
+    const provider = createTangleProvider({ client });
 
     await expect(
       runAgentEnvironmentProviderConformance({
