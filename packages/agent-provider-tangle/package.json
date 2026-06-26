@@ -1,7 +1,7 @@
 {
-  "name": "@tangle-network/agent-provider-sandbox",
+  "name": "@tangle-network/agent-provider-tangle",
   "version": "0.2.0",
-  "description": "AgentEnvironmentProvider adapter for @tangle-network/sandbox",
+  "description": "AgentEnvironmentProvider adapter for Tangle sandboxes",
   "type": "module",
   "license": "MIT",
   "main": "dist/index.js",
@@ -15,7 +15,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tangle-network/agent-sdk.git",
-    "directory": "packages/agent-provider-sandbox"
+    "directory": "packages/agent-provider-tangle"
   },
   "publishConfig": {
     "access": "public",

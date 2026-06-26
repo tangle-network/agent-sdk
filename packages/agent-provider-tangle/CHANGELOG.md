@@ -1,4 +1,4 @@
-# @tangle-network/agent-provider-sandbox
+# @tangle-network/agent-provider-tangle
 
 ## 0.2.0
 
