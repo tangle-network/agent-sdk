@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.14.0
+
+### Minor Changes
+
+- 6591b16: Add the provider-neutral agent environment contract plus provider packages for Tangle Sandbox, CLI bridge, ComputeSDK, E2B, Daytona, and shared provider conformance tests.
+
 ## 0.13.0
 
 ### Minor Changes
