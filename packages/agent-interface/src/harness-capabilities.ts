@@ -34,10 +34,13 @@ export const reasoningLadder: readonly ReasoningEffort[] = [
  * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `anthropic`, `openai`).
  * A harness with no entry is router-backed: it runs any model. Keyed by the BASE runner — aliases
  * (`claude`/`claudish`/`kimi`) resolve through `canonicalizeHarness` first.
+ *
+ * `nanoclaw` is deliberately absent despite the "claw" name: its runner routes every provider through
+ * the Tangle router (canonical model id straight to the gateway), so it is router-backed like
+ * `opencode` — not Anthropic-locked.
  */
 const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {
   "claude-code": ["anthropic"],
-  nanoclaw: ["anthropic"],
   codex: ["openai"],
   "kimi-code": ["moonshot"],
 };
@@ -80,20 +83,82 @@ export function preferredHarnessForModel(modelId: string): HarnessType | null {
   return null;
 }
 
+// ── Harness ↔ model snapping (catalog-aware) ─────────────────────────────────
+
+/**
+ * Per-harness ranking patterns for {@link snapModelToHarness}, best first; within one pattern the
+ * highest version wins (numeric-aware). Only vendor-locked harnesses need an entry — a router-backed
+ * harness never snaps (it runs the model as-is). Keyed by the BASE runner (aliases canonicalized).
+ */
+const harnessPreferredModelPatterns: Partial<
+  Record<HarnessType, readonly RegExp[]>
+> = {
+  "claude-code": [
+    /^anthropic\/claude-opus-[\d.-]+$/,
+    /^anthropic\/claude-sonnet-[\d.-]+$/,
+    /^anthropic\//,
+  ],
+  codex: [/^openai\/gpt-\d+(\.\d+)?$/, /^openai\/gpt/, /^openai\//],
+  "kimi-code": [/^moonshot\//],
+};
+
+const numericDesc = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+/**
+ * Keep `modelId` when the harness can run it; otherwise return the harness's best compatible id from
+ * `candidateIds` (preferred patterns in order, highest version within a pattern). When nothing in the
+ * candidate list fits, the original id is returned unchanged so the caller sees the incompatibility
+ * instead of a silent wrong substitution. `candidateIds` are canonical ("provider/model") ids — the
+ * caller maps its own catalog shape down to ids, keeping this layer catalog-agnostic.
+ */
+export function snapModelToHarness(
+  harness: HarnessType,
+  modelId: string,
+  candidateIds: readonly string[],
+): string {
+  if (harnessSupportsModel(harness, modelId)) return modelId;
+  const patterns =
+    harnessPreferredModelPatterns[canonicalizeHarness(harness)] ?? [];
+  for (const pattern of patterns) {
+    const matches = candidateIds
+      .filter((id) => pattern.test(id))
+      .sort((a, b) => numericDesc.compare(b, a));
+    if (matches.length > 0) return matches[0]!;
+  }
+  return candidateIds.find((id) => harnessSupportsModel(harness, id)) ?? modelId;
+}
+
+/**
+ * Keep the harness when it can run `modelId`; otherwise return the model's native harness
+ * (anthropic → claude-code, openai → codex, moonshot → kimi-code), falling back to the router-backed
+ * `opencode` for everything else.
+ */
+export function snapHarnessToModel(
+  harness: HarnessType,
+  modelId: string,
+): HarnessType {
+  if (harnessSupportsModel(harness, modelId)) return harness;
+  return preferredHarnessForModel(modelId) ?? "opencode";
+}
+
 // ── Reasoning-effort support ──────────────────────────────────────────────────
 
 /**
  * The highest reasoning effort a harness's runtime can express (its native clamp ceiling). Grounded
  * in cli-bridge: codex's `model_reasoning_effort` caps at `high` (xhigh/ultracode clamp down); kimi's
  * `--thinking` is binary, so `high` is its "on"; claude-code carries the full range; `cli-base` has
- * no agent and thus no thinking. Router/model-driven harnesses default to the full range.
+ * no agent and thus no thinking; `nanoclaw`'s runner sends no thinking flag, so it expresses only
+ * `none`. Router/model-driven harnesses default to the full range.
  */
 const harnessReasoningCeiling: Partial<Record<HarnessType, ReasoningEffort>> = {
   "cli-base": "none",
   codex: "high",
   "kimi-code": "high",
   "claude-code": "ultracode",
-  nanoclaw: "ultracode",
+  nanoclaw: "none",
 };
 
 /** The reasoning efforts a harness can express, independent of model — `none` up to its ceiling. */
