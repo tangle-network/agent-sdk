@@ -112,11 +112,24 @@ describe("snapHarnessToModel", () => {
 });
 
 describe("reasoning effort support", () => {
-  it("clamps each harness to its native ceiling", () => {
+  it("offers each harness its real adapter set, not the generic ladder", () => {
+    // no-thinking runners
     expect(harnessReasoningEfforts("cli-base")).toEqual(["none"]);
-    expect(harnessReasoningEfforts("codex")).toEqual(["none", "minimal", "low", "medium", "high"]);
-    expect(harnessReasoningEfforts("kimi-code")).toEqual(["none", "minimal", "low", "medium", "high"]);
-    expect(harnessReasoningEfforts("claude-code")).toContain("ultracode");
+    // clamp-based: `none` dropped (inert ≡ auto); capped at the adapter's real ceiling
+    expect(harnessReasoningEfforts("codex")).toEqual(["minimal", "low", "medium", "high"]);
+    expect(harnessReasoningEfforts("pi")).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+    expect(harnessReasoningEfforts("openclaw")).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+    // claude: real `--effort` ladder low…max (ultracode stands in for max); no none/minimal
+    expect(harnessReasoningEfforts("claude-code")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "ultracode",
+    ]);
+    // kimi: binary toggle (minimal = off, high = on)
+    expect(harnessReasoningEfforts("kimi-code")).toEqual(["minimal", "high"]);
+    // pass-through / router-driven: full ladder (narrowed later by the model)
     expect(harnessReasoningEfforts("opencode")).toContain("ultracode");
   });
 
@@ -126,9 +139,8 @@ describe("reasoning effort support", () => {
 
   it("narrows by the model's own capability", () => {
     expect(reasoningEffortsFor("claude-code", { supportsReasoning: false })).toEqual(["none"]);
+    // claude's set is low…ultracode; a model capped at `medium` trims the tail.
     expect(reasoningEffortsFor("claude-code", { maxEffort: "medium" })).toEqual([
-      "none",
-      "minimal",
       "low",
       "medium",
     ]);
@@ -156,7 +168,7 @@ describe("per-turn selector support", () => {
   });
 
   it("flags harnesses that drop the reasoning effort", () => {
-    for (const h of ["amp", "factory-droids", "hermes", "nanoclaw"] as const) {
+    for (const h of ["amp", "factory-droids", "hermes", "nanoclaw", "acp"] as const) {
       expect(harnessHonorsEffort(h)).toBe(false);
     }
     expect(harnessHonorsEffort("openclaw")).toBe(true); // honors effort, not model
