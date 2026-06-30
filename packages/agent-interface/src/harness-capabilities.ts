@@ -196,3 +196,45 @@ export function reasoningEffortsFor(
   }
   return efforts;
 }
+
+// ── Per-turn selector support (does the harness honor the chat pickers?) ──────
+
+/**
+ * Harnesses whose runner DROPS a per-turn selector — grounded in the cli-bridge adapter audit, NOT a
+ * guess. Most harnesses honor both selectors, so only the exceptions are listed; a harness absent from
+ * a set honors that selector. Keyed by the BASE runner (aliases canonicalized).
+ *
+ *   - model dropped:  `amp` (own agent picks the model), `openclaw` (dispatcher routes by its own
+ *     config), `nanoclaw` (socket-bridge runner is config/env-driven).
+ *   - effort dropped: `amp` and `factory-droids`/`hermes`/`nanoclaw` (no thinking flag is plumbed to
+ *     the underlying CLI).
+ *
+ * This is distinct from {@link reasoningEffortsFor} (which levels a harness can EXPRESS): a picker uses
+ * these to trim or mark harnesses up front, so a user's model/effort choice is never silently ignored.
+ */
+const harnessIgnoresModel: ReadonlySet<HarnessType> = new Set([
+  "amp",
+  "openclaw",
+  "nanoclaw",
+]);
+const harnessIgnoresEffort: ReadonlySet<HarnessType> = new Set([
+  "amp",
+  "factory-droids",
+  "hermes",
+  "nanoclaw",
+]);
+
+/** Whether the harness's runner honors a per-turn MODEL override (vs. picking the model itself). */
+export function harnessHonorsModel(harness: HarnessType): boolean {
+  return !harnessIgnoresModel.has(canonicalizeHarness(harness));
+}
+
+/** Whether the harness's runner honors a reasoning-EFFORT override (vs. dropping it). */
+export function harnessHonorsEffort(harness: HarnessType): boolean {
+  return !harnessIgnoresEffort.has(canonicalizeHarness(harness));
+}
+
+/** Whether the harness honors BOTH chat selectors — i.e. the model and effort pickers are live. */
+export function harnessHonorsSelectors(harness: HarnessType): boolean {
+  return harnessHonorsModel(harness) && harnessHonorsEffort(harness);
+}

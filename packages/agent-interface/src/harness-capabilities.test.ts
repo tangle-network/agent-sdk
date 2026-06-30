@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  harnessHonorsEffort,
+  harnessHonorsModel,
+  harnessHonorsSelectors,
   harnessProviders,
   harnessReasoningEfforts,
   harnessSupportsModel,
@@ -133,5 +136,40 @@ describe("reasoning effort support", () => {
     expect(reasoningEffortsFor("codex", { maxEffort: "ultracode" })).toEqual(
       harnessReasoningEfforts("codex"),
     );
+  });
+});
+
+describe("per-turn selector support", () => {
+  it("honors both selectors for the mainstream agent harnesses", () => {
+    for (const h of ["opencode", "claude-code", "codex", "kimi-code"] as const) {
+      expect(harnessHonorsModel(h)).toBe(true);
+      expect(harnessHonorsEffort(h)).toBe(true);
+      expect(harnessHonorsSelectors(h)).toBe(true);
+    }
+  });
+
+  it("flags harnesses that drop the per-turn model", () => {
+    for (const h of ["amp", "openclaw", "nanoclaw"] as const) {
+      expect(harnessHonorsModel(h)).toBe(false);
+    }
+    expect(harnessHonorsModel("factory-droids")).toBe(true); // honors model, not effort
+  });
+
+  it("flags harnesses that drop the reasoning effort", () => {
+    for (const h of ["amp", "factory-droids", "hermes", "nanoclaw"] as const) {
+      expect(harnessHonorsEffort(h)).toBe(false);
+    }
+    expect(harnessHonorsEffort("openclaw")).toBe(true); // honors effort, not model
+  });
+
+  it("harnessHonorsSelectors is the AND of both", () => {
+    expect(harnessHonorsSelectors("amp")).toBe(false);
+    expect(harnessHonorsSelectors("factory-droids")).toBe(false); // model yes, effort no
+    expect(harnessHonorsSelectors("openclaw")).toBe(false); // effort yes, model no
+  });
+
+  it("resolves aliases before keying", () => {
+    // `claude` canonicalizes to `claude-code`, which honors both.
+    expect(harnessHonorsSelectors("claude")).toBe(true);
   });
 });
