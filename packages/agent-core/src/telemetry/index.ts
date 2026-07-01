@@ -22,8 +22,10 @@ export {
   declaredTaskText,
   extractContent,
   hasContent,
+  INDEXED_CONTENT_KEY_LIKE_PATTERNS,
   logRecordContentBag,
   type NormalizedContent,
+  normalizeContentAttributes,
   resolveDeclaredIntent,
 } from "./content-attributes.js";
 export {

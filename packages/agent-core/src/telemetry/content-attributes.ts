@@ -90,7 +90,12 @@ const CONTENT_KEY_ALIASES: Readonly<Record<string, ContentField>> = {
   "input.value": "prompt",
   "output.value": "completion",
   "llm.input_messages": "messages",
-  "llm.output_messages": "messages",
+  // NOTE: `llm.output_messages` is deliberately NOT a `messages` alias. Both
+  // input and output message arrays would collapse to the single `messages`
+  // field (resolved once), so the input would shadow the reply. The output side
+  // is reconstructed into the SEPARATE `completion` field by
+  // `normalizeContentAttributes` (see the reconstruction section below), so a
+  // full turn carries BOTH the prompt (`messages`) and the reply (`completion`).
   "user.message": "prompt",
   prompt: "prompt",
   "tangle.task": "task",
@@ -208,7 +213,6 @@ const FIELD_KEY_PRIORITY: Readonly<Record<ContentField, readonly string[]>> = {
     "claude_code.api_request_body.body",
     "claude_code.api_response_body.body",
     "llm.input_messages",
-    "llm.output_messages",
   ],
 };
 
@@ -333,6 +337,336 @@ function messageHasText(msg: Record<string, unknown>): boolean {
   return readMessageText(msg) !== null;
 }
 
+// ── Indexed / array / tool-call reconstruction ────────────────────────────────
+//
+// Push-OTLP providers spell a turn's content under INDEXED / ARRAY / nested keys
+// the flat alias table above cannot match:
+//   OpenInference (Phoenix, LangGraph, CrewAI, LlamaIndex):
+//     llm.input_messages.{i}.message.content
+//     llm.output_messages.{i}.message.tool_calls.{j}.tool_call.function.arguments
+//   OTel-GenAI flattened (LiteLLM, OpenAI Agents SDK, Pydantic, older OpenLLMetry):
+//     gen_ai.prompt.{i}.content / gen_ai.completion.{i}.content
+//   OTel-GenAI v1.28+ event arrays (Vercel AI SDK, current OpenLLMetry):
+//     gen_ai.input.messages   (a JSON array of { role, parts:[{ content|text }] })
+//     gen_ai.output.messages
+// `extractContent({"gen_ai.prompt.0.content":"hi"})` would otherwise return {} —
+// the content silently invisible for the entire push population.
+//
+// `normalizeContentAttributes` reconstructs these into the canonical aliases the
+// reader already understands, run as a pre-pass by extractContent / hasContent /
+// resolveDeclaredIntent so every consumer reads indexed content by construction:
+//   INPUT prompt  → `llm.input_messages` array (the `messages` field)
+//   OUTPUT reply  → `gen_ai.completion` string (the SEPARATE `completion` field —
+//                   never a colliding message array, so a full turn keeps both)
+//   tool calls    → `tool.args` / `tool.name`
+// It is NON-DESTRUCTIVE (an already-present coarse key wins) and returns the SAME
+// reference when there is nothing to reconstruct, so the metadata-only hot path
+// pays only a single key scan.
+
+/** Indexed `{prefix}.{i}.…` message prefixes carrying the INPUT conversation. */
+const INDEXED_INPUT_PREFIXES = [
+  "llm.input_messages",
+  "gen_ai.prompt",
+  "gen_ai.request.messages",
+] as const;
+/** Indexed message prefixes carrying the OUTPUT reply. */
+const INDEXED_OUTPUT_PREFIXES = [
+  "llm.output_messages",
+  "gen_ai.completion",
+  "gen_ai.response.messages",
+] as const;
+/** Single-value keys holding a whole INPUT message array (JSON string or array). */
+const ARRAY_INPUT_KEYS = [
+  "gen_ai.input.messages",
+  "gen_ai.system_instructions",
+] as const;
+/** Single-value keys holding a whole OUTPUT message array. */
+const ARRAY_OUTPUT_KEYS = [
+  "llm.output_messages",
+  "gen_ai.output.messages",
+] as const;
+/** Completion-field alias keys — if any is present the provider sent its own
+ *  reply, so the output reconstruction is skipped (non-destructive). */
+const COMPLETION_PRESENT_KEYS = [
+  "gen_ai.completion",
+  "gen_ai.response.completion",
+  "output.value",
+  "message.part.text",
+  "message.text",
+] as const;
+const TOOL_ARG_KEYS = [
+  "tool_call.function.arguments",
+  "gen_ai.tool.call.arguments",
+  "gen_ai.tool.arguments",
+] as const;
+const TOOL_NAME_KEYS = [
+  "tool_call.function.name",
+  "gen_ai.tool.call.name",
+  "gen_ai.tool.name",
+] as const;
+const ROLE_SUBKEYS = ["role", "message.role"];
+const CONTENT_SUBKEYS = ["content", "message.content", "message.text", "text"];
+
+/**
+ * SQL `LIKE` patterns (over `jsonb_object_keys`) that detect indexed / array /
+ * tool-call content on a flattened bag — the DB-side complement to
+ * `normalizeContentAttributes` for a reader (e.g. the onboarding "content seen"
+ * check) that must decide "does any content-bearing key exist" in SQL without
+ * materializing rows. Kept beside the reconstruction so the in-process reader and
+ * the SQL predicate can never drift on which shapes count as content.
+ */
+export const INDEXED_CONTENT_KEY_LIKE_PATTERNS: readonly string[] =
+  Object.freeze([
+    "llm.input_messages.%",
+    "llm.output_messages.%",
+    "gen_ai.prompt.%",
+    "gen_ai.completion.%",
+    "gen_ai.input.messages",
+    "gen_ai.output.messages",
+    "gen_ai.request.messages.%",
+    "gen_ai.response.messages.%",
+    "%.function.arguments",
+    "gen_ai.tool.call.arguments",
+  ]);
+
+function maybeJson(v: unknown): unknown {
+  if (typeof v !== "string") return v;
+  const t = v.trim();
+  if (!(t.startsWith("[") || t.startsWith("{"))) return v;
+  try {
+    return JSON.parse(t);
+  } catch {
+    return v;
+  }
+}
+
+/** Reconstruct an ordered message array from a bag's `{prefix}.{i}.{sub}` keys.
+ *  Null when the prefix yields no text-bearing message. */
+function collectIndexedMessages(
+  bag: Record<string, unknown>,
+  prefix: string,
+): Record<string, unknown>[] | null {
+  const dot = `${prefix}.`;
+  const byIndex = new Map<number, Record<string, unknown>>();
+  let sawContent = false;
+  for (const key of Object.keys(bag)) {
+    if (!key.startsWith(dot)) continue;
+    const m = /^(\d+)\.(.+)$/.exec(key.slice(dot.length));
+    if (!m || m[1] === undefined || m[2] === undefined) continue;
+    const idx = Number(m[1]);
+    const sub = m[2];
+    const slot = byIndex.get(idx) ?? {};
+    byIndex.set(idx, slot);
+    if (ROLE_SUBKEYS.includes(sub) && slot.role === undefined) {
+      const role = asContentField(bag[key]);
+      if (role !== null) slot.role = role;
+      continue;
+    }
+    // Multimodal content parts: {i}.…contents.{k}.…text — concatenate.
+    if (
+      /(?:^|\.)contents\.\d+\..*text$/.test(sub) ||
+      /(?:^|\.)parts\.\d+\..*(?:text|content)$/.test(sub)
+    ) {
+      const part = asContentField(bag[key]);
+      if (part !== null) {
+        slot.content =
+          slot.content === undefined
+            ? part
+            : `${String(slot.content)}\n${part}`;
+        sawContent = true;
+      }
+      continue;
+    }
+    if (CONTENT_SUBKEYS.includes(sub) && slot.content === undefined) {
+      const c = asContentField(bag[key]);
+      if (c !== null) {
+        slot.content = c;
+        sawContent = true;
+      }
+    }
+  }
+  if (!sawContent) return null;
+  const out: Record<string, unknown>[] = [];
+  for (const idx of [...byIndex.keys()].sort((a, b) => a - b)) {
+    const slot = byIndex.get(idx);
+    if (slot && slot.content !== undefined) out.push(slot);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** Coerce a single-key message-array value into `{role, content}[]`. */
+function coerceMessageArray(value: unknown): Record<string, unknown>[] | null {
+  const v = maybeJson(value);
+  const arr = Array.isArray(v)
+    ? v
+    : v && typeof v === "object"
+      ? [v]
+      : null;
+  if (!arr) return null;
+  const out: Record<string, unknown>[] = [];
+  for (const el of arr) {
+    if (!el || typeof el !== "object") {
+      const s = asContentField(el);
+      if (s !== null) out.push({ content: s });
+      continue;
+    }
+    const obj = el as Record<string, unknown>;
+    // OTel-GenAI part shape: { role, parts:[{ type, content|text }] }.
+    const parts = obj.parts;
+    if (Array.isArray(parts)) {
+      const text = parts
+        .map((p) =>
+          p && typeof p === "object"
+            ? asContentField(
+                (p as Record<string, unknown>).content ??
+                  (p as Record<string, unknown>).text,
+              )
+            : null,
+        )
+        .filter((s): s is string => s !== null)
+        .join("\n");
+      if (text.length > 0) {
+        out.push(
+          obj.role !== undefined
+            ? { role: obj.role, content: text }
+            : { content: text },
+        );
+        continue;
+      }
+    }
+    out.push(obj);
+  }
+  return out.length > 0 ? out : null;
+}
+
+function firstIndexedMessages(
+  bag: Record<string, unknown>,
+  prefixes: readonly string[],
+): Record<string, unknown>[] | null {
+  for (const prefix of prefixes) {
+    const msgs = collectIndexedMessages(bag, prefix);
+    if (msgs) return msgs;
+  }
+  return null;
+}
+
+function firstArrayMessages(
+  bag: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown>[] | null {
+  for (const key of keys) {
+    if (!(key in bag)) continue;
+    const msgs = coerceMessageArray(bag[key]);
+    if (msgs) return msgs;
+  }
+  return null;
+}
+
+/** Concatenate a reconstructed message array into one reply string. */
+function messagesToText(msgs: Record<string, unknown>[]): string {
+  const parts: string[] = [];
+  for (const m of msgs) {
+    const t = readMessageText(m);
+    if (t !== null) parts.push(t);
+  }
+  return parts.join("\n");
+}
+
+function findToolValue(
+  bag: Record<string, unknown>,
+  exactKeys: readonly string[],
+  suffix: string,
+): string | null {
+  for (const k of exactKeys) {
+    if (k in bag) {
+      const s = asContentString(bag[k]);
+      if (s !== null) return s;
+    }
+  }
+  for (const key of Object.keys(bag)) {
+    if (key.endsWith(suffix)) {
+      const s = asContentString(bag[key]);
+      if (s !== null) return s;
+    }
+  }
+  return null;
+}
+
+/** Cheap guard: does the bag carry any indexed/array/tool-call shape that needs
+ *  reconstruction? Lets the common (already-coarse / metadata) path return the
+ *  same reference with a single key scan and no allocation. */
+function needsNormalization(bag: Record<string, unknown>): boolean {
+  for (const key of Object.keys(bag)) {
+    if (
+      /(?:^|\.)(?:input_messages|output_messages|prompt|completion|messages)\.\d+\./.test(
+        key,
+      )
+    ) {
+      return true;
+    }
+    if (
+      key === "gen_ai.input.messages" ||
+      key === "gen_ai.output.messages" ||
+      key === "llm.output_messages" ||
+      key === "gen_ai.system_instructions" ||
+      key === "gen_ai.tool.call.arguments" ||
+      key === "gen_ai.tool.name" ||
+      key.endsWith(".function.arguments") ||
+      key.endsWith(".function.name")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reconstruct a flattened attribute bag's indexed / array / tool-call content
+ * keys into the canonical coarse aliases the reader understands. Pure and
+ * NON-DESTRUCTIVE: an already-present coarse key wins, and the SAME reference is
+ * returned when nothing needs reconstructing. Every content read path runs this
+ * first, so a new provider's flattening is learned in ONE place.
+ */
+export function normalizeContentAttributes(
+  bag: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!bag) return {};
+  if (!needsNormalization(bag)) return bag;
+  const out: Record<string, unknown> = { ...bag };
+
+  if (!("llm.input_messages" in bag)) {
+    const input =
+      firstIndexedMessages(bag, INDEXED_INPUT_PREFIXES) ??
+      firstArrayMessages(bag, ARRAY_INPUT_KEYS);
+    if (input) out["llm.input_messages"] = input;
+  }
+
+  if (!COMPLETION_PRESENT_KEYS.some((k) => k in bag)) {
+    const output =
+      firstIndexedMessages(bag, INDEXED_OUTPUT_PREFIXES) ??
+      firstArrayMessages(bag, ARRAY_OUTPUT_KEYS);
+    if (output) {
+      const text = messagesToText(output);
+      if (text.length > 0) out["gen_ai.completion"] = text;
+    }
+  }
+
+  if (
+    !("tool.args" in bag) &&
+    !("tool.input" in bag) &&
+    !("tangle.tool.args" in bag)
+  ) {
+    const args = findToolValue(bag, TOOL_ARG_KEYS, ".function.arguments");
+    if (args !== null) out["tool.args"] = args;
+  }
+  if (!("tool.name" in bag) && !("tangle.tool.name" in bag)) {
+    const name = findToolValue(bag, TOOL_NAME_KEYS, ".function.name");
+    if (name !== null) out["tool.name"] = name;
+  }
+
+  return out;
+}
+
 /**
  * Precomputed resolution order per field: the explicit priority list, then any
  * remaining aliased keys for that field appended at lowest priority. Built once
@@ -405,8 +739,9 @@ export function extractContent(
 ): NormalizedContent {
   const out: NormalizedContent = {};
   if (!attributes) return out;
+  const bag = normalizeContentAttributes(attributes);
   for (const field of ALL_FIELDS) {
-    const v = resolveField(attributes, field);
+    const v = resolveField(bag, field);
     if (v !== undefined) {
       // Index assignment is safe: `field` is the matching key of the union.
       (out as Record<ContentField, unknown>)[field] = v;
@@ -431,10 +766,11 @@ export function hasContent(
   attributes: Record<string, unknown> | undefined | null,
 ): boolean {
   if (!attributes) return false;
+  const bag = normalizeContentAttributes(attributes);
   for (const key of PRESENCE_KEYS) {
-    if (!(key in attributes)) continue;
+    if (!(key in bag)) continue;
     const field = CONTENT_KEY_ALIASES[key];
-    const raw = attributes[key];
+    const raw = bag[key];
     if (field === "messages") {
       if (asMessages(raw)) return true;
       continue;
@@ -554,9 +890,10 @@ export interface DeclaredIntentMatch {
  * when nothing usable is present — never a fabricated intent.
  */
 export function resolveDeclaredIntent(
-  bag: Record<string, unknown> | null | undefined,
+  bag0: Record<string, unknown> | null | undefined,
 ): DeclaredIntentMatch | null {
-  if (!bag) return null;
+  if (!bag0) return null;
+  const bag = normalizeContentAttributes(bag0);
   for (const field of ["task", "prompt"] as const) {
     for (const key of fieldKeyOrder(field)) {
       if (!(key in bag)) continue;
