@@ -12,9 +12,10 @@ import { canonicalizeHarness, type HarnessType } from "./harness.js";
  * cli-bridge backends, the sandbox UI pickers, and the router all read one truth instead of each
  * hand-rolling a divergent copy.
  *
- * Grounded in cli-bridge's real backend clamps (codex caps at `high`, kimi is binary on/off, claude
- * carries the full range, cli-base has no agent) — NOT a guessed matrix. The per-MODEL reasoning
- * capability (does this specific model reason at all) is dynamic catalog data the caller supplies.
+ * Grounded in cli-bridge's real backend clamps (codex is `low..xhigh` for current models, kimi is
+ * binary on/off, claude carries the full range, cli-base has no agent) — NOT a guessed matrix. The
+ * per-MODEL reasoning capability (does this specific model reason at all) is dynamic catalog data the
+ * caller supplies.
  */
 
 /** low → high. `none` = thinking off; `ultracode` = max (claude-code mode). */
@@ -149,8 +150,8 @@ export function snapHarnessToModel(
 /**
  * The explicit reasoning-effort set a harness's runtime accepts when it ISN'T a plain `none…ceiling`
  * slice — grounded in the cli-bridge adapters (NOT the canonical ladder):
- *   - codex: `model_reasoning_effort` accepts `minimal|low|medium|high` (xhigh/ultracode clamp down);
- *     it has no real `none` (the flag is just omitted), so `none` is dropped — `auto` covers "default".
+ *   - codex: current models advertise `low|medium|high|xhigh`; `none` is omitted (use `auto`) and
+ *     legacy `minimal` requests clamp up to `low`.
  *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`. `ultracode` is the ladder's stand-in
  *     for claude's `max` (clamped at runtime); `minimal`→`low` and `none`/`auto`→no flag, so both are
  *     dropped as redundant.
@@ -161,7 +162,7 @@ export function snapHarnessToModel(
 const harnessReasoningEffortsOverride: Partial<
   Record<HarnessType, readonly ReasoningEffort[]>
 > = {
-  codex: ["minimal", "low", "medium", "high"],
+  codex: ["low", "medium", "high", "xhigh"],
   "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
   pi: ["minimal", "low", "medium", "high", "xhigh"],
   openclaw: ["minimal", "low", "medium", "high", "xhigh"],
