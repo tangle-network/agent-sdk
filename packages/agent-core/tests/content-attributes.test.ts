@@ -11,7 +11,9 @@ import {
   declaredTaskText,
   extractContent,
   hasContent,
+  INDEXED_CONTENT_KEY_LIKE_PATTERNS,
   logRecordContentBag,
+  normalizeContentAttributes,
   resolveDeclaredIntent,
 } from "../src/index.js";
 
@@ -258,5 +260,110 @@ describe("Claude Code list-of-blocks message content (the capture unlock)", () =
     expect(hasContent({ "claude_code.api_request_body.body": toolOnly })).toBe(
       false,
     );
+  });
+});
+
+describe("indexed / array / tool-call reconstruction (push-OTLP providers)", () => {
+  it("OTel-GenAI flattened indexed prompt → prompt/messages flow (was invisible)", () => {
+    const bag = {
+      "gen_ai.prompt.0.role": "user",
+      "gen_ai.prompt.0.content": "book a flight to Tokyo",
+    };
+    // Before the reconstruction pre-pass this extracted {} — the exact push gap.
+    expect(hasContent(bag)).toBe(true);
+    expect(JSON.stringify(extractContent(bag).messages)).toContain(
+      "flight to Tokyo",
+    );
+  });
+
+  it("REGRESSION: a full turn keeps BOTH prompt (messages) AND reply (completion)", () => {
+    // Both message arrays alias the single `messages` field, resolved once, so
+    // without routing the reply to `completion` the assistant answer is dropped.
+    const bag = {
+      "llm.input_messages.0.message.role": "user",
+      "llm.input_messages.0.message.content": "is my order shipped?",
+      "llm.output_messages.0.message.role": "assistant",
+      "llm.output_messages.0.message.content": "yes, it ships tomorrow",
+    };
+    const c = extractContent(bag);
+    expect(JSON.stringify(c.messages)).toContain("is my order shipped");
+    expect(c.completion).toContain("ships tomorrow");
+  });
+
+  it("coarse llm.output_messages array becomes the completion, not the input", () => {
+    const bag = {
+      "llm.input_messages": [{ role: "user", content: "hello" }],
+      "llm.output_messages": [{ role: "assistant", content: "hi there" }],
+    };
+    const c = extractContent(bag);
+    expect(JSON.stringify(c.messages)).toContain("hello");
+    expect(c.completion).toContain("hi there");
+  });
+
+  it("OpenInference nested tool-call arguments → toolArgs", () => {
+    const bag = {
+      "llm.output_messages.0.message.tool_calls.0.tool_call.function.name":
+        "search_flights",
+      "llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments":
+        '{"dest":"NRT"}',
+    };
+    expect(extractContent(bag).toolArgs).toContain("NRT");
+  });
+
+  it("OTel-GenAI v1.28+ event array (Vercel AI SDK / current OpenLLMetry)", () => {
+    const bag = {
+      "gen_ai.input.messages": JSON.stringify([
+        { role: "user", parts: [{ type: "text", content: "summarize this" }] },
+      ]),
+    };
+    expect(JSON.stringify(extractContent(bag).messages)).toContain(
+      "summarize this",
+    );
+  });
+
+  it("bare tool_call.function.arguments (LiteLLM / OpenAI Agents SDK)", () => {
+    const bag = { "tool_call.function.arguments": '{"city":"Tokyo"}' };
+    expect(extractContent(bag).toolArgs).toContain("Tokyo");
+  });
+
+  it("multimodal content parts concatenate into one message", () => {
+    const bag = {
+      "llm.input_messages.0.message.role": "user",
+      "llm.input_messages.0.message.contents.0.message_content.text": "part one",
+      "llm.input_messages.0.message.contents.1.message_content.text": "part two",
+    };
+    const s = JSON.stringify(extractContent(bag).messages);
+    expect(s).toContain("part one");
+    expect(s).toContain("part two");
+  });
+
+  it("resolveDeclaredIntent recovers the first user message from indexed input", () => {
+    const m = resolveDeclaredIntent({
+      "llm.input_messages.0.message.role": "user",
+      "llm.input_messages.0.message.content": "refund my order",
+    });
+    expect(m?.text).toContain("refund my order");
+    expect(m?.source).toBe("messages");
+  });
+
+  it("NON-DESTRUCTIVE: a coarse-only bag is returned by the SAME reference", () => {
+    const bag = { "gen_ai.prompt": "hi", "service.name": "x" };
+    expect(normalizeContentAttributes(bag)).toBe(bag);
+  });
+
+  it("metadata-only bag stays empty (no false-positive from the pre-pass)", () => {
+    const bag = {
+      "gen_ai.usage.input_tokens": 10,
+      "gen_ai.request.model": "gpt-4o",
+      "llm.model_name": "gpt-4o",
+    };
+    expect(hasContent(bag)).toBe(false);
+    expect(extractContent(bag)).toEqual({});
+  });
+
+  it("exposes SQL LIKE patterns for indexed content detection (frozen, non-empty)", () => {
+    expect(Object.isFrozen(INDEXED_CONTENT_KEY_LIKE_PATTERNS)).toBe(true);
+    expect(INDEXED_CONTENT_KEY_LIKE_PATTERNS).toContain("gen_ai.prompt.%");
+    expect(INDEXED_CONTENT_KEY_LIKE_PATTERNS).toContain("%.function.arguments");
   });
 });
