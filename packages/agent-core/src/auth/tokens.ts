@@ -6,14 +6,6 @@
  * - Sidecar tokens: Ed25519 (asymmetric — sidecar cannot forge tokens)
  */
 
-import {
-  createHmac,
-  generateKeyPairSync,
-  randomBytes,
-  sign,
-  timingSafeEqual,
-  verify,
-} from "node:crypto";
 import type {
   BatchScopedTokenPayload,
   ProductAuthInfo,
@@ -24,13 +16,43 @@ import type {
   TokenValidationResult,
 } from "./types.js";
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+type NodeCrypto = typeof import("node:crypto");
+let nodeCryptoCache: NodeCrypto | undefined;
+
+/**
+ * Resolve Node's `crypto` lazily and synchronously. Signing, verification, and
+ * key generation are server-only, but this module must stay importable in a
+ * browser bundle — a static `import "node:crypto"` forces bundlers to resolve
+ * the builtin at load and blanks the page. `process.getBuiltinModule` exists
+ * only on a Node runtime (Node >= 22.3); in a browser `globalThis.process` is
+ * undefined, so callers get a clear server-only error instead of a crash.
+ */
+function nodeCrypto(): NodeCrypto {
+  if (nodeCryptoCache) return nodeCryptoCache;
+  const resolved = (
+    globalThis as {
+      process?: { getBuiltinModule?: (id: string) => unknown };
+    }
+  ).process?.getBuiltinModule?.("node:crypto") as NodeCrypto | undefined;
+  if (!resolved) {
+    throw new Error(
+      "@tangle-network/agent-core/auth: token signing, verification, and key generation are server-only (Node.js crypto) and cannot run in a browser.",
+    );
+  }
+  nodeCryptoCache = resolved;
+  return resolved;
+}
+
 /**
  * Generate a cryptographically secure random string.
  * @param prefix - Prefix for the generated string (e.g., "orch_prod_")
  * @param bytes - Number of random bytes (default: 32 = 256 bits)
  */
 export function generateSecureToken(prefix: string, bytes = 32): string {
-  return `${prefix}${randomBytes(bytes).toString("base64url")}`;
+  return `${prefix}${base64UrlEncode(nodeCrypto().randomBytes(bytes))}`;
 }
 
 /**
@@ -48,33 +70,45 @@ export function generateSigningSecret(): string {
 }
 
 /**
- * Base64URL encode (RFC 7515).
+ * Base64URL encode (RFC 7515). Isomorphic: `btoa` + `TextEncoder` exist in Node
+ * and browsers, so — unlike `Buffer` — this never blanks a browser page that
+ * transitively imports the module.
  */
-function base64UrlEncode(data: string | Buffer): string {
-  const buffer = typeof data === "string" ? Buffer.from(data) : data;
-  return buffer
-    .toString("base64")
+function base64UrlEncode(data: string | Uint8Array): string {
+  const bytes = typeof data === "string" ? textEncoder.encode(data) : data;
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
 
 /**
- * Base64URL decode.
+ * Base64URL decode (RFC 7515) to raw bytes.
+ */
+function base64UrlToBytes(data: string): Uint8Array {
+  const padded = data + "=".repeat((4 - (data.length % 4)) % 4);
+  const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Base64URL decode to a UTF-8 string.
  */
 function base64UrlDecode(data: string): string {
-  const padded = data + "=".repeat((4 - (data.length % 4)) % 4);
-  return Buffer.from(
-    padded.replace(/-/g, "+").replace(/_/g, "/"),
-    "base64",
-  ).toString();
+  return textDecoder.decode(base64UrlToBytes(data));
 }
 
 /**
  * Create HMAC-SHA256 signature.
  */
 function createSignature(data: string, secret: string): string {
-  return base64UrlEncode(createHmac("sha256", secret).update(data).digest());
+  return base64UrlEncode(
+    nodeCrypto().createHmac("sha256", secret).update(data).digest(),
+  );
 }
 
 /**
@@ -92,10 +126,11 @@ function verifySignature(
   signature: string,
   secret: string,
 ): boolean {
+  const { createHmac, timingSafeEqual } = nodeCrypto();
   const expectedBuf = createHmac("sha256", secret).update(data).digest();
-  let providedBuf: Buffer;
+  let providedBuf: Uint8Array;
   try {
-    providedBuf = Buffer.from(signature, "base64url");
+    providedBuf = base64UrlToBytes(signature);
   } catch {
     return false;
   }
@@ -108,11 +143,18 @@ function verifySignature(
 }
 
 /**
- * JWT header (always the same for our use case).
+ * Base64URL-encoded JWT header `{"alg":"HS256","typ":"JWT"}`. Computed on first
+ * use (not at module load) and memoized.
  */
-const JWT_HEADER = base64UrlEncode(
-  JSON.stringify({ alg: "HS256", typ: "JWT" }),
-);
+let jwtHeaderCache: string | undefined;
+function jwtHeader(): string {
+  if (jwtHeaderCache === undefined) {
+    jwtHeaderCache = base64UrlEncode(
+      JSON.stringify({ alg: "HS256", typ: "JWT" }),
+    );
+  }
+  return jwtHeaderCache;
+}
 
 /**
  * Issue a read token (JWT) for WebSocket authentication.
@@ -139,7 +181,7 @@ export function issueReadToken(
   } as ReadTokenPayload;
 
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
-  const data = `${JWT_HEADER}.${encodedPayload}`;
+  const data = `${jwtHeader()}.${encodedPayload}`;
   const signature = createSignature(data, signingSecret);
 
   return `${data}.${signature}`;
@@ -201,10 +243,17 @@ export function issueBatchScopedToken(
   );
 }
 
-// Ed25519 JWT header (asymmetric — sidecar cannot forge tokens)
-const JWT_HEADER_EDDSA = base64UrlEncode(
-  JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
-);
+// Ed25519 JWT header (asymmetric — sidecar cannot forge tokens); computed on
+// first use, not at module load, so the module stays browser-importable.
+let jwtHeaderEddsaCache: string | undefined;
+function jwtHeaderEddsa(): string {
+  if (jwtHeaderEddsaCache === undefined) {
+    jwtHeaderEddsaCache = base64UrlEncode(
+      JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
+    );
+  }
+  return jwtHeaderEddsaCache;
+}
 
 /**
  * Capability strings carried in a sidecar token's `cap` claim. This is the
@@ -237,10 +286,13 @@ export function generateSidecarKeyPair(): {
   privateKey: string;
   publicKey: string;
 } {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519", {
-    publicKeyEncoding: { type: "spki", format: "pem" },
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-  });
+  const { privateKey, publicKey } = nodeCrypto().generateKeyPairSync(
+    "ed25519",
+    {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    },
+  );
   return { privateKey, publicKey };
 }
 
@@ -280,6 +332,7 @@ export function issueSidecarAccessToken(
   const now = Math.floor(Date.now() / 1000);
   // jti (JWT ID) enables token revocation — orchestrator adds jti to blocklist
   // on sandbox delete, sidecar checks blocklist on every request.
+  const { randomBytes, sign } = nodeCrypto();
   const jti = `${payload.cid}:${now}:${randomBytes(8).toString("hex")}`;
   const fullPayload = {
     ...payload,
@@ -289,8 +342,10 @@ export function issueSidecarAccessToken(
     exp: now + ttlMinutes * 60,
   };
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
-  const data = `${JWT_HEADER_EDDSA}.${encodedPayload}`;
-  const signature = base64UrlEncode(sign(null, Buffer.from(data), privateKey));
+  const data = `${jwtHeaderEddsa()}.${encodedPayload}`;
+  const signature = base64UrlEncode(
+    sign(null, textEncoder.encode(data), privateKey),
+  );
   return `${data}.${signature}`;
 }
 
@@ -316,7 +371,7 @@ export function verifySidecarToken(
     const parts = token.split(".");
     if (parts.length !== 3) return null;
 
-    const headerJson = Buffer.from(parts[0], "base64url").toString("utf-8");
+    const headerJson = base64UrlDecode(parts[0]);
     const header = JSON.parse(headerJson);
     if (header.alg !== "EdDSA") return null;
 
@@ -324,14 +379,17 @@ export function verifySidecarToken(
     // Parsing claims before verification creates a timing oracle that
     // leaks valid container IDs via early-return timing differences.
     const data = `${parts[0]}.${parts[1]}`;
-    const signatureBuffer = Buffer.from(parts[2], "base64url");
-    const valid = verify(null, Buffer.from(data), publicKey, signatureBuffer);
+    const signatureBuffer = base64UrlToBytes(parts[2]);
+    const valid = nodeCrypto().verify(
+      null,
+      textEncoder.encode(data),
+      publicKey,
+      signatureBuffer,
+    );
     if (!valid) return null;
 
     // Signature verified — now safe to parse and inspect claims
-    const payload = JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8"),
-    );
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
 
     if (payload.typ !== "sidecar") return null;
     if (typeof payload.jti !== "string" || payload.jti.length === 0) {
@@ -516,7 +574,7 @@ export function verifyReadToken(
   // with an extra `kid` claim) fall through to signature verification,
   // which covers the actual header bytes — so any tampering with the
   // header still fails the signature check.
-  if (header !== JWT_HEADER) {
+  if (header !== jwtHeader()) {
     let parsedAlg: string | null = null;
     try {
       const decoded = JSON.parse(base64UrlDecode(header)) as Record<
@@ -677,7 +735,10 @@ function getApiKeyHashSalt(): string {
  * WARNING: Changing the salt will invalidate all existing API key hashes.
  */
 export function hashApiKey(apiKey: string): string {
-  return createHmac("sha256", getApiKeyHashSalt()).update(apiKey).digest("hex");
+  return nodeCrypto()
+    .createHmac("sha256", getApiKeyHashSalt())
+    .update(apiKey)
+    .digest("hex");
 }
 
 /**
@@ -685,7 +746,7 @@ export function hashApiKey(apiKey: string): string {
  * Use this when you need to verify against a specific salt.
  */
 export function hashApiKeyWithSalt(apiKey: string, salt: string): string {
-  return createHmac("sha256", salt).update(apiKey).digest("hex");
+  return nodeCrypto().createHmac("sha256", salt).update(apiKey).digest("hex");
 }
 
 /**
@@ -696,7 +757,10 @@ export function verifyApiKey(provided: string, stored: string): boolean {
     return false;
   }
   try {
-    return timingSafeEqual(Buffer.from(provided), Buffer.from(stored));
+    return nodeCrypto().timingSafeEqual(
+      textEncoder.encode(provided),
+      textEncoder.encode(stored),
+    );
   } catch {
     return false;
   }
