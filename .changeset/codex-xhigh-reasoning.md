@@ -2,4 +2,4 @@
 "@tangle-network/agent-interface": patch
 ---
 
-Expose Codex `xhigh` reasoning support in harness capability helpers.
+Align Codex reasoning support with the live model catalog in harness capability helpers.
