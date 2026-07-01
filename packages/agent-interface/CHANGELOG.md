@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.17.1
+
+### Patch Changes
+
+- f7ca568: Align Codex reasoning support with the live model catalog in harness capability helpers.
+
 ## 0.17.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-testkit",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Framework-neutral conformance checks for AgentEnvironmentProvider implementations",
   "type": "module",
   "license": "MIT",
