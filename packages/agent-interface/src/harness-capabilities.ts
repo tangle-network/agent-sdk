@@ -147,26 +147,48 @@ export function snapHarnessToModel(
 // ── Reasoning-effort support ──────────────────────────────────────────────────
 
 /**
- * The highest reasoning effort a harness's runtime can express (its native clamp ceiling). Grounded
- * in cli-bridge: codex's `model_reasoning_effort` caps at `high` (xhigh/ultracode clamp down); kimi's
- * `--thinking` is binary, so `high` is its "on"; claude-code carries the full range; `cli-base` has
- * no agent and thus no thinking; `nanoclaw`'s runner sends no thinking flag, so it expresses only
- * `none`. Router/model-driven harnesses default to the full range.
+ * The explicit reasoning-effort set a harness's runtime accepts when it ISN'T a plain `none…ceiling`
+ * slice — grounded in the cli-bridge adapters (NOT the canonical ladder):
+ *   - codex: `model_reasoning_effort` accepts `minimal|low|medium|high` (xhigh/ultracode clamp down);
+ *     it has no real `none` (the flag is just omitted), so `none` is dropped — `auto` covers "default".
+ *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`. `ultracode` is the ladder's stand-in
+ *     for claude's `max` (clamped at runtime); `minimal`→`low` and `none`/`auto`→no flag, so both are
+ *     dropped as redundant.
+ *   - pi / openclaw: `--thinking` accepts `minimal…xhigh` (max/ultracode clamp to `xhigh`; no `none`).
+ *   - kimi-code: `--thinking` is BINARY (off/on) — `minimal` is the only value that emits
+ *     `--no-thinking`, `high` is "thinking on". So two levels, not five.
+ */
+const harnessReasoningEffortsOverride: Partial<
+  Record<HarnessType, readonly ReasoningEffort[]>
+> = {
+  codex: ["minimal", "low", "medium", "high"],
+  "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
+  pi: ["minimal", "low", "medium", "high", "xhigh"],
+  openclaw: ["minimal", "low", "medium", "high", "xhigh"],
+  "kimi-code": ["minimal", "high"],
+};
+
+/**
+ * The ceiling for harnesses whose set IS a plain `none…ceiling` slice. Only the no-thinking runners
+ * need an entry (`cli-base` has no agent; `nanoclaw` sends no thinking flag). Harnesses with a
+ * provider-clamped or non-contiguous set live in {@link harnessReasoningEffortsOverride}; router /
+ * model-driven harnesses (opencode, gemini, …) have no entry → default to the full ladder, narrowed
+ * by the model's own capability.
  */
 const harnessReasoningCeiling: Partial<Record<HarnessType, ReasoningEffort>> = {
   "cli-base": "none",
-  codex: "high",
-  "kimi-code": "high",
-  "claude-code": "ultracode",
   nanoclaw: "none",
 };
 
-/** The reasoning efforts a harness can express, independent of model — `none` up to its ceiling. */
+/** The reasoning efforts a harness can express, independent of model — its explicit override set, or
+ *  `none` up to its ceiling (default `ultracode` for router/model-driven harnesses). */
 export function harnessReasoningEfforts(
   harness: HarnessType,
 ): readonly ReasoningEffort[] {
-  const ceiling =
-    harnessReasoningCeiling[canonicalizeHarness(harness)] ?? "ultracode";
+  const canonical = canonicalizeHarness(harness);
+  const override = harnessReasoningEffortsOverride[canonical];
+  if (override) return override;
+  const ceiling = harnessReasoningCeiling[canonical] ?? "ultracode";
   return reasoningLadder.slice(0, reasoningLadder.indexOf(ceiling) + 1);
 }
 
@@ -206,8 +228,8 @@ export function reasoningEffortsFor(
  *
  *   - model dropped:  `amp` (own agent picks the model), `openclaw` (dispatcher routes by its own
  *     config), `nanoclaw` (socket-bridge runner is config/env-driven).
- *   - effort dropped: `amp` and `factory-droids`/`hermes`/`nanoclaw` (no thinking flag is plumbed to
- *     the underlying CLI).
+ *   - effort dropped: `amp`, `factory-droids`, `hermes`, `nanoclaw`, and `acp` (no thinking flag is
+ *     plumbed to the underlying CLI — the runner reads no `reasoningEffort`).
  *
  * This is distinct from {@link reasoningEffortsFor} (which levels a harness can EXPRESS): a picker uses
  * these to trim or mark harnesses up front, so a user's model/effort choice is never silently ignored.
@@ -222,6 +244,7 @@ const harnessIgnoresEffort: ReadonlySet<HarnessType> = new Set([
   "factory-droids",
   "hermes",
   "nanoclaw",
+  "acp",
 ]);
 
 /** Whether the harness's runner honors a per-turn MODEL override (vs. picking the model itself). */
