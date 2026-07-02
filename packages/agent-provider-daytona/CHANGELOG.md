@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-daytona
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [1f2821b]
+  - @tangle-network/agent-interface@0.18.0
+
 ## 0.2.4
 
 ### Patch Changes

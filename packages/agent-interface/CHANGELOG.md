@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.18.0
+
+### Minor Changes
+
+- 1f2821b: Add `allowCustom` to select interaction fields: when set, `validateInteractionAnswer` accepts non-blank write-in values beyond the declared options, and `questionAnswerSpec` propagates the flag from `LegacyQuestion.allowCustom`. Enables "Other…" style questions where the user supplies their own text as the answer value.
+
 ## 0.17.1
 
 ### Patch Changes
