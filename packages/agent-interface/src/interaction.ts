@@ -68,12 +68,6 @@ export const InteractionFieldSchema = z.discriminatedUnion("type", [
       .min(1),
     /** When true the user may pick more than one option. */
     multi: z.boolean().optional(),
-    /**
-     * When true the answer may contain write-in values outside `options`
-     * (e.g. a rendered "Other…" choice carrying the user's own text).
-     * Write-ins must still be non-empty strings.
-     */
-    allowCustom: z.boolean().optional(),
     default: z.array(z.string()).optional(),
   }),
   /** Like `text` but the value is sensitive (token/key) and must be masked. */
@@ -217,8 +211,6 @@ export type LegacyQuestion = {
   question: string;
   options?: Array<{ label: string; description?: string }>;
   multiSelect?: boolean;
-  /** When true the select field accepts write-in answers beyond `options`. */
-  allowCustom?: boolean;
 };
 
 /**
@@ -236,7 +228,6 @@ export function questionAnswerSpec(questions: LegacyQuestion[]): InteractionAnsw
         label: q.question,
         required: true,
         multi: q.multiSelect === true,
-        ...(q.allowCustom === true ? { allowCustom: true } : {}),
         options: q.options.map((o) => ({ value: o.label, label: o.label, description: o.description })),
       };
     }
@@ -293,15 +284,7 @@ export function validateInteractionAnswer(
         if (field.required && v.length === 0) errors.push(`field "${field.name}" requires a selection`);
         const allowed = new Set(field.options.map((o) => o.value));
         for (const choice of v) {
-          if (allowed.has(choice)) continue;
-          if (field.allowCustom === true) {
-            // Write-ins are open but stay fail-closed on shape: string, non-blank.
-            if (typeof choice !== "string" || choice.trim() === "") {
-              errors.push(`field "${field.name}" has blank write-in value`);
-            }
-            continue;
-          }
-          errors.push(`field "${field.name}" has invalid option "${choice}"`);
+          if (!allowed.has(choice)) errors.push(`field "${field.name}" has invalid option "${choice}"`);
         }
         break;
       }
