@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AgentProfile } from "./agent-profile.js";
+import type { AgentProfileDiff } from "./profile-diff.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
@@ -115,6 +116,41 @@ export const agentProfileConnectionSchema = z.object({
   alias: z.string().min(1).optional(),
 });
 
+const removeListSchema = z.union([z.literal(true), z.array(z.string().min(1))]);
+
+export const agentProfilePromptRemovalSchema = z.object({
+  systemPrompt: z.literal(true).optional(),
+  instructions: removeListSchema.optional(),
+});
+
+export const agentProfileResourceRemovalSchema = z.object({
+  files: removeListSchema.optional(),
+  tools: removeListSchema.optional(),
+  skills: removeListSchema.optional(),
+  agents: removeListSchema.optional(),
+  commands: removeListSchema.optional(),
+  instructions: z.literal(true).optional(),
+  failOnError: z.literal(true).optional(),
+});
+
+export const agentProfileDiffRemovalSchema = z.object({
+  identity: z.literal(true).optional(),
+  tags: removeListSchema.optional(),
+  prompt: z.union([z.literal(true), agentProfilePromptRemovalSchema]).optional(),
+  model: removeListSchema.optional(),
+  permissions: removeListSchema.optional(),
+  tools: removeListSchema.optional(),
+  mcp: removeListSchema.optional(),
+  connections: removeListSchema.optional(),
+  subagents: removeListSchema.optional(),
+  resources: z.union([z.literal(true), agentProfileResourceRemovalSchema]).optional(),
+  hooks: removeListSchema.optional(),
+  modes: removeListSchema.optional(),
+  confidential: z.literal(true).optional(),
+  metadata: removeListSchema.optional(),
+  extensions: removeListSchema.optional(),
+});
+
 /**
  * The complete provider-neutral agent profile schema — the runtime validator for
  * the canonical {@link AgentProfile} TS contract. Kept structurally in lock-step
@@ -145,6 +181,31 @@ export const agentProfileSchema = z.object({
       z.union([z.record(z.string(), z.unknown()), z.undefined()]),
     )
     .optional(),
+});
+
+export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("agent-profile-diff"),
+  id: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  rationale: z.string().optional(),
+  source: z
+    .object({
+      kind: z.enum([
+        "trace",
+        "frontier-author",
+        "human",
+        "optimizer",
+        "compound",
+      ]),
+      artifacts: z.array(z.string().min(1)).optional(),
+      notes: z.array(z.string()).optional(),
+    })
+    .optional(),
+  set: agentProfileSchema.optional(),
+  remove: agentProfileDiffRemovalSchema.optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ── Compile-time drift guard ──────────────────────────────────────────────────

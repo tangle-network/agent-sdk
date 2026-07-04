@@ -806,6 +806,7 @@ export interface SdkProviderAdapter {
 }
 export * from "./interaction.js";
 export * from "./agent-profile.js";
+export * from "./profile-diff.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
 export * from "./profile-schema.js";
