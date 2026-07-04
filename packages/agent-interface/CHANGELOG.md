@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.19.0
+
+### Minor Changes
+
+- e0a8e98: Add AgentProfileDiff, a portable full-profile patch contract with apply, prune, changed-axis, and schema validation helpers.
+
 ## 0.18.0
 
 ### Minor Changes
