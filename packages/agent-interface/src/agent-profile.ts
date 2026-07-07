@@ -7,6 +7,8 @@
  * re-exports these symbols for backward compatibility.
  */
 
+import type { HarnessType } from "./harness.js";
+
 /**
  * Permission policy value for a capability.
  */
@@ -270,6 +272,19 @@ export interface AgentProfile {
   tags?: string[];
   prompt?: AgentProfilePrompt;
   model?: AgentProfileModelHints;
+  /**
+   * Preferred execution harness for this profile — the coding-CLI runtime that
+   * materializes and runs it (`claude-code`, `codex`, `opencode`, `pi`, …).
+   *
+   * This is an optional PREFERENCE, not part of profile IDENTITY: the same
+   * profile still runs on any harness, and an executor MAY override it (e.g. the
+   * leaderboard's `harness × model` axis sweeps a profile across every harness,
+   * and a supervisor spawning a worker may pick a harness per subtask). When
+   * unset, the caller/executor chooses. Formalizes what runtimes already read as
+   * `profile.harness`; making it typed also lets an improvement loop optimize
+   * harness routing as a first-class lever.
+   */
+  harness?: HarnessType;
   permissions?: Record<string, AgentProfilePermission>;
   tools?: Record<string, boolean>;
   mcp?: Record<string, AgentProfileMcpServer>;
