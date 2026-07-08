@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AgentProfile } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
+import { harnessTypeSchema } from "./harness.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
@@ -163,6 +164,7 @@ export const agentProfileSchema = z.object({
   tags: z.array(z.string()).optional(),
   prompt: agentProfilePromptSchema.optional(),
   model: agentProfileModelHintsSchema.optional(),
+  harness: harnessTypeSchema.optional(),
   permissions: z.record(z.string(), agentProfilePermissionSchema).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
   mcp: z.record(z.string(), agentProfileMcpServerSchema).optional(),
