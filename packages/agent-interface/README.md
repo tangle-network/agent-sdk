@@ -62,6 +62,25 @@ const provider: AgentEnvironmentProvider = {
 };
 ```
 
+## Frozen improvement candidates
+
+`AgentCandidateBundle` is the portable output of an improvement run: a recursively strict profile, an explicit disabled/no-op/changed code result, a pinned container command, optional knowledge, isolated memory, ancestry, and spend.
+Resources are embedded, addressed through closed S3/IPFS locators, or pinned to a full GitHub commit plus content digest.
+Credential-bearing configuration uses `{ kind: "secret", name: "..." }`; secret values never belong in the bundle.
+Because prompts and inline files are arbitrary text, producers must also run their normal secret scanner before persistence.
+Candidate v1 rejects unregistered backend extensions instead of accepting an untyped behavior or credential channel.
+
+`agentCandidateBundleSchema.parse()` proves only that the wire shape is valid.
+Before execution, an integrity verifier must omit only the top-level `digest`, canonicalize the rest with RFC 8785, hash the UTF-8 bytes to lowercase `sha256:<hex>`, verify every artifact, apply any Git patch to the declared base tree, and emit an `AgentCandidateMaterializationReceipt`.
+Artifact resolvers must also reject redirects or DNS results that reach loopback, private, or link-local addresses; schema parsing cannot prove network resolution safety.
+Attach the materialization and `AgentCandidateRunReceipt` records to the benchmark run so the result names the exact profile plan, code tree, launch plan, selected OCI manifest/platform, model, memory isolation, trace, harness, and container that ran.
+
+The three code states are intentionally distinct:
+
+- `{ kind: "disabled" }` is the fixed control with no code proposer.
+- `{ kind: "no-op" }` means a proposer ran and returned no change.
+- `{ kind: "git-patch" }` carries a non-empty binary Git diff whose resulting tree must be verified.
+
 ## License
 
 MIT
