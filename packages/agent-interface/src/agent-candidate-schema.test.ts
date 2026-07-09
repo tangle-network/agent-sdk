@@ -80,6 +80,19 @@ describe("agentCandidateBundleSchema", () => {
     ).toThrow(/launch its candidate entrypoint/);
   });
 
+  it("allows active candidate code to edit an evaluator-owned task workspace", () => {
+    expect(() =>
+      agentCandidateBundleSchema.parse({
+        ...candidateFixture(),
+        execution: {
+          ...candidateFixture().execution,
+          cwd: { workspace: "task", path: "." },
+          environment: { kind: "evaluator-task-container" },
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects non-I-JSON values and property names before RFC 8785 hashing", () => {
     for (const metadata of [
       { invalid: Number.NaN },
@@ -169,6 +182,7 @@ describe("candidate receipts", () => {
     harness: "codex",
     harnessVersion: "0.1.0",
     container: {
+      source: "evaluator-task-container",
       indexDigest: candidateSha("5"),
       manifestDigest: candidateSha("6"),
       platform: { os: "linux", architecture: "amd64" },
@@ -197,6 +211,16 @@ describe("candidate receipts", () => {
         codeKind: "disabled",
       }),
     ).toThrow(/disabled code/);
+  });
+
+  it("records whether the candidate or evaluator selected the executed image", () => {
+    expect(materialization.container.source).toBe("evaluator-task-container");
+    expect(() =>
+      agentCandidateMaterializationReceiptSchema.parse({
+        ...materialization,
+        container: { ...materialization.container, source: "unknown" },
+      }),
+    ).toThrow();
   });
 
   it("records the launched plan, isolated memory, trace, and exit status", () => {

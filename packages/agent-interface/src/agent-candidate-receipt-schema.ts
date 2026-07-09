@@ -59,6 +59,7 @@ export const agentCandidateMaterializationReceiptSchema = z
     harnessVersion: z.string().min(1),
     container: z
       .object({
+        source: z.enum(["pinned-container", "evaluator-task-container"]),
         indexDigest: sha256DigestSchema,
         manifestDigest: sha256DigestSchema,
         platform: ociPlatformSchema,

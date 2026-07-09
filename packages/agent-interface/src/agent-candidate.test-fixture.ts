@@ -63,7 +63,10 @@ export function candidateFixture() {
         NODE_ENV: { kind: "public", value: "production" },
         OPENAI_API_KEY: { kind: "secret", name: "OPENAI_API_KEY" },
       },
-      container: { image: "node:22", indexDigest: candidateSha("6") },
+      environment: {
+        kind: "pinned-container",
+        container: { image: "node:22", indexDigest: candidateSha("6") },
+      },
     },
     knowledge: {
       snapshotId: "knowledge-17",

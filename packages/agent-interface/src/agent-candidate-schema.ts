@@ -70,13 +70,6 @@ export const agentCandidateBundleSchema = z
         });
       }
     } else {
-      if (bundle.execution.cwd.workspace !== "candidate") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["execution", "cwd", "workspace"],
-          message: "an active code surface must execute in the candidate workspace",
-        });
-      }
       if (bundle.execution.launch.kind !== "candidate-entrypoint") {
         ctx.addIssue({
           code: "custom",

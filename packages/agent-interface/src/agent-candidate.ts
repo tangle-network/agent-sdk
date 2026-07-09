@@ -185,11 +185,31 @@ export type AgentCandidateCode =
   | AgentCandidateCodeNoOp
   | AgentCandidateGitPatch;
 
-/** Pinned base image used to execute a candidate workspace. */
+/** Pinned base image selected by the candidate contract. */
 export interface AgentCandidateContainer {
   image: string;
   indexDigest: Sha256Digest;
 }
+
+/** Candidate-selected container whose bytes are fixed in the bundle. */
+export interface AgentCandidatePinnedContainerEnvironment {
+  kind: "pinned-container";
+  container: AgentCandidateContainer;
+}
+
+/**
+ * Benchmark-controlled task container selected per task by the evaluator.
+ *
+ * The runtime must bind the selected image index, manifest, platform, and task
+ * workspace in the per-task execution plan and materialization receipt.
+ */
+export interface AgentCandidateEvaluatorTaskEnvironment {
+  kind: "evaluator-task-container";
+}
+
+export type AgentCandidateExecutionEnvironment =
+  | AgentCandidatePinnedContainerEnvironment
+  | AgentCandidateEvaluatorTaskEnvironment;
 
 export interface AgentCandidateWorkingDirectory {
   workspace: "candidate" | "task";
@@ -220,7 +240,7 @@ export interface AgentCandidateExecution {
   launch: AgentCandidateLaunch;
   cwd: AgentCandidateWorkingDirectory;
   env?: Record<string, AgentCandidateConfigValue>;
-  container: AgentCandidateContainer;
+  environment: AgentCandidateExecutionEnvironment;
 }
 
 /** Optional immutable knowledge snapshot mounted with the profile. */
@@ -320,6 +340,7 @@ export interface AgentCandidateMaterializationReceiptV1 {
   harness: HarnessType;
   harnessVersion: string;
   container: {
+    source: AgentCandidateExecutionEnvironment["kind"];
     indexDigest: Sha256Digest;
     manifestDigest: Sha256Digest;
     platform: AgentCandidateOciPlatform;

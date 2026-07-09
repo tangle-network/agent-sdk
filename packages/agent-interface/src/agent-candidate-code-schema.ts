@@ -6,8 +6,11 @@ import type {
   AgentCandidateContainer,
   AgentCandidateContainerLaunch,
   AgentCandidateEntrypointLaunch,
+  AgentCandidateEvaluatorTaskEnvironment,
   AgentCandidateExecution,
+  AgentCandidateExecutionEnvironment,
   AgentCandidateGitPatch,
+  AgentCandidatePinnedContainerEnvironment,
   AgentCandidateWorkingDirectory,
 } from "./agent-candidate.js";
 import { agentCandidateEmbeddedArtifactSchema } from "./agent-candidate-artifact-schema.js";
@@ -140,6 +143,27 @@ export const agentCandidateContainerSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateContainer>;
 
+export const agentCandidatePinnedContainerEnvironmentSchema = z
+  .object({
+    kind: z.literal("pinned-container"),
+    container: agentCandidateContainerSchema,
+  })
+  .strict() satisfies z.ZodType<AgentCandidatePinnedContainerEnvironment>;
+
+export const agentCandidateEvaluatorTaskEnvironmentSchema = z
+  .object({
+    kind: z.literal("evaluator-task-container"),
+  })
+  .strict() satisfies z.ZodType<AgentCandidateEvaluatorTaskEnvironment>;
+
+export const agentCandidateExecutionEnvironmentSchema = z.discriminatedUnion(
+  "kind",
+  [
+    agentCandidatePinnedContainerEnvironmentSchema,
+    agentCandidateEvaluatorTaskEnvironmentSchema,
+  ],
+) satisfies z.ZodType<AgentCandidateExecutionEnvironment>;
+
 export const agentCandidateWorkingDirectorySchema = z
   .object({
     workspace: z.enum(["candidate", "task"]),
@@ -188,6 +212,6 @@ export const agentCandidateExecutionSchema = z
     launch: agentCandidateLaunchSchema,
     cwd: agentCandidateWorkingDirectorySchema,
     env: environmentConfigSchema.optional(),
-    container: agentCandidateContainerSchema,
+    environment: agentCandidateExecutionEnvironmentSchema,
   })
   .strict() satisfies z.ZodType<AgentCandidateExecution>;

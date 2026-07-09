@@ -99,7 +99,10 @@ describe("candidate code and execution schemas", () => {
           entrypoint: "dist/agent.js",
         },
         cwd: { workspace: "candidate", path: "." },
-        container: { image: "node:22", indexDigest: candidateSha("1") },
+        environment: {
+          kind: "pinned-container",
+          container: { image: "node:22", indexDigest: candidateSha("1") },
+        },
       }),
     ).not.toThrow();
     expect(() =>
@@ -108,9 +111,25 @@ describe("candidate code and execution schemas", () => {
         harnessVersion: "0.1.0",
         launch: { kind: "container-command", executable: "bash", args: [] },
         cwd: { workspace: "task", path: "." },
-        container: { image: "node:22", indexDigest: candidateSha("1") },
+        environment: { kind: "evaluator-task-container" },
       }),
     ).toThrow(/non-shell/);
+  });
+
+  it("lets an evaluator select a different pinned task container per task", () => {
+    expect(() =>
+      agentCandidateExecutionSchema.parse({
+        harness: "codex",
+        harnessVersion: "0.1.0",
+        launch: {
+          kind: "candidate-entrypoint",
+          interpreter: "node",
+          entrypoint: "dist/agent.js",
+        },
+        cwd: { workspace: "task", path: "." },
+        environment: { kind: "evaluator-task-container" },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects container references that bypass the separately pinned index", () => {
@@ -128,7 +147,10 @@ describe("candidate code and execution schemas", () => {
           harnessVersion: "0.1.0",
           launch: { kind: "container-command", executable: "codex" },
           cwd: { workspace: "task", path: "." },
-          container: { image, indexDigest: candidateSha("1") },
+          environment: {
+            kind: "pinned-container",
+            container: { image, indexDigest: candidateSha("1") },
+          },
         }),
       ).toThrow();
     }
