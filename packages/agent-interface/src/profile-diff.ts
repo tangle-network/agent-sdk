@@ -5,6 +5,9 @@ import type {
 } from "./agent-profile.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
 
+type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
+type AgentProfileDiffPropertyAxis = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
+
 const agentProfileDiffPropertyAxes = [
   "prompt",
   "model",
@@ -20,7 +23,16 @@ const agentProfileDiffPropertyAxes = [
   "confidential",
   "metadata",
   "extensions",
-] as const;
+] as const satisfies readonly AgentProfileDiffPropertyAxis[];
+
+type MissingAgentProfileDiffPropertyAxis = Exclude<
+  AgentProfileDiffPropertyAxis,
+  (typeof agentProfileDiffPropertyAxes)[number]
+>;
+const _agentProfileDiffPropertyAxesAreExhaustive: MissingAgentProfileDiffPropertyAxis extends never
+  ? true
+  : never = true;
+void _agentProfileDiffPropertyAxesAreExhaustive;
 
 export type AgentProfileDiffAxis =
   | "identity"
