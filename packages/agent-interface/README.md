@@ -75,7 +75,8 @@ Candidate v1 rejects unregistered backend extensions instead of accepting an unt
 `agentCandidateBundleSchema.parse()` proves only that the wire shape is valid.
 Before execution, an integrity verifier must omit only the top-level `digest`, canonicalize the rest with RFC 8785, hash the UTF-8 bytes to lowercase `sha256:<hex>`, verify every artifact, apply any Git patch to the declared base tree, and emit an `AgentCandidateMaterializationReceipt`.
 Artifact resolvers must also reject redirects or DNS results that reach loopback, private, or link-local addresses; schema parsing cannot prove network resolution safety.
-Attach the materialization and `AgentCandidateRunReceipt` records to the benchmark run so the result names the exact profile plan, code tree, launch plan, selected OCI manifest/platform and source, model, memory isolation, trace, harness, and container that ran.
+Attach the materialization and `AgentCandidateRunReceipt` records to the benchmark run so the result names the exact profile plan, code tree, launch plan, selected OCI manifest/platform and source, model, memory isolation, trace, termination, harness, and container that ran.
+A timeout, signal, or cancellation remains distinct from a process exit; if the protected evaluator cannot recover complete usage and trace evidence, it must mark the cell as invalid capture instead of minting a zero-usage receipt.
 
 The three code states are intentionally distinct:
 

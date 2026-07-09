@@ -354,6 +354,13 @@ export interface AgentCandidateMaterializationReceiptV1 {
 export type AgentCandidateMaterializationReceipt =
   AgentCandidateMaterializationReceiptV1;
 
+/** How an execution ended, independent of whether protected evidence capture completed. */
+export type AgentCandidateTermination =
+  | { kind: "exit"; exitCode: number }
+  | { kind: "timeout"; timeoutMs: number }
+  | { kind: "signal"; signal: string }
+  | { kind: "cancelled" };
+
 /** Proof emitted after the exact materialized plan finishes executing. */
 export interface AgentCandidateRunReceiptV1 {
   schemaVersion: 1;
@@ -365,7 +372,7 @@ export interface AgentCandidateRunReceiptV1 {
   memory: AgentCandidateMemoryPolicy;
   usage: AgentCandidateSpend;
   trace: AgentCandidateArtifactRef;
-  exitCode: number;
+  termination: AgentCandidateTermination;
   digest: Sha256Digest;
 }
 

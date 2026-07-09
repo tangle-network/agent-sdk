@@ -2,6 +2,7 @@ import { z } from "zod";
 import type {
   AgentCandidateMaterializationReceipt,
   AgentCandidateRunReceipt,
+  AgentCandidateTermination,
 } from "./agent-candidate.js";
 import { agentCandidateArtifactRefSchema } from "./agent-candidate-artifact-schema.js";
 import {
@@ -44,6 +45,23 @@ const resolvedModelSchema = z
     snapshot: z.string().min(1).optional(),
   })
   .strict();
+
+export const agentCandidateTerminationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("exit"), exitCode: z.number().int() }).strict(),
+  z
+    .object({
+      kind: z.literal("timeout"),
+      timeoutMs: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("signal"),
+      signal: z.string().regex(/^SIG[A-Z0-9]+$/),
+    })
+    .strict(),
+  z.object({ kind: z.literal("cancelled") }).strict(),
+]) satisfies z.ZodType<AgentCandidateTermination>;
 
 export const agentCandidateMaterializationReceiptSchema = z
   .object({
@@ -110,7 +128,7 @@ export const agentCandidateRunReceiptSchema = z
     memory: agentCandidateMemoryPolicySchema,
     usage: agentCandidateSpendSchema,
     trace: agentCandidateArtifactRefSchema,
-    exitCode: z.number().int(),
+    termination: agentCandidateTerminationSchema,
     digest: sha256DigestSchema,
   })
   .strict()

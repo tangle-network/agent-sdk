@@ -252,9 +252,46 @@ describe("candidate receipts", () => {
           sha256: candidateSha("a"),
           byteLength: 100,
         },
-        exitCode: 0,
+        termination: { kind: "exit", exitCode: 0 },
         digest: candidateSha("b"),
       }),
     ).not.toThrow();
+  });
+
+  it("records timeout, signal, and cancellation without inventing exit codes", () => {
+    for (const termination of [
+      { kind: "timeout", timeoutMs: 600_000 },
+      { kind: "signal", signal: "SIGTERM" },
+      { kind: "cancelled" },
+    ] as const) {
+      expect(() =>
+        agentCandidateRunReceiptSchema.parse({
+          schemaVersion: 1,
+          kind: "agent-candidate-run",
+          digestAlgorithm: "rfc8785-sha256",
+          bundleDigest: candidateSha("1"),
+          materializationReceiptDigest: materialization.digest,
+          executionPlanDigest: materialization.executionPlanDigest,
+          memory: { mode: "disabled" },
+          usage: {
+            costUsd: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            modelCalls: 0,
+          },
+          trace: {
+            locator: {
+              kind: "s3",
+              bucket: "agent-candidate-artifacts",
+              key: "traces/termination.jsonl",
+            },
+            sha256: candidateSha("a"),
+            byteLength: 1,
+          },
+          termination,
+          digest: candidateSha("b"),
+        }),
+      ).not.toThrow();
+    }
   });
 });
