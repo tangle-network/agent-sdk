@@ -192,6 +192,17 @@ describe("AgentProfileDiff", () => {
     ).toThrow();
   });
 
+  it("applies harness removal after a harness overlay", () => {
+    const profile = applyAgentProfileDiff(baseProfile, {
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      set: { harness: "codex" },
+      remove: { harness: true },
+    });
+
+    expect(profile.harness).toBeUndefined();
+  });
+
   it("prunes harness set and removal without changing other axes", () => {
     const diff = defineAgentProfileDiff({
       schemaVersion: 1,

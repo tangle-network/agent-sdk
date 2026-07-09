@@ -210,7 +210,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
   if (remove.model !== undefined) {
     next.model = removeKeys(next.model, remove.model);
   }
-  if (remove.harness) next.harness = undefined;
+  if (remove.harness !== undefined) next.harness = undefined;
   if (remove.permissions !== undefined) {
     next.permissions = removeKeys(next.permissions, remove.permissions);
   }
