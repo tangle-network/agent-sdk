@@ -139,6 +139,7 @@ export const agentProfileDiffRemovalSchema = z.object({
   tags: removeListSchema.optional(),
   prompt: z.union([z.literal(true), agentProfilePromptRemovalSchema]).optional(),
   model: removeListSchema.optional(),
+  harness: z.literal(true).optional(),
   permissions: removeListSchema.optional(),
   tools: removeListSchema.optional(),
   mcp: removeListSchema.optional(),
