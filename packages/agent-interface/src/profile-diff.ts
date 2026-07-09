@@ -5,21 +5,38 @@ import type {
 } from "./agent-profile.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
 
+type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
+type AgentProfileDiffPropertyAxis = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
+
+const agentProfileDiffPropertyAxes = [
+  "prompt",
+  "model",
+  "harness",
+  "permissions",
+  "tools",
+  "mcp",
+  "connections",
+  "subagents",
+  "resources",
+  "hooks",
+  "modes",
+  "confidential",
+  "metadata",
+  "extensions",
+] as const satisfies readonly AgentProfileDiffPropertyAxis[];
+
+type MissingAgentProfileDiffPropertyAxis = Exclude<
+  AgentProfileDiffPropertyAxis,
+  (typeof agentProfileDiffPropertyAxes)[number]
+>;
+const _agentProfileDiffPropertyAxesAreExhaustive: MissingAgentProfileDiffPropertyAxis extends never
+  ? true
+  : never = true;
+void _agentProfileDiffPropertyAxesAreExhaustive;
+
 export type AgentProfileDiffAxis =
   | "identity"
-  | "prompt"
-  | "model"
-  | "permissions"
-  | "tools"
-  | "mcp"
-  | "connections"
-  | "subagents"
-  | "resources"
-  | "hooks"
-  | "modes"
-  | "confidential"
-  | "metadata"
-  | "extensions";
+  | (typeof agentProfileDiffPropertyAxes)[number];
 
 export type AgentProfileRemoveList = true | readonly string[];
 
@@ -43,6 +60,7 @@ export interface AgentProfileDiffRemoval {
   tags?: AgentProfileRemoveList;
   prompt?: true | AgentProfilePromptRemoval;
   model?: AgentProfileRemoveList;
+  harness?: true;
   permissions?: AgentProfileRemoveList;
   tools?: AgentProfileRemoveList;
   mcp?: AgentProfileRemoveList;
@@ -186,7 +204,9 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
     next.description = undefined;
     next.version = undefined;
   }
-  next.tags = removeValues(asMutable(next.tags), remove.tags);
+  if (remove.tags !== undefined) {
+    next.tags = removeValues(asMutable(next.tags), remove.tags);
+  }
 
   if (remove.prompt === true) {
     next.prompt = undefined;
@@ -199,17 +219,38 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
       : undefined;
   }
 
-  next.model = removeKeys(next.model, remove.model);
-  next.permissions = removeKeys(next.permissions, remove.permissions);
-  next.tools = removeKeys(next.tools, remove.tools);
-  next.mcp = removeKeys(next.mcp, remove.mcp);
-  next.subagents = removeKeys(next.subagents, remove.subagents);
-  next.resources = removeResources(next.resources, remove.resources);
-  next.hooks = removeKeys(next.hooks, remove.hooks);
-  next.modes = removeKeys(next.modes, remove.modes);
+  if (remove.model !== undefined) {
+    next.model = removeKeys(next.model, remove.model);
+  }
+  if (remove.harness !== undefined) next.harness = undefined;
+  if (remove.permissions !== undefined) {
+    next.permissions = removeKeys(next.permissions, remove.permissions);
+  }
+  if (remove.tools !== undefined) {
+    next.tools = removeKeys(next.tools, remove.tools);
+  }
+  if (remove.mcp !== undefined) {
+    next.mcp = removeKeys(next.mcp, remove.mcp);
+  }
+  if (remove.subagents !== undefined) {
+    next.subagents = removeKeys(next.subagents, remove.subagents);
+  }
+  if (remove.resources !== undefined) {
+    next.resources = removeResources(next.resources, remove.resources);
+  }
+  if (remove.hooks !== undefined) {
+    next.hooks = removeKeys(next.hooks, remove.hooks);
+  }
+  if (remove.modes !== undefined) {
+    next.modes = removeKeys(next.modes, remove.modes);
+  }
   if (remove.confidential) next.confidential = undefined;
-  next.metadata = removeKeys(next.metadata, remove.metadata);
-  next.extensions = removeKeys(next.extensions, remove.extensions);
+  if (remove.metadata !== undefined) {
+    next.metadata = removeKeys(next.metadata, remove.metadata);
+  }
+  if (remove.extensions !== undefined) {
+    next.extensions = removeKeys(next.extensions, remove.extensions);
+  }
 
   if (next.connections && remove.connections !== undefined) {
     if (remove.connections === true) {
@@ -241,42 +282,14 @@ export function changedAgentProfileAxes(diff: AgentProfileDiff): AgentProfileDif
   const set = diff.set;
   if (set) {
     if (set.name || set.description || set.version || set.tags) axes.add("identity");
-    for (const axis of [
-      "prompt",
-      "model",
-      "permissions",
-      "tools",
-      "mcp",
-      "connections",
-      "subagents",
-      "resources",
-      "hooks",
-      "modes",
-      "confidential",
-      "metadata",
-      "extensions",
-    ] as const) {
+    for (const axis of agentProfileDiffPropertyAxes) {
       if (set[axis] !== undefined) axes.add(axis);
     }
   }
   const remove = diff.remove;
   if (remove) {
     if (remove.identity || remove.tags) axes.add("identity");
-    for (const axis of [
-      "prompt",
-      "model",
-      "permissions",
-      "tools",
-      "mcp",
-      "connections",
-      "subagents",
-      "resources",
-      "hooks",
-      "modes",
-      "confidential",
-      "metadata",
-      "extensions",
-    ] as const) {
+    for (const axis of agentProfileDiffPropertyAxes) {
       if (remove[axis] !== undefined) axes.add(axis);
     }
   }
@@ -292,34 +305,20 @@ export function pruneAgentProfileDiff(
   const remove = diff.remove ? { ...diff.remove } : undefined;
 
   if (removeSet.has("identity") && set) {
-    set.name = undefined;
-    set.description = undefined;
-    set.version = undefined;
-    set.tags = undefined;
+    delete set.name;
+    delete set.description;
+    delete set.version;
+    delete set.tags;
   }
   if (removeSet.has("identity") && remove) {
-    remove.identity = undefined;
-    remove.tags = undefined;
+    delete remove.identity;
+    delete remove.tags;
   }
 
-  for (const axis of [
-    "prompt",
-    "model",
-    "permissions",
-    "tools",
-    "mcp",
-    "connections",
-    "subagents",
-    "resources",
-    "hooks",
-    "modes",
-    "confidential",
-    "metadata",
-    "extensions",
-  ] as const) {
+  for (const axis of agentProfileDiffPropertyAxes) {
     if (!removeSet.has(axis)) continue;
-    if (set) set[axis] = undefined;
-    if (remove) remove[axis] = undefined;
+    if (set) delete set[axis];
+    if (remove) delete remove[axis];
   }
 
   return {

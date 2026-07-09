@@ -10,6 +10,7 @@ import { defineInlineResource, type AgentProfile } from "./agent-profile.js";
 
 const baseProfile: AgentProfile = {
   name: "baseline",
+  harness: "claude-code",
   prompt: {
     systemPrompt: "Solve directly.",
     instructions: ["Keep answers short."],
@@ -88,6 +89,7 @@ describe("AgentProfileDiff", () => {
       small: "moonshot/kimi-k2",
       reasoningEffort: "high",
     });
+    expect(profile.harness).toBe("claude-code");
     expect(profile.tools).toEqual({ browser: true, shell: true });
     expect(profile.resources?.files?.map((file) => file.path)).toEqual([
       ".agent-profile/policy.md",
@@ -144,5 +146,87 @@ describe("AgentProfileDiff", () => {
 
     expect(parsed.source?.kind).toBe("frontier-author");
     expect(changedAgentProfileAxes(parsed)).toEqual(["model", "subagents"]);
+  });
+
+  it("sets only the harness axis", () => {
+    const diff = defineAgentProfileDiff({
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      set: { harness: "codex" },
+    });
+
+    const profile = applyAgentProfileDiff(baseProfile, diff);
+    const control = applyAgentProfileDiff(baseProfile, {
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+    });
+
+    expect(changedAgentProfileAxes(diff)).toEqual(["harness"]);
+    expect(profile.harness).toBe("codex");
+    expect(profile).toEqual({ ...control, harness: "codex" });
+    expect(baseProfile.harness).toBe("claude-code");
+  });
+
+  it("explicitly removes only the harness axis", () => {
+    const diff = agentProfileDiffSchema.parse({
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      remove: { harness: true },
+    });
+
+    const profile = applyAgentProfileDiff(baseProfile, diff);
+    const control = applyAgentProfileDiff(baseProfile, {
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+    });
+
+    expect(changedAgentProfileAxes(diff)).toEqual(["harness"]);
+    expect(profile.harness).toBeUndefined();
+    expect(profile).toEqual({ ...control, harness: undefined });
+    expect(() =>
+      agentProfileDiffSchema.parse({
+        schemaVersion: 1,
+        kind: "agent-profile-diff",
+        remove: { harness: false },
+      }),
+    ).toThrow();
+  });
+
+  it("applies harness removal after a harness overlay", () => {
+    const profile = applyAgentProfileDiff(baseProfile, {
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      set: { harness: "codex" },
+      remove: { harness: true },
+    });
+
+    expect(profile.harness).toBeUndefined();
+  });
+
+  it("prunes harness set and removal without changing other axes", () => {
+    const diff = defineAgentProfileDiff({
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      set: {
+        harness: "codex",
+        tools: { shell: true },
+      },
+      remove: { harness: true },
+    });
+
+    const pruned = pruneAgentProfileDiff(diff, ["harness"]);
+
+    const profile = applyAgentProfileDiff(baseProfile, pruned);
+    const toolsOnlyControl = applyAgentProfileDiff(baseProfile, {
+      schemaVersion: 1,
+      kind: "agent-profile-diff",
+      set: { tools: { shell: true } },
+    });
+
+    expect(pruned.set).not.toHaveProperty("harness");
+    expect(pruned.remove).toBeUndefined();
+    expect(changedAgentProfileAxes(pruned)).toEqual(["tools"]);
+    expect(profile.harness).toBe("claude-code");
+    expect(profile).toEqual(toolsOnlyControl);
   });
 });
