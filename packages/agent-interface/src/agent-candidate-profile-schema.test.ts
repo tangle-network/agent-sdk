@@ -20,6 +20,10 @@ describe("agentCandidateProfileSchema", () => {
             headers: {
               Authorization: { kind: "secret", name: "GITHUB_TOKEN" },
             },
+          },
+          local: {
+            transport: "stdio",
+            command: "local-mcp",
             args: [
               { kind: "public", value: "--token" },
               { kind: "secret", name: "GITHUB_TOKEN" },
@@ -57,6 +61,24 @@ describe("agentCandidateProfileSchema", () => {
         },
       }),
     ).toThrow(/resembles a credential/);
+  });
+
+  it("requires one unambiguous MCP transport shape", () => {
+    for (const server of [
+      { transport: "stdio", url: { kind: "https", url: "https://mcp.example/api" } },
+      { transport: "http", command: "local-mcp" },
+      { transport: "sse" },
+      { command: "local-mcp", headers: { Authorization: { kind: "secret", name: "TOKEN" } } },
+    ]) {
+      expect(() =>
+        agentCandidateProfileSchema.parse({ mcp: { invalid: server } }),
+      ).toThrow(/MCP servers/);
+    }
+    expect(() =>
+      agentCandidateProfileSchema.parse({
+        mcp: { disabled: { enabled: false } },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects arbitrary backend extensions in frozen profile v1", () => {

@@ -81,7 +81,51 @@ export const agentCandidateMcpServerSchema = z
     enabled: z.boolean().optional(),
     metadata: candidateMetadataSchema.optional(),
   })
-  .strict() satisfies z.ZodType<AgentCandidateMcpServer>;
+  .strict()
+  .superRefine((server, ctx) => {
+    if (
+      server.enabled === false &&
+      server.command === undefined &&
+      server.url === undefined
+    ) {
+      return;
+    }
+    const transport = server.transport ?? "stdio";
+    if (transport === "stdio") {
+      if (server.command === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["command"],
+          message: "stdio MCP servers require a command",
+        });
+      }
+      if (server.url !== undefined || server.headers !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "stdio MCP servers cannot carry a URL or HTTP headers",
+        });
+      }
+      return;
+    }
+    if (server.url === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: `${transport} MCP servers require an HTTPS URL`,
+      });
+    }
+    if (
+      server.command !== undefined ||
+      server.args !== undefined ||
+      server.env !== undefined ||
+      server.cwd !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: `${transport} MCP servers cannot carry stdio process fields`,
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateMcpServer>;
 
 export const agentCandidateHookCommandSchema = z
   .object({
