@@ -703,6 +703,7 @@ export interface AgentCandidateBenchmarkResultMaterialV1 {
     artifact: AgentCandidateArtifactRef;
   };
   score: number;
+  passed: boolean;
   dimensions: AgentCandidateBenchmarkDimension[];
 }
 

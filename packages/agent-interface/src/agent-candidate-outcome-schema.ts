@@ -265,6 +265,7 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
       })
       .strict(),
     score: normalizedScoreSchema,
+    passed: z.boolean(),
     dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
   })
   .strict()

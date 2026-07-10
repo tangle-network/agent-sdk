@@ -442,10 +442,8 @@ function legacyUsageMatchesFixed(
   legacy: AgentCandidateModelUsage["usage"],
   fixed: AgentCandidateFixedSpend,
 ): boolean {
-  const costUsdNanos = Math.round(legacy.costUsd * 1_000_000_000);
   return (
-    Number.isSafeInteger(costUsdNanos) &&
-    costUsdNanos === fixed.costUsdNanos &&
+    legacy.costUsd === fixed.costUsdNanos / 1_000_000_000 &&
     legacy.inputTokens === fixed.inputTokens &&
     legacy.outputTokens === fixed.outputTokens &&
     (legacy.cachedInputTokens ?? 0) === fixed.cachedInputTokens &&

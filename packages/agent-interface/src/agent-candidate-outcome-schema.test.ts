@@ -156,6 +156,7 @@ function runReceiptV2() {
       artifact: durableArtifact("graders/pier-0.3.0.tar", "a", 1_000),
     },
     score: 0.75,
+    passed: true,
     dimensions: [
       { name: "lint", score: 1 },
       { name: "tests", score: 0.5 },
@@ -251,6 +252,16 @@ describe("candidate outcome contracts", () => {
         fixedUsage: { ...receipt.fixedUsage, reasoningTokens: 6 },
       }),
     ).toThrow(/model settlement aggregate/);
+    expect(() =>
+      agentCandidateRunReceiptV2Schema.parse({
+        ...receipt,
+        usage: { ...receipt.usage, costUsd: 1.250_000_000_4 },
+        modelUsage: {
+          ...receipt.modelUsage,
+          usage: { ...receipt.modelUsage.usage, costUsd: 1.250_000_000_4 },
+        },
+      }),
+    ).toThrow(/fixed usage/);
   });
 
   it("rejects duplicate call and trace-span identities", () => {
@@ -344,6 +355,20 @@ describe("candidate outcome contracts", () => {
         dimensions: [{ name: "tests", score: -0.01 }],
       }),
     ).toThrow();
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse({
+        ...material,
+        score: 0,
+        passed: true,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse({
+        ...material,
+        score: 1,
+        passed: false,
+      }),
+    ).not.toThrow();
     expect(() =>
       agentCandidateBenchmarkResultMaterialSchema.parse({
         ...material,
