@@ -371,12 +371,23 @@ describe("candidate receipts", () => {
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "run-1",
+    attempt: {
+      number: 1,
+      maxAttempts: 1,
+      retryPolicy: "pre-model-infrastructure-only" as const,
+    },
     task: {
       benchmark: "pier",
       benchmarkVersion: "0.3",
       taskId: "pier-task-1",
       splitDigest: candidateSha("f"),
       inputDigest: candidateSha("e"),
+      repository: {
+        identity: "r360/pier-synthetic-task-1",
+        rootIdentity: "r360/pier-synthetic",
+        baseCommit: candidateGit("a"),
+        baseTree: candidateGit("b"),
+      },
       workspace: taskWorkspace,
     },
     workspaces: {
@@ -385,7 +396,11 @@ describe("candidate receipts", () => {
     },
     codeKind: "git-patch" as const,
     candidateWorkspace,
-    profilePlanDigest: profilePlan.digest,
+    profile: {
+      planDigest: profilePlan.digest,
+      targetWorkspace: "task" as const,
+      mountPaths: [],
+    },
     harness: "codex" as const,
     harnessVersion: "0.1.0",
     container: {
@@ -424,6 +439,7 @@ describe("candidate receipts", () => {
     },
     limits: {
       timeoutMs: 600_000,
+      maxSteps: 500,
       maxModelCalls: 100,
       maxInputTokens: 1_000_000,
       maxOutputTokens: 100_000,
@@ -486,6 +502,21 @@ describe("candidate receipts", () => {
         },
       }),
     ).toThrow(/exact candidate-workspace bytes/);
+    expect(() =>
+      agentCandidateMaterializationReceiptSchema.parse({
+        ...materialization,
+        executionPlan: {
+          ...materialization.executionPlan,
+          material: {
+            ...materialization.executionPlan.material,
+            profile: {
+              ...materialization.executionPlan.material.profile,
+              mountPaths: ["AGENTS.md"],
+            },
+          },
+        },
+      }),
+    ).toThrow(/every profile mount path/);
   });
 
   it("requires captured canonical bytes for both materialization plans", () => {

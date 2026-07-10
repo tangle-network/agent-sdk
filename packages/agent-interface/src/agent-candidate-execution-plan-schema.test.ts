@@ -51,12 +51,23 @@ function planFixture() {
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "execution-1",
+    attempt: {
+      number: 1,
+      maxAttempts: 1,
+      retryPolicy: "pre-model-infrastructure-only" as const,
+    },
     task: {
       benchmark: "pier",
       benchmarkVersion: "0.3",
       taskId: "task-1",
       splitDigest: candidateSha("2"),
       inputDigest: candidateSha("3"),
+      repository: {
+        identity: "tangle-network/agent-runtime",
+        rootIdentity: "tangle-network/agent-runtime",
+        baseCommit: "1".repeat(40),
+        baseTree: "2".repeat(40),
+      },
       workspace: workspace("src/task.ts", "4"),
     },
     workspaces: {
@@ -65,7 +76,11 @@ function planFixture() {
     },
     codeKind: "git-patch" as const,
     candidateWorkspace: workspace("dist/agent.js", "5"),
-    profilePlanDigest: candidateSha("6"),
+    profile: {
+      planDigest: candidateSha("6"),
+      targetWorkspace: "task" as const,
+      mountPaths: [],
+    },
     harness: "codex" as const,
     harnessVersion: "0.1.0",
     container: {
@@ -100,6 +115,7 @@ function planFixture() {
     memory: { mode: "disabled" as const },
     limits: {
       timeoutMs: 60_000,
+      maxSteps: 200,
       maxModelCalls: 20,
       maxInputTokens: 200_000,
       maxOutputTokens: 20_000,
@@ -131,6 +147,18 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         task: taskWithoutSplit,
       }),
     ).toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        task: {
+          ...plan.task,
+          repository: {
+            ...plan.task.repository,
+            baseTree: "2".repeat(64),
+          },
+        },
+      }),
+    ).toThrow(/one object format/);
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
@@ -173,6 +201,25 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     expect(() =>
       agentCandidateProfilePlanMaterialSchema.parse(profilePlan),
     ).toThrow(/cannot omit profile behavior/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        profile: { ...plan.profile, mountPaths: ["z", "a"] },
+      }),
+    ).toThrow(/lexicographically sorted/);
+  });
+
+  it("requires a workspace root for candidate-targeted profile files", () => {
+    const plan = planFixture();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        codeKind: "disabled",
+        candidateWorkspace: undefined,
+        workspaces: { taskRoot: plan.workspaces.taskRoot },
+        profile: { ...plan.profile, targetWorkspace: "candidate" },
+      }),
+    ).toThrow(/candidate-targeted profile files/);
   });
 
   it("rejects alternate model routes and incomplete resolved identities", () => {
@@ -198,6 +245,28 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     const { reasoningEffort: _reasoningEffort, ...withoutEffort } =
       plan.model.resolved;
     expect(() => agentCandidateResolvedModelSchema.parse(withoutEffort)).toThrow();
+  });
+
+  it("freezes counted attempts, retry policy, and tool-loop steps", () => {
+    const plan = planFixture();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        attempt: { ...plan.attempt, number: 2 },
+      }),
+    ).toThrow(/cannot exceed/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        attempt: { number: 1, maxAttempts: 2, retryPolicy: "none" },
+      }),
+    ).toThrow(/exactly one attempt/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        limits: { ...plan.limits, maxSteps: 0 },
+      }),
+    ).toThrow();
   });
 
   it("requires active workspace bytes and fresh reset evidence", () => {

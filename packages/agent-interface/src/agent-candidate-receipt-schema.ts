@@ -184,9 +184,17 @@ export const agentCandidateMaterializationReceiptSchema = z
         "execution plan must bind the receipt bundle",
       ],
       [
-        receipt.profilePlan.digest === plan.profilePlanDigest,
-        ["executionPlan", "material", "profilePlanDigest"],
+        receipt.profilePlan.digest === plan.profile.planDigest,
+        ["executionPlan", "material", "profile", "planDigest"],
         "execution plan must bind the exact profile plan",
+      ],
+      [
+        JSON.stringify(plan.profile.mountPaths) ===
+          JSON.stringify(
+            receipt.profilePlan.material.files.map((file) => file.relPath),
+          ),
+        ["executionPlan", "material", "profile", "mountPaths"],
+        "execution plan must bind every profile mount path",
       ],
       [
         receipt.codeKind === plan.codeKind,

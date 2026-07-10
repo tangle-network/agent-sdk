@@ -20,9 +20,11 @@ import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
   environmentConfigSchema,
+  gitObjectSchema,
   isCanonicalJsonValue,
   isSafeExecutable,
   isSafeRelativePath,
+  sameGitObjectFormat,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
@@ -153,6 +155,7 @@ export const agentCandidateEffectiveMemorySchema = z.discriminatedUnion("mode", 
 export const agentCandidateExecutionLimitsSchema = z
   .object({
     timeoutMs: z.number().int().positive(),
+    maxSteps: z.number().int().positive(),
     maxModelCalls: z.number().int().nonnegative(),
     maxInputTokens: z.number().int().nonnegative(),
     maxOutputTokens: z.number().int().nonnegative(),
@@ -166,6 +169,13 @@ export const agentCandidateExecutionPlanMaterialSchema = z
     kind: z.literal("agent-candidate-execution-plan-material"),
     bundleDigest: sha256DigestSchema,
     executionId: z.string().min(1),
+    attempt: z
+      .object({
+        number: z.number().int().min(1),
+        maxAttempts: z.number().int().min(1),
+        retryPolicy: z.enum(["pre-model-infrastructure-only", "none"]),
+      })
+      .strict(),
     task: z
       .object({
         benchmark: z.string().min(1),
@@ -173,6 +183,14 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         taskId: z.string().min(1),
         splitDigest: sha256DigestSchema,
         inputDigest: sha256DigestSchema,
+        repository: z
+          .object({
+            identity: z.string().min(1),
+            rootIdentity: z.string().min(1),
+            baseCommit: gitObjectSchema,
+            baseTree: gitObjectSchema,
+          })
+          .strict(),
         workspace: agentCandidateWorkspaceSnapshotEvidenceSchema,
       })
       .strict(),
@@ -192,7 +210,20 @@ export const agentCandidateExecutionPlanMaterialSchema = z
       .strict(),
     codeKind: z.enum(["disabled", "no-op", "git-patch"]),
     candidateWorkspace: agentCandidateWorkspaceSnapshotEvidenceSchema.optional(),
-    profilePlanDigest: sha256DigestSchema,
+    profile: z
+      .object({
+        planDigest: sha256DigestSchema,
+        targetWorkspace: z.enum(["task", "candidate"]),
+        mountPaths: z.array(
+          z
+            .string()
+            .refine(
+              (value) => isSafeRelativePath(value, false),
+              "profile mount paths must be canonical and relative",
+            ),
+        ),
+      })
+      .strict(),
     harness: harnessTypeSchema,
     harnessVersion: z.string().min(1),
     container: agentCandidateContainerSchema
@@ -269,12 +300,58 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
+    if (
+      !sameGitObjectFormat(
+        material.task.repository.baseCommit,
+        material.task.repository.baseTree,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["task", "repository"],
+        message: "task Git object ids must use one object format",
+      });
+    }
+    if (material.attempt.number > material.attempt.maxAttempts) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attempt", "number"],
+        message: "attempt number cannot exceed the frozen maximum",
+      });
+    }
+    if (
+      material.attempt.retryPolicy === "none" &&
+      material.attempt.maxAttempts !== 1
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attempt", "maxAttempts"],
+        message: "a no-retry plan must allow exactly one attempt",
+      });
+    }
     const routeIds = material.model.routes.map((route) =>
       route.kind === "mode" || route.kind === "subagent"
         ? `${route.kind}:${route.name}`
         : route.kind,
     );
     addDuplicateIssues(routeIds, ["model", "routes"], ctx);
+    addDuplicateIssues(
+      material.profile.mountPaths,
+      ["profile", "mountPaths"],
+      ctx,
+    );
+    for (let index = 1; index < material.profile.mountPaths.length; index++) {
+      if (
+        (material.profile.mountPaths[index - 1] ?? "") >=
+        (material.profile.mountPaths[index] ?? "")
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["profile", "mountPaths", index],
+          message: "profile mount paths must be lexicographically sorted",
+        });
+      }
+    }
     if (!material.model.routes.some((route) => route.kind === "primary")) {
       ctx.addIssue({
         code: "custom",
@@ -327,6 +404,17 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         code: "custom",
         path: ["launch", "cwd", "workspace"],
         message: "candidate cwd requires a pinned candidate workspace root",
+      });
+    }
+    if (
+      material.profile.targetWorkspace === "candidate" &&
+      material.workspaces.candidateRoot === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["profile", "targetWorkspace"],
+        message:
+          "candidate-targeted profile files require a candidate workspace root",
       });
     }
     if (activeCode && material.candidateWorkspace?.material.files.length === 0) {

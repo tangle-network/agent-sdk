@@ -407,10 +407,25 @@ export type AgentCandidateEffectiveMemory =
 /** The exact evaluator-owned limits applied to every candidate arm. */
 export interface AgentCandidateExecutionLimits {
   timeoutMs: number;
+  maxSteps: number;
   maxModelCalls: number;
   maxInputTokens: number;
   maxOutputTokens: number;
   maxCostUsd: number;
+}
+
+/** Counted attempt identity and the only retry class allowed by the evaluator. */
+export interface AgentCandidateAttemptPolicy {
+  number: number;
+  maxAttempts: number;
+  retryPolicy: "pre-model-infrastructure-only" | "none";
+}
+
+/** Exact workspace placement of one fully supported profile plan. */
+export interface AgentCandidateProfileApplication {
+  planDigest: Sha256Digest;
+  targetWorkspace: AgentCandidateWorkingDirectory["workspace"];
+  mountPaths: string[];
 }
 
 /**
@@ -424,12 +439,19 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
   kind: "agent-candidate-execution-plan-material";
   bundleDigest: Sha256Digest;
   executionId: string;
+  attempt: AgentCandidateAttemptPolicy;
   task: {
     benchmark: string;
     benchmarkVersion: string;
     taskId: string;
     splitDigest: Sha256Digest;
     inputDigest: Sha256Digest;
+    repository: {
+      identity: string;
+      rootIdentity: string;
+      baseCommit: string;
+      baseTree: string;
+    };
     workspace: AgentCandidateWorkspaceSnapshotEvidence;
   };
   workspaces: {
@@ -438,7 +460,7 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
   };
   codeKind: AgentCandidateCode["kind"];
   candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
-  profilePlanDigest: Sha256Digest;
+  profile: AgentCandidateProfileApplication;
   harness: HarnessType;
   harnessVersion: string;
   container: {
