@@ -14,6 +14,7 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import {
   agentCandidateContainerSchema,
+  agentCandidateInstructionDeliverySchema,
   agentCandidateWorkingDirectorySchema,
 } from "./agent-candidate-code-schema.js";
 import {
@@ -187,6 +188,7 @@ export const agentCandidateExecutionPlanMaterialSchema = z
             encoding: z.literal("utf8"),
             sha256: sha256DigestSchema,
             byteLength: z.number().int().positive(),
+            delivery: agentCandidateInstructionDeliverySchema,
           })
           .strict(),
         repository: z
@@ -421,6 +423,34 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         path: ["profile", "targetWorkspace"],
         message:
           "candidate-targeted profile files require a candidate workspace root",
+      });
+    }
+    const delivery = material.task.instruction.delivery;
+    const taskPath = material.launch.env.TANGLE_CANDIDATE_TASK_PATH;
+    if (delivery.kind === "utf8-file") {
+      if (taskPath?.value !== delivery.path) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
+          message: "file delivery requires the signed fixed task path",
+        });
+      }
+      if (
+        pathsOverlap(material.workspaces.taskRoot, delivery.path) ||
+        (material.workspaces.candidateRoot !== undefined &&
+          pathsOverlap(material.workspaces.candidateRoot, delivery.path))
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["workspaces"],
+          message: "the task instruction file must be outside both workspaces",
+        });
+      }
+    } else if (taskPath !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
+        message: "non-file delivery cannot expose an instruction path",
       });
     }
     if (activeCode && material.candidateWorkspace?.material.files.length === 0) {

@@ -385,6 +385,7 @@ describe("candidate receipts", () => {
         encoding: "utf8" as const,
         sha256: candidateSha("e"),
         byteLength: 37,
+        delivery: { kind: "argv-append" as const },
       },
       repository: {
         identity: "r360/pier-synthetic-task-1",

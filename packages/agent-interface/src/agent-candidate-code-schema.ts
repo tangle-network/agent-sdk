@@ -10,6 +10,7 @@ import type {
   AgentCandidateExecution,
   AgentCandidateExecutionEnvironment,
   AgentCandidateGitPatch,
+  AgentCandidateInstructionDelivery,
   AgentCandidatePinnedContainerEnvironment,
   AgentCandidateWorkingDirectory,
 } from "./agent-candidate.js";
@@ -208,11 +209,27 @@ export const agentCandidateLaunchSchema = z.discriminatedUnion("kind", [
   agentCandidateEntrypointLaunchSchema,
 ]);
 
+export const agentCandidateInstructionDeliverySchema = z.discriminatedUnion(
+  "kind",
+  [
+    z.object({ kind: z.literal("argv-append") }).strict(),
+    z.object({ kind: z.literal("stdin-utf8") }).strict(),
+    z
+      .object({
+        kind: z.literal("utf8-file"),
+        env: z.literal("TANGLE_CANDIDATE_TASK_PATH"),
+        path: z.literal("/tangle/input/task.txt"),
+      })
+      .strict(),
+  ],
+) satisfies z.ZodType<AgentCandidateInstructionDelivery>;
+
 export const agentCandidateExecutionSchema = z
   .object({
     harness: harnessTypeSchema,
     harnessVersion: z.string().min(1),
     launch: agentCandidateLaunchSchema,
+    instructionDelivery: agentCandidateInstructionDeliverySchema,
     cwd: agentCandidateWorkingDirectorySchema,
     env: environmentConfigSchema.optional(),
     environment: agentCandidateExecutionEnvironmentSchema,
@@ -225,4 +242,13 @@ export const agentCandidateExecutionSchema = z
       })
       .strict(),
   })
-  .strict() satisfies z.ZodType<AgentCandidateExecution>;
+  .strict()
+  .superRefine((execution, ctx) => {
+    if (execution.env?.TANGLE_CANDIDATE_TASK_PATH !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["env", "TANGLE_CANDIDATE_TASK_PATH"],
+        message: "the evaluator exclusively owns task-instruction delivery",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateExecution>;
