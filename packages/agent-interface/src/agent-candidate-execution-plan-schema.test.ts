@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentCandidateExecutionPlanMaterialSchema,
+  agentCandidateProfilePlanMaterialSchema,
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
 import { candidateSha } from "./agent-candidate.test-fixture.js";
@@ -146,6 +147,32 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         model: modelWithoutAccess,
       }),
     ).toThrow();
+  });
+
+  it("rejects ambiguous roots and silently omitted profile behavior", () => {
+    const plan = planFixture();
+    for (const taskRoot of ["/work\\task", "/work/ta\nsk", "/work/../task"]) {
+      expect(() =>
+        agentCandidateExecutionPlanMaterialSchema.parse({
+          ...plan,
+          workspaces: { ...plan.workspaces, taskRoot },
+        }),
+      ).toThrow(/canonical absolute path/);
+    }
+
+    const profilePlan = {
+      version: 1,
+      harness: "codex",
+      files: [],
+      env: {},
+      flags: [],
+      unsupported: [
+        { dimension: "hooks", reason: "backend does not implement hooks" },
+      ],
+    };
+    expect(() =>
+      agentCandidateProfilePlanMaterialSchema.parse(profilePlan),
+    ).toThrow(/cannot omit profile behavior/);
   });
 
   it("rejects alternate model routes and incomplete resolved identities", () => {

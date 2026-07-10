@@ -68,6 +68,34 @@ describe("agentCandidateBundleSchema", () => {
     ).toThrow(/disabled code controls/);
   });
 
+  it("represents optimized non-code surfaces without inventing a code change", () => {
+    const candidate = candidateFixture();
+    const { workspace: _workspace, ...executionWithoutWorkspace } =
+      candidate.execution;
+    expect(() =>
+      agentCandidateBundleSchema.parse({
+        ...candidate,
+        code: { kind: "disabled", reason: "not-applicable" },
+        execution: {
+          ...executionWithoutWorkspace,
+          launch: { kind: "container-command", executable: "codex" },
+          cwd: { workspace: "task", path: "." },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateBundleSchema.parse({
+        ...candidate,
+        code: { kind: "disabled", reason: "control" },
+        execution: {
+          ...executionWithoutWorkspace,
+          launch: { kind: "container-command", executable: "codex" },
+          cwd: { workspace: "task", path: "." },
+        },
+      }),
+    ).toThrow(/fixed controls cannot claim proposer lineage/);
+  });
+
   it("requires active code to use its structured candidate entrypoint", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({
@@ -94,6 +122,34 @@ describe("agentCandidateBundleSchema", () => {
         execution: executionWithoutWorkspace,
       }),
     ).toThrow(/complete candidate workspace/);
+  });
+
+  it("requires a direct candidate entrypoint to carry executable mode", () => {
+    const candidate = candidateFixture();
+    expect(() =>
+      agentCandidateBundleSchema.parse({
+        ...candidate,
+        execution: {
+          ...candidate.execution,
+          launch: {
+            kind: "candidate-entrypoint",
+            entrypoint: "dist/agent.js",
+          },
+          workspace: {
+            ...candidate.execution.workspace,
+            material: {
+              ...candidate.execution.workspace.material,
+              files: candidate.execution.workspace.material.files.map(
+                (file) => ({
+                  ...file,
+                  mode: 0o644,
+                }),
+              ),
+            },
+          },
+        },
+      }),
+    ).toThrow(/must be executable/);
   });
 
   it("allows active candidate code to edit an evaluator-owned task workspace", () => {
@@ -152,6 +208,10 @@ describe("agentCandidateBundleSchema", () => {
 
   it("fails closed when a generated candidate omits run, split, or spend", () => {
     for (const lineage of [
+      {
+        ...candidateFixture().lineage,
+        parentDigests: [],
+      },
       {
         ...candidateFixture().lineage,
         runIds: [],
@@ -417,6 +477,15 @@ describe("candidate receipts", () => {
         codeKind: "disabled",
       }),
     ).toThrow(/disabled code/);
+    expect(() =>
+      agentCandidateMaterializationReceiptSchema.parse({
+        ...materialization,
+        entrypoint: {
+          ...materialization.entrypoint,
+          sha256: candidateSha("f"),
+        },
+      }),
+    ).toThrow(/exact candidate-workspace bytes/);
   });
 
   it("requires captured canonical bytes for both materialization plans", () => {
@@ -633,5 +702,16 @@ describe("candidate receipts", () => {
         trace: { ...receipt.trace, modelCallCount: 2 },
       }),
     ).toThrow(/model-call count/);
+    expect(() =>
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        usage: { ...receipt.usage, modelCalls: 2 },
+        modelUsage: {
+          ...receipt.modelUsage,
+          usage: { ...receipt.modelUsage.usage, modelCalls: 2 },
+        },
+        trace: { ...receipt.trace, modelCallCount: 2 },
+      }),
+    ).toThrow(/one event for every model call/);
   });
 });

@@ -81,12 +81,22 @@ export const agentCandidateHookCommandSchema = z
 
 const candidateModelHintsSchema = agentProfileModelHintsSchema
   .omit({ metadata: true })
+  .extend({
+    default: z.string().min(1).optional(),
+    small: z.string().min(1).optional(),
+    provider: z.string().min(1).optional(),
+  })
   .strict();
 const candidateSubagentSchema = agentSubagentProfileSchema
   .omit({ metadata: true })
+  .extend({
+    model: z.string().min(1).optional(),
+    maxSteps: z.number().int().positive().optional(),
+  })
   .strict();
 const candidateModeSchema = agentProfileModeSchema
   .omit({ metadata: true })
+  .extend({ model: z.string().min(1).optional() })
   .strict();
 
 export const agentCandidateProfileSchema = z

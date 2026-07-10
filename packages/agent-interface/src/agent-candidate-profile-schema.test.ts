@@ -134,6 +134,19 @@ describe("agentCandidateProfileSchema", () => {
     ).toThrow(/exact primary model/);
   });
 
+  it("rejects model routes and subagent limits that cannot execute", () => {
+    for (const profile of [
+      { model: { default: "" } },
+      { model: { provider: "" } },
+      { model: { default: "openai/gpt-5.4", small: "" } },
+      { subagents: { reviewer: { maxSteps: 0 } } },
+      { subagents: { reviewer: { maxSteps: 1.5 } } },
+      { modes: { review: { model: "" } } },
+    ]) {
+      expect(() => agentCandidateProfileSchema.parse(profile)).toThrow();
+    }
+  });
+
   it("rejects lone surrogates even through generic profile sub-schemas", () => {
     expect(() =>
       agentCandidateProfileSchema.parse({

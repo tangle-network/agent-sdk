@@ -69,7 +69,7 @@ export function isSafeRelativePath(value: string, allowDot: boolean): boolean {
   const parts = value.split("/");
   return (
     parts.every((part) => part.length > 0 && part !== "." && part !== "..") &&
-    !reservedWorkspaceRoots.has(parts[0] ?? "")
+    !parts.some((part) => reservedWorkspaceRoots.has(part))
   );
 }
 
@@ -96,32 +96,60 @@ export function isSafeExecutable(value: string): boolean {
 }
 
 export function isObviouslyPrivateHostname(rawHostname: string): boolean {
-  const hostname = rawHostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const literal = rawHostname.toLowerCase().replace(/^\[|\]$/g, "");
+  let hostname = literal;
+  try {
+    const parsed = new URL(
+      `http://${literal.includes(":") ? `[${literal}]` : literal}/`,
+    );
+    hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    // Non-URL hostnames remain ordinary DNS names and are handled below.
+  }
   if (blockedHostnames.has(hostname) || hostname.endsWith(".localhost")) {
     return true;
   }
-  if (
-    hostname === "::1" ||
-    hostname.startsWith("fe80:") ||
-    hostname.startsWith("fc") ||
-    hostname.startsWith("fd") ||
-    hostname.startsWith("::ffff:")
-  ) {
-    return true;
+  if (hostname.includes(":")) {
+    const firstHextet = hostname.split(":", 1)[0] ?? "";
+    if (
+      hostname === "::" ||
+      hostname === "::1" ||
+      hostname.startsWith("fe8") ||
+      hostname.startsWith("fe9") ||
+      hostname.startsWith("fea") ||
+      hostname.startsWith("feb") ||
+      firstHextet.startsWith("fc") ||
+      firstHextet.startsWith("fd") ||
+      hostname.startsWith("::ffff:")
+    ) {
+      return true;
+    }
   }
   const parts = hostname.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [a, b] = parts;
-  return (
+  if (a === undefined || b === undefined) {
+    return false;
+  }
+  if (
     a === 0 ||
     a === 10 ||
     a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
-    (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
-  );
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function isCanonicalJsonValue(

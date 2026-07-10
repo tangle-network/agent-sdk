@@ -171,6 +171,7 @@ export interface AgentCandidateProfile
 
 export interface AgentCandidateCodeDisabled {
   kind: "disabled";
+  /** `control` marks a comparison arm; `not-applicable` disables only the code surface. */
   reason: "control" | "not-applicable";
 }
 

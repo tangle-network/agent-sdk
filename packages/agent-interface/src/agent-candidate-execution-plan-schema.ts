@@ -38,11 +38,12 @@ const reasoningEffortSchema = z.enum([
 ]);
 
 function isCanonicalAbsolutePath(value: string): boolean {
-  if (!value.startsWith("/") || value === "/" || value.includes("//")) return false;
-  return value
-    .slice(1)
-    .split("/")
-    .every((part) => part.length > 0 && part !== "." && part !== "..");
+  return (
+    value.startsWith("/") &&
+    value !== "/" &&
+    !value.includes("//") &&
+    isSafeRelativePath(value.slice(1), false)
+  );
 }
 
 function pathsOverlap(left: string, right: string): boolean {
@@ -79,14 +80,19 @@ export const agentCandidateProfilePlanMaterialSchema = z
     ),
     env: environmentConfigSchema,
     flags: z.array(agentCandidateConfigValueSchema),
-    unsupported: z.array(
-      z
-        .object({
-          dimension: z.string().min(1),
-          reason: z.string().min(1),
-        })
-        .strict(),
-    ),
+    unsupported: z
+      .array(
+        z
+          .object({
+            dimension: z.string().min(1),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      )
+      .length(
+        0,
+        "sealed candidate materialization cannot omit profile behavior",
+      ),
   })
   .strict()
   .superRefine((material, ctx) => {

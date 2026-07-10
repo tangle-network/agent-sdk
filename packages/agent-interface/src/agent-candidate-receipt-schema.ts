@@ -64,6 +64,13 @@ export const agentCandidateTraceEvidenceSchema = z
         message: "trace artifact must contain captured events",
       });
     }
+    if (trace.eventCount < trace.modelCallCount) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["eventCount"],
+        message: "trace must contain at least one event for every model call",
+      });
+    }
   }) satisfies z.ZodType<AgentCandidateTraceEvidence>;
 
 export const agentCandidateModelUsageSchema = z
@@ -154,6 +161,21 @@ export const agentCandidateMaterializationReceiptSchema = z
         code: "custom",
         message: "active code requires a materialized tree, entrypoint, and workspace receipt",
       });
+    } else {
+      const entrypoint = receipt.candidateWorkspace.material.files.find(
+        (file) => file.path === receipt.entrypoint?.path,
+      );
+      if (
+        entrypoint === undefined ||
+        entrypoint.sha256 !== receipt.entrypoint.sha256 ||
+        entrypoint.byteLength !== receipt.entrypoint.byteLength
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["entrypoint"],
+          message: "entrypoint receipt must identify exact candidate-workspace bytes",
+        });
+      }
     }
     const checks: Array<[boolean, (string | number)[], string]> = [
       [

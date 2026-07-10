@@ -79,6 +79,13 @@ export const agentCandidateLineageSchema = z
       });
     }
     if (lineage.source === "optimizer" || lineage.source === "compound") {
+      if ((lineage.parentDigests?.length ?? 0) === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["parentDigests"],
+          message: "generated candidates must name at least one parent",
+        });
+      }
       if ((lineage.runIds?.length ?? 0) === 0) {
         ctx.addIssue({
           code: "custom",

@@ -55,6 +55,7 @@ describe("candidate artifact schemas", () => {
       "../secret",
       "/absolute",
       ".git/config",
+      "nested/.git/config",
       ".sidecar/state",
       "tokens/sk-live-abcdefghijkl",
     ]) {
@@ -166,7 +167,12 @@ describe("candidate artifact schemas", () => {
       sha256: candidateSha("1"),
       byteLength: 2,
     };
-    for (const path of ["../escape", ".git/config", ".sidecar/secrets.json"]) {
+    for (const path of [
+      "../escape",
+      ".git/config",
+      "nested/.git/config",
+      ".sidecar/secrets.json",
+    ]) {
       expect(() =>
         agentCandidateFileMountSchema.parse({ path, resource }),
       ).toThrow();

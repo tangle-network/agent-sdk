@@ -147,6 +147,9 @@ describe("candidate code and execution schemas", () => {
       "https://registry.example/image",
       "user:password@registry.example/image",
       "127.0.0.1/image",
+      "127.1/image",
+      "2130706433:5000/image",
+      "0x7f000001:5000/image",
       "169.254.169.254/image",
       "localhost/image",
     ]) {
@@ -164,5 +167,22 @@ describe("candidate code and execution schemas", () => {
         }),
       ).toThrow();
     }
+
+    expect(() =>
+      agentCandidateExecutionSchema.parse({
+        harness: "codex",
+        harnessVersion: "0.1.0",
+        launch: { kind: "container-command", executable: "codex" },
+        cwd: { workspace: "task", path: "." },
+        environment: {
+          kind: "pinned-container",
+          container: {
+            image: "fcorp.example/image",
+            indexDigest: candidateSha("1"),
+          },
+        },
+        isolation,
+      }),
+    ).not.toThrow();
   });
 });

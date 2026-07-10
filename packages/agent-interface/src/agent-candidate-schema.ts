@@ -84,13 +84,14 @@ export const agentCandidateBundleSchema = z
         });
       }
       if (
-        bundle.lineage.source === "optimizer" ||
-        bundle.lineage.source === "compound"
+        bundle.code.reason === "control" &&
+        (bundle.lineage.source === "optimizer" ||
+          bundle.lineage.source === "compound")
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["lineage", "source"],
-          message: "disabled controls cannot claim proposer lineage",
+          message: "fixed controls cannot claim proposer lineage",
         });
       }
     } else {
@@ -125,6 +126,17 @@ export const agentCandidateBundleSchema = z
           path: ["execution", "launch", "entrypoint"],
           message: "candidate entrypoint must exist in the pinned workspace manifest",
         });
+      } else if (launch.kind === "candidate-entrypoint") {
+        const entrypoint = bundle.execution.workspace.material.files.find(
+          (file) => file.path === launch.entrypoint,
+        );
+        if (launch.interpreter === undefined && entrypoint?.mode !== 0o755) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["execution", "launch", "entrypoint"],
+            message: "a directly launched candidate entrypoint must be executable",
+          });
+        }
       }
       if (
         bundle.code.kind === "no-op" &&
