@@ -1,5 +1,15 @@
 # @tangle-network/agent-interface
 
+## 0.22.0
+
+### Minor Changes
+
+- 96c6e84: Add V2 candidate run receipts with fixed-point model usage, per-call settlement evidence, exact repository outcomes, and pinned benchmark results.
+
+### Patch Changes
+
+- 73759a5: Require every candidate benchmark result to carry a non-empty durable reference to the raw grader output behind its score and pass verdict.
+
 ## 0.21.0
 
 ### Minor Changes
