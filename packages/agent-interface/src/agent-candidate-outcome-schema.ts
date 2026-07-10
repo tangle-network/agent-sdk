@@ -264,6 +264,7 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
         artifact: agentCandidateArtifactRefSchema,
       })
       .strict(),
+    evidence: agentCandidateArtifactRefSchema,
     score: normalizedScoreSchema,
     passed: z.boolean(),
     dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
@@ -275,6 +276,20 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
         code: "custom",
         path: ["grader", "artifact", "byteLength"],
         message: "pinned grader artifact must contain executable grader bytes",
+      });
+    }
+    if (material.evidence.byteLength === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evidence", "byteLength"],
+        message: "benchmark result must contain non-empty durable grading evidence",
+      });
+    }
+    if (material.evidence.sha256 === material.grader.artifact.sha256) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evidence", "sha256"],
+        message: "grading evidence must be distinct from the grader implementation",
       });
     }
     for (let index = 1; index < material.dimensions.length; index++) {
