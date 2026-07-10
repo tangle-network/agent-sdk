@@ -456,6 +456,8 @@ type MutuallyAssignable<A, B> = [A] extends [B]
     ? true
     : never
   : never;
+type V2MustNotSatisfyOriginalReceipt =
+  AgentCandidateRunReceiptV2 extends AgentCandidateRunReceipt ? never : true;
 
 const _materializationReceiptSchemaMatchesType: MutuallyAssignable<
   z.infer<typeof agentCandidateMaterializationReceiptSchema>,
@@ -477,8 +479,10 @@ const _runReceiptV2SchemaMatchesType: MutuallyAssignable<
   z.infer<typeof agentCandidateRunReceiptV2Schema>,
   AgentCandidateRunReceiptV2
 > = true;
+const _v2MustNotSatisfyOriginalReceipt: V2MustNotSatisfyOriginalReceipt = true;
 void _materializationReceiptSchemaMatchesType;
 void _runReceiptSchemaMatchesType;
 void _anyRunReceiptSchemaMatchesType;
 void _runReceiptV1SchemaMatchesType;
 void _runReceiptV2SchemaMatchesType;
+void _v2MustNotSatisfyOriginalReceipt;
