@@ -182,7 +182,13 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         benchmarkVersion: z.string().min(1),
         taskId: z.string().min(1),
         splitDigest: sha256DigestSchema,
-        inputDigest: sha256DigestSchema,
+        instruction: z
+          .object({
+            encoding: z.literal("utf8"),
+            sha256: sha256DigestSchema,
+            byteLength: z.number().int().positive(),
+          })
+          .strict(),
         repository: z
           .object({
             identity: z.string().min(1),

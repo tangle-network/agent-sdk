@@ -61,7 +61,11 @@ function planFixture() {
       benchmarkVersion: "0.3",
       taskId: "task-1",
       splitDigest: candidateSha("2"),
-      inputDigest: candidateSha("3"),
+      instruction: {
+        encoding: "utf8" as const,
+        sha256: candidateSha("3"),
+        byteLength: 42,
+      },
       repository: {
         identity: "tangle-network/agent-runtime",
         rootIdentity: "tangle-network/agent-runtime",
@@ -159,6 +163,15 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         },
       }),
     ).toThrow(/one object format/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        task: {
+          ...plan.task,
+          instruction: { ...plan.task.instruction, byteLength: 0 },
+        },
+      }),
+    ).toThrow();
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,

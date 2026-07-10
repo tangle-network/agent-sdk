@@ -445,7 +445,11 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
     benchmarkVersion: string;
     taskId: string;
     splitDigest: Sha256Digest;
-    inputDigest: Sha256Digest;
+    instruction: {
+      encoding: "utf8";
+      sha256: Sha256Digest;
+      byteLength: number;
+    };
     repository: {
       identity: string;
       rootIdentity: string;
