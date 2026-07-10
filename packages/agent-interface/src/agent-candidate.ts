@@ -250,11 +250,25 @@ export type AgentCandidateLaunch =
   | AgentCandidateContainerLaunch
   | AgentCandidateEntrypointLaunch;
 
+/** Closed delivery modes for the exact agent-visible UTF-8 task instruction. */
+export type AgentCandidateInstructionDelivery =
+  /** Append one final argv element after candidate args and materializer flags. */
+  | { kind: "argv-append" }
+  /** Write the exact bytes to stdin, then close stdin. */
+  | { kind: "stdin-utf8" }
+  /** Write exact bytes to the fixed path and expose that path through the fixed env name. */
+  | {
+      kind: "utf8-file";
+      env: "TANGLE_CANDIDATE_TASK_PATH";
+      path: "/tangle/input/task.txt";
+    };
+
 /** Shell-free execution contract for replaying a candidate. */
 export interface AgentCandidateExecution {
   harness: HarnessType;
   harnessVersion: string;
   launch: AgentCandidateLaunch;
+  instructionDelivery: AgentCandidateInstructionDelivery;
   cwd: AgentCandidateWorkingDirectory;
   env?: Record<string, AgentCandidateConfigValue>;
   environment: AgentCandidateExecutionEnvironment;
@@ -445,7 +459,12 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
     benchmarkVersion: string;
     taskId: string;
     splitDigest: Sha256Digest;
-    inputDigest: Sha256Digest;
+    instruction: {
+      encoding: "utf8";
+      sha256: Sha256Digest;
+      byteLength: number;
+      delivery: AgentCandidateInstructionDelivery;
+    };
     repository: {
       identity: string;
       rootIdentity: string;

@@ -17,6 +17,8 @@ const isolation = {
   candidateSecrets: "disabled" as const,
 };
 
+const instructionDelivery = { kind: "argv-append" as const };
+
 describe("candidate code and execution schemas", () => {
   it("distinguishes disabled, proposer no-op, and real changes", () => {
     expect(() =>
@@ -104,6 +106,7 @@ describe("candidate code and execution schemas", () => {
           interpreter: "node",
           entrypoint: "dist/agent.js",
         },
+        instructionDelivery,
         cwd: { workspace: "candidate", path: "." },
         environment: {
           kind: "pinned-container",
@@ -117,6 +120,7 @@ describe("candidate code and execution schemas", () => {
         harness: "codex",
         harnessVersion: "0.1.0",
         launch: { kind: "container-command", executable: "bash", args: [] },
+        instructionDelivery,
         cwd: { workspace: "task", path: "." },
         environment: { kind: "evaluator-task-container" },
         isolation,
@@ -134,6 +138,7 @@ describe("candidate code and execution schemas", () => {
           interpreter: "node",
           entrypoint: "dist/agent.js",
         },
+        instructionDelivery: { kind: "stdin-utf8" },
         cwd: { workspace: "task", path: "." },
         environment: { kind: "evaluator-task-container" },
         isolation,
@@ -158,6 +163,7 @@ describe("candidate code and execution schemas", () => {
           harness: "codex",
           harnessVersion: "0.1.0",
           launch: { kind: "container-command", executable: "codex" },
+          instructionDelivery,
           cwd: { workspace: "task", path: "." },
           environment: {
             kind: "pinned-container",
@@ -173,6 +179,7 @@ describe("candidate code and execution schemas", () => {
         harness: "codex",
         harnessVersion: "0.1.0",
         launch: { kind: "container-command", executable: "codex" },
+        instructionDelivery,
         cwd: { workspace: "task", path: "." },
         environment: {
           kind: "pinned-container",
@@ -184,5 +191,54 @@ describe("candidate code and execution schemas", () => {
         isolation,
       }),
     ).not.toThrow();
+  });
+
+  it("freezes task-instruction delivery without an evaluator env override", () => {
+    const base = {
+      harness: "codex" as const,
+      harnessVersion: "0.1.0",
+      launch: { kind: "container-command" as const, executable: "codex" },
+      cwd: { workspace: "task" as const, path: "." },
+      environment: { kind: "evaluator-task-container" as const },
+      isolation,
+    };
+    for (const delivery of [
+      { kind: "argv-append" },
+      { kind: "stdin-utf8" },
+      {
+        kind: "utf8-file",
+        env: "TANGLE_CANDIDATE_TASK_PATH",
+        path: "/tangle/input/task.txt",
+      },
+    ]) {
+      expect(() =>
+        agentCandidateExecutionSchema.parse({
+          ...base,
+          instructionDelivery: delivery,
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      agentCandidateExecutionSchema.parse({
+        ...base,
+        instructionDelivery: {
+          kind: "utf8-file",
+          env: "TASK_PATH",
+          path: "/tmp/task.txt",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      agentCandidateExecutionSchema.parse({
+        ...base,
+        instructionDelivery,
+        env: {
+          TANGLE_CANDIDATE_TASK_PATH: {
+            kind: "public",
+            value: "/tmp/override.txt",
+          },
+        },
+      }),
+    ).toThrow(/evaluator exclusively owns/);
   });
 });

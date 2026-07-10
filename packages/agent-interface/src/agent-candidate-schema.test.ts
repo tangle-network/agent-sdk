@@ -381,7 +381,12 @@ describe("candidate receipts", () => {
       benchmarkVersion: "0.3",
       taskId: "pier-task-1",
       splitDigest: candidateSha("f"),
-      inputDigest: candidateSha("e"),
+      instruction: {
+        encoding: "utf8" as const,
+        sha256: candidateSha("e"),
+        byteLength: 37,
+        delivery: { kind: "argv-append" as const },
+      },
       repository: {
         identity: "r360/pier-synthetic-task-1",
         rootIdentity: "r360/pier-synthetic",

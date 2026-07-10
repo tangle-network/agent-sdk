@@ -61,7 +61,16 @@ function planFixture() {
       benchmarkVersion: "0.3",
       taskId: "task-1",
       splitDigest: candidateSha("2"),
-      inputDigest: candidateSha("3"),
+      instruction: {
+        encoding: "utf8" as const,
+        sha256: candidateSha("3"),
+        byteLength: 42,
+        delivery: {
+          kind: "utf8-file" as const,
+          env: "TANGLE_CANDIDATE_TASK_PATH" as const,
+          path: "/tangle/input/task.txt" as const,
+        },
+      },
       repository: {
         identity: "tangle-network/agent-runtime",
         rootIdentity: "tangle-network/agent-runtime",
@@ -109,7 +118,12 @@ function planFixture() {
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
-      env: {},
+      env: {
+        TANGLE_CANDIDATE_TASK_PATH: {
+          kind: "public" as const,
+          value: "/tangle/input/task.txt",
+        },
+      },
       cwd: { workspace: "task" as const, path: "." },
     },
     memory: { mode: "disabled" as const },
@@ -159,6 +173,15 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         },
       }),
     ).toThrow(/one object format/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        task: {
+          ...plan.task,
+          instruction: { ...plan.task.instruction, byteLength: 0 },
+        },
+      }),
+    ).toThrow();
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
@@ -267,6 +290,34 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         limits: { ...plan.limits, maxSteps: 0 },
       }),
     ).toThrow();
+  });
+
+  it("binds exact task-instruction delivery outside both workspaces", () => {
+    const plan = planFixture();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        launch: { ...plan.launch, env: {} },
+      }),
+    ).toThrow(/signed fixed task path/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        workspaces: { ...plan.workspaces, taskRoot: "/tangle" },
+      }),
+    ).toThrow(/outside both workspaces/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        task: {
+          ...plan.task,
+          instruction: {
+            ...plan.task.instruction,
+            delivery: { kind: "argv-append" },
+          },
+        },
+      }),
+    ).toThrow(/cannot expose an instruction path/);
   });
 
   it("requires active workspace bytes and fresh reset evidence", () => {

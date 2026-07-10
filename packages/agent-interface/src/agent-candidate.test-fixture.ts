@@ -62,6 +62,7 @@ export function candidateFixture() {
         entrypoint: "dist/agent.js",
         args: [{ kind: "public", value: "--mode=benchmark" }],
       },
+      instructionDelivery: { kind: "argv-append" },
       cwd: { workspace: "candidate", path: "." },
       env: {
         NODE_ENV: { kind: "public", value: "production" },
