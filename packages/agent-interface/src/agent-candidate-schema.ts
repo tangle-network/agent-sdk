@@ -168,6 +168,7 @@ export * from "./agent-candidate-artifact-schema.js";
 export * from "./agent-candidate-code-schema.js";
 export * from "./agent-candidate-execution-plan-schema.js";
 export * from "./agent-candidate-lineage-schema.js";
+export * from "./agent-candidate-outcome-schema.js";
 export * from "./agent-candidate-profile-schema.js";
 export * from "./agent-candidate-receipt-schema.js";
 export { sha256DigestSchema } from "./agent-candidate-schema-common.js";

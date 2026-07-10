@@ -305,6 +305,17 @@ export interface AgentCandidateSpend {
   modelCalls: number;
 }
 
+/** Lossless evaluator-owned usage totals for one candidate execution. */
+export interface AgentCandidateFixedSpend {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  modelCalls: number;
+  /** Integer billionths of one US dollar. */
+  costUsdNanos: number;
+}
+
 /** Evidence and ancestry that produced the immutable candidate. */
 export interface AgentCandidateLineage {
   source: "optimizer" | "human" | "import" | "compound";
@@ -606,7 +617,125 @@ export interface AgentCandidateRunReceiptV1 {
   digest: Sha256Digest;
 }
 
+/** One evaluator-mediated model call in a terminal settlement. */
+export interface AgentCandidateModelSettlementCall {
+  callId: string;
+  traceSpanId: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  costUsdNanos: number;
+}
+
+/** Canonical model-access ledger after the evaluator has revoked the grant. */
+export interface AgentCandidateModelSettlementMaterialV1 {
+  schemaVersion: 1;
+  kind: "agent-candidate-model-settlement-material";
+  executionPlanDigest: Sha256Digest;
+  preparationId: string;
+  grantDigest: Sha256Digest;
+  closed: true;
+  resolved: AgentCandidateResolvedModel;
+  calls: AgentCandidateModelSettlementCall[];
+  usage: AgentCandidateFixedSpend;
+}
+
+export interface AgentCandidateModelSettlementEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-model-settlement";
+  digest: Sha256Digest;
+  material: AgentCandidateModelSettlementMaterialV1;
+  artifact: AgentCandidateCapturedArtifact;
+}
+
+/** Git identity before or after a task execution. */
+export interface AgentCandidateRepositoryState {
+  identity: string;
+  rootIdentity: string;
+  commit: string;
+  tree: string;
+}
+
+/** Canonical repository result produced by the candidate on one task. */
+export interface AgentCandidateTaskOutcomeMaterialV1 {
+  schemaVersion: 1;
+  kind: "agent-candidate-task-outcome-material";
+  executionPlanDigest: Sha256Digest;
+  baseRepository: AgentCandidateRepositoryState;
+  resultRepository: AgentCandidateRepositoryState;
+  afterState: AgentCandidateWorkspaceSnapshotEvidence;
+  gitDiff: {
+    format: "git-diff-binary";
+    artifact: AgentCandidateArtifactRef;
+  };
+}
+
+export interface AgentCandidateTaskOutcomeEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-task-outcome";
+  digest: Sha256Digest;
+  material: AgentCandidateTaskOutcomeMaterialV1;
+  artifact: AgentCandidateCapturedArtifact;
+}
+
+export interface AgentCandidateBenchmarkDimension {
+  name: string;
+  score: number;
+}
+
+/** Canonical executable-grade result for one task outcome. */
+export interface AgentCandidateBenchmarkResultMaterialV1 {
+  schemaVersion: 1;
+  kind: "agent-candidate-benchmark-result-material";
+  executionPlanDigest: Sha256Digest;
+  taskOutcomeDigest: Sha256Digest;
+  benchmark: {
+    name: string;
+    version: string;
+    taskId: string;
+    splitDigest: Sha256Digest;
+  };
+  grader: {
+    name: string;
+    version: string;
+    artifact: AgentCandidateArtifactRef;
+  };
+  score: number;
+  passed: boolean;
+  dimensions: AgentCandidateBenchmarkDimension[];
+}
+
+export interface AgentCandidateBenchmarkResultEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-benchmark-result";
+  digest: Sha256Digest;
+  material: AgentCandidateBenchmarkResultMaterialV1;
+  artifact: AgentCandidateCapturedArtifact;
+}
+
+/**
+ * Terminal candidate receipt with lossless spend, exact repository output,
+ * and executable benchmark evidence. V1 fields remain present for consumers
+ * that have not yet adopted the stronger evidence surfaces.
+ */
+export interface AgentCandidateRunReceiptV2
+  extends Omit<AgentCandidateRunReceiptV1, "schemaVersion"> {
+  schemaVersion: 2;
+  fixedUsage: AgentCandidateFixedSpend;
+  modelSettlement: AgentCandidateModelSettlementEvidence;
+  taskOutcome: AgentCandidateTaskOutcomeEvidence;
+  benchmarkResult: AgentCandidateBenchmarkResultEvidence;
+}
+
+/** Backward-compatible V1 receipt name. */
 export type AgentCandidateRunReceipt = AgentCandidateRunReceiptV1;
+
+/** Explicit parser target for consumers that accept both receipt generations. */
+export type AgentCandidateRunReceiptAnyVersion =
+  | AgentCandidateRunReceiptV1
+  | AgentCandidateRunReceiptV2;
 
 /** Declare a candidate bundle while retaining literal inference. */
 export function defineAgentCandidateBundle<T extends AgentCandidateBundle>(
