@@ -13,7 +13,10 @@ import type {
   AgentCandidatePinnedContainerEnvironment,
   AgentCandidateWorkingDirectory,
 } from "./agent-candidate.js";
-import { agentCandidateEmbeddedArtifactSchema } from "./agent-candidate-artifact-schema.js";
+import {
+  agentCandidateEmbeddedArtifactSchema,
+  agentCandidateWorkspaceSnapshotEvidenceSchema,
+} from "./agent-candidate-artifact-schema.js";
 import {
   agentCandidateConfigValueSchema,
   agentCandidateGitHubRepositorySchema,
@@ -213,5 +216,13 @@ export const agentCandidateExecutionSchema = z
     cwd: agentCandidateWorkingDirectorySchema,
     env: environmentConfigSchema.optional(),
     environment: agentCandidateExecutionEnvironmentSchema,
+    workspace: agentCandidateWorkspaceSnapshotEvidenceSchema.optional(),
+    isolation: z
+      .object({
+        network: z.literal("disabled"),
+        remoteIntegrations: z.literal("disabled"),
+        candidateSecrets: z.literal("disabled"),
+      })
+      .strict(),
   })
   .strict() satisfies z.ZodType<AgentCandidateExecution>;

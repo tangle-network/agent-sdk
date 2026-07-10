@@ -23,9 +23,8 @@ export const agentCandidateMemoryPolicySchema = z.discriminatedUnion("mode", [
   z
     .object({
       mode: z.literal("isolated"),
-      namespace: z.string().min(1),
+      scope: z.literal("task"),
       seed: agentCandidateArtifactRefSchema.optional(),
-      crossTaskWrites: z.literal(false),
     })
     .strict(),
 ]) satisfies z.ZodType<AgentCandidateMemoryPolicy>;

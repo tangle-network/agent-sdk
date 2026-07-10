@@ -53,6 +53,13 @@ export const agentCandidateBundleSchema = z
         message: "execution harness must match the candidate profile preference",
       });
     }
+    if (bundle.lineage.parentDigests?.includes(bundle.digest)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lineage", "parentDigests"],
+        message: "a candidate cannot name itself as a parent",
+      });
+    }
 
     if (bundle.code.kind === "disabled") {
       if (bundle.execution.cwd.workspace !== "task") {
@@ -69,12 +76,65 @@ export const agentCandidateBundleSchema = z
           message: "disabled code controls must use a container command",
         });
       }
+      if (bundle.execution.workspace !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["execution", "workspace"],
+          message: "disabled code cannot carry a candidate workspace",
+        });
+      }
+      if (
+        bundle.lineage.source === "optimizer" ||
+        bundle.lineage.source === "compound"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["lineage", "source"],
+          message: "disabled controls cannot claim proposer lineage",
+        });
+      }
     } else {
-      if (bundle.execution.launch.kind !== "candidate-entrypoint") {
+      const launch = bundle.execution.launch;
+      if (launch.kind !== "candidate-entrypoint") {
         ctx.addIssue({
           code: "custom",
           path: ["execution", "launch"],
           message: "an active code surface must launch its candidate entrypoint",
+        });
+      }
+      if (bundle.execution.workspace === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["execution", "workspace"],
+          message: "active code requires a complete candidate workspace",
+        });
+      } else if (bundle.execution.workspace.material.files.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["execution", "workspace", "material", "files"],
+          message: "active candidate workspaces cannot be empty",
+        });
+      } else if (
+        launch.kind === "candidate-entrypoint" &&
+        !bundle.execution.workspace.material.files.some(
+          (file) => file.path === launch.entrypoint,
+        )
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["execution", "launch", "entrypoint"],
+          message: "candidate entrypoint must exist in the pinned workspace manifest",
+        });
+      }
+      if (
+        bundle.code.kind === "no-op" &&
+        bundle.lineage.source !== "optimizer" &&
+        bundle.lineage.source !== "compound"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["lineage", "source"],
+          message: "proposer no-op candidates require optimizer or compound lineage",
         });
       }
     }
@@ -94,6 +154,7 @@ void _bundleSchemaMatchesType;
 
 export * from "./agent-candidate-artifact-schema.js";
 export * from "./agent-candidate-code-schema.js";
+export * from "./agent-candidate-execution-plan-schema.js";
 export * from "./agent-candidate-lineage-schema.js";
 export * from "./agent-candidate-profile-schema.js";
 export * from "./agent-candidate-receipt-schema.js";

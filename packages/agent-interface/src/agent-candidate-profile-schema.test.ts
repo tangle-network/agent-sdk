@@ -10,26 +10,29 @@ describe("agentCandidateProfileSchema", () => {
     ).toThrow(/Unrecognized key/);
   });
 
-  it("uses secret refs in environment, headers, MCP args, and hook args", () => {
+  it("allows only public local process configuration", () => {
     expect(() =>
       agentCandidateProfileSchema.parse({
         mcp: {
-          github: {
-            transport: "http",
-            url: { kind: "https", url: "https://mcp.example/api" },
-            headers: {
-              Authorization: { kind: "secret", name: "GITHUB_TOKEN" },
-            },
-          },
           local: {
             transport: "stdio",
             command: "local-mcp",
-            args: [
-              { kind: "public", value: "--token" },
-              { kind: "secret", name: "GITHUB_TOKEN" },
-            ],
+            args: [{ kind: "public", value: "--read-only" }],
           },
         },
+        hooks: {
+          beforeRun: [
+            {
+              executable: "prepare-agent",
+              args: [{ kind: "public", value: "--offline" }],
+            },
+          ],
+        },
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      agentCandidateProfileSchema.parse({
         hooks: {
           beforeRun: [
             {
@@ -39,19 +42,7 @@ describe("agentCandidateProfileSchema", () => {
           ],
         },
       }),
-    ).not.toThrow();
-
-    expect(() =>
-      agentCandidateProfileSchema.parse({
-        mcp: {
-          github: {
-            headers: {
-              Authorization: { kind: "public", value: "Bearer plaintext-token" },
-            },
-          },
-        },
-      }),
-    ).toThrow(/secret reference/);
+    ).toThrow();
     expect(() =>
       agentCandidateProfileSchema.parse({
         mcp: {
@@ -60,19 +51,20 @@ describe("agentCandidateProfileSchema", () => {
           },
         },
       }),
-    ).toThrow(/resembles a credential/);
+    ).toThrow(/cannot carry credentials/);
   });
 
-  it("requires one unambiguous MCP transport shape", () => {
+  it("forbids remote MCP and process fields on disabled entries", () => {
     for (const server of [
       { transport: "stdio", url: { kind: "https", url: "https://mcp.example/api" } },
       { transport: "http", command: "local-mcp" },
       { transport: "sse" },
       { command: "local-mcp", headers: { Authorization: { kind: "secret", name: "TOKEN" } } },
+      { enabled: false, transport: "stdio", command: "local-mcp" },
     ]) {
       expect(() =>
         agentCandidateProfileSchema.parse({ mcp: { invalid: server } }),
-      ).toThrow(/MCP servers/);
+      ).toThrow();
     }
     expect(() =>
       agentCandidateProfileSchema.parse({
@@ -107,12 +99,39 @@ describe("agentCandidateProfileSchema", () => {
     }
   });
 
-  it("rejects credential-bearing metadata keys", () => {
+  it("rejects all candidate-authored metadata and ambient connections", () => {
     expect(() =>
       agentCandidateProfileSchema.parse({
         metadata: { nested: { database_url: "plaintext" } },
       }),
-    ).toThrow(/credential-bearing keys/);
+    ).toThrow(/Unrecognized key/);
+    expect(() =>
+      agentCandidateProfileSchema.parse({
+        connections: [
+          { connectionId: "ambient-github", capabilities: ["repo.write"] },
+        ],
+      }),
+    ).toThrow(/Unrecognized key/);
+  });
+
+  it("requires every explicit model route to use the primary literal", () => {
+    expect(() =>
+      agentCandidateProfileSchema.parse({
+        model: { default: "openai/gpt-5.4", small: "openai/gpt-5.4" },
+        subagents: { reviewer: { model: "openai/gpt-5.4" } },
+        modes: { planning: { model: "openai/gpt-5.4" } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateProfileSchema.parse({
+        model: { default: "openai/gpt-5.4", small: "openai/gpt-5-mini" },
+      }),
+    ).toThrow(/exact primary model/);
+    expect(() =>
+      agentCandidateProfileSchema.parse({
+        subagents: { reviewer: { model: "openai/gpt-5.4" } },
+      }),
+    ).toThrow(/exact primary model/);
   });
 
   it("rejects lone surrogates even through generic profile sub-schemas", () => {

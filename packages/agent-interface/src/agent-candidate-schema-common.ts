@@ -176,38 +176,28 @@ function isPublicConfigValue(value: string): boolean {
   );
 }
 
-const secretNameSchema = z.string().regex(environmentNamePattern);
-
-export const agentCandidateConfigValueSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("public"),
-      value: z
-        .string()
-        .refine(
-          isPublicConfigValue,
-          "public config resembles a credential; use a named secret reference",
-        ),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("secret"),
-      name: secretNameSchema,
-    })
-    .strict(),
-]) satisfies z.ZodType<AgentCandidateConfigValue>;
+export const agentCandidateConfigValueSchema = z
+  .object({
+    kind: z.literal("public"),
+    value: z
+      .string()
+      .refine(
+        isPublicConfigValue,
+        "candidate config cannot carry credentials; the evaluator owns model authorization",
+      ),
+  })
+  .strict() satisfies z.ZodType<AgentCandidateConfigValue>;
 
 function configRecordSchema(keySchema: z.ZodString) {
   return z
     .record(keySchema, agentCandidateConfigValueSchema)
     .superRefine((config, ctx) => {
       for (const [name, value] of Object.entries(config)) {
-        if (secretNamePattern.test(name) && value.kind !== "secret") {
+        if (secretNamePattern.test(name)) {
           ctx.addIssue({
             code: "custom",
             path: [name],
-            message: "credential-bearing config must use a named secret reference",
+            message: "candidate config cannot declare credential-bearing names",
           });
         }
       }

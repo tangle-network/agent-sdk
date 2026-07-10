@@ -7,6 +7,8 @@ import {
   agentCandidateGitHubResourceSchema,
   agentCandidateInlineResourceSchema,
   agentCandidateResourcesSchema,
+  agentCandidateWorkspaceManifestMaterialSchema,
+  agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
 import { candidateGit, candidateSha } from "./agent-candidate.test-fixture.js";
 
@@ -181,5 +183,84 @@ describe("candidate artifact schemas", () => {
     expect(() =>
       agentCandidateResourcesSchema.parse({ files: [], failOnError: false }),
     ).toThrow();
+  });
+
+  it("binds a sorted regular-file-only workspace manifest", () => {
+    const files = [
+      {
+        path: "dist/agent.js",
+        mode: 0o755,
+        sha256: candidateSha("1"),
+        byteLength: 42,
+      },
+      {
+        path: "dist/lib.js",
+        mode: 0o644,
+        sha256: candidateSha("2"),
+        byteLength: 10,
+      },
+    ];
+    expect(() =>
+      agentCandidateWorkspaceManifestMaterialSchema.parse({
+        schemaVersion: 1,
+        kind: "agent-candidate-workspace-manifest",
+        files,
+      }),
+    ).not.toThrow();
+    for (const invalidFiles of [
+      [...files].reverse(),
+      [files[0], files[0]],
+      [{ ...files[0], path: "../escape" }],
+      [{ ...files[0], mode: 0o777 }],
+      [{ ...files[0], kind: "symlink", target: "/etc/passwd" }],
+    ]) {
+      expect(() =>
+        agentCandidateWorkspaceManifestMaterialSchema.parse({
+          schemaVersion: 1,
+          kind: "agent-candidate-workspace-manifest",
+          files: invalidFiles,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("requires workspace manifest and archive evidence", () => {
+    const evidence = {
+      schemaVersion: 1,
+      kind: "agent-candidate-workspace-snapshot",
+      digest: candidateSha("1"),
+      material: {
+        schemaVersion: 1,
+        kind: "agent-candidate-workspace-manifest",
+        files: [],
+      },
+      manifest: {
+        encoding: "base64",
+        content: "e30=",
+        sha256: candidateSha("1"),
+        byteLength: 2,
+      },
+      archive: {
+        encoding: "base64",
+        content: "e30=",
+        sha256: candidateSha("2"),
+        byteLength: 2,
+      },
+    };
+    expect(() =>
+      agentCandidateWorkspaceSnapshotEvidenceSchema.parse(evidence),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateWorkspaceSnapshotEvidenceSchema.parse({
+        ...evidence,
+        manifest: { ...evidence.manifest, sha256: candidateSha("3") },
+      }),
+    ).toThrow(/canonical manifest hash/);
+    expect(() =>
+      agentCandidateWorkspaceSnapshotEvidenceSchema.parse({
+        ...evidence,
+        archive: { ...evidence.archive, content: "", byteLength: 0 },
+      }),
+    ).toThrow(/non-empty/);
   });
 });

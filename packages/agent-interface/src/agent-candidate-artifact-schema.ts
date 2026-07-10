@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AgentCandidateArtifactRef,
+  AgentCandidateCapturedArtifact,
   AgentCandidateEmbeddedArtifact,
   AgentCandidateFileMount,
   AgentCandidateGitHubResource,
@@ -9,6 +10,8 @@ import type {
   AgentCandidateResourceRef,
   AgentCandidateResources,
   AgentCandidateS3Locator,
+  AgentCandidateWorkspaceManifestMaterialV1,
+  AgentCandidateWorkspaceSnapshotEvidence,
 } from "./agent-candidate.js";
 import {
   agentCandidateGitHubRepositorySchema,
@@ -97,6 +100,72 @@ export const agentCandidateEmbeddedArtifactSchema = z
   })
   .strict()
   .superRefine(validateEmbeddedArtifact) satisfies z.ZodType<AgentCandidateEmbeddedArtifact>;
+
+export const agentCandidateCapturedArtifactSchema = z.union([
+  agentCandidateArtifactRefSchema,
+  agentCandidateEmbeddedArtifactSchema,
+]) satisfies z.ZodType<AgentCandidateCapturedArtifact>;
+
+export const agentCandidateWorkspaceManifestMaterialSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("agent-candidate-workspace-manifest"),
+    files: z.array(
+      z
+        .object({
+          path: z
+            .string()
+            .refine(
+              (value) => isSafeRelativePath(value, false),
+              "workspace manifest paths must be canonical and relative",
+            ),
+          mode: z.union([z.literal(0o644), z.literal(0o755)]),
+          sha256: sha256DigestSchema,
+          byteLength: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((material, ctx) => {
+    for (let index = 1; index < material.files.length; index++) {
+      const previous = material.files[index - 1]?.path ?? "";
+      const current = material.files[index]?.path ?? "";
+      if (previous >= current) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["files", index, "path"],
+          message: "workspace manifest paths must be unique and lexicographically sorted",
+        });
+      }
+    }
+  }) satisfies z.ZodType<AgentCandidateWorkspaceManifestMaterialV1>;
+
+export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("agent-candidate-workspace-snapshot"),
+    digest: sha256DigestSchema,
+    material: agentCandidateWorkspaceManifestMaterialSchema,
+    manifest: agentCandidateCapturedArtifactSchema,
+    archive: agentCandidateCapturedArtifactSchema,
+  })
+  .strict()
+  .superRefine((evidence, ctx) => {
+    if (evidence.manifest.sha256 !== evidence.digest) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["manifest", "sha256"],
+        message: "workspace digest must equal the canonical manifest hash",
+      });
+    }
+    if (evidence.manifest.byteLength === 0 || evidence.archive.byteLength === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "workspace evidence requires non-empty manifest and archive bytes",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateWorkspaceSnapshotEvidence>;
 
 export function validateEmbeddedArtifact(
   artifact: { content: string; byteLength: number },

@@ -11,6 +11,12 @@ const repository = {
   repo: "agent-runtime",
 };
 
+const isolation = {
+  network: "disabled" as const,
+  remoteIntegrations: "disabled" as const,
+  candidateSecrets: "disabled" as const,
+};
+
 describe("candidate code and execution schemas", () => {
   it("distinguishes disabled, proposer no-op, and real changes", () => {
     expect(() =>
@@ -103,6 +109,7 @@ describe("candidate code and execution schemas", () => {
           kind: "pinned-container",
           container: { image: "node:22", indexDigest: candidateSha("1") },
         },
+        isolation,
       }),
     ).not.toThrow();
     expect(() =>
@@ -112,6 +119,7 @@ describe("candidate code and execution schemas", () => {
         launch: { kind: "container-command", executable: "bash", args: [] },
         cwd: { workspace: "task", path: "." },
         environment: { kind: "evaluator-task-container" },
+        isolation,
       }),
     ).toThrow(/non-shell/);
   });
@@ -128,6 +136,7 @@ describe("candidate code and execution schemas", () => {
         },
         cwd: { workspace: "task", path: "." },
         environment: { kind: "evaluator-task-container" },
+        isolation,
       }),
     ).not.toThrow();
   });
@@ -151,6 +160,7 @@ describe("candidate code and execution schemas", () => {
             kind: "pinned-container",
             container: { image, indexDigest: candidateSha("1") },
           },
+          isolation,
         }),
       ).toThrow();
     }

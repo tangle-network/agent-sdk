@@ -12,6 +12,10 @@ export function candidateFixture() {
     profile: {
       name: "repository-agent",
       harness: "codex",
+      model: {
+        default: "openai/gpt-5.4",
+        reasoningEffort: "high",
+      },
       prompt: { systemPrompt: "Solve the repository task." },
       resources: {
         files: [
@@ -61,11 +65,44 @@ export function candidateFixture() {
       cwd: { workspace: "candidate", path: "." },
       env: {
         NODE_ENV: { kind: "public", value: "production" },
-        OPENAI_API_KEY: { kind: "secret", name: "OPENAI_API_KEY" },
       },
       environment: {
         kind: "pinned-container",
         container: { image: "node:22", indexDigest: candidateSha("6") },
+      },
+      workspace: {
+        schemaVersion: 1,
+        kind: "agent-candidate-workspace-snapshot",
+        digest: candidateSha("c"),
+        material: {
+          schemaVersion: 1,
+          kind: "agent-candidate-workspace-manifest",
+          files: [
+            {
+              path: "dist/agent.js",
+              mode: 0o755,
+              sha256: candidateSha("d"),
+              byteLength: 42,
+            },
+          ],
+        },
+        manifest: {
+          encoding: "base64",
+          content: "e30=",
+          sha256: candidateSha("c"),
+          byteLength: 2,
+        },
+        archive: {
+          encoding: "base64",
+          content: "e30=",
+          sha256: candidateSha("e"),
+          byteLength: 2,
+        },
+      },
+      isolation: {
+        network: "disabled",
+        remoteIntegrations: "disabled",
+        candidateSecrets: "disabled",
       },
     },
     knowledge: {
@@ -83,8 +120,7 @@ export function candidateFixture() {
     },
     memory: {
       mode: "isolated",
-      namespace: "candidate-run",
-      crossTaskWrites: false,
+      scope: "task",
     },
     lineage: {
       source: "optimizer",

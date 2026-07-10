@@ -3,8 +3,12 @@ import type {
   AgentProfileFileMount,
   AgentProfileHookCommand,
   AgentProfileMcpServer,
+  AgentProfileMode,
+  AgentProfileModelHints,
   AgentProfileResourceRef,
   AgentProfileResources,
+  AgentSubagentProfile,
+  ReasoningEffort,
 } from "./agent-profile.js";
 import type { HarnessType } from "./harness.js";
 
@@ -47,26 +51,18 @@ export interface AgentCandidateEmbeddedArtifact {
   byteLength: number;
 }
 
+/** Captured bytes are either embedded for portable/local runs or stored by a closed resolver. */
+export type AgentCandidateCapturedArtifact =
+  | AgentCandidateArtifactRef
+  | AgentCandidateEmbeddedArtifact;
+
 /** A deliberately public value; producers remain responsible for secret scanning. */
 export interface AgentCandidatePublicValue {
   kind: "public";
   value: string;
 }
 
-/** A named secret resolved only by the sealed executor. */
-export interface AgentCandidateSecretRef {
-  kind: "secret";
-  name: string;
-}
-
-export type AgentCandidateConfigValue =
-  | AgentCandidatePublicValue
-  | AgentCandidateSecretRef;
-
-export interface AgentCandidateHttpsEndpoint {
-  kind: "https";
-  url: string;
-}
+export type AgentCandidateConfigValue = AgentCandidatePublicValue;
 
 export interface AgentCandidateGitHubRepository {
   kind: "github";
@@ -124,12 +120,21 @@ export interface AgentCandidateResources
 }
 
 export interface AgentCandidateMcpServer
-  extends Omit<AgentProfileMcpServer, "args" | "env" | "headers" | "url"> {
+  extends Omit<
+    AgentProfileMcpServer,
+    "transport" | "args" | "env" | "headers" | "url" | "metadata"
+  > {
+  transport?: "stdio";
   args?: AgentCandidateConfigValue[];
   env?: Record<string, AgentCandidateConfigValue>;
-  url?: AgentCandidateHttpsEndpoint;
-  headers?: Record<string, AgentCandidateConfigValue>;
 }
+
+export type AgentCandidateModelHints = Omit<AgentProfileModelHints, "metadata">;
+export type AgentCandidateSubagentProfile = Omit<
+  AgentSubagentProfile,
+  "metadata"
+>;
+export type AgentCandidateMode = Omit<AgentProfileMode, "metadata">;
 
 export interface AgentCandidateHookCommand
   extends Omit<AgentProfileHookCommand, "command" | "env"> {
@@ -146,11 +151,22 @@ export interface AgentCandidateHookCommand
 export interface AgentCandidateProfile
   extends Omit<
     AgentProfile,
-    "mcp" | "resources" | "hooks" | "extensions"
+    | "model"
+    | "mcp"
+    | "connections"
+    | "subagents"
+    | "resources"
+    | "hooks"
+    | "modes"
+    | "metadata"
+    | "extensions"
   > {
+  model?: AgentCandidateModelHints;
   mcp?: Record<string, AgentCandidateMcpServer>;
+  subagents?: Record<string, AgentCandidateSubagentProfile>;
   resources?: AgentCandidateResources;
   hooks?: Record<string, AgentCandidateHookCommand[]>;
+  modes?: Record<string, AgentCandidateMode>;
 }
 
 export interface AgentCandidateCodeDisabled {
@@ -241,6 +257,13 @@ export interface AgentCandidateExecution {
   cwd: AgentCandidateWorkingDirectory;
   env?: Record<string, AgentCandidateConfigValue>;
   environment: AgentCandidateExecutionEnvironment;
+  /** Complete executable directory after build, before task execution. */
+  workspace?: AgentCandidateWorkspaceSnapshotEvidence;
+  isolation: {
+    network: "disabled";
+    remoteIntegrations: "disabled";
+    candidateSecrets: "disabled";
+  };
 }
 
 /** Optional immutable knowledge snapshot mounted with the profile. */
@@ -249,14 +272,13 @@ export interface AgentCandidateKnowledge {
   manifest: AgentCandidateArtifactRef;
 }
 
-/** Memory is either absent or isolated per run; cross-task writes are forbidden. */
+/** Memory is absent or freshly evaluator-scoped to exactly one task. */
 export type AgentCandidateMemoryPolicy =
   | { mode: "disabled" }
   | {
       mode: "isolated";
-      namespace: string;
+      scope: "task";
       seed?: AgentCandidateArtifactRef;
-      crossTaskWrites: false;
     };
 
 /** Captured model spend for one phase of candidate production. */
@@ -322,10 +344,173 @@ export interface AgentCandidateOciPlatform {
 }
 
 export interface AgentCandidateResolvedModel {
+  requested: string;
   provider: string;
   model: string;
-  snapshot?: string;
+  snapshot: string;
+  reasoningEffort: ReasoningEffort;
 }
+
+/** Canonical, digest-free profile-plan identity document. */
+export interface AgentCandidateProfilePlanMaterialV1 {
+  version: 1;
+  harness: HarnessType;
+  files: Array<{
+    relPath: string;
+    mode: number;
+    contentSha256: Sha256Digest;
+  }>;
+  env: Record<string, AgentCandidateConfigValue>;
+  flags: AgentCandidateConfigValue[];
+  unsupported: Array<{ dimension: string; reason: string }>;
+}
+
+export interface AgentCandidateWorkspaceManifestMaterialV1 {
+  schemaVersion: 1;
+  kind: "agent-candidate-workspace-manifest";
+  files: Array<{
+    path: string;
+    mode: 0o644 | 0o755;
+    sha256: Sha256Digest;
+    byteLength: number;
+  }>;
+}
+
+/** Content-addressed manifest of every file uploaded to one workspace. */
+export interface AgentCandidateWorkspaceSnapshotEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-workspace-snapshot";
+  digest: Sha256Digest;
+  material: AgentCandidateWorkspaceManifestMaterialV1;
+  manifest: AgentCandidateCapturedArtifact;
+  archive: AgentCandidateCapturedArtifact;
+}
+
+export interface AgentCandidateMemoryReset {
+  kind: "fresh";
+  evidence: AgentCandidateCapturedArtifact;
+  emptyStateDigest: Sha256Digest;
+}
+
+export type AgentCandidateEffectiveMemory =
+  | { mode: "disabled" }
+  | {
+      mode: "isolated";
+      scope: "task";
+      effectiveNamespace: string;
+      reset: AgentCandidateMemoryReset;
+      beforeState: AgentCandidateWorkspaceSnapshotEvidence;
+      seedDigest?: Sha256Digest;
+    };
+
+/** The exact evaluator-owned limits applied to every candidate arm. */
+export interface AgentCandidateExecutionLimits {
+  timeoutMs: number;
+  maxModelCalls: number;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  maxCostUsd: number;
+}
+
+/**
+ * Canonical, digest-free per-task execution identity document.
+ *
+ * RFC 8785 serialization of this material is stored verbatim by the receipt;
+ * its raw SHA-256 is the execution-plan digest.
+ */
+export interface AgentCandidateExecutionPlanMaterialV1 {
+  schemaVersion: 1;
+  kind: "agent-candidate-execution-plan-material";
+  bundleDigest: Sha256Digest;
+  executionId: string;
+  task: {
+    benchmark: string;
+    benchmarkVersion: string;
+    taskId: string;
+    splitDigest: Sha256Digest;
+    inputDigest: Sha256Digest;
+    workspace: AgentCandidateWorkspaceSnapshotEvidence;
+  };
+  workspaces: {
+    taskRoot: string;
+    candidateRoot?: string;
+  };
+  codeKind: AgentCandidateCode["kind"];
+  candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
+  profilePlanDigest: Sha256Digest;
+  harness: HarnessType;
+  harnessVersion: string;
+  container: {
+    source: AgentCandidateExecutionEnvironment["kind"];
+    image: string;
+    indexDigest: Sha256Digest;
+    manifestDigest: Sha256Digest;
+    platform: AgentCandidateOciPlatform;
+  };
+  model: {
+    policy: "single";
+    resolved: AgentCandidateResolvedModel;
+    access: {
+      kind: "evaluator-mediated";
+      grantDigest: Sha256Digest;
+    };
+    routes: Array<
+      | { kind: "primary"; requested?: string }
+      | { kind: "small"; requested: string }
+      | { kind: "mode"; name: string; requested: string }
+      | { kind: "subagent"; name: string; requested: string }
+    >;
+  };
+  launch: {
+    executable: string;
+    args: AgentCandidateConfigValue[];
+    env: Record<string, AgentCandidateConfigValue>;
+    cwd: AgentCandidateWorkingDirectory;
+  };
+  knowledgeManifestDigest?: Sha256Digest;
+  memory: AgentCandidateEffectiveMemory;
+  limits: AgentCandidateExecutionLimits;
+  network: { mode: "disabled" };
+}
+
+export interface AgentCandidateProfilePlanEvidence {
+  schemaVersion: 1;
+  kind: "agent-profile-workspace-plan";
+  digest: Sha256Digest;
+  material: AgentCandidateProfilePlanMaterialV1;
+  artifact: AgentCandidateCapturedArtifact;
+}
+
+export interface AgentCandidateExecutionPlanEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-execution-plan";
+  digest: Sha256Digest;
+  material: AgentCandidateExecutionPlanMaterialV1;
+  artifact: AgentCandidateCapturedArtifact;
+}
+
+export interface AgentCandidateTraceEvidence {
+  schemaVersion: 1;
+  artifact: AgentCandidateCapturedArtifact;
+  eventCount: number;
+  modelCallCount: number;
+}
+
+export interface AgentCandidateModelUsage {
+  resolved: AgentCandidateResolvedModel;
+  usage: AgentCandidateSpend;
+}
+
+export type AgentCandidateMemoryReceipt =
+  | { mode: "disabled" }
+  | {
+      mode: "isolated";
+      scope: "task";
+      effectiveNamespace: string;
+      resetEvidenceDigest: Sha256Digest;
+      beforeStateDigest: Sha256Digest;
+      afterState: AgentCandidateWorkspaceSnapshotEvidence;
+    };
 
 /** Proof emitted after a runtime materializes, but before it executes, a bundle. */
 export interface AgentCandidateMaterializationReceiptV1 {
@@ -333,14 +518,16 @@ export interface AgentCandidateMaterializationReceiptV1 {
   kind: "agent-candidate-materialization";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   bundleDigest: Sha256Digest;
-  profilePlanDigest: Sha256Digest;
-  executionPlanDigest: Sha256Digest;
+  profilePlan: AgentCandidateProfilePlanEvidence;
+  executionPlan: AgentCandidateExecutionPlanEvidence;
+  candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
   codeKind: AgentCandidateCode["kind"];
   materializedTree?: string;
   harness: HarnessType;
   harnessVersion: string;
   container: {
     source: AgentCandidateExecutionEnvironment["kind"];
+    image: string;
     indexDigest: Sha256Digest;
     manifestDigest: Sha256Digest;
     platform: AgentCandidateOciPlatform;
@@ -369,9 +556,10 @@ export interface AgentCandidateRunReceiptV1 {
   bundleDigest: Sha256Digest;
   materializationReceiptDigest: Sha256Digest;
   executionPlanDigest: Sha256Digest;
-  memory: AgentCandidateMemoryPolicy;
+  memory: AgentCandidateMemoryReceipt;
   usage: AgentCandidateSpend;
-  trace: AgentCandidateArtifactRef;
+  modelUsage: AgentCandidateModelUsage;
+  trace: AgentCandidateTraceEvidence;
   termination: AgentCandidateTermination;
   digest: Sha256Digest;
 }

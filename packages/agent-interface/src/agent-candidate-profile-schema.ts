@@ -1,27 +1,21 @@
 import { z } from "zod";
 import type {
   AgentCandidateHookCommand,
-  AgentCandidateHttpsEndpoint,
   AgentCandidateMcpServer,
   AgentCandidateProfile,
 } from "./agent-candidate.js";
 import { agentCandidateResourcesSchema } from "./agent-candidate-artifact-schema.js";
 import {
   agentCandidateConfigValueSchema,
-  candidateMetadataSchema,
   environmentConfigSchema,
-  headerConfigSchema,
   isCanonicalJsonValue,
-  isObviouslyPrivateHostname,
   isSafeExecutable,
   isSafeRelativePath,
   isWellFormedUnicode,
-  looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
 import {
   agentProfileConfidentialSchema,
-  agentProfileConnectionSchema,
   agentProfileModeSchema,
   agentProfileModelHintsSchema,
   agentProfilePermissionSchema,
@@ -29,43 +23,13 @@ import {
   agentSubagentProfileSchema,
 } from "./profile-schema.js";
 
-function isSafeHttpsEndpoint(value: string): boolean {
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    return (
-      url.protocol === "https:" &&
-      url.username === "" &&
-      url.password === "" &&
-      url.search === "" &&
-      url.hash === "" &&
-      !isObviouslyPrivateHostname(hostname) &&
-      !looksLikeCredential(value)
-    );
-  } catch {
-    return false;
-  }
-}
-
 const executableSchema = z
   .string()
   .refine(isSafeExecutable, "executable must be a canonical non-shell command");
 
-export const agentCandidateHttpsEndpointSchema = z
-  .object({
-    kind: z.literal("https"),
-    url: z
-      .string()
-      .refine(
-        isSafeHttpsEndpoint,
-        "HTTPS endpoint must be credential-free and not target an obvious private address",
-      ),
-  })
-  .strict() satisfies z.ZodType<AgentCandidateHttpsEndpoint>;
-
 export const agentCandidateMcpServerSchema = z
   .object({
-    transport: z.enum(["stdio", "sse", "http"]).optional(),
+    transport: z.literal("stdio").optional(),
     command: executableSchema.optional(),
     args: z.array(agentCandidateConfigValueSchema).optional(),
     env: environmentConfigSchema.optional(),
@@ -76,53 +40,30 @@ export const agentCandidateMcpServerSchema = z
         "MCP cwd must be a canonical workspace-relative path",
       )
       .optional(),
-    url: agentCandidateHttpsEndpointSchema.optional(),
-    headers: headerConfigSchema.optional(),
     enabled: z.boolean().optional(),
-    metadata: candidateMetadataSchema.optional(),
   })
   .strict()
   .superRefine((server, ctx) => {
-    if (
-      server.enabled === false &&
-      server.command === undefined &&
-      server.url === undefined
-    ) {
-      return;
-    }
-    const transport = server.transport ?? "stdio";
-    if (transport === "stdio") {
-      if (server.command === undefined) {
+    if (server.enabled === false) {
+      if (
+        server.transport !== undefined ||
+        server.command !== undefined ||
+        server.args !== undefined ||
+        server.env !== undefined ||
+        server.cwd !== undefined
+      ) {
         ctx.addIssue({
           code: "custom",
-          path: ["command"],
-          message: "stdio MCP servers require a command",
-        });
-      }
-      if (server.url !== undefined || server.headers !== undefined) {
-        ctx.addIssue({
-          code: "custom",
-          message: "stdio MCP servers cannot carry a URL or HTTP headers",
+          message: "disabled MCP servers cannot carry process fields",
         });
       }
       return;
     }
-    if (server.url === undefined) {
+    if (server.command === undefined) {
       ctx.addIssue({
         code: "custom",
-        path: ["url"],
-        message: `${transport} MCP servers require an HTTPS URL`,
-      });
-    }
-    if (
-      server.command !== undefined ||
-      server.args !== undefined ||
-      server.env !== undefined ||
-      server.cwd !== undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: `${transport} MCP servers cannot carry stdio process fields`,
+        path: ["command"],
+        message: "enabled stdio MCP servers require a command",
       });
     }
   }) satisfies z.ZodType<AgentCandidateMcpServer>;
@@ -139,13 +80,13 @@ export const agentCandidateHookCommandSchema = z
   .strict() satisfies z.ZodType<AgentCandidateHookCommand>;
 
 const candidateModelHintsSchema = agentProfileModelHintsSchema
-  .extend({ metadata: candidateMetadataSchema.optional() })
+  .omit({ metadata: true })
   .strict();
 const candidateSubagentSchema = agentSubagentProfileSchema
-  .extend({ metadata: candidateMetadataSchema.optional() })
+  .omit({ metadata: true })
   .strict();
 const candidateModeSchema = agentProfileModeSchema
-  .extend({ metadata: candidateMetadataSchema.optional() })
+  .omit({ metadata: true })
   .strict();
 
 export const agentCandidateProfileSchema = z
@@ -162,7 +103,6 @@ export const agentCandidateProfileSchema = z
       .optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     mcp: z.record(z.string(), agentCandidateMcpServerSchema).optional(),
-    connections: z.array(agentProfileConnectionSchema.strict()).optional(),
     subagents: z.record(z.string(), candidateSubagentSchema).optional(),
     resources: agentCandidateResourcesSchema.optional(),
     hooks: z
@@ -170,7 +110,6 @@ export const agentCandidateProfileSchema = z
       .optional(),
     modes: z.record(z.string(), candidateModeSchema).optional(),
     confidential: agentProfileConfidentialSchema.strict().optional(),
-    metadata: candidateMetadataSchema.optional(),
   })
   .strict()
   .superRefine((profile, ctx) => {
@@ -179,5 +118,31 @@ export const agentCandidateProfileSchema = z
         code: "custom",
         message: "candidate profile must contain only RFC 8785 JSON values",
       });
+    }
+    const primaryModel = profile.model?.default;
+    const alternateRoutes = [
+      ...(profile.model?.small === undefined
+        ? []
+        : [["model", "small", profile.model.small] as const]),
+      ...Object.entries(profile.subagents ?? {}).flatMap(([name, subagent]) =>
+        subagent.model === undefined
+          ? []
+          : [["subagents", name, "model", subagent.model] as const],
+      ),
+      ...Object.entries(profile.modes ?? {}).flatMap(([name, mode]) =>
+        mode.model === undefined
+          ? []
+          : [["modes", name, "model", mode.model] as const],
+      ),
+    ];
+    for (const route of alternateRoutes) {
+      const routeModel = route.at(-1);
+      if (primaryModel === undefined || routeModel !== primaryModel) {
+        ctx.addIssue({
+          code: "custom",
+          path: route.slice(0, -1),
+          message: "sealed candidates require every model route to use the exact primary model",
+        });
+      }
     }
   }) satisfies z.ZodType<AgentCandidateProfile>;
