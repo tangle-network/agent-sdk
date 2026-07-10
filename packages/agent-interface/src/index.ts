@@ -6,7 +6,14 @@
  */
 
 import type { InteractionRequest, InteractionResponse } from "./interaction.js";
+import type {
+  AgentExecutionOutcome,
+  DurablePlan,
+  PlanContinuation,
+  SdkPlanHost,
+} from "./plan.js";
 export type * from "./environment-provider.js";
+export * from "./plan.js";
 
 // Capabilities describe what a provider supports
 export type BackendCapabilities = {
@@ -320,6 +327,11 @@ export type StreamEvent =
       type: "interaction.cancel";
       id: string;
       reason?: string;
+    }
+  /** A durable plan was committed. This event is observational, not a live ask. */
+  | {
+      type: "plan.submitted";
+      plan: DurablePlan;
     };
 
 export type ToolInvocation = {
@@ -373,9 +385,12 @@ export type AgentExecutionInput = {
    * client-initiated retries of the same intent.
    */
   turnId?: string;
+  /** Server-owned continuation of a previously committed plan decision. */
+  planContinuation?: PlanContinuation;
 };
 
 export type AgentExecutionResult = {
+  outcome: AgentExecutionOutcome;
   text: string;
   toolInvocations: ToolInvocation[];
   reasoning?: string[];
@@ -674,6 +689,7 @@ export interface SdkTraceContext {
 export type SdkHostServices = {
   memoryHost: SdkMemoryHost;
   toolHost: SdkToolHost;
+  planHost: SdkPlanHost;
   recorder: SdkRecorder;
   providerConfig: ProviderConfig;
   traceContext?: SdkTraceContext;
