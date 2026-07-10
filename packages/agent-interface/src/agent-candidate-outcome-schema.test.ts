@@ -155,6 +155,7 @@ function runReceiptV2() {
       version: "0.3.0",
       artifact: durableArtifact("graders/pier-0.3.0.tar", "a", 1_000),
     },
+    evidence: durableArtifact("results/run-1/grader-output.json", "c", 500),
     score: 0.75,
     passed: true,
     dimensions: [
@@ -378,6 +379,36 @@ describe("candidate outcome contracts", () => {
         },
       }),
     ).toThrow(/grader bytes/);
+    const { evidence: _evidence, ...withoutEvidence } = material;
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse(withoutEvidence),
+    ).toThrow();
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse({
+        ...material,
+        evidence: { ...material.evidence, byteLength: 0 },
+      }),
+    ).toThrow(/non-empty durable grading evidence/);
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse({
+        ...material,
+        evidence: {
+          ...material.evidence,
+          sha256: material.grader.artifact.sha256,
+        },
+      }),
+    ).toThrow(/distinct from the grader implementation/);
+    expect(() =>
+      agentCandidateBenchmarkResultMaterialSchema.parse({
+        ...material,
+        evidence: {
+          encoding: "base64",
+          content: "e30=",
+          sha256: candidateSha("c"),
+          byteLength: 2,
+        },
+      }),
+    ).toThrow();
   });
 
   it("rejects unknown keys at every new contract boundary", () => {

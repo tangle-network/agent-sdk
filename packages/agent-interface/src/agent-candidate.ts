@@ -702,6 +702,8 @@ export interface AgentCandidateBenchmarkResultMaterialV1 {
     version: string;
     artifact: AgentCandidateArtifactRef;
   };
+  /** Raw grader output required to independently audit the reported verdict. */
+  evidence: AgentCandidateArtifactRef;
   score: number;
   passed: boolean;
   dimensions: AgentCandidateBenchmarkDimension[];
