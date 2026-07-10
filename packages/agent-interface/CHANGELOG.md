@@ -1,5 +1,16 @@
 # @tangle-network/agent-interface
 
+## 0.21.0
+
+### Minor Changes
+
+- 2d70211: Add the versioned sealed `AgentCandidateBundle` contract with content-addressed profile, source, built-workspace, task, and trace evidence; one exact model and reasoning effort; evaluator-owned authorization; shell-free network-disabled execution; fresh task-scoped memory; lineage and spend; RFC 8785 identity documents; and materialization and run receipts.
+
+### Patch Changes
+
+- f5cbf34: Bind the exact UTF-8 task instruction digest, byte length, and closed delivery mode in every candidate execution plan.
+- 9ad63d0: Add the profile harness preference to `AgentProfileDiff` set, removal, changed-axis, and pruning operations, while ensuring removals and pruned fields cannot affect unrelated profile axes.
+
 ## 0.20.0
 
 ### Minor Changes
