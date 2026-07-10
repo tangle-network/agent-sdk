@@ -1,9 +1,13 @@
 import { z } from "zod";
 import type {
+  AgentCandidateFixedSpend,
   AgentCandidateMaterializationReceipt,
   AgentCandidateMemoryReceipt,
   AgentCandidateModelUsage,
   AgentCandidateRunReceipt,
+  AgentCandidateRunReceiptAnyVersion,
+  AgentCandidateRunReceiptV1,
+  AgentCandidateRunReceiptV2,
   AgentCandidateTermination,
   AgentCandidateTraceEvidence,
 } from "./agent-candidate.js";
@@ -19,6 +23,13 @@ import {
 import {
   agentCandidateSpendSchema,
 } from "./agent-candidate-lineage-schema.js";
+import {
+  agentCandidateBenchmarkResultEvidenceSchema,
+  agentCandidateFixedSpendSchema,
+  agentCandidateModelSettlementEvidenceSchema,
+  agentCandidateTaskOutcomeEvidenceSchema,
+  sameFixedSpend,
+} from "./agent-candidate-outcome-schema.js";
 import {
   gitObjectSchema,
   isCanonicalJsonValue,
@@ -297,7 +308,150 @@ export const agentCandidateRunReceiptSchema = z
         message: "run receipt must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateRunReceipt>;
+  }) satisfies z.ZodType<AgentCandidateRunReceiptV1>;
+
+export const agentCandidateRunReceiptV2Schema = z
+  .object({
+    schemaVersion: z.literal(2),
+    kind: z.literal("agent-candidate-run"),
+    digestAlgorithm: z.literal("rfc8785-sha256"),
+    bundleDigest: sha256DigestSchema,
+    materializationReceiptDigest: sha256DigestSchema,
+    executionPlanDigest: sha256DigestSchema,
+    memory: agentCandidateMemoryReceiptSchema,
+    usage: agentCandidateSpendSchema,
+    modelUsage: agentCandidateModelUsageSchema,
+    trace: agentCandidateTraceEvidenceSchema,
+    termination: agentCandidateTerminationSchema,
+    fixedUsage: agentCandidateFixedSpendSchema,
+    modelSettlement: agentCandidateModelSettlementEvidenceSchema,
+    taskOutcome: agentCandidateTaskOutcomeEvidenceSchema,
+    benchmarkResult: agentCandidateBenchmarkResultEvidenceSchema,
+    digest: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((receipt, ctx) => {
+    const legacyUsageMatchesModel =
+      receipt.usage.costUsd === receipt.modelUsage.usage.costUsd &&
+      receipt.usage.inputTokens === receipt.modelUsage.usage.inputTokens &&
+      receipt.usage.outputTokens === receipt.modelUsage.usage.outputTokens &&
+      receipt.usage.cachedInputTokens ===
+        receipt.modelUsage.usage.cachedInputTokens &&
+      receipt.usage.modelCalls === receipt.modelUsage.usage.modelCalls;
+    if (!legacyUsageMatchesModel) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelUsage", "usage"],
+        message: "single-model usage must equal aggregate protected usage",
+      });
+    }
+    if (!legacyUsageMatchesFixed(receipt.usage, receipt.fixedUsage)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["fixedUsage"],
+        message: "fixed usage must exactly preserve the legacy usage totals",
+      });
+    }
+    if (
+      !sameFixedSpend(
+        receipt.fixedUsage,
+        receipt.modelSettlement.material.usage,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelSettlement", "material", "usage"],
+        message: "model settlement aggregate must equal fixed run usage",
+      });
+    }
+    if (
+      JSON.stringify(receipt.modelUsage.resolved) !==
+      JSON.stringify(receipt.modelSettlement.material.resolved)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelSettlement", "material", "resolved"],
+        message: "model settlement must bind the run's resolved model",
+      });
+    }
+    if (
+      receipt.modelSettlement.material.executionPlanDigest !==
+      receipt.executionPlanDigest
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelSettlement", "material", "executionPlanDigest"],
+        message: "model settlement must bind the executed plan",
+      });
+    }
+    if (receipt.trace.modelCallCount !== receipt.fixedUsage.modelCalls) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["trace", "modelCallCount"],
+        message: "trace model-call count must match fixed run usage",
+      });
+    }
+    if (
+      receipt.taskOutcome.material.executionPlanDigest !==
+      receipt.executionPlanDigest
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["taskOutcome", "material", "executionPlanDigest"],
+        message: "task outcome must bind the executed plan",
+      });
+    }
+    if (
+      receipt.benchmarkResult.material.executionPlanDigest !==
+      receipt.executionPlanDigest
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["benchmarkResult", "material", "executionPlanDigest"],
+        message: "benchmark result must bind the executed plan",
+      });
+    }
+    if (
+      receipt.benchmarkResult.material.taskOutcomeDigest !==
+      receipt.taskOutcome.digest
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["benchmarkResult", "material", "taskOutcomeDigest"],
+        message: "benchmark result must bind the exact task outcome",
+      });
+    }
+    if (!isCanonicalJsonValue(receipt)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "run receipt must contain only RFC 8785 JSON values",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateRunReceiptV2>;
+
+/** Explicit V1 alias; the original schema export remains unchanged. */
+export const agentCandidateRunReceiptV1Schema = agentCandidateRunReceiptSchema;
+
+/** Parses both receipt generations without changing the original V1 export. */
+export const agentCandidateRunReceiptAnyVersionSchema = z.union([
+  agentCandidateRunReceiptSchema,
+  agentCandidateRunReceiptV2Schema,
+]) satisfies z.ZodType<AgentCandidateRunReceiptAnyVersion>;
+
+function legacyUsageMatchesFixed(
+  legacy: AgentCandidateModelUsage["usage"],
+  fixed: AgentCandidateFixedSpend,
+): boolean {
+  const costUsdNanos = Math.round(legacy.costUsd * 1_000_000_000);
+  return (
+    Number.isSafeInteger(costUsdNanos) &&
+    costUsdNanos === fixed.costUsdNanos &&
+    legacy.inputTokens === fixed.inputTokens &&
+    legacy.outputTokens === fixed.outputTokens &&
+    (legacy.cachedInputTokens ?? 0) === fixed.cachedInputTokens &&
+    legacy.modelCalls === fixed.modelCalls
+  );
+}
 
 type MutuallyAssignable<A, B> = [A] extends [B]
   ? [B] extends [A]
@@ -313,5 +467,20 @@ const _runReceiptSchemaMatchesType: MutuallyAssignable<
   z.infer<typeof agentCandidateRunReceiptSchema>,
   AgentCandidateRunReceipt
 > = true;
+const _anyRunReceiptSchemaMatchesType: MutuallyAssignable<
+  z.infer<typeof agentCandidateRunReceiptAnyVersionSchema>,
+  AgentCandidateRunReceiptAnyVersion
+> = true;
+const _runReceiptV1SchemaMatchesType: MutuallyAssignable<
+  z.infer<typeof agentCandidateRunReceiptV1Schema>,
+  AgentCandidateRunReceiptV1
+> = true;
+const _runReceiptV2SchemaMatchesType: MutuallyAssignable<
+  z.infer<typeof agentCandidateRunReceiptV2Schema>,
+  AgentCandidateRunReceiptV2
+> = true;
 void _materializationReceiptSchemaMatchesType;
 void _runReceiptSchemaMatchesType;
+void _anyRunReceiptSchemaMatchesType;
+void _runReceiptV1SchemaMatchesType;
+void _runReceiptV2SchemaMatchesType;
