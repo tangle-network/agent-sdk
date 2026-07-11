@@ -10,6 +10,7 @@ import type {
   AgentCandidateResolvedModel,
 } from "./agent-candidate.js";
 import {
+  agentCandidateArtifactRefSchema,
   agentCandidateCapturedArtifactSchema,
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
@@ -334,6 +335,13 @@ export const agentCandidateExecutionPlanMaterialSchema = z
             ]),
           )
           .min(1),
+      })
+      .strict(),
+    grader: z
+      .object({
+        name: z.string().min(1),
+        version: z.string().min(1),
+        artifact: agentCandidateArtifactRefSchema,
       })
       .strict(),
     launch: z

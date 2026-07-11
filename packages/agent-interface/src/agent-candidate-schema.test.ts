@@ -428,6 +428,15 @@ describe("candidate receipts", () => {
       },
       routes: [{ kind: "primary" as const, requested: "openai/gpt-5.4" }],
     },
+    grader: {
+      name: "fixture-grader",
+      version: "1.0.0",
+      artifact: {
+        locator: { kind: "s3" as const, bucket: "test-artifacts", key: "grader" },
+        sha256: candidateSha("c"),
+        byteLength: 1,
+      },
+    },
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],

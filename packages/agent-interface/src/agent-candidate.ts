@@ -520,6 +520,12 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
       | { kind: "subagent"; name: string; requested: string }
     >;
   };
+  /** Exact evaluator grader implementation admitted for this plan. */
+  grader: {
+    name: string;
+    version: string;
+    artifact: AgentCandidateArtifactRef;
+  };
   launch: {
     executable: string;
     args: AgentCandidateConfigValue[];
