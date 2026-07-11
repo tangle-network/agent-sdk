@@ -5,8 +5,11 @@ import {
   agentCandidateBenchmarkResultMaterialSchema,
   agentCandidateFixedSpendSchema,
   agentCandidateModelSettlementCallSchema,
+  agentCandidateModelSettlementCallV2Schema,
   agentCandidateModelSettlementEvidenceSchema,
   agentCandidateModelSettlementMaterialSchema,
+  agentCandidateModelSettlementMaterialV1Schema,
+  agentCandidateModelSettlementMaterialV2Schema,
   agentCandidateTaskOutcomeEvidenceSchema,
   agentCandidateTaskOutcomeMaterialSchema,
 } from "./agent-candidate-outcome-schema.js";
@@ -72,7 +75,7 @@ function runReceiptV2() {
     costUsdNanos: 1_250_000_000,
   };
   const modelSettlementMaterial = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-model-settlement-material" as const,
     executionPlanDigest,
     preparationId: "candidate-preparation-v1.abc123",
@@ -82,8 +85,12 @@ function runReceiptV2() {
     calls: [
       {
         callId: "call-1",
+        generationId: "span-1",
         traceSpanId: "span-1",
+        status: "succeeded" as const,
         model: "gpt-5.4",
+        startedAtMs: 120,
+        endedAtMs: 180,
         inputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 3,
@@ -92,8 +99,12 @@ function runReceiptV2() {
       },
       {
         callId: "call-2",
+        generationId: "span-2",
         traceSpanId: "span-2",
+        status: "succeeded" as const,
         model: "gpt-5.4",
+        startedAtMs: 220,
+        endedAtMs: 280,
         inputTokens: 20,
         outputTokens: 7,
         cachedInputTokens: 4,
@@ -211,6 +222,23 @@ function runReceiptV2() {
   };
 }
 
+function legacyModelSettlementMaterial() {
+  const material = runReceiptV2().modelSettlement.material;
+  return {
+    ...material,
+    schemaVersion: 1 as const,
+    calls: material.calls.map(
+      ({
+        generationId: _generationId,
+        status: _status,
+        startedAtMs: _startedAtMs,
+        endedAtMs: _endedAtMs,
+        ...call
+      }) => call,
+    ),
+  };
+}
+
 function runReceiptV1() {
   const receipt = runReceiptV2();
   const {
@@ -228,6 +256,27 @@ describe("candidate outcome contracts", () => {
     const receipt = runReceiptV2();
     expect(agentCandidateRunReceiptV2Schema.parse(receipt)).toEqual(receipt);
     expect(agentCandidateRunReceiptAnyVersionSchema.parse(receipt)).toEqual(receipt);
+  });
+
+  it("preserves V1 model settlements while requiring router provenance in V2", () => {
+    const legacy = legacyModelSettlementMaterial();
+    expect(agentCandidateModelSettlementMaterialV1Schema.parse(legacy)).toEqual(legacy);
+    expect(agentCandidateModelSettlementMaterialSchema.parse(legacy)).toEqual(legacy);
+
+    const current = runReceiptV2().modelSettlement.material;
+    expect(agentCandidateModelSettlementMaterialV2Schema.parse(current)).toEqual(current);
+    expect(() =>
+      agentCandidateModelSettlementMaterialV2Schema.parse({
+        ...current,
+        calls: [{ ...current.calls[0], traceSpanId: "caller-chosen" }, current.calls[1]],
+      }),
+    ).toThrow(/router generation id/);
+    expect(() =>
+      agentCandidateModelSettlementMaterialV2Schema.parse({
+        ...current,
+        calls: [{ ...current.calls[0], endedAtMs: 119 }, current.calls[1]],
+      }),
+    ).toThrow(/cannot end before/);
   });
 
   it("requires safe fixed-point usage and exact per-call aggregates", () => {
@@ -278,7 +327,7 @@ describe("candidate outcome contracts", () => {
         ...material,
         calls: [
           material.calls[0],
-          { ...material.calls[1], traceSpanId: "span-1" },
+          { ...material.calls[1], generationId: "span-1", traceSpanId: "span-1" },
         ],
       }),
     ).toThrow(/trace span ids must be unique/);
@@ -413,11 +462,24 @@ describe("candidate outcome contracts", () => {
 
   it("rejects unknown keys at every new contract boundary", () => {
     const receipt = runReceiptV2();
+    const legacySettlement = legacyModelSettlementMaterial();
     const strictCases: Array<[{ parse(value: unknown): unknown }, unknown]> = [
       [agentCandidateFixedSpendSchema, { ...receipt.fixedUsage, unexpected: true }],
       [
         agentCandidateModelSettlementCallSchema,
+        { ...legacySettlement.calls[0], unexpected: true },
+      ],
+      [
+        agentCandidateModelSettlementCallV2Schema,
         { ...receipt.modelSettlement.material.calls[0], unexpected: true },
+      ],
+      [
+        agentCandidateModelSettlementMaterialV1Schema,
+        { ...legacySettlement, unexpected: true },
+      ],
+      [
+        agentCandidateModelSettlementMaterialV2Schema,
+        { ...receipt.modelSettlement.material, unexpected: true },
       ],
       [
         agentCandidateModelSettlementMaterialSchema,
