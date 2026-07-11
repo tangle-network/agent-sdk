@@ -119,6 +119,15 @@ function planFixture() {
         },
       ],
     },
+    grader: {
+      name: "fixture-grader",
+      version: "1.0.0",
+      artifact: {
+        locator: { kind: "s3" as const, bucket: "test-artifacts", key: "grader" },
+        sha256: candidateSha("a"),
+        byteLength: 1,
+      },
+    },
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
