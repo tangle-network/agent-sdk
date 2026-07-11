@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.4.8
+
+### Patch Changes
+
+- 66ab1f0: Add the `workspace` sidecar token capability for session-scoped file operations.
+
 ## 0.4.7
 
 ### Patch Changes
