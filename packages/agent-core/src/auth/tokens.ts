@@ -271,6 +271,7 @@ export type SidecarCapability =
   | "read"
   | "debug"
   | "terminal"
+  | "workspace"
   | "control"
   | "raw_input";
 

@@ -59,6 +59,21 @@ describe("Ed25519 Sidecar Token Auth", () => {
       expect(claims.exp - claims.iat).toBe(300); // 5 minutes
     });
 
+    it("round-trips the workspace capability", () => {
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, cap: ["read", "workspace", "terminal"] },
+        5,
+      );
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result?.cap).toEqual(["read", "workspace", "terminal"]);
+    });
+
     it("throws if given a non-PEM key (HMAC secret)", () => {
       expect(() =>
         issueSidecarAccessToken("not-a-pem-key", payload, 5),
