@@ -421,6 +421,10 @@ describe("candidate receipts", () => {
       access: {
         kind: "evaluator-mediated" as const,
         grantDigest: candidateSha("d"),
+        network: {
+          mode: "gateway-only" as const,
+          domains: ["router.tangle.tools"],
+        },
       },
       routes: [{ kind: "primary" as const, requested: "openai/gpt-5.4" }],
     },

@@ -4,6 +4,7 @@ import type {
   AgentCandidateExecutionLimits,
   AgentCandidateExecutionPlanEvidence,
   AgentCandidateExecutionPlanMaterialV1,
+  AgentCandidateModelAccessNetwork,
   AgentCandidateProfilePlanEvidence,
   AgentCandidateProfilePlanMaterialV1,
   AgentCandidateResolvedModel,
@@ -23,6 +24,7 @@ import {
   environmentConfigSchema,
   gitObjectSchema,
   isCanonicalJsonValue,
+  isObviouslyPrivateHostname,
   isSafeExecutable,
   isSafeRelativePath,
   sameGitObjectFormat,
@@ -52,6 +54,48 @@ function isCanonicalAbsolutePath(value: string): boolean {
 function pathsOverlap(left: string, right: string): boolean {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
+
+function isExactPublicGatewayDomain(value: string): boolean {
+  if (
+    value.length > 253 ||
+    value !== value.toLowerCase() ||
+    value.endsWith(".") ||
+    value.includes(":") ||
+    isObviouslyPrivateHostname(value)
+  ) {
+    return false;
+  }
+  const labels = value.split(".");
+  return (
+    labels.length >= 2 &&
+    labels.every(
+      (label) =>
+        label.length >= 1 &&
+        label.length <= 63 &&
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    ) &&
+    /[a-z]/.test(labels.at(-1) ?? "")
+  );
+}
+
+export const agentCandidateModelAccessNetworkSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("disabled") }).strict(),
+  z
+    .object({
+      mode: z.literal("gateway-only"),
+      domains: z
+        .array(
+          z
+            .string()
+            .refine(
+              isExactPublicGatewayDomain,
+              "model gateway must be an exact lowercase public DNS name",
+            ),
+        )
+        .min(1),
+    })
+    .strict(),
+]) satisfies z.ZodType<AgentCandidateModelAccessNetwork>;
 
 export const agentCandidateResolvedModelSchema = z
   .object({
@@ -255,6 +299,7 @@ export const agentCandidateExecutionPlanMaterialSchema = z
           .object({
             kind: z.literal("evaluator-mediated"),
             grantDigest: sha256DigestSchema,
+            network: agentCandidateModelAccessNetworkSchema,
           })
           .strict(),
         routes: z
@@ -377,6 +422,37 @@ export const agentCandidateExecutionPlanMaterialSchema = z
           path: ["model", "routes", index, "requested"],
           message: "every route must request the one resolved model literal",
         });
+      }
+    }
+    const modelNetwork = material.model.access.network;
+    if (material.limits.maxModelCalls === 0 && modelNetwork.mode !== "disabled") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model", "access", "network"],
+        message: "zero-call plans cannot expose a model gateway",
+      });
+    }
+    if (material.limits.maxModelCalls > 0 && modelNetwork.mode !== "gateway-only") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model", "access", "network"],
+        message: "model-calling plans require one frozen gateway allowlist",
+      });
+    }
+    if (modelNetwork.mode === "gateway-only") {
+      addDuplicateIssues(
+        modelNetwork.domains,
+        ["model", "access", "network", "domains"],
+        ctx,
+      );
+      for (let index = 1; index < modelNetwork.domains.length; index++) {
+        if ((modelNetwork.domains[index - 1] ?? "") >= (modelNetwork.domains[index] ?? "")) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["model", "access", "network", "domains", index],
+            message: "model gateway domains must be lexicographically sorted",
+          });
+        }
       }
     }
     const activeCode = material.codeKind !== "disabled";
