@@ -105,6 +105,10 @@ function planFixture() {
       access: {
         kind: "evaluator-mediated" as const,
         grantDigest: candidateSha("9"),
+        network: {
+          mode: "gateway-only" as const,
+          domains: ["router.tangle.tools"],
+        },
       },
       routes: [
         { kind: "primary" as const, requested: "openai/gpt-5.4" },
@@ -268,6 +272,65 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     const { reasoningEffort: _reasoningEffort, ...withoutEffort } =
       plan.model.resolved;
     expect(() => agentCandidateResolvedModelSchema.parse(withoutEffort)).toThrow();
+  });
+
+  it("freezes only exact model-gateway domains and disables them for zero-call plans", () => {
+    const plan = planFixture();
+    for (const domain of [
+      "*.tangle.tools",
+      ".tangle.tools",
+      "https://router.tangle.tools",
+      "ROUTER.TANGLE.TOOLS",
+      "localhost",
+      "10.0.0.1",
+    ]) {
+      expect(() =>
+        agentCandidateExecutionPlanMaterialSchema.parse({
+          ...plan,
+          model: {
+            ...plan.model,
+            access: {
+              ...plan.model.access,
+              network: { mode: "gateway-only", domains: [domain] },
+            },
+          },
+        }),
+      ).toThrow();
+    }
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        model: {
+          ...plan.model,
+          access: {
+            ...plan.model.access,
+            network: {
+              mode: "gateway-only",
+              domains: ["z.example.com", "a.example.com"],
+            },
+          },
+        },
+      }),
+    ).toThrow(/lexicographically sorted/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        limits: { ...plan.limits, maxModelCalls: 0 },
+        model: {
+          ...plan.model,
+          access: { ...plan.model.access, network: { mode: "disabled" } },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        model: {
+          ...plan.model,
+          access: { ...plan.model.access, network: { mode: "disabled" } },
+        },
+      }),
+    ).toThrow(/require one frozen gateway allowlist/);
   });
 
   it("freezes counted attempts, retry policy, and tool-loop steps", () => {

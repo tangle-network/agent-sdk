@@ -453,6 +453,11 @@ export interface AgentCandidateProfileApplication {
   mountPaths: string[];
 }
 
+/** Evaluator-owned network exception for the one frozen model gateway. */
+export type AgentCandidateModelAccessNetwork =
+  | { mode: "disabled" }
+  | { mode: "gateway-only"; domains: string[] };
+
 /**
  * Canonical, digest-free per-task execution identity document.
  *
@@ -506,6 +511,7 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
     access: {
       kind: "evaluator-mediated";
       grantDigest: Sha256Digest;
+      network: AgentCandidateModelAccessNetwork;
     };
     routes: Array<
       | { kind: "primary"; requested?: string }
