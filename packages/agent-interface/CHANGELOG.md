@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.24.0
+
+### Minor Changes
+
+- 8b2576f: Add a backward-compatible V2 candidate model settlement that binds every model call to its router-generated identity, terminal status, exact timing, token accounting, and fixed-point cost.
+
 ## 0.23.0
 
 ### Minor Changes
