@@ -635,6 +635,15 @@ export interface AgentCandidateModelSettlementCall {
   costUsdNanos: number;
 }
 
+/** Router-authored call identity, timing, and terminal status. */
+export interface AgentCandidateModelSettlementCallV2
+  extends AgentCandidateModelSettlementCall {
+  generationId: string;
+  status: "succeeded" | "failed";
+  startedAtMs: number;
+  endedAtMs: number;
+}
+
 /** Canonical model-access ledger after the evaluator has revoked the grant. */
 export interface AgentCandidateModelSettlementMaterialV1 {
   schemaVersion: 1;
@@ -648,11 +657,28 @@ export interface AgentCandidateModelSettlementMaterialV1 {
   usage: AgentCandidateFixedSpend;
 }
 
+/** Canonical ledger whose LLM spans can be reproduced only from router facts. */
+export interface AgentCandidateModelSettlementMaterialV2 {
+  schemaVersion: 2;
+  kind: "agent-candidate-model-settlement-material";
+  executionPlanDigest: Sha256Digest;
+  preparationId: string;
+  grantDigest: Sha256Digest;
+  closed: true;
+  resolved: AgentCandidateResolvedModel;
+  calls: AgentCandidateModelSettlementCallV2[];
+  usage: AgentCandidateFixedSpend;
+}
+
+export type AgentCandidateModelSettlementMaterial =
+  | AgentCandidateModelSettlementMaterialV1
+  | AgentCandidateModelSettlementMaterialV2;
+
 export interface AgentCandidateModelSettlementEvidence {
   schemaVersion: 1;
   kind: "agent-candidate-model-settlement";
   digest: Sha256Digest;
-  material: AgentCandidateModelSettlementMaterialV1;
+  material: AgentCandidateModelSettlementMaterial;
   artifact: AgentCandidateCapturedArtifact;
 }
 

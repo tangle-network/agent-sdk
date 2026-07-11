@@ -4,7 +4,9 @@ import type {
   AgentCandidateBenchmarkResultMaterialV1,
   AgentCandidateFixedSpend,
   AgentCandidateModelSettlementEvidence,
+  AgentCandidateModelSettlementMaterial,
   AgentCandidateModelSettlementMaterialV1,
+  AgentCandidateModelSettlementMaterialV2,
   AgentCandidateRepositoryState,
   AgentCandidateTaskOutcomeEvidence,
   AgentCandidateTaskOutcomeMaterialV1,
@@ -29,6 +31,7 @@ const safeCountSchema = z
   .refine(Number.isSafeInteger, "value must be a nonnegative safe integer");
 
 const boundedIdentifierSchema = z.string().min(1).max(256);
+const positiveTimestampSchema = safeCountSchema.positive();
 const normalizedDimensionNameSchema = z
   .string()
   .regex(
@@ -61,90 +64,161 @@ export const agentCandidateModelSettlementCallSchema = z
   })
   .strict();
 
-export const agentCandidateModelSettlementMaterialSchema = z
+export const agentCandidateModelSettlementCallV2Schema = z
   .object({
-    schemaVersion: z.literal(1),
+    callId: boundedIdentifierSchema,
+    generationId: boundedIdentifierSchema,
+    traceSpanId: boundedIdentifierSchema,
+    status: z.enum(["succeeded", "failed"]),
+    model: boundedIdentifierSchema,
+    startedAtMs: positiveTimestampSchema,
+    endedAtMs: positiveTimestampSchema,
+    inputTokens: safeCountSchema,
+    outputTokens: safeCountSchema,
+    cachedInputTokens: safeCountSchema,
+    reasoningTokens: safeCountSchema,
+    costUsdNanos: safeCountSchema,
+  })
+  .strict()
+  .superRefine((call, ctx) => {
+    if (call.traceSpanId !== call.generationId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["traceSpanId"],
+        message: "model settlement trace span id must equal the router generation id",
+      });
+    }
+    if (call.endedAtMs < call.startedAtMs) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["endedAtMs"],
+        message: "model settlement call cannot end before it starts",
+      });
+    }
+  });
+
+const modelSettlementMaterialShape = {
     kind: z.literal("agent-candidate-model-settlement-material"),
     executionPlanDigest: sha256DigestSchema,
     preparationId: boundedIdentifierSchema,
     grantDigest: sha256DigestSchema,
     closed: z.literal(true),
     resolved: agentCandidateResolvedModelSchema,
-    calls: z.array(agentCandidateModelSettlementCallSchema),
     usage: agentCandidateFixedSpendSchema,
+};
+
+export const agentCandidateModelSettlementMaterialV1Schema = z
+  .object({
+    schemaVersion: z.literal(1),
+    ...modelSettlementMaterialShape,
+    calls: z.array(agentCandidateModelSettlementCallSchema),
   })
   .strict()
-  .superRefine((material, ctx) => {
-    const callIds = new Set<string>();
-    const traceSpanIds = new Set<string>();
-    const totals: AgentCandidateFixedSpend = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedInputTokens: 0,
-      reasoningTokens: 0,
-      modelCalls: material.calls.length,
-      costUsdNanos: 0,
-    };
+  .superRefine(refineModelSettlementMaterial) satisfies z.ZodType<AgentCandidateModelSettlementMaterialV1>;
 
-    for (const [index, call] of material.calls.entries()) {
-      if (callIds.has(call.callId)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["calls", index, "callId"],
-          message: "model settlement call ids must be unique",
-        });
-      }
-      callIds.add(call.callId);
-      if (traceSpanIds.has(call.traceSpanId)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["calls", index, "traceSpanId"],
-          message: "model settlement trace span ids must be unique",
-        });
-      }
-      traceSpanIds.add(call.traceSpanId);
-      if (call.model !== material.resolved.model) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["calls", index, "model"],
-          message: "settled call model must match the resolved single model",
-        });
-      }
+export const agentCandidateModelSettlementMaterialV2Schema = z
+  .object({
+    schemaVersion: z.literal(2),
+    ...modelSettlementMaterialShape,
+    calls: z.array(agentCandidateModelSettlementCallV2Schema),
+  })
+  .strict()
+  .superRefine(refineModelSettlementMaterial) satisfies z.ZodType<AgentCandidateModelSettlementMaterialV2>;
 
-      for (const field of [
-        "inputTokens",
-        "outputTokens",
-        "cachedInputTokens",
-        "reasoningTokens",
-        "costUsdNanos",
-      ] as const) {
-        const sum = totals[field] + call[field];
-        if (!Number.isSafeInteger(sum)) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["calls", index, field],
-            message: `model settlement ${field} total exceeds safe integer range`,
-          });
-        } else {
-          totals[field] = sum;
-        }
-      }
-    }
+export const agentCandidateModelSettlementMaterialSchema = z.union([
+  agentCandidateModelSettlementMaterialV1Schema,
+  agentCandidateModelSettlementMaterialV2Schema,
+]) satisfies z.ZodType<AgentCandidateModelSettlementMaterial>;
 
-    if (!sameFixedSpend(totals, material.usage)) {
+function refineModelSettlementMaterial(
+  material: AgentCandidateModelSettlementMaterial,
+  ctx: z.RefinementCtx,
+): void {
+  const callIds = new Set<string>();
+  const traceSpanIds = new Set<string>();
+  const generationIds = new Set<string>();
+  const totals: AgentCandidateFixedSpend = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningTokens: 0,
+    modelCalls: material.calls.length,
+    costUsdNanos: 0,
+  };
+
+  for (const [index, call] of material.calls.entries()) {
+    if (callIds.has(call.callId)) {
       ctx.addIssue({
         code: "custom",
-        path: ["usage"],
-        message: "model settlement usage must equal the exact per-call aggregate",
+        path: ["calls", index, "callId"],
+        message: "model settlement call ids must be unique",
       });
     }
-    if (!isCanonicalJsonValue(material)) {
+    callIds.add(call.callId);
+    if (traceSpanIds.has(call.traceSpanId)) {
       ctx.addIssue({
         code: "custom",
-        message: "model settlement material must contain only RFC 8785 JSON values",
+        path: ["calls", index, "traceSpanId"],
+        message: "model settlement trace span ids must be unique",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateModelSettlementMaterialV1>;
+    traceSpanIds.add(call.traceSpanId);
+    const generationId =
+      "generationId" in call && typeof call.generationId === "string"
+        ? call.generationId
+        : undefined;
+    if (generationId !== undefined) {
+      if (generationIds.has(generationId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["calls", index, "generationId"],
+          message: "model settlement generation ids must be unique",
+        });
+      }
+      generationIds.add(generationId);
+    }
+    if (call.model !== material.resolved.model) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calls", index, "model"],
+        message: "settled call model must match the resolved single model",
+      });
+    }
+
+    for (const field of [
+      "inputTokens",
+      "outputTokens",
+      "cachedInputTokens",
+      "reasoningTokens",
+      "costUsdNanos",
+    ] as const) {
+      const sum = totals[field] + call[field];
+      if (!Number.isSafeInteger(sum)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["calls", index, field],
+          message: `model settlement ${field} total exceeds safe integer range`,
+        });
+      } else {
+        totals[field] = sum;
+      }
+    }
+  }
+
+  if (!sameFixedSpend(totals, material.usage)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["usage"],
+      message: "model settlement usage must equal the exact per-call aggregate",
+    });
+  }
+  if (!isCanonicalJsonValue(material)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "model settlement material must contain only RFC 8785 JSON values",
+    });
+  }
+}
 
 export const agentCandidateModelSettlementEvidenceSchema = evidenceSchema(
   "agent-candidate-model-settlement",
