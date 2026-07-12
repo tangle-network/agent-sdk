@@ -414,26 +414,26 @@ export function mergeAgentProfiles(
       ? {
           ...(base?.resources ?? {}),
           ...(overlay?.resources ?? {}),
-          files: [
-            ...(base?.resources?.files ?? []),
-            ...(overlay?.resources?.files ?? []),
-          ],
-          tools: [
-            ...(base?.resources?.tools ?? []),
-            ...(overlay?.resources?.tools ?? []),
-          ],
-          skills: [
-            ...(base?.resources?.skills ?? []),
-            ...(overlay?.resources?.skills ?? []),
-          ],
-          agents: [
-            ...(base?.resources?.agents ?? []),
-            ...(overlay?.resources?.agents ?? []),
-          ],
-          commands: [
-            ...(base?.resources?.commands ?? []),
-            ...(overlay?.resources?.commands ?? []),
-          ],
+          files: mergeOptionalArrays(
+            base?.resources?.files,
+            overlay?.resources?.files,
+          ),
+          tools: mergeOptionalArrays(
+            base?.resources?.tools,
+            overlay?.resources?.tools,
+          ),
+          skills: mergeOptionalArrays(
+            base?.resources?.skills,
+            overlay?.resources?.skills,
+          ),
+          agents: mergeOptionalArrays(
+            base?.resources?.agents,
+            overlay?.resources?.agents,
+          ),
+          commands: mergeOptionalArrays(
+            base?.resources?.commands,
+            overlay?.resources?.commands,
+          ),
           instructions:
             overlay?.resources?.instructions ?? base?.resources?.instructions,
         }
