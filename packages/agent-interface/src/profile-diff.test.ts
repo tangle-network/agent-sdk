@@ -41,6 +41,21 @@ const baseProfile: AgentProfile = {
 };
 
 describe("AgentProfileDiff", () => {
+  it("does not materialize absent resource arrays for an empty diff", () => {
+    const profile: AgentProfile = {
+      name: "minimal",
+      prompt: { systemPrompt: "baseline" },
+      resources: { failOnError: true },
+    };
+
+    expect(
+      applyAgentProfileDiff(profile, {
+        schemaVersion: 1,
+        kind: "agent-profile-diff",
+      }),
+    ).toEqual(profile);
+  });
+
   it("applies a full-profile overlay and named removals", () => {
     const diff = defineAgentProfileDiff({
       schemaVersion: 1,
