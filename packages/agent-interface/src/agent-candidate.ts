@@ -18,6 +18,15 @@ export type Sha256Digest = `sha256:${string}`;
 /** RFC 8785 JSON Canonicalization Scheme followed by SHA-256. */
 export type AgentCandidateDigestAlgorithm = "rfc8785-sha256";
 
+/** Finite, acyclic JSON accepted by canonical candidate documents. */
+export type AgentCandidateJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | AgentCandidateJsonValue[]
+  | { [key: string]: AgentCandidateJsonValue };
+
 export interface AgentCandidateS3Locator {
   kind: "s3";
   bucket: string;
@@ -281,10 +290,24 @@ export interface AgentCandidateExecution {
   };
 }
 
-/** Optional immutable knowledge snapshot mounted with the profile. */
+/** Exact frozen knowledge candidate admitted only through an approved review. */
+export interface AgentCandidateKnowledgeRef {
+  schemaVersion: 1;
+  kind: "knowledge-improvement-candidate";
+  runId: string;
+  candidateId: string;
+  goalHash: Sha256Digest;
+  baseHash: Sha256Digest;
+  candidateHash: Sha256Digest;
+  evidenceHash: Sha256Digest;
+  promotionPlanHash: Sha256Digest;
+}
+
 export interface AgentCandidateKnowledge {
-  snapshotId: string;
-  manifest: AgentCandidateArtifactRef;
+  candidate: AgentCandidateKnowledgeRef;
+  snapshot: AgentCandidateWorkspaceSnapshotEvidence;
+  retrievalConfig?: AgentCandidateCapturedArtifact;
+  evaluation: AgentCandidateCapturedArtifact;
 }
 
 /** Memory is absent or freshly evaluator-scoped to exactly one task. */
@@ -396,7 +419,8 @@ export interface AgentCandidateWorkspaceManifestMaterialV1 {
   kind: "agent-candidate-workspace-manifest";
   files: Array<{
     path: string;
-    mode: 0o644 | 0o755;
+    /** Exact regular-file permission bits, excluding file-type and special bits. */
+    mode: number;
     sha256: Sha256Digest;
     byteLength: number;
   }>;
@@ -458,23 +482,25 @@ export type AgentCandidateModelAccessNetwork =
   | { mode: "disabled" }
   | { mode: "gateway-only"; domains: string[] };
 
+/** Optional source repository identity for a signed benchmark task. */
+export interface AgentCandidateTaskRepository {
+  identity: string;
+  rootIdentity: string;
+  baseCommit: string;
+  baseTree: string;
+}
+
+/** Bounded media contract for one exact non-workspace task result. */
+export interface AgentCandidateTaskOutputSpec {
+  /** Evaluator-declared label; the bound grader verifies the bytes match it. */
+  mediaType: string;
+  maxBytes: number;
+}
+
 /** Exact result shape the evaluator must capture after one candidate task. */
 export type AgentCandidateTaskOutcomeSpec =
-  | {
-      kind: "workspace";
-      repository: {
-        identity: string;
-        rootIdentity: string;
-        baseCommit: string;
-        baseTree: string;
-      };
-    }
-  | {
-      kind: "output";
-      /** Evaluator-declared label; the bound grader verifies the bytes match it. */
-      mediaType: string;
-      maxBytes: number;
-    };
+  | { kind: "workspace" }
+  | ({ kind: "output" } & AgentCandidateTaskOutputSpec);
 
 /**
  * Canonical, digest-free per-task execution identity document.
@@ -482,7 +508,7 @@ export type AgentCandidateTaskOutcomeSpec =
  * RFC 8785 serialization of this material is stored verbatim by the receipt;
  * its raw SHA-256 is the execution-plan digest.
  */
-export interface AgentCandidateExecutionPlanMaterialV1 {
+export interface AgentCandidateExecutionPlanMaterial {
   schemaVersion: 1;
   kind: "agent-candidate-execution-plan-material";
   bundleDigest: Sha256Digest;
@@ -499,6 +525,7 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
       byteLength: number;
       delivery: AgentCandidateInstructionDelivery;
     };
+    repository?: AgentCandidateTaskRepository;
     outcome: AgentCandidateTaskOutcomeSpec;
     workspace: AgentCandidateWorkspaceSnapshotEvidence;
   };
@@ -559,11 +586,24 @@ export interface AgentCandidateProfilePlanEvidence {
   artifact: AgentCandidateCapturedArtifact;
 }
 
+/** Exact native profile files and the canonical plan that activated them. */
+export interface AgentCandidateProfileActivation {
+  schemaVersion: 1;
+  kind: "agent-candidate-profile-activation";
+  profilePlan: AgentCandidateProfilePlanEvidence;
+  files: Array<{
+    path: string;
+    mode: number;
+    content: string;
+  }>;
+  digest: Sha256Digest;
+}
+
 export interface AgentCandidateExecutionPlanEvidence {
   schemaVersion: 1;
   kind: "agent-candidate-execution-plan";
   digest: Sha256Digest;
-  material: AgentCandidateExecutionPlanMaterialV1;
+  material: AgentCandidateExecutionPlanMaterial;
   artifact: AgentCandidateCapturedArtifact;
 }
 
@@ -632,9 +672,183 @@ export interface AgentCandidateRunReceipt {
   memory: AgentCandidateMemoryReceipt;
   trace: AgentCandidateTraceEvidence;
   termination: AgentCandidateTermination;
+  executorCapture: AgentCandidateArtifactRef;
   modelSettlement: AgentCandidateModelSettlementEvidence;
   taskOutcome: AgentCandidateTaskOutcomeEvidence;
   benchmarkResult: AgentCandidateBenchmarkResultEvidence;
+  digest: Sha256Digest;
+}
+
+export type AgentImprovementSurface =
+  | "prompt"
+  | "skills"
+  | "tools"
+  | "mcp"
+  | "hooks"
+  | "subagents"
+  | "agent-profile"
+  | "memory"
+  | "code"
+  | "knowledge";
+
+/** Portable paired held-out comparison produced by an evaluation package. */
+export interface AgentImprovementMeasuredComparison {
+  schemaVersion: 1;
+  kind: "agent-improvement-measured-comparison";
+  benchmark: {
+    name: string;
+    version: string;
+    splitDigest: Sha256Digest;
+  };
+  baselineProfileDigest: Sha256Digest;
+  candidateBundleDigest: Sha256Digest;
+  overall: {
+    name: "composite";
+    baseline: number;
+    candidate: number;
+    delta: number;
+    confidenceInterval: {
+      level: number;
+      lower: number;
+      upper: number;
+      method: "paired-bootstrap";
+      statistic: "mean";
+      resamples: number;
+    };
+    n: number;
+    direction: "higher-is-better";
+    unit: "score";
+  };
+  objectives: Array<
+    (
+      | {
+          kind: "objective";
+          name: string;
+          direction: "higher-is-better";
+          unit: "score";
+        }
+      | {
+          kind: "dimension";
+          objective: string;
+          name: string;
+          direction: "higher-is-better";
+          unit: "score";
+        }
+      | {
+          kind: "cost";
+          name: "cost";
+          direction: "lower-is-better";
+          unit: "usd";
+        }
+      | {
+          kind: "latency";
+          name: "latency";
+          direction: "lower-is-better";
+          unit: "milliseconds";
+        }
+    ) &
+      (
+        | {
+            availability: "measured";
+            baseline: number;
+            candidate: number;
+            delta: number;
+            confidenceInterval: {
+              level: number;
+              lower: number;
+              upper: number;
+              method: "paired-bootstrap";
+              statistic: "mean";
+              resamples: number;
+            };
+            n: number;
+          }
+        | { availability: "unavailable"; reason: string }
+      )
+  >;
+  candidate?: {
+    label?: string;
+    rationale?: string;
+  };
+  decision: {
+    outcome:
+      | "ship"
+      | "hold"
+      | "need_more_work"
+      | "model_ceiling"
+      | "arch_ceiling";
+    reasons: string[];
+    contributingChecks: Array<{ name: string; passed: boolean }>;
+  };
+  power: {
+    sufficient: boolean;
+    n: number;
+    minimumDetectableDelta: number;
+    confidenceLevel: number;
+    scaleAssumed: boolean;
+    sharedScorerChannel: boolean;
+    reason: string;
+  };
+  provenance: {
+    kind: "agent-eval-loop";
+    schema: string;
+    runId: string;
+    recordDigest: Sha256Digest;
+    baselineContentHash: string;
+    candidateContentHash: string;
+  };
+  diff: string;
+  evaluation: {
+    generationsExplored: number;
+    durationMs: number;
+    totalCostUsd: number;
+  };
+  metadata?: { [key: string]: AgentCandidateJsonValue };
+}
+
+export interface AgentImprovementProposal {
+  schemaVersion: 1;
+  kind: "agent-improvement-proposal";
+  runId: string;
+  changedSurfaces: [AgentImprovementSurface, ...AgentImprovementSurface[]];
+  proposedAt: string;
+  baselineProfile: AgentProfile;
+  findings: { [key: string]: AgentCandidateJsonValue }[];
+  evaluation: AgentImprovementMeasuredComparison;
+  candidateBundle: AgentCandidateBundle;
+  digest: Sha256Digest;
+}
+
+export type AgentImprovementReviewDecision =
+  | "approve"
+  | "reject"
+  | "request-changes";
+
+/** Human or tenant-policy decision bound to one exact proposal. */
+export interface AgentImprovementReview {
+  schemaVersion: 1;
+  kind: "agent-improvement-review";
+  proposalDigest: Sha256Digest;
+  candidateBundleDigest: Sha256Digest;
+  decision: AgentImprovementReviewDecision;
+  reviewedBy: string;
+  reviewedAt: string;
+  reason: string;
+  feedback?: string;
+  digest: Sha256Digest;
+}
+
+/** Successful post-approval execution, carrying the exact Runtime receipt. */
+export interface CandidateExecutionEvidence {
+  schemaVersion: 1;
+  kind: "agent-candidate-execution-evidence";
+  proposalDigest: Sha256Digest;
+  reviewDigest: Sha256Digest;
+  executionId: string;
+  succeeded: true;
+  materializationReceipt: AgentCandidateMaterializationReceipt;
+  profileActivation: AgentCandidateProfileActivation;
+  receipt: AgentCandidateRunReceipt;
   digest: Sha256Digest;
 }
 
@@ -684,7 +898,7 @@ export interface AgentCandidateRepositoryState {
 }
 
 /** Canonical result captured by the evaluator after one candidate task. */
-export interface AgentCandidateTaskOutcomeMaterialV1 {
+export interface AgentCandidateTaskOutcomeMaterial {
   schemaVersion: 1;
   kind: "agent-candidate-task-outcome-material";
   executionPlanDigest: Sha256Digest;
@@ -699,17 +913,18 @@ export interface AgentCandidateTaskOutcomeMaterialV1 {
           artifact: AgentCandidateArtifactRef;
         };
       }
-    | {
-        kind: "output";
-        artifact: AgentCandidateArtifactRef;
-      };
+      | {
+          kind: "output";
+          spec: AgentCandidateTaskOutputSpec;
+          artifact: AgentCandidateArtifactRef;
+        };
 }
 
 export interface AgentCandidateTaskOutcomeEvidence {
   schemaVersion: 1;
   kind: "agent-candidate-task-outcome";
   digest: Sha256Digest;
-  material: AgentCandidateTaskOutcomeMaterialV1;
+  material: AgentCandidateTaskOutcomeMaterial;
   artifact: AgentCandidateCapturedArtifact;
 }
 

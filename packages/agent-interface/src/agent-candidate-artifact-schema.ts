@@ -119,7 +119,7 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
               (value) => isSafeRelativePath(value, false),
               "workspace manifest paths must be canonical and relative",
             ),
-          mode: z.union([z.literal(0o644), z.literal(0o755)]),
+          mode: z.number().int().min(0).max(0o777),
           sha256: sha256DigestSchema,
           byteLength: z.number().int().nonnegative(),
         })

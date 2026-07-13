@@ -20,6 +20,15 @@ describe("agentCandidateBundleSchema", () => {
     });
   });
 
+  it("does not require retrieval evidence for a file-backed knowledge candidate", () => {
+    const candidate = candidateFixture();
+    if (!candidate.knowledge) throw new Error("fixture must include knowledge");
+    const { retrievalConfig: _retrievalConfig, ...knowledge } = candidate.knowledge;
+    expect(
+      agentCandidateBundleSchema.parse({ ...candidate, knowledge }).knowledge,
+    ).toEqual(knowledge);
+  });
+
   it("accepts canonical harness aliases but rejects a true mismatch", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({
@@ -384,15 +393,13 @@ describe("candidate receipts", () => {
         byteLength: 37,
         delivery: { kind: "argv-append" as const },
       },
-      outcome: {
-        kind: "workspace" as const,
-        repository: {
-          identity: "r360/pier-synthetic-task-1",
-          rootIdentity: "r360/pier-synthetic",
-          baseCommit: candidateGit("a"),
-          baseTree: candidateGit("b"),
-        },
+      repository: {
+        identity: "r360/pier-synthetic-task-1",
+        rootIdentity: "r360/pier-synthetic",
+        baseCommit: candidateGit("a"),
+        baseTree: candidateGit("b"),
       },
+      outcome: { kind: "workspace" as const },
       workspace: taskWorkspace,
     },
     workspaces: {

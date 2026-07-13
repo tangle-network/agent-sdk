@@ -107,16 +107,50 @@ export function candidateFixture() {
       },
     },
     knowledge: {
-      snapshotId: "knowledge-17",
-      manifest: {
-        locator: {
-          kind: "s3",
-          bucket: "agent-candidate-artifacts",
-          key: "knowledge/knowledge-17.json",
-          region: "us-east-1",
+      candidate: {
+        schemaVersion: 1,
+        kind: "knowledge-improvement-candidate",
+        runId: "knowledge-run-17",
+        candidateId: "knowledge-17",
+        goalHash: candidateSha("5"),
+        baseHash: candidateSha("6"),
+        candidateHash: candidateSha("7"),
+        evidenceHash: candidateSha("8"),
+        promotionPlanHash: candidateSha("9"),
+      },
+      snapshot: {
+        schemaVersion: 1,
+        kind: "agent-candidate-workspace-snapshot",
+        digest: candidateSha("7"),
+        material: {
+          schemaVersion: 1,
+          kind: "agent-candidate-workspace-manifest",
+          files: [],
         },
-        sha256: candidateSha("7"),
-        byteLength: 42,
+        manifest: {
+          encoding: "base64",
+          content: "e30=",
+          sha256: candidateSha("7"),
+          byteLength: 2,
+        },
+        archive: {
+          encoding: "base64",
+          content: "e30=",
+          sha256: candidateSha("8"),
+          byteLength: 2,
+        },
+      },
+      retrievalConfig: {
+        encoding: "base64",
+        content: "e30=",
+        sha256: candidateSha("9"),
+        byteLength: 2,
+      },
+      evaluation: {
+        encoding: "base64",
+        content: "e30=",
+        sha256: candidateSha("a"),
+        byteLength: 2,
       },
     },
     memory: {

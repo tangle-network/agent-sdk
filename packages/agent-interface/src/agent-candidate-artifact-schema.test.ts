@@ -201,7 +201,7 @@ describe("candidate artifact schemas", () => {
       },
       {
         path: "dist/lib.js",
-        mode: 0o644,
+        mode: 0o664,
         sha256: candidateSha("2"),
         byteLength: 10,
       },
@@ -217,7 +217,7 @@ describe("candidate artifact schemas", () => {
       [...files].reverse(),
       [files[0], files[0]],
       [{ ...files[0], path: "../escape" }],
-      [{ ...files[0], mode: 0o777 }],
+      [{ ...files[0], mode: 0o1000 }],
       [{ ...files[0], kind: "symlink", target: "/etc/passwd" }],
     ]) {
       expect(() =>

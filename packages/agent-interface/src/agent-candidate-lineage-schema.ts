@@ -5,7 +5,11 @@ import type {
   AgentCandidateMemoryPolicy,
   AgentCandidateSpend,
 } from "./agent-candidate.js";
-import { agentCandidateArtifactRefSchema } from "./agent-candidate-artifact-schema.js";
+import {
+  agentCandidateArtifactRefSchema,
+  agentCandidateCapturedArtifactSchema,
+  agentCandidateWorkspaceSnapshotEvidenceSchema,
+} from "./agent-candidate-artifact-schema.js";
 import {
   addDuplicateIssues,
   sha256DigestSchema,
@@ -13,8 +17,22 @@ import {
 
 export const agentCandidateKnowledgeSchema = z
   .object({
-    snapshotId: z.string().min(1),
-    manifest: agentCandidateArtifactRefSchema,
+    candidate: z
+      .object({
+        schemaVersion: z.literal(1),
+        kind: z.literal("knowledge-improvement-candidate"),
+        runId: z.string().min(1),
+        candidateId: z.string().min(1),
+        goalHash: sha256DigestSchema,
+        baseHash: sha256DigestSchema,
+        candidateHash: sha256DigestSchema,
+        evidenceHash: sha256DigestSchema,
+        promotionPlanHash: sha256DigestSchema,
+      })
+      .strict(),
+    snapshot: agentCandidateWorkspaceSnapshotEvidenceSchema,
+    retrievalConfig: agentCandidateCapturedArtifactSchema.optional(),
+    evaluation: agentCandidateCapturedArtifactSchema,
   })
   .strict() satisfies z.ZodType<AgentCandidateKnowledge>;
 

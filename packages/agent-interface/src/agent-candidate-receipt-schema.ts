@@ -7,6 +7,7 @@ import type {
   AgentCandidateTraceEvidence,
 } from "./agent-candidate.js";
 import {
+  agentCandidateArtifactRefSchema,
   agentCandidateCapturedArtifactSchema,
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
@@ -258,6 +259,7 @@ export const agentCandidateRunReceiptSchema = z
     memory: agentCandidateMemoryReceiptSchema,
     trace: agentCandidateTraceEvidenceSchema,
     termination: agentCandidateTerminationSchema,
+    executorCapture: agentCandidateArtifactRefSchema,
     modelSettlement: agentCandidateModelSettlementEvidenceSchema,
     taskOutcome: agentCandidateTaskOutcomeEvidenceSchema,
     benchmarkResult: agentCandidateBenchmarkResultEvidenceSchema,

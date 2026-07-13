@@ -3,8 +3,9 @@ import type {
   AgentCandidateEffectiveMemory,
   AgentCandidateExecutionLimits,
   AgentCandidateExecutionPlanEvidence,
-  AgentCandidateExecutionPlanMaterialV1,
+  AgentCandidateExecutionPlanMaterial,
   AgentCandidateModelAccessNetwork,
+  AgentCandidateProfileActivation,
   AgentCandidateProfilePlanEvidence,
   AgentCandidateProfilePlanMaterialV1,
   AgentCandidateResolvedModel,
@@ -30,7 +31,9 @@ import {
   isObviouslyPrivateHostname,
   isSafeExecutable,
   isSafeRelativePath,
+  isWellFormedUnicode,
   sameGitObjectFormat,
+  sha256Utf8,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
@@ -212,19 +215,7 @@ export const agentCandidateExecutionLimitsSchema = z
   .strict() satisfies z.ZodType<AgentCandidateExecutionLimits>;
 
 export const agentCandidateTaskOutcomeSpecSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("workspace"),
-      repository: z
-        .object({
-          identity: z.string().min(1),
-          rootIdentity: z.string().min(1),
-          baseCommit: gitObjectSchema,
-          baseTree: gitObjectSchema,
-        })
-        .strict(),
-    })
-    .strict(),
+  z.object({ kind: z.literal("workspace") }).strict(),
   z
     .object({
       kind: z.literal("output"),
@@ -261,6 +252,15 @@ export const agentCandidateExecutionPlanMaterialSchema = z
             delivery: agentCandidateInstructionDeliverySchema,
           })
           .strict(),
+        repository: z
+          .object({
+            identity: z.string().min(1),
+            rootIdentity: z.string().min(1),
+            baseCommit: gitObjectSchema,
+            baseTree: gitObjectSchema,
+          })
+          .strict()
+          .optional(),
         outcome: agentCandidateTaskOutcomeSpecSchema,
         workspace: agentCandidateWorkspaceSnapshotEvidenceSchema,
       })
@@ -380,16 +380,26 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   .strict()
   .superRefine((material, ctx) => {
     if (
-      material.task.outcome.kind === "workspace" &&
+      material.task.repository !== undefined &&
       !sameGitObjectFormat(
-        material.task.outcome.repository.baseCommit,
-        material.task.outcome.repository.baseTree,
+        material.task.repository.baseCommit,
+        material.task.repository.baseTree,
       )
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["task", "outcome", "repository"],
+        path: ["task", "repository"],
         message: "task Git object ids must use one object format",
+      });
+    }
+    if (
+      material.task.outcome.kind === "workspace" &&
+      material.task.repository === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["task", "repository"],
+        message: "workspace outcomes require task repository provenance",
       });
     }
     if (material.attempt.number > material.attempt.maxAttempts) {
@@ -579,7 +589,7 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         message: "execution-plan material must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateExecutionPlanMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateExecutionPlanMaterial>;
 
 function planEvidenceSchema<
   TKind extends string,
@@ -616,6 +626,64 @@ export const agentCandidateProfilePlanEvidenceSchema = planEvidenceSchema(
   "agent-profile-workspace-plan",
   agentCandidateProfilePlanMaterialSchema,
 ) satisfies z.ZodType<AgentCandidateProfilePlanEvidence>;
+
+export const agentCandidateProfileActivationSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("agent-candidate-profile-activation"),
+    profilePlan: agentCandidateProfilePlanEvidenceSchema,
+    files: z.array(
+      z
+        .object({
+          path: z
+            .string()
+            .refine(
+              (value) => isSafeRelativePath(value, false),
+              "profile activation file must use a canonical relative path",
+            ),
+          mode: z.number().int().min(0).max(0o777),
+          content: z
+            .string()
+            .refine(isWellFormedUnicode, "profile activation content must be valid Unicode"),
+        })
+        .strict(),
+    ),
+    digest: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((activation, ctx) => {
+    const planned = activation.profilePlan.material.files;
+    if (activation.files.length !== planned.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "profile activation must contain every planned native file",
+      });
+    }
+    for (let index = 0; index < planned.length; index++) {
+      const expected = planned[index];
+      const actual = activation.files[index];
+      if (
+        expected === undefined ||
+        actual === undefined ||
+        actual.path !== expected.relPath ||
+        actual.mode !== expected.mode ||
+        sha256Utf8(actual.content) !== expected.contentSha256
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["files", index],
+          message: "profile activation file path, mode, and content must match the canonical plan",
+        });
+      }
+    }
+    if (!isCanonicalJsonValue(activation)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "profile activation must contain only RFC 8785 JSON values",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateProfileActivation>;
 
 export const agentCandidateExecutionPlanEvidenceSchema = planEvidenceSchema(
   "agent-candidate-execution-plan",

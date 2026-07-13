@@ -1,3 +1,4 @@
+import { sha256 } from "@noble/hashes/sha256";
 import { z } from "zod";
 import type {
   AgentCandidateConfigValue,
@@ -41,6 +42,12 @@ export const gitObjectSchema = z.string().regex(gitObjectPattern);
 export const environmentNameSchema = z.string().regex(environmentNamePattern);
 export const headerNameSchema = z.string().regex(headerNamePattern);
 export const agentCandidateMediaTypeSchema = z.string().regex(mediaTypePattern);
+
+export function sha256Utf8(value: string): Sha256Digest {
+  const bytes = sha256(new TextEncoder().encode(value));
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hex}`;
+}
 
 export function isWellFormedUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index++) {

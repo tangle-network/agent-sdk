@@ -7,7 +7,7 @@ import type {
   AgentCandidateModelSettlementMaterial,
   AgentCandidateRepositoryState,
   AgentCandidateTaskOutcomeEvidence,
-  AgentCandidateTaskOutcomeMaterialV1,
+  AgentCandidateTaskOutcomeMaterial,
 } from "./agent-candidate.js";
 import {
   agentCandidateArtifactRefSchema,
@@ -16,6 +16,7 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import { agentCandidateResolvedModelSchema } from "./agent-candidate-execution-plan-schema.js";
 import {
+  agentCandidateMediaTypeSchema,
   gitObjectSchema,
   isCanonicalJsonValue,
   sameGitObjectFormat,
@@ -234,6 +235,12 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
       z
         .object({
           kind: z.literal("output"),
+          spec: z
+            .object({
+              mediaType: agentCandidateMediaTypeSchema,
+              maxBytes: z.number().int().positive().max(64 * 1024 * 1024),
+            })
+            .strict(),
           artifact: agentCandidateArtifactRefSchema,
         })
         .strict(),
@@ -291,13 +298,23 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
         message: "task outcome artifact cannot be empty",
       });
     }
+    if (
+      material.outcome.kind === "output" &&
+      material.outcome.artifact.byteLength > material.outcome.spec.maxBytes
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["outcome", "artifact", "byteLength"],
+        message: "task outcome artifact exceeds its signed byte limit",
+      });
+    }
     if (!isCanonicalJsonValue(material)) {
       ctx.addIssue({
         code: "custom",
         message: "task outcome material must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateTaskOutcomeMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateTaskOutcomeMaterial>;
 
 export const agentCandidateTaskOutcomeEvidenceSchema = evidenceSchema(
   "agent-candidate-task-outcome",
