@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type {
   AgentCandidateBenchmarkResultEvidence,
-  AgentCandidateBenchmarkResultMaterialV1,
+  AgentCandidateBenchmarkResultMaterial,
   AgentCandidateFixedSpend,
   AgentCandidateModelSettlementEvidence,
   AgentCandidateModelSettlementMaterial,
@@ -395,7 +395,7 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
         message: "benchmark result material must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateBenchmarkResultMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateBenchmarkResultMaterial>;
 
 export const agentCandidateBenchmarkResultEvidenceSchema = evidenceSchema(
   "agent-candidate-benchmark-result",

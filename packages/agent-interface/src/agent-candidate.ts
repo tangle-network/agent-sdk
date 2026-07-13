@@ -365,7 +365,7 @@ export interface AgentCandidateLineage {
  * runtime integrity verifier before materialization; the carried digest and all
  * artifact hashes are untrusted until recomputed.
  */
-export interface AgentCandidateBundleV1 {
+export interface AgentCandidateBundle {
   schemaVersion: 1;
   kind: "agent-candidate-bundle";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
@@ -377,8 +377,6 @@ export interface AgentCandidateBundleV1 {
   lineage: AgentCandidateLineage;
   digest: Sha256Digest;
 }
-
-export type AgentCandidateBundle = AgentCandidateBundleV1;
 
 export interface AgentCandidateEntrypointReceipt {
   path: string;
@@ -401,7 +399,7 @@ export interface AgentCandidateResolvedModel {
 }
 
 /** Canonical, digest-free profile-plan identity document. */
-export interface AgentCandidateProfilePlanMaterialV1 {
+export interface AgentCandidateProfilePlanMaterial {
   version: 1;
   harness: HarnessType;
   files: Array<{
@@ -414,7 +412,7 @@ export interface AgentCandidateProfilePlanMaterialV1 {
   unsupported: Array<{ dimension: string; reason: string }>;
 }
 
-export interface AgentCandidateWorkspaceManifestMaterialV1 {
+export interface AgentCandidateWorkspaceManifestMaterial {
   schemaVersion: 1;
   kind: "agent-candidate-workspace-manifest";
   files: Array<{
@@ -431,7 +429,7 @@ export interface AgentCandidateWorkspaceSnapshotEvidence {
   schemaVersion: 1;
   kind: "agent-candidate-workspace-snapshot";
   digest: Sha256Digest;
-  material: AgentCandidateWorkspaceManifestMaterialV1;
+  material: AgentCandidateWorkspaceManifestMaterial;
   manifest: AgentCandidateCapturedArtifact;
   archive: AgentCandidateCapturedArtifact;
 }
@@ -582,7 +580,7 @@ export interface AgentCandidateProfilePlanEvidence {
   schemaVersion: 1;
   kind: "agent-profile-workspace-plan";
   digest: Sha256Digest;
-  material: AgentCandidateProfilePlanMaterialV1;
+  material: AgentCandidateProfilePlanMaterial;
   artifact: AgentCandidateCapturedArtifact;
 }
 
@@ -626,7 +624,7 @@ export type AgentCandidateMemoryReceipt =
     };
 
 /** Proof emitted after a runtime materializes, but before it executes, a bundle. */
-export interface AgentCandidateMaterializationReceiptV1 {
+export interface AgentCandidateMaterializationReceipt {
   schemaVersion: 1;
   kind: "agent-candidate-materialization";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
@@ -650,9 +648,6 @@ export interface AgentCandidateMaterializationReceiptV1 {
   entrypoint?: AgentCandidateEntrypointReceipt;
   digest: Sha256Digest;
 }
-
-export type AgentCandidateMaterializationReceipt =
-  AgentCandidateMaterializationReceiptV1;
 
 /** How an execution ended, independent of whether protected evidence capture completed. */
 export type AgentCandidateTermination =
@@ -934,7 +929,7 @@ export interface AgentCandidateBenchmarkDimension {
 }
 
 /** Canonical executable-grade result for one task outcome. */
-export interface AgentCandidateBenchmarkResultMaterialV1 {
+export interface AgentCandidateBenchmarkResultMaterial {
   schemaVersion: 1;
   kind: "agent-candidate-benchmark-result-material";
   executionPlanDigest: Sha256Digest;
@@ -961,7 +956,7 @@ export interface AgentCandidateBenchmarkResultEvidence {
   schemaVersion: 1;
   kind: "agent-candidate-benchmark-result";
   digest: Sha256Digest;
-  material: AgentCandidateBenchmarkResultMaterialV1;
+  material: AgentCandidateBenchmarkResultMaterial;
   artifact: AgentCandidateCapturedArtifact;
 }
 

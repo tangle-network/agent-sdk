@@ -10,7 +10,7 @@ import type {
   AgentCandidateResourceRef,
   AgentCandidateResources,
   AgentCandidateS3Locator,
-  AgentCandidateWorkspaceManifestMaterialV1,
+  AgentCandidateWorkspaceManifestMaterial,
   AgentCandidateWorkspaceSnapshotEvidence,
 } from "./agent-candidate.js";
 import {
@@ -139,7 +139,7 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
         });
       }
     }
-  }) satisfies z.ZodType<AgentCandidateWorkspaceManifestMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateWorkspaceManifestMaterial>;
 
 export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
   .object({

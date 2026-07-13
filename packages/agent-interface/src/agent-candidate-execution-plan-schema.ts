@@ -7,7 +7,7 @@ import type {
   AgentCandidateModelAccessNetwork,
   AgentCandidateProfileActivation,
   AgentCandidateProfilePlanEvidence,
-  AgentCandidateProfilePlanMaterialV1,
+  AgentCandidateProfilePlanMaterial,
   AgentCandidateResolvedModel,
   AgentCandidateTaskOutcomeSpec,
 } from "./agent-candidate.js";
@@ -172,7 +172,7 @@ export const agentCandidateProfilePlanMaterialSchema = z
         message: "profile-plan material must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateProfilePlanMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateProfilePlanMaterial>;
 
 export const agentCandidateEffectiveMemorySchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("disabled") }).strict(),
