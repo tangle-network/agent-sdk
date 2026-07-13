@@ -1,13 +1,8 @@
 import { z } from "zod";
 import type {
-  AgentCandidateFixedSpend,
   AgentCandidateMaterializationReceipt,
   AgentCandidateMemoryReceipt,
-  AgentCandidateModelUsage,
   AgentCandidateRunReceipt,
-  AgentCandidateRunReceiptAnyVersion,
-  AgentCandidateRunReceiptV1,
-  AgentCandidateRunReceiptV2,
   AgentCandidateTermination,
   AgentCandidateTraceEvidence,
 } from "./agent-candidate.js";
@@ -21,14 +16,9 @@ import {
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
 import {
-  agentCandidateSpendSchema,
-} from "./agent-candidate-lineage-schema.js";
-import {
   agentCandidateBenchmarkResultEvidenceSchema,
-  agentCandidateFixedSpendSchema,
   agentCandidateModelSettlementEvidenceSchema,
   agentCandidateTaskOutcomeEvidenceSchema,
-  sameFixedSpend,
 } from "./agent-candidate-outcome-schema.js";
 import {
   gitObjectSchema,
@@ -83,13 +73,6 @@ export const agentCandidateTraceEvidenceSchema = z
       });
     }
   }) satisfies z.ZodType<AgentCandidateTraceEvidence>;
-
-export const agentCandidateModelUsageSchema = z
-  .object({
-    resolved: agentCandidateResolvedModelSchema,
-    usage: agentCandidateSpendSchema,
-  })
-  .strict() satisfies z.ZodType<AgentCandidateModelUsage>;
 
 export const agentCandidateMemoryReceiptSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("disabled") }).strict(),
@@ -273,57 +256,8 @@ export const agentCandidateRunReceiptSchema = z
     materializationReceiptDigest: sha256DigestSchema,
     executionPlanDigest: sha256DigestSchema,
     memory: agentCandidateMemoryReceiptSchema,
-    usage: agentCandidateSpendSchema,
-    modelUsage: agentCandidateModelUsageSchema,
     trace: agentCandidateTraceEvidenceSchema,
     termination: agentCandidateTerminationSchema,
-    digest: sha256DigestSchema,
-  })
-  .strict()
-  .superRefine((receipt, ctx) => {
-    const usageMatchesModel =
-      receipt.usage.costUsd === receipt.modelUsage.usage.costUsd &&
-      receipt.usage.inputTokens === receipt.modelUsage.usage.inputTokens &&
-      receipt.usage.outputTokens === receipt.modelUsage.usage.outputTokens &&
-      receipt.usage.cachedInputTokens ===
-        receipt.modelUsage.usage.cachedInputTokens &&
-      receipt.usage.modelCalls === receipt.modelUsage.usage.modelCalls;
-    if (!usageMatchesModel) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["modelUsage", "usage"],
-        message: "single-model usage must equal aggregate protected usage",
-      });
-    }
-    if (receipt.trace.modelCallCount !== receipt.modelUsage.usage.modelCalls) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["trace", "modelCallCount"],
-        message: "trace model-call count must match protected single-model usage",
-      });
-    }
-    if (!isCanonicalJsonValue(receipt)) {
-      ctx.addIssue({
-        code: "custom",
-        message: "run receipt must contain only RFC 8785 JSON values",
-      });
-    }
-  }) satisfies z.ZodType<AgentCandidateRunReceiptV1>;
-
-export const agentCandidateRunReceiptV2Schema = z
-  .object({
-    schemaVersion: z.literal(2),
-    kind: z.literal("agent-candidate-run"),
-    digestAlgorithm: z.literal("rfc8785-sha256"),
-    bundleDigest: sha256DigestSchema,
-    materializationReceiptDigest: sha256DigestSchema,
-    executionPlanDigest: sha256DigestSchema,
-    memory: agentCandidateMemoryReceiptSchema,
-    usage: agentCandidateSpendSchema,
-    modelUsage: agentCandidateModelUsageSchema,
-    trace: agentCandidateTraceEvidenceSchema,
-    termination: agentCandidateTerminationSchema,
-    fixedUsage: agentCandidateFixedSpendSchema,
     modelSettlement: agentCandidateModelSettlementEvidenceSchema,
     taskOutcome: agentCandidateTaskOutcomeEvidenceSchema,
     benchmarkResult: agentCandidateBenchmarkResultEvidenceSchema,
@@ -331,49 +265,6 @@ export const agentCandidateRunReceiptV2Schema = z
   })
   .strict()
   .superRefine((receipt, ctx) => {
-    const legacyUsageMatchesModel =
-      receipt.usage.costUsd === receipt.modelUsage.usage.costUsd &&
-      receipt.usage.inputTokens === receipt.modelUsage.usage.inputTokens &&
-      receipt.usage.outputTokens === receipt.modelUsage.usage.outputTokens &&
-      receipt.usage.cachedInputTokens ===
-        receipt.modelUsage.usage.cachedInputTokens &&
-      receipt.usage.modelCalls === receipt.modelUsage.usage.modelCalls;
-    if (!legacyUsageMatchesModel) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["modelUsage", "usage"],
-        message: "single-model usage must equal aggregate protected usage",
-      });
-    }
-    if (!legacyUsageMatchesFixed(receipt.usage, receipt.fixedUsage)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["fixedUsage"],
-        message: "fixed usage must exactly preserve the legacy usage totals",
-      });
-    }
-    if (
-      !sameFixedSpend(
-        receipt.fixedUsage,
-        receipt.modelSettlement.material.usage,
-      )
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["modelSettlement", "material", "usage"],
-        message: "model settlement aggregate must equal fixed run usage",
-      });
-    }
-    if (
-      JSON.stringify(receipt.modelUsage.resolved) !==
-      JSON.stringify(receipt.modelSettlement.material.resolved)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["modelSettlement", "material", "resolved"],
-        message: "model settlement must bind the run's resolved model",
-      });
-    }
     if (
       receipt.modelSettlement.material.executionPlanDigest !==
       receipt.executionPlanDigest
@@ -384,7 +275,10 @@ export const agentCandidateRunReceiptV2Schema = z
         message: "model settlement must bind the executed plan",
       });
     }
-    if (receipt.trace.modelCallCount !== receipt.fixedUsage.modelCalls) {
+    if (
+      receipt.trace.modelCallCount !==
+      receipt.modelSettlement.material.usage.modelCalls
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["trace", "modelCallCount"],
@@ -427,37 +321,13 @@ export const agentCandidateRunReceiptV2Schema = z
         message: "run receipt must contain only RFC 8785 JSON values",
       });
     }
-  }) satisfies z.ZodType<AgentCandidateRunReceiptV2>;
-
-/** Explicit V1 alias; the original schema export remains unchanged. */
-export const agentCandidateRunReceiptV1Schema = agentCandidateRunReceiptSchema;
-
-/** Parses both receipt generations without changing the original V1 export. */
-export const agentCandidateRunReceiptAnyVersionSchema = z.union([
-  agentCandidateRunReceiptSchema,
-  agentCandidateRunReceiptV2Schema,
-]) satisfies z.ZodType<AgentCandidateRunReceiptAnyVersion>;
-
-function legacyUsageMatchesFixed(
-  legacy: AgentCandidateModelUsage["usage"],
-  fixed: AgentCandidateFixedSpend,
-): boolean {
-  return (
-    legacy.costUsd === fixed.costUsdNanos / 1_000_000_000 &&
-    legacy.inputTokens === fixed.inputTokens &&
-    legacy.outputTokens === fixed.outputTokens &&
-    (legacy.cachedInputTokens ?? 0) === fixed.cachedInputTokens &&
-    legacy.modelCalls === fixed.modelCalls
-  );
-}
+  }) satisfies z.ZodType<AgentCandidateRunReceipt>;
 
 type MutuallyAssignable<A, B> = [A] extends [B]
   ? [B] extends [A]
     ? true
     : never
   : never;
-type V2MustNotSatisfyOriginalReceipt =
-  AgentCandidateRunReceiptV2 extends AgentCandidateRunReceipt ? never : true;
 
 const _materializationReceiptSchemaMatchesType: MutuallyAssignable<
   z.infer<typeof agentCandidateMaterializationReceiptSchema>,
@@ -467,22 +337,5 @@ const _runReceiptSchemaMatchesType: MutuallyAssignable<
   z.infer<typeof agentCandidateRunReceiptSchema>,
   AgentCandidateRunReceipt
 > = true;
-const _anyRunReceiptSchemaMatchesType: MutuallyAssignable<
-  z.infer<typeof agentCandidateRunReceiptAnyVersionSchema>,
-  AgentCandidateRunReceiptAnyVersion
-> = true;
-const _runReceiptV1SchemaMatchesType: MutuallyAssignable<
-  z.infer<typeof agentCandidateRunReceiptV1Schema>,
-  AgentCandidateRunReceiptV1
-> = true;
-const _runReceiptV2SchemaMatchesType: MutuallyAssignable<
-  z.infer<typeof agentCandidateRunReceiptV2Schema>,
-  AgentCandidateRunReceiptV2
-> = true;
-const _v2MustNotSatisfyOriginalReceipt: V2MustNotSatisfyOriginalReceipt = true;
 void _materializationReceiptSchemaMatchesType;
 void _runReceiptSchemaMatchesType;
-void _anyRunReceiptSchemaMatchesType;
-void _runReceiptV1SchemaMatchesType;
-void _runReceiptV2SchemaMatchesType;
-void _v2MustNotSatisfyOriginalReceipt;

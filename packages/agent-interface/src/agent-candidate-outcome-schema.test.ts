@@ -5,20 +5,12 @@ import {
   agentCandidateBenchmarkResultMaterialSchema,
   agentCandidateFixedSpendSchema,
   agentCandidateModelSettlementCallSchema,
-  agentCandidateModelSettlementCallV2Schema,
   agentCandidateModelSettlementEvidenceSchema,
   agentCandidateModelSettlementMaterialSchema,
-  agentCandidateModelSettlementMaterialV1Schema,
-  agentCandidateModelSettlementMaterialV2Schema,
   agentCandidateTaskOutcomeEvidenceSchema,
   agentCandidateTaskOutcomeMaterialSchema,
 } from "./agent-candidate-outcome-schema.js";
-import {
-  agentCandidateRunReceiptAnyVersionSchema,
-  agentCandidateRunReceiptSchema,
-  agentCandidateRunReceiptV1Schema,
-  agentCandidateRunReceiptV2Schema,
-} from "./agent-candidate-receipt-schema.js";
+import { agentCandidateRunReceiptSchema } from "./agent-candidate-receipt-schema.js";
 import { candidateGit, candidateSha } from "./agent-candidate.test-fixture.js";
 
 function durableArtifact(key: string, digit: string, byteLength = 1) {
@@ -64,7 +56,7 @@ const resolvedModel = {
   reasoningEffort: "high" as const,
 };
 
-function runReceiptV2() {
+function runReceipt() {
   const executionPlanDigest = candidateSha("3");
   const fixedUsage = {
     inputTokens: 30,
@@ -75,7 +67,7 @@ function runReceiptV2() {
     costUsdNanos: 1_250_000_000,
   };
   const modelSettlementMaterial = {
-    schemaVersion: 2 as const,
+    schemaVersion: 1 as const,
     kind: "agent-candidate-model-settlement-material" as const,
     executionPlanDigest,
     preparationId: "candidate-preparation-v1.abc123",
@@ -186,30 +178,13 @@ function runReceiptV2() {
   };
 
   return {
-    schemaVersion: 2 as const,
+    schemaVersion: 1 as const,
     kind: "agent-candidate-run" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
     bundleDigest: candidateSha("c"),
     materializationReceiptDigest: candidateSha("d"),
     executionPlanDigest,
     memory: { mode: "disabled" as const },
-    usage: {
-      costUsd: 1.25,
-      inputTokens: 30,
-      outputTokens: 12,
-      cachedInputTokens: 7,
-      modelCalls: 2,
-    },
-    modelUsage: {
-      resolved: resolvedModel,
-      usage: {
-        costUsd: 1.25,
-        inputTokens: 30,
-        outputTokens: 12,
-        cachedInputTokens: 7,
-        modelCalls: 2,
-      },
-    },
     trace: {
       schemaVersion: 1 as const,
       artifact: durableArtifact("traces/run-1.json", "e", 500),
@@ -217,7 +192,6 @@ function runReceiptV2() {
       modelCallCount: 2,
     },
     termination: { kind: "exit" as const, exitCode: 0 },
-    fixedUsage,
     modelSettlement,
     taskOutcome,
     benchmarkResult,
@@ -225,57 +199,49 @@ function runReceiptV2() {
   };
 }
 
-function legacyModelSettlementMaterial() {
-  const material = runReceiptV2().modelSettlement.material;
-  return {
-    ...material,
-    schemaVersion: 1 as const,
-    calls: material.calls.map(
-      ({
-        generationId: _generationId,
-        status: _status,
-        startedAtMs: _startedAtMs,
-        endedAtMs: _endedAtMs,
-        ...call
-      }) => call,
-    ),
-  };
-}
-
-function runReceiptV1() {
-  const receipt = runReceiptV2();
-  const {
-    fixedUsage: _fixedUsage,
-    modelSettlement: _modelSettlement,
-    taskOutcome: _taskOutcome,
-    benchmarkResult: _benchmarkResult,
-    ...v1Fields
-  } = receipt;
-  return { ...v1Fields, schemaVersion: 1 as const };
-}
-
 describe("candidate outcome contracts", () => {
-  it("accepts a V2 receipt with exact spend and all three evidence surfaces", () => {
-    const receipt = runReceiptV2();
-    expect(agentCandidateRunReceiptV2Schema.parse(receipt)).toEqual(receipt);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(receipt)).toEqual(receipt);
+  it("accepts a receipt with exact spend and all three evidence surfaces", () => {
+    const receipt = runReceipt();
+    expect(agentCandidateRunReceiptSchema.parse(receipt)).toEqual(receipt);
   });
 
-  it("preserves V1 model settlements while requiring router provenance in V2", () => {
-    const legacy = legacyModelSettlementMaterial();
-    expect(agentCandidateModelSettlementMaterialV1Schema.parse(legacy)).toEqual(legacy);
-    expect(agentCandidateModelSettlementMaterialSchema.parse(legacy)).toEqual(legacy);
-
-    const current = runReceiptV2().modelSettlement.material;
-    expect(agentCandidateModelSettlementMaterialV2Schema.parse(current)).toEqual(current);
+  it("accepts every terminal result and rejects impossible trace counts", () => {
+    const receipt = runReceipt();
+    for (const termination of [
+      { kind: "exit", exitCode: 0 },
+      { kind: "timeout", timeoutMs: 60_000 },
+      { kind: "signal", signal: "SIGTERM" },
+      { kind: "cancelled" },
+    ] as const) {
+      expect(
+        agentCandidateRunReceiptSchema.parse({ ...receipt, termination }).termination,
+      ).toEqual(termination);
+    }
     expect(() =>
-      agentCandidateModelSettlementMaterialV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        trace: { ...receipt.trace, eventCount: 0 },
+      }),
+    ).toThrow();
+    expect(() =>
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        trace: { ...receipt.trace, modelCallCount: 3 },
+      }),
+    ).toThrow(/model-call count/);
+  });
+
+  it("requires router provenance in every model settlement", () => {
+    const current = runReceipt().modelSettlement.material;
+    expect(agentCandidateModelSettlementMaterialSchema.parse(current)).toEqual(current);
+    expect(() =>
+      agentCandidateModelSettlementMaterialSchema.parse({
         ...current,
         calls: [{ ...current.calls[0], traceSpanId: "caller-chosen" }, current.calls[1]],
       }),
     ).toThrow(/router generation id/);
     expect(() =>
-      agentCandidateModelSettlementMaterialV2Schema.parse({
+      agentCandidateModelSettlementMaterialSchema.parse({
         ...current,
         calls: [{ ...current.calls[0], endedAtMs: 119 }, current.calls[1]],
       }),
@@ -283,10 +249,10 @@ describe("candidate outcome contracts", () => {
   });
 
   it("requires safe fixed-point usage and exact per-call aggregates", () => {
-    const receipt = runReceiptV2();
+    const receipt = runReceipt();
     expect(() =>
       agentCandidateFixedSpendSchema.parse({
-        ...receipt.fixedUsage,
+        ...receipt.modelSettlement.material.usage,
         inputTokens: Number.MAX_SAFE_INTEGER + 1,
       }),
     ).toThrow(/safe integer/);
@@ -300,25 +266,24 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/exact per-call aggregate/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
-        fixedUsage: { ...receipt.fixedUsage, reasoningTokens: 6 },
-      }),
-    ).toThrow(/model settlement aggregate/);
-    expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
-        ...receipt,
-        usage: { ...receipt.usage, costUsd: 1.250_000_000_4 },
-        modelUsage: {
-          ...receipt.modelUsage,
-          usage: { ...receipt.modelUsage.usage, costUsd: 1.250_000_000_4 },
+        modelSettlement: {
+          ...receipt.modelSettlement,
+          material: {
+            ...receipt.modelSettlement.material,
+            usage: {
+              ...receipt.modelSettlement.material.usage,
+              reasoningTokens: 6,
+            },
+          },
         },
       }),
-    ).toThrow(/fixed usage/);
+    ).toThrow(/exact per-call aggregate/);
   });
 
   it("rejects duplicate call and trace-span identities", () => {
-    const material = runReceiptV2().modelSettlement.material;
+    const material = runReceipt().modelSettlement.material;
     expect(() =>
       agentCandidateModelSettlementMaterialSchema.parse({
         ...material,
@@ -337,7 +302,7 @@ describe("candidate outcome contracts", () => {
   });
 
   it("binds base and result states to one repository identity", () => {
-    const material = runReceiptV2().taskOutcome.material;
+    const material = runReceipt().taskOutcome.material;
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
@@ -365,7 +330,7 @@ describe("candidate outcome contracts", () => {
   });
 
   it("requires a durable git-diff-binary artifact reference", () => {
-    const material = runReceiptV2().taskOutcome.material;
+    const material = runReceipt().taskOutcome.material;
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
@@ -386,13 +351,11 @@ describe("candidate outcome contracts", () => {
   });
 
   it("accepts exact non-code output evidence", () => {
-    const material = runReceiptV2().taskOutcome.material;
+    const material = runReceipt().taskOutcome.material;
     const outputMaterial = {
       ...material,
       outcome: {
         kind: "output" as const,
-        mediaType: "application/json",
-        maxBytes: 1_024,
         artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
       },
     };
@@ -408,16 +371,28 @@ describe("candidate outcome contracts", () => {
         },
       }),
     ).toThrow(/cannot be empty/);
-    expect(() =>
-      agentCandidateTaskOutcomeMaterialSchema.parse({
-        ...outputMaterial,
-        outcome: { ...outputMaterial.outcome, maxBytes: 49 },
-      }),
-    ).toThrow(/frozen byte maximum/);
+  });
+
+  it("accepts a complete receipt for exact non-code output", () => {
+    const receipt = runReceipt();
+    const outputReceipt = {
+      ...receipt,
+      taskOutcome: {
+        ...receipt.taskOutcome,
+        material: {
+          ...receipt.taskOutcome.material,
+          outcome: {
+            kind: "output" as const,
+            artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
+          },
+        },
+      },
+    };
+    expect(agentCandidateRunReceiptSchema.parse(outputReceipt)).toEqual(outputReceipt);
   });
 
   it("requires normalized, sorted, unique dimensions and bounded scores", () => {
-    const material = runReceiptV2().benchmarkResult.material;
+    const material = runReceipt().benchmarkResult.material;
     expect(() =>
       agentCandidateBenchmarkResultMaterialSchema.parse({
         ...material,
@@ -504,25 +479,15 @@ describe("candidate outcome contracts", () => {
   });
 
   it("rejects unknown keys at every new contract boundary", () => {
-    const receipt = runReceiptV2();
-    const legacySettlement = legacyModelSettlementMaterial();
+    const receipt = runReceipt();
     const strictCases: Array<[{ parse(value: unknown): unknown }, unknown]> = [
-      [agentCandidateFixedSpendSchema, { ...receipt.fixedUsage, unexpected: true }],
+      [
+        agentCandidateFixedSpendSchema,
+        { ...receipt.modelSettlement.material.usage, unexpected: true },
+      ],
       [
         agentCandidateModelSettlementCallSchema,
-        { ...legacySettlement.calls[0], unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementCallV2Schema,
         { ...receipt.modelSettlement.material.calls[0], unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementMaterialV1Schema,
-        { ...legacySettlement, unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementMaterialV2Schema,
-        { ...receipt.modelSettlement.material, unexpected: true },
       ],
       [
         agentCandidateModelSettlementMaterialSchema,
@@ -580,14 +545,14 @@ describe("candidate outcome contracts", () => {
       expect(() => schema.parse(value)).toThrow();
     }
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({ ...receipt, unexpected: true }),
+      agentCandidateRunReceiptSchema.parse({ ...receipt, unexpected: true }),
     ).toThrow();
   });
 
   it("binds outcome and benchmark evidence to the exact run", () => {
-    const receipt = runReceiptV2();
+    const receipt = runReceipt();
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         modelSettlement: {
           ...receipt.modelSettlement,
@@ -599,7 +564,7 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/model settlement must bind/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         taskOutcome: {
           ...receipt.taskOutcome,
@@ -611,7 +576,7 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/task outcome must bind/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         benchmarkResult: {
           ...receipt.benchmarkResult,
@@ -624,15 +589,4 @@ describe("candidate outcome contracts", () => {
     ).toThrow(/exact task outcome/);
   });
 
-  it("keeps the original V1 export unchanged and offers an explicit union", () => {
-    const v1 = runReceiptV1();
-    const v2 = runReceiptV2();
-    expect(agentCandidateRunReceiptV1Schema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptSchema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(v2)).toEqual(v2);
-    expect(agentCandidateRunReceiptV2Schema.parse(v2)).toEqual(v2);
-    expect(() => agentCandidateRunReceiptSchema.parse(v2)).toThrow();
-    expect(() => agentCandidateRunReceiptV1Schema.parse(v2)).toThrow();
-  });
 });

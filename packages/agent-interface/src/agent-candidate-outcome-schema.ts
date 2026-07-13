@@ -5,8 +5,6 @@ import type {
   AgentCandidateFixedSpend,
   AgentCandidateModelSettlementEvidence,
   AgentCandidateModelSettlementMaterial,
-  AgentCandidateModelSettlementMaterialV1,
-  AgentCandidateModelSettlementMaterialV2,
   AgentCandidateRepositoryState,
   AgentCandidateTaskOutcomeEvidence,
   AgentCandidateTaskOutcomeMaterialV1,
@@ -18,7 +16,6 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import { agentCandidateResolvedModelSchema } from "./agent-candidate-execution-plan-schema.js";
 import {
-  agentCandidateMediaTypeSchema,
   gitObjectSchema,
   isCanonicalJsonValue,
   sameGitObjectFormat,
@@ -55,19 +52,6 @@ export const agentCandidateFixedSpendSchema = z
 export const agentCandidateModelSettlementCallSchema = z
   .object({
     callId: boundedIdentifierSchema,
-    traceSpanId: boundedIdentifierSchema,
-    model: boundedIdentifierSchema,
-    inputTokens: safeCountSchema,
-    outputTokens: safeCountSchema,
-    cachedInputTokens: safeCountSchema,
-    reasoningTokens: safeCountSchema,
-    costUsdNanos: safeCountSchema,
-  })
-  .strict();
-
-export const agentCandidateModelSettlementCallV2Schema = z
-  .object({
-    callId: boundedIdentifierSchema,
     generationId: boundedIdentifierSchema,
     traceSpanId: boundedIdentifierSchema,
     status: z.enum(["succeeded", "failed"]),
@@ -99,37 +83,25 @@ export const agentCandidateModelSettlementCallV2Schema = z
   });
 
 const modelSettlementMaterialShape = {
-    kind: z.literal("agent-candidate-model-settlement-material"),
-    executionPlanDigest: sha256DigestSchema,
-    preparationId: boundedIdentifierSchema,
-    grantDigest: sha256DigestSchema,
-    closed: z.literal(true),
-    resolved: agentCandidateResolvedModelSchema,
-    usage: agentCandidateFixedSpendSchema,
+  kind: z.literal("agent-candidate-model-settlement-material"),
+  executionPlanDigest: sha256DigestSchema,
+  preparationId: boundedIdentifierSchema,
+  grantDigest: sha256DigestSchema,
+  closed: z.literal(true),
+  resolved: agentCandidateResolvedModelSchema,
+  usage: agentCandidateFixedSpendSchema,
 };
 
-export const agentCandidateModelSettlementMaterialV1Schema = z
+export const agentCandidateModelSettlementMaterialSchema = z
   .object({
     schemaVersion: z.literal(1),
     ...modelSettlementMaterialShape,
     calls: z.array(agentCandidateModelSettlementCallSchema),
   })
   .strict()
-  .superRefine(refineModelSettlementMaterial) satisfies z.ZodType<AgentCandidateModelSettlementMaterialV1>;
-
-export const agentCandidateModelSettlementMaterialV2Schema = z
-  .object({
-    schemaVersion: z.literal(2),
-    ...modelSettlementMaterialShape,
-    calls: z.array(agentCandidateModelSettlementCallV2Schema),
-  })
-  .strict()
-  .superRefine(refineModelSettlementMaterial) satisfies z.ZodType<AgentCandidateModelSettlementMaterialV2>;
-
-export const agentCandidateModelSettlementMaterialSchema = z.union([
-  agentCandidateModelSettlementMaterialV1Schema,
-  agentCandidateModelSettlementMaterialV2Schema,
-]) satisfies z.ZodType<AgentCandidateModelSettlementMaterial>;
+  .superRefine(
+    refineModelSettlementMaterial,
+  ) satisfies z.ZodType<AgentCandidateModelSettlementMaterial>;
 
 function refineModelSettlementMaterial(
   material: AgentCandidateModelSettlementMaterial,
@@ -164,20 +136,14 @@ function refineModelSettlementMaterial(
       });
     }
     traceSpanIds.add(call.traceSpanId);
-    const generationId =
-      "generationId" in call && typeof call.generationId === "string"
-        ? call.generationId
-        : undefined;
-    if (generationId !== undefined) {
-      if (generationIds.has(generationId)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["calls", index, "generationId"],
-          message: "model settlement generation ids must be unique",
-        });
-      }
-      generationIds.add(generationId);
+    if (generationIds.has(call.generationId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calls", index, "generationId"],
+        message: "model settlement generation ids must be unique",
+      });
     }
+    generationIds.add(call.generationId);
     if (call.model !== material.resolved.model) {
       ctx.addIssue({
         code: "custom",
@@ -268,8 +234,6 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
       z
         .object({
           kind: z.literal("output"),
-          mediaType: agentCandidateMediaTypeSchema,
-          maxBytes: z.number().int().positive().max(64 * 1024 * 1024),
           artifact: agentCandidateArtifactRefSchema,
         })
         .strict(),
@@ -325,16 +289,6 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
         code: "custom",
         path: ["outcome", "artifact"],
         message: "task outcome artifact cannot be empty",
-      });
-    }
-    if (
-      material.outcome.kind === "output" &&
-      material.outcome.artifact.byteLength > material.outcome.maxBytes
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["outcome", "artifact", "byteLength"],
-        message: "task outcome artifact exceeds its frozen byte maximum",
       });
     }
     if (!isCanonicalJsonValue(material)) {
@@ -432,7 +386,7 @@ export const agentCandidateBenchmarkResultEvidenceSchema = evidenceSchema(
   "benchmark result",
 ) satisfies z.ZodType<AgentCandidateBenchmarkResultEvidence>;
 
-export function sameFixedSpend(
+function sameFixedSpend(
   left: AgentCandidateFixedSpend,
   right: AgentCandidateFixedSpend,
 ): boolean {

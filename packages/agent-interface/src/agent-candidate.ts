@@ -471,6 +471,7 @@ export type AgentCandidateTaskOutcomeSpec =
     }
   | {
       kind: "output";
+      /** Evaluator-declared label; the bound grader verifies the bytes match it. */
       mediaType: string;
       maxBytes: number;
     };
@@ -573,11 +574,6 @@ export interface AgentCandidateTraceEvidence {
   modelCallCount: number;
 }
 
-export interface AgentCandidateModelUsage {
-  resolved: AgentCandidateResolvedModel;
-  usage: AgentCandidateSpend;
-}
-
 export type AgentCandidateMemoryReceipt =
   | { mode: "disabled" }
   | {
@@ -626,7 +622,7 @@ export type AgentCandidateTermination =
   | { kind: "cancelled" };
 
 /** Proof emitted after the exact materialized plan finishes executing. */
-export interface AgentCandidateRunReceiptV1 {
+export interface AgentCandidateRunReceipt {
   schemaVersion: 1;
   kind: "agent-candidate-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
@@ -634,18 +630,23 @@ export interface AgentCandidateRunReceiptV1 {
   materializationReceiptDigest: Sha256Digest;
   executionPlanDigest: Sha256Digest;
   memory: AgentCandidateMemoryReceipt;
-  usage: AgentCandidateSpend;
-  modelUsage: AgentCandidateModelUsage;
   trace: AgentCandidateTraceEvidence;
   termination: AgentCandidateTermination;
+  modelSettlement: AgentCandidateModelSettlementEvidence;
+  taskOutcome: AgentCandidateTaskOutcomeEvidence;
+  benchmarkResult: AgentCandidateBenchmarkResultEvidence;
   digest: Sha256Digest;
 }
 
-/** One evaluator-mediated model call in a terminal settlement. */
+/** One router-authored model call in a terminal settlement. */
 export interface AgentCandidateModelSettlementCall {
   callId: string;
+  generationId: string;
   traceSpanId: string;
+  status: "succeeded" | "failed";
   model: string;
+  startedAtMs: number;
+  endedAtMs: number;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
@@ -653,17 +654,8 @@ export interface AgentCandidateModelSettlementCall {
   costUsdNanos: number;
 }
 
-/** Router-authored call identity, timing, and terminal status. */
-export interface AgentCandidateModelSettlementCallV2
-  extends AgentCandidateModelSettlementCall {
-  generationId: string;
-  status: "succeeded" | "failed";
-  startedAtMs: number;
-  endedAtMs: number;
-}
-
-/** Canonical model-access ledger after the evaluator has revoked the grant. */
-export interface AgentCandidateModelSettlementMaterialV1 {
+/** Canonical model-access ledger after the evaluator has revoked access. */
+export interface AgentCandidateModelSettlementMaterial {
   schemaVersion: 1;
   kind: "agent-candidate-model-settlement-material";
   executionPlanDigest: Sha256Digest;
@@ -674,23 +666,6 @@ export interface AgentCandidateModelSettlementMaterialV1 {
   calls: AgentCandidateModelSettlementCall[];
   usage: AgentCandidateFixedSpend;
 }
-
-/** Canonical ledger whose LLM spans can be reproduced only from router facts. */
-export interface AgentCandidateModelSettlementMaterialV2 {
-  schemaVersion: 2;
-  kind: "agent-candidate-model-settlement-material";
-  executionPlanDigest: Sha256Digest;
-  preparationId: string;
-  grantDigest: Sha256Digest;
-  closed: true;
-  resolved: AgentCandidateResolvedModel;
-  calls: AgentCandidateModelSettlementCallV2[];
-  usage: AgentCandidateFixedSpend;
-}
-
-export type AgentCandidateModelSettlementMaterial =
-  | AgentCandidateModelSettlementMaterialV1
-  | AgentCandidateModelSettlementMaterialV2;
 
 export interface AgentCandidateModelSettlementEvidence {
   schemaVersion: 1;
@@ -726,8 +701,6 @@ export interface AgentCandidateTaskOutcomeMaterialV1 {
       }
     | {
         kind: "output";
-        mediaType: string;
-        maxBytes: number;
         artifact: AgentCandidateArtifactRef;
       };
 }
@@ -776,28 +749,6 @@ export interface AgentCandidateBenchmarkResultEvidence {
   material: AgentCandidateBenchmarkResultMaterialV1;
   artifact: AgentCandidateCapturedArtifact;
 }
-
-/**
- * Terminal candidate receipt with lossless spend, exact task output,
- * and executable benchmark evidence. V1 fields remain present for consumers
- * that have not yet adopted the stronger evidence surfaces.
- */
-export interface AgentCandidateRunReceiptV2
-  extends Omit<AgentCandidateRunReceiptV1, "schemaVersion"> {
-  schemaVersion: 2;
-  fixedUsage: AgentCandidateFixedSpend;
-  modelSettlement: AgentCandidateModelSettlementEvidence;
-  taskOutcome: AgentCandidateTaskOutcomeEvidence;
-  benchmarkResult: AgentCandidateBenchmarkResultEvidence;
-}
-
-/** Backward-compatible V1 receipt name. */
-export type AgentCandidateRunReceipt = AgentCandidateRunReceiptV1;
-
-/** Explicit parser target for consumers that accept both receipt generations. */
-export type AgentCandidateRunReceiptAnyVersion =
-  | AgentCandidateRunReceiptV1
-  | AgentCandidateRunReceiptV2;
 
 /** Declare a candidate bundle while retaining literal inference. */
 export function defineAgentCandidateBundle<T extends AgentCandidateBundle>(
