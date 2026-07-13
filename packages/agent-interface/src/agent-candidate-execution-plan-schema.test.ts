@@ -71,11 +71,14 @@ function planFixture() {
           path: "/tangle/input/task.txt" as const,
         },
       },
-      repository: {
-        identity: "tangle-network/agent-runtime",
-        rootIdentity: "tangle-network/agent-runtime",
-        baseCommit: "1".repeat(40),
-        baseTree: "2".repeat(40),
+      outcome: {
+        kind: "workspace" as const,
+        repository: {
+          identity: "tangle-network/agent-runtime",
+          rootIdentity: "tangle-network/agent-runtime",
+          baseCommit: "1".repeat(40),
+          baseTree: "2".repeat(40),
+        },
       },
       workspace: workspace("src/task.ts", "4"),
     },
@@ -179,9 +182,12 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         ...plan,
         task: {
           ...plan.task,
-          repository: {
-            ...plan.task.repository,
-            baseTree: "2".repeat(64),
+          outcome: {
+            ...plan.task.outcome,
+            repository: {
+              ...plan.task.outcome.repository,
+              baseTree: "2".repeat(64),
+            },
           },
         },
       }),
@@ -209,6 +215,46 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
         model: modelWithoutAccess,
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a bounded exact output instead of a Git result", () => {
+    const plan = planFixture();
+    const outputPlan = {
+      ...plan,
+      task: {
+        ...plan.task,
+        workspace: {
+          ...plan.task.workspace,
+          material: { ...plan.task.workspace.material, files: [] },
+        },
+        outcome: {
+          kind: "output" as const,
+          mediaType: "application/json",
+          maxBytes: 1_048_576,
+        },
+      },
+    };
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse(outputPlan),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...outputPlan,
+        task: {
+          ...outputPlan.task,
+          outcome: { ...outputPlan.task.outcome, mediaType: "Application/JSON" },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...outputPlan,
+        task: {
+          ...outputPlan.task,
+          outcome: { ...outputPlan.task.outcome, maxBytes: 64 * 1024 * 1024 + 1 },
+        },
       }),
     ).toThrow();
   });

@@ -387,11 +387,14 @@ describe("candidate receipts", () => {
         byteLength: 37,
         delivery: { kind: "argv-append" as const },
       },
-      repository: {
-        identity: "r360/pier-synthetic-task-1",
-        rootIdentity: "r360/pier-synthetic",
-        baseCommit: candidateGit("a"),
-        baseTree: candidateGit("b"),
+      outcome: {
+        kind: "workspace" as const,
+        repository: {
+          identity: "r360/pier-synthetic-task-1",
+          rootIdentity: "r360/pier-synthetic",
+          baseCommit: candidateGit("a"),
+          baseTree: candidateGit("b"),
+        },
       },
       workspace: taskWorkspace,
     },

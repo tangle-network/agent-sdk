@@ -458,6 +458,23 @@ export type AgentCandidateModelAccessNetwork =
   | { mode: "disabled" }
   | { mode: "gateway-only"; domains: string[] };
 
+/** Exact result shape the evaluator must capture after one candidate task. */
+export type AgentCandidateTaskOutcomeSpec =
+  | {
+      kind: "workspace";
+      repository: {
+        identity: string;
+        rootIdentity: string;
+        baseCommit: string;
+        baseTree: string;
+      };
+    }
+  | {
+      kind: "output";
+      mediaType: string;
+      maxBytes: number;
+    };
+
 /**
  * Canonical, digest-free per-task execution identity document.
  *
@@ -481,12 +498,7 @@ export interface AgentCandidateExecutionPlanMaterialV1 {
       byteLength: number;
       delivery: AgentCandidateInstructionDelivery;
     };
-    repository: {
-      identity: string;
-      rootIdentity: string;
-      baseCommit: string;
-      baseTree: string;
-    };
+    outcome: AgentCandidateTaskOutcomeSpec;
     workspace: AgentCandidateWorkspaceSnapshotEvidence;
   };
   workspaces: {
@@ -696,18 +708,28 @@ export interface AgentCandidateRepositoryState {
   tree: string;
 }
 
-/** Canonical repository result produced by the candidate on one task. */
+/** Canonical result captured by the evaluator after one candidate task. */
 export interface AgentCandidateTaskOutcomeMaterialV1 {
   schemaVersion: 1;
   kind: "agent-candidate-task-outcome-material";
   executionPlanDigest: Sha256Digest;
-  baseRepository: AgentCandidateRepositoryState;
-  resultRepository: AgentCandidateRepositoryState;
-  afterState: AgentCandidateWorkspaceSnapshotEvidence;
-  gitDiff: {
-    format: "git-diff-binary";
-    artifact: AgentCandidateArtifactRef;
-  };
+  outcome:
+    | {
+        kind: "workspace";
+        baseRepository: AgentCandidateRepositoryState;
+        resultRepository: AgentCandidateRepositoryState;
+        afterState: AgentCandidateWorkspaceSnapshotEvidence;
+        gitDiff: {
+          format: "git-diff-binary";
+          artifact: AgentCandidateArtifactRef;
+        };
+      }
+    | {
+        kind: "output";
+        mediaType: string;
+        maxBytes: number;
+        artifact: AgentCandidateArtifactRef;
+      };
 }
 
 export interface AgentCandidateTaskOutcomeEvidence {
@@ -756,7 +778,7 @@ export interface AgentCandidateBenchmarkResultEvidence {
 }
 
 /**
- * Terminal candidate receipt with lossless spend, exact repository output,
+ * Terminal candidate receipt with lossless spend, exact task output,
  * and executable benchmark evidence. V1 fields remain present for consumers
  * that have not yet adopted the stronger evidence surfaces.
  */

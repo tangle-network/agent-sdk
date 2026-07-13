@@ -18,6 +18,7 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import { agentCandidateResolvedModelSchema } from "./agent-candidate-execution-plan-schema.js";
 import {
+  agentCandidateMediaTypeSchema,
   gitObjectSchema,
   isCanonicalJsonValue,
   sameGitObjectFormat,
@@ -249,51 +250,91 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
     schemaVersion: z.literal(1),
     kind: z.literal("agent-candidate-task-outcome-material"),
     executionPlanDigest: sha256DigestSchema,
-    baseRepository: agentCandidateRepositoryStateSchema,
-    resultRepository: agentCandidateRepositoryStateSchema,
-    afterState: agentCandidateWorkspaceSnapshotEvidenceSchema,
-    gitDiff: z
-      .object({
-        format: z.literal("git-diff-binary"),
-        artifact: agentCandidateArtifactRefSchema,
-      })
-      .strict(),
+    outcome: z.discriminatedUnion("kind", [
+      z
+        .object({
+          kind: z.literal("workspace"),
+          baseRepository: agentCandidateRepositoryStateSchema,
+          resultRepository: agentCandidateRepositoryStateSchema,
+          afterState: agentCandidateWorkspaceSnapshotEvidenceSchema,
+          gitDiff: z
+            .object({
+              format: z.literal("git-diff-binary"),
+              artifact: agentCandidateArtifactRefSchema,
+            })
+            .strict(),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("output"),
+          mediaType: agentCandidateMediaTypeSchema,
+          maxBytes: z.number().int().positive().max(64 * 1024 * 1024),
+          artifact: agentCandidateArtifactRefSchema,
+        })
+        .strict(),
+    ]),
   })
   .strict()
   .superRefine((material, ctx) => {
     if (
-      material.baseRepository.identity !== material.resultRepository.identity
+      material.outcome.kind === "workspace" &&
+      material.outcome.baseRepository.identity !==
+        material.outcome.resultRepository.identity
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["resultRepository", "identity"],
+        path: ["outcome", "resultRepository", "identity"],
         message: "base and result repository identities must match",
       });
     }
     if (
-      material.baseRepository.rootIdentity !==
-      material.resultRepository.rootIdentity
+      material.outcome.kind === "workspace" &&
+      material.outcome.baseRepository.rootIdentity !==
+        material.outcome.resultRepository.rootIdentity
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["resultRepository", "rootIdentity"],
+        path: ["outcome", "resultRepository", "rootIdentity"],
         message: "base and result repository roots must match",
       });
     }
+    if (material.outcome.kind === "workspace") {
+      if (
+        !sameGitObjectFormat(
+          material.outcome.baseRepository.commit,
+          material.outcome.resultRepository.commit,
+        ) ||
+        !sameGitObjectFormat(
+          material.outcome.baseRepository.tree,
+          material.outcome.resultRepository.tree,
+        )
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["outcome", "resultRepository"],
+          message: "base and result repositories must use one Git object format",
+        });
+      }
+    }
     if (
-      !sameGitObjectFormat(
-        material.baseRepository.commit,
-        material.resultRepository.commit,
-      ) ||
-      !sameGitObjectFormat(
-        material.baseRepository.tree,
-        material.resultRepository.tree,
-      )
+      material.outcome.kind === "output" &&
+      material.outcome.artifact.byteLength === 0
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["resultRepository"],
-        message: "base and result repositories must use one Git object format",
+        path: ["outcome", "artifact"],
+        message: "task outcome artifact cannot be empty",
+      });
+    }
+    if (
+      material.outcome.kind === "output" &&
+      material.outcome.artifact.byteLength > material.outcome.maxBytes
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["outcome", "artifact", "byteLength"],
+        message: "task outcome artifact exceeds its frozen byte maximum",
       });
     }
     if (!isCanonicalJsonValue(material)) {

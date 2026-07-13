@@ -125,22 +125,25 @@ function runReceiptV2() {
     schemaVersion: 1 as const,
     kind: "agent-candidate-task-outcome-material" as const,
     executionPlanDigest,
-    baseRepository: {
-      identity: "pier/task-1",
-      rootIdentity: "pier",
-      commit: candidateGit("1"),
-      tree: candidateGit("2"),
-    },
-    resultRepository: {
-      identity: "pier/task-1",
-      rootIdentity: "pier",
-      commit: candidateGit("3"),
-      tree: candidateGit("4"),
-    },
-    afterState: workspaceSnapshot("run-1", "6"),
-    gitDiff: {
-      format: "git-diff-binary" as const,
-      artifact: durableArtifact("outcomes/run-1/result.diff", "7", 50),
+    outcome: {
+      kind: "workspace" as const,
+      baseRepository: {
+        identity: "pier/task-1",
+        rootIdentity: "pier",
+        commit: candidateGit("1"),
+        tree: candidateGit("2"),
+      },
+      resultRepository: {
+        identity: "pier/task-1",
+        rootIdentity: "pier",
+        commit: candidateGit("3"),
+        tree: candidateGit("4"),
+      },
+      afterState: workspaceSnapshot("run-1", "6"),
+      gitDiff: {
+        format: "git-diff-binary" as const,
+        artifact: durableArtifact("outcomes/run-1/result.diff", "7", 50),
+      },
     },
   };
   const taskOutcome = {
@@ -338,18 +341,24 @@ describe("candidate outcome contracts", () => {
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        resultRepository: {
-          ...material.resultRepository,
-          identity: "pier/different-task",
+        outcome: {
+          ...material.outcome,
+          resultRepository: {
+            ...material.outcome.resultRepository,
+            identity: "pier/different-task",
+          },
         },
       }),
     ).toThrow(/repository identities must match/);
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        resultRepository: {
-          ...material.resultRepository,
-          rootIdentity: "different-root",
+        outcome: {
+          ...material.outcome,
+          resultRepository: {
+            ...material.outcome.resultRepository,
+            rootIdentity: "different-root",
+          },
         },
       }),
     ).toThrow(/repository roots must match/);
@@ -360,17 +369,51 @@ describe("candidate outcome contracts", () => {
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        gitDiff: {
-          format: "git-diff-binary",
-          artifact: {
-            encoding: "base64",
-            content: "",
-            sha256: candidateSha("1"),
-            byteLength: 0,
+        outcome: {
+          ...material.outcome,
+          gitDiff: {
+            format: "git-diff-binary",
+            artifact: {
+              encoding: "base64",
+              content: "",
+              sha256: candidateSha("1"),
+              byteLength: 0,
+            },
           },
         },
       }),
     ).toThrow();
+  });
+
+  it("accepts exact non-code output evidence", () => {
+    const material = runReceiptV2().taskOutcome.material;
+    const outputMaterial = {
+      ...material,
+      outcome: {
+        kind: "output" as const,
+        mediaType: "application/json",
+        maxBytes: 1_024,
+        artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
+      },
+    };
+    expect(agentCandidateTaskOutcomeMaterialSchema.parse(outputMaterial)).toEqual(
+      outputMaterial,
+    );
+    expect(() =>
+      agentCandidateTaskOutcomeMaterialSchema.parse({
+        ...outputMaterial,
+        outcome: {
+          ...outputMaterial.outcome,
+          artifact: { ...outputMaterial.outcome.artifact, byteLength: 0 },
+        },
+      }),
+    ).toThrow(/cannot be empty/);
+    expect(() =>
+      agentCandidateTaskOutcomeMaterialSchema.parse({
+        ...outputMaterial,
+        outcome: { ...outputMaterial.outcome, maxBytes: 49 },
+      }),
+    ).toThrow(/frozen byte maximum/);
   });
 
   it("requires normalized, sorted, unique dimensions and bounded scores", () => {
@@ -497,7 +540,13 @@ describe("candidate outcome contracts", () => {
         agentCandidateTaskOutcomeMaterialSchema,
         {
           ...receipt.taskOutcome.material,
-          gitDiff: { ...receipt.taskOutcome.material.gitDiff, unexpected: true },
+          outcome: {
+            ...receipt.taskOutcome.material.outcome,
+            gitDiff: {
+              ...receipt.taskOutcome.material.outcome.gitDiff,
+              unexpected: true,
+            },
+          },
         },
       ],
       [

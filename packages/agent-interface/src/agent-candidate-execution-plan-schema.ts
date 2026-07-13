@@ -8,6 +8,7 @@ import type {
   AgentCandidateProfilePlanEvidence,
   AgentCandidateProfilePlanMaterialV1,
   AgentCandidateResolvedModel,
+  AgentCandidateTaskOutcomeSpec,
 } from "./agent-candidate.js";
 import {
   agentCandidateArtifactRefSchema,
@@ -22,6 +23,7 @@ import {
 import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
+  agentCandidateMediaTypeSchema,
   environmentConfigSchema,
   gitObjectSchema,
   isCanonicalJsonValue,
@@ -209,6 +211,29 @@ export const agentCandidateExecutionLimitsSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateExecutionLimits>;
 
+export const agentCandidateTaskOutcomeSpecSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("workspace"),
+      repository: z
+        .object({
+          identity: z.string().min(1),
+          rootIdentity: z.string().min(1),
+          baseCommit: gitObjectSchema,
+          baseTree: gitObjectSchema,
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("output"),
+      mediaType: agentCandidateMediaTypeSchema,
+      maxBytes: z.number().int().positive().max(64 * 1024 * 1024),
+    })
+    .strict(),
+]) satisfies z.ZodType<AgentCandidateTaskOutcomeSpec>;
+
 export const agentCandidateExecutionPlanMaterialSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -236,14 +261,7 @@ export const agentCandidateExecutionPlanMaterialSchema = z
             delivery: agentCandidateInstructionDeliverySchema,
           })
           .strict(),
-        repository: z
-          .object({
-            identity: z.string().min(1),
-            rootIdentity: z.string().min(1),
-            baseCommit: gitObjectSchema,
-            baseTree: gitObjectSchema,
-          })
-          .strict(),
+        outcome: agentCandidateTaskOutcomeSpecSchema,
         workspace: agentCandidateWorkspaceSnapshotEvidenceSchema,
       })
       .strict(),
@@ -362,14 +380,15 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   .strict()
   .superRefine((material, ctx) => {
     if (
+      material.task.outcome.kind === "workspace" &&
       !sameGitObjectFormat(
-        material.task.repository.baseCommit,
-        material.task.repository.baseTree,
+        material.task.outcome.repository.baseCommit,
+        material.task.outcome.repository.baseTree,
       )
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["task", "repository"],
+        path: ["task", "outcome", "repository"],
         message: "task Git object ids must use one object format",
       });
     }
@@ -544,7 +563,10 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         message: "active candidate workspaces cannot be empty",
       });
     }
-    if (material.task.workspace.material.files.length === 0) {
+    if (
+      material.task.outcome.kind === "workspace" &&
+      material.task.workspace.material.files.length === 0
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["task", "workspace", "material", "files"],
