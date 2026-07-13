@@ -18,6 +18,12 @@ describe("agentCandidateBundleSchema", () => {
       mode: "isolated",
       scope: "task",
     });
+    expect(
+      agentCandidateBundleSchema.safeParse({
+        ...candidateFixture(),
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
   });
 
   it("does not require retrieval evidence for a file-backed knowledge candidate", () => {
@@ -310,13 +316,13 @@ describe("candidate receipts", () => {
     archiveName: string,
   ) => {
     const material = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-manifest" as const,
       files,
     };
     const manifest = capturedMaterial(material);
     return {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-snapshot" as const,
       digest: manifest.digest,
       material,
@@ -373,7 +379,7 @@ describe("candidate receipts", () => {
   };
   const resetEvidence = embeddedBytes("fresh-memory-reset");
   const executionPlanMaterial = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "run-1",
@@ -474,13 +480,13 @@ describe("candidate receipts", () => {
   };
   const capturedExecutionPlan = capturedMaterial(executionPlanMaterial);
   const materialization = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "agent-candidate-materialization",
     digestAlgorithm: "rfc8785-sha256",
     bundleDigest: candidateSha("1"),
     profilePlan,
     executionPlan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "agent-candidate-execution-plan",
       digest: capturedExecutionPlan.digest,
       material: executionPlanMaterial,

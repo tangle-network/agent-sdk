@@ -72,7 +72,7 @@ That plan also binds the profile target workspace and every mounted path; benchm
 Resources are embedded, addressed through closed S3/IPFS locators, or pinned to a full GitHub commit plus content digest.
 Candidate-authored process configuration is explicitly public; model authorization is evaluator-mediated and secret values never belong in the bundle.
 Because prompts and inline files are arbitrary text, producers must also run their normal secret scanner before persistence.
-Candidate v1 rejects unregistered backend extensions instead of accepting an untyped behavior or credential channel.
+Candidate bundles reject unregistered backend extensions instead of accepting an untyped behavior or credential channel.
 
 `agentCandidateBundleSchema.parse()` proves only that the wire shape is valid.
 Before execution, an integrity verifier must omit only the top-level `digest`, canonicalize the rest with RFC 8785, hash the UTF-8 bytes to lowercase `sha256:<hex>`, verify every artifact, apply any Git patch to the declared base tree, and emit an `AgentCandidateMaterializationReceipt`.

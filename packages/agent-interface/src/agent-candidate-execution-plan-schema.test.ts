@@ -9,11 +9,11 @@ import { candidateSha } from "./agent-candidate.test-fixture.js";
 
 function workspace(path: string, digit: string) {
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-workspace-snapshot" as const,
     digest: candidateSha(digit),
     material: {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-manifest" as const,
       files: [
         {
@@ -48,7 +48,7 @@ function planFixture() {
     reasoningEffort: "high" as const,
   };
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "execution-1",
@@ -215,6 +215,12 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse(planFixture()),
     ).not.toThrow();
+    expect(
+      agentCandidateExecutionPlanMaterialSchema.safeParse({
+        ...planFixture(),
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...planFixture(),
