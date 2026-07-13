@@ -6,7 +6,7 @@ export const candidateGit = (digit: string) => digit.repeat(40);
 
 export function candidateFixture() {
   return defineAgentCandidateBundle({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "agent-candidate-bundle",
     digestAlgorithm: "rfc8785-sha256",
     profile: {
@@ -72,11 +72,11 @@ export function candidateFixture() {
         container: { image: "node:22", indexDigest: candidateSha("6") },
       },
       workspace: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "agent-candidate-workspace-snapshot",
         digest: candidateSha("c"),
         material: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           kind: "agent-candidate-workspace-manifest",
           files: [
             {
@@ -119,11 +119,11 @@ export function candidateFixture() {
         promotionPlanHash: candidateSha("9"),
       },
       snapshot: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "agent-candidate-workspace-snapshot",
         digest: candidateSha("7"),
         material: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           kind: "agent-candidate-workspace-manifest",
           files: [],
         },

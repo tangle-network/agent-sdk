@@ -208,11 +208,18 @@ describe("candidate artifact schemas", () => {
     ];
     expect(() =>
       agentCandidateWorkspaceManifestMaterialSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "agent-candidate-workspace-manifest",
         files,
       }),
     ).not.toThrow();
+    expect(
+      agentCandidateWorkspaceManifestMaterialSchema.safeParse({
+        schemaVersion: 1,
+        kind: "agent-candidate-workspace-manifest",
+        files,
+      }).success,
+    ).toBe(false);
     for (const invalidFiles of [
       [...files].reverse(),
       [files[0], files[0]],
@@ -222,7 +229,7 @@ describe("candidate artifact schemas", () => {
     ]) {
       expect(() =>
         agentCandidateWorkspaceManifestMaterialSchema.parse({
-          schemaVersion: 1,
+          schemaVersion: 2,
           kind: "agent-candidate-workspace-manifest",
           files: invalidFiles,
         }),
@@ -232,11 +239,11 @@ describe("candidate artifact schemas", () => {
 
   it("requires workspace manifest and archive evidence", () => {
     const evidence = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "agent-candidate-workspace-snapshot",
       digest: candidateSha("1"),
       material: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "agent-candidate-workspace-manifest",
         files: [],
       },
@@ -256,6 +263,12 @@ describe("candidate artifact schemas", () => {
     expect(() =>
       agentCandidateWorkspaceSnapshotEvidenceSchema.parse(evidence),
     ).not.toThrow();
+    expect(
+      agentCandidateWorkspaceSnapshotEvidenceSchema.safeParse({
+        ...evidence,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
     expect(() =>
       agentCandidateWorkspaceSnapshotEvidenceSchema.parse({
         ...evidence,

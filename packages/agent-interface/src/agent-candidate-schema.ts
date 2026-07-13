@@ -23,7 +23,7 @@ import { canonicalizeHarness } from "./harness.js";
  */
 export const agentCandidateBundleSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-bundle"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     profile: agentCandidateProfileSchema,

@@ -10,7 +10,10 @@ import {
   agentCandidateTaskOutcomeEvidenceSchema,
   agentCandidateTaskOutcomeMaterialSchema,
 } from "./agent-candidate-outcome-schema.js";
-import { agentCandidateRunReceiptSchema } from "./agent-candidate-receipt-schema.js";
+import {
+  agentCandidateMaterializationReceiptSchema,
+  agentCandidateRunReceiptSchema,
+} from "./agent-candidate-receipt-schema.js";
 import {
   agentImprovementProposalSchema,
   agentImprovementReviewSchema,
@@ -37,11 +40,11 @@ function durableArtifact(key: string, digit: string, byteLength = 1) {
 
 function workspaceSnapshot(name: string, digit: string) {
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-workspace-snapshot" as const,
     digest: candidateSha(digit),
     material: {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-manifest" as const,
       files: [
         {
@@ -81,7 +84,7 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
     artifact: durableArtifact("plans/profile.json", "1", 72),
   };
   const executionPlanMaterial = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: receipt.bundleDigest,
     executionId: "candidate-execution-1",
@@ -151,13 +154,13 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
     network: { mode: "disabled" as const },
   };
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-materialization" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
     bundleDigest: receipt.bundleDigest,
     profilePlan,
     executionPlan: {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       kind: "agent-candidate-execution-plan" as const,
       digest: receipt.executionPlanDigest,
       material: executionPlanMaterial,
@@ -183,7 +186,7 @@ function runReceipt() {
     costUsdNanos: 1_250_000_000,
   };
   const modelSettlementMaterial = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-model-settlement-material" as const,
     executionPlanDigest,
     preparationId: "candidate-preparation-v1.abc123",
@@ -223,14 +226,14 @@ function runReceipt() {
     usage: fixedUsage,
   };
   const modelSettlement = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-model-settlement" as const,
     digest: candidateSha("5"),
     material: modelSettlementMaterial,
     artifact: durableArtifact("settlements/run-1.json", "5", 300),
   };
   const taskOutcomeMaterial = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-task-outcome-material" as const,
     executionPlanDigest,
     outcome: {
@@ -255,7 +258,7 @@ function runReceipt() {
     },
   };
   const taskOutcome = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     kind: "agent-candidate-task-outcome" as const,
     digest: candidateSha("8"),
     material: taskOutcomeMaterial,
@@ -294,7 +297,7 @@ function runReceipt() {
   };
 
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 3 as const,
     kind: "agent-candidate-run" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
     bundleDigest: candidateSha("c"),
@@ -617,6 +620,53 @@ describe("candidate outcome contracts", () => {
   it("accepts a receipt with exact spend and all three evidence surfaces", () => {
     const receipt = runReceipt();
     expect(agentCandidateRunReceiptSchema.parse(receipt)).toEqual(receipt);
+  });
+
+  it("rejects record versions already published with different shapes", () => {
+    const receipt = runReceipt();
+    const materialization = materializationReceipt(receipt);
+    expect(
+      agentCandidateRunReceiptSchema.safeParse({ ...receipt, schemaVersion: 1 }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateRunReceiptSchema.safeParse({ ...receipt, schemaVersion: 2 }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateModelSettlementMaterialSchema.safeParse({
+        ...receipt.modelSettlement.material,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateModelSettlementEvidenceSchema.safeParse({
+        ...receipt.modelSettlement,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateTaskOutcomeMaterialSchema.safeParse({
+        ...receipt.taskOutcome.material,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateTaskOutcomeEvidenceSchema.safeParse({
+        ...receipt.taskOutcome,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateMaterializationReceiptSchema.safeParse({
+        ...materialization,
+        schemaVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateMaterializationReceiptSchema.safeParse({
+        ...materialization,
+        executionPlan: { ...materialization.executionPlan, schemaVersion: 1 },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts every terminal result and rejects impossible trace counts", () => {
