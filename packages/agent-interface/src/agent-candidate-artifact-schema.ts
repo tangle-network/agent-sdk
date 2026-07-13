@@ -10,7 +10,7 @@ import type {
   AgentCandidateResourceRef,
   AgentCandidateResources,
   AgentCandidateS3Locator,
-  AgentCandidateWorkspaceManifestMaterialV1,
+  AgentCandidateWorkspaceManifestMaterial,
   AgentCandidateWorkspaceSnapshotEvidence,
 } from "./agent-candidate.js";
 import {
@@ -119,7 +119,7 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
               (value) => isSafeRelativePath(value, false),
               "workspace manifest paths must be canonical and relative",
             ),
-          mode: z.union([z.literal(0o644), z.literal(0o755)]),
+          mode: z.number().int().min(0).max(0o777),
           sha256: sha256DigestSchema,
           byteLength: z.number().int().nonnegative(),
         })
@@ -139,7 +139,7 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
         });
       }
     }
-  }) satisfies z.ZodType<AgentCandidateWorkspaceManifestMaterialV1>;
+  }) satisfies z.ZodType<AgentCandidateWorkspaceManifestMaterial>;
 
 export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
   .object({

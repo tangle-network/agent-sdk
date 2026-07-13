@@ -5,21 +5,22 @@ import {
   agentCandidateBenchmarkResultMaterialSchema,
   agentCandidateFixedSpendSchema,
   agentCandidateModelSettlementCallSchema,
-  agentCandidateModelSettlementCallV2Schema,
   agentCandidateModelSettlementEvidenceSchema,
   agentCandidateModelSettlementMaterialSchema,
-  agentCandidateModelSettlementMaterialV1Schema,
-  agentCandidateModelSettlementMaterialV2Schema,
   agentCandidateTaskOutcomeEvidenceSchema,
   agentCandidateTaskOutcomeMaterialSchema,
 } from "./agent-candidate-outcome-schema.js";
+import { agentCandidateRunReceiptSchema } from "./agent-candidate-receipt-schema.js";
 import {
-  agentCandidateRunReceiptAnyVersionSchema,
-  agentCandidateRunReceiptSchema,
-  agentCandidateRunReceiptV1Schema,
-  agentCandidateRunReceiptV2Schema,
-} from "./agent-candidate-receipt-schema.js";
-import { candidateGit, candidateSha } from "./agent-candidate.test-fixture.js";
+  agentImprovementProposalSchema,
+  agentImprovementReviewSchema,
+  candidateExecutionEvidenceSchema,
+} from "./agent-candidate-promotion-schema.js";
+import {
+  candidateFixture,
+  candidateGit,
+  candidateSha,
+} from "./agent-candidate.test-fixture.js";
 
 function durableArtifact(key: string, digit: string, byteLength = 1) {
   return {
@@ -64,7 +65,114 @@ const resolvedModel = {
   reasoningEffort: "high" as const,
 };
 
-function runReceiptV2() {
+function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
+  const profilePlan = {
+    schemaVersion: 1 as const,
+    kind: "agent-profile-workspace-plan" as const,
+    digest: candidateSha("1"),
+    material: {
+      version: 1 as const,
+      harness: "codex" as const,
+      files: [],
+      env: {},
+      flags: [],
+      unsupported: [],
+    },
+    artifact: durableArtifact("plans/profile.json", "1", 72),
+  };
+  const executionPlanMaterial = {
+    schemaVersion: 1 as const,
+    kind: "agent-candidate-execution-plan-material" as const,
+    bundleDigest: receipt.bundleDigest,
+    executionId: "candidate-execution-1",
+    attempt: { number: 1, maxAttempts: 1, retryPolicy: "none" as const },
+    task: {
+      benchmark: "output",
+      benchmarkVersion: "1.0.0",
+      taskId: "task-1",
+      splitDigest: candidateSha("2"),
+      instruction: {
+        encoding: "utf8" as const,
+        sha256: candidateSha("3"),
+        byteLength: 1,
+        delivery: { kind: "stdin-utf8" as const },
+      },
+      repository: {
+        identity: receipt.taskOutcome.material.outcome.baseRepository.identity,
+        rootIdentity: receipt.taskOutcome.material.outcome.baseRepository.rootIdentity,
+        baseCommit: receipt.taskOutcome.material.outcome.baseRepository.commit,
+        baseTree: receipt.taskOutcome.material.outcome.baseRepository.tree,
+      },
+      outcome: { kind: "workspace" as const },
+      workspace: workspaceSnapshot("input", "4"),
+    },
+    workspaces: { taskRoot: "/work/task" },
+    codeKind: "disabled" as const,
+    profile: { planDigest: profilePlan.digest, targetWorkspace: "task" as const, mountPaths: [] },
+    harness: "codex" as const,
+    harnessVersion: "0.1.0",
+    container: {
+      source: "evaluator-task-container" as const,
+      image: "candidate:1.0.0",
+      indexDigest: candidateSha("5"),
+      manifestDigest: candidateSha("6"),
+      platform: { os: "linux", architecture: "amd64" },
+    },
+    model: {
+      policy: "single" as const,
+      resolved: resolvedModel,
+      access: {
+        kind: "evaluator-mediated" as const,
+        grantDigest: candidateSha("7"),
+        network: { mode: "disabled" as const },
+      },
+      routes: [{ kind: "primary" as const, requested: "openai/gpt-5.4" }],
+    },
+    grader: {
+      name: "output-grader",
+      version: "1.0.0",
+      artifact: durableArtifact("graders/output.tar", "8", 100),
+    },
+    launch: {
+      executable: "node",
+      args: [],
+      env: {},
+      cwd: { workspace: "task" as const, path: "." },
+    },
+    memory: { mode: "disabled" as const },
+    limits: {
+      timeoutMs: 1_000,
+      maxSteps: 1,
+      maxModelCalls: 0,
+      maxInputTokens: 0,
+      maxOutputTokens: 0,
+      maxCostUsd: 0,
+    },
+    network: { mode: "disabled" as const },
+  };
+  return {
+    schemaVersion: 1 as const,
+    kind: "agent-candidate-materialization" as const,
+    digestAlgorithm: "rfc8785-sha256" as const,
+    bundleDigest: receipt.bundleDigest,
+    profilePlan,
+    executionPlan: {
+      schemaVersion: 1 as const,
+      kind: "agent-candidate-execution-plan" as const,
+      digest: receipt.executionPlanDigest,
+      material: executionPlanMaterial,
+      artifact: durableArtifact("plans/execution.json", "3", 800),
+    },
+    codeKind: "disabled" as const,
+    harness: "codex" as const,
+    harnessVersion: "0.1.0",
+    container: executionPlanMaterial.container,
+    resolvedModel,
+    digest: receipt.materializationReceiptDigest,
+  };
+}
+
+function runReceipt() {
   const executionPlanDigest = candidateSha("3");
   const fixedUsage = {
     inputTokens: 30,
@@ -75,7 +183,7 @@ function runReceiptV2() {
     costUsdNanos: 1_250_000_000,
   };
   const modelSettlementMaterial = {
-    schemaVersion: 2 as const,
+    schemaVersion: 1 as const,
     kind: "agent-candidate-model-settlement-material" as const,
     executionPlanDigest,
     preparationId: "candidate-preparation-v1.abc123",
@@ -125,22 +233,25 @@ function runReceiptV2() {
     schemaVersion: 1 as const,
     kind: "agent-candidate-task-outcome-material" as const,
     executionPlanDigest,
-    baseRepository: {
-      identity: "pier/task-1",
-      rootIdentity: "pier",
-      commit: candidateGit("1"),
-      tree: candidateGit("2"),
-    },
-    resultRepository: {
-      identity: "pier/task-1",
-      rootIdentity: "pier",
-      commit: candidateGit("3"),
-      tree: candidateGit("4"),
-    },
-    afterState: workspaceSnapshot("run-1", "6"),
-    gitDiff: {
-      format: "git-diff-binary" as const,
-      artifact: durableArtifact("outcomes/run-1/result.diff", "7", 50),
+    outcome: {
+      kind: "workspace" as const,
+      baseRepository: {
+        identity: "pier/task-1",
+        rootIdentity: "pier",
+        commit: candidateGit("1"),
+        tree: candidateGit("2"),
+      },
+      resultRepository: {
+        identity: "pier/task-1",
+        rootIdentity: "pier",
+        commit: candidateGit("3"),
+        tree: candidateGit("4"),
+      },
+      afterState: workspaceSnapshot("run-1", "6"),
+      gitDiff: {
+        format: "git-diff-binary" as const,
+        artifact: durableArtifact("outcomes/run-1/result.diff", "7", 50),
+      },
     },
   };
   const taskOutcome = {
@@ -183,30 +294,13 @@ function runReceiptV2() {
   };
 
   return {
-    schemaVersion: 2 as const,
+    schemaVersion: 1 as const,
     kind: "agent-candidate-run" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
     bundleDigest: candidateSha("c"),
     materializationReceiptDigest: candidateSha("d"),
     executionPlanDigest,
     memory: { mode: "disabled" as const },
-    usage: {
-      costUsd: 1.25,
-      inputTokens: 30,
-      outputTokens: 12,
-      cachedInputTokens: 7,
-      modelCalls: 2,
-    },
-    modelUsage: {
-      resolved: resolvedModel,
-      usage: {
-        costUsd: 1.25,
-        inputTokens: 30,
-        outputTokens: 12,
-        cachedInputTokens: 7,
-        modelCalls: 2,
-      },
-    },
     trace: {
       schemaVersion: 1 as const,
       artifact: durableArtifact("traces/run-1.json", "e", 500),
@@ -214,7 +308,7 @@ function runReceiptV2() {
       modelCallCount: 2,
     },
     termination: { kind: "exit" as const, exitCode: 0 },
-    fixedUsage,
+    executorCapture: durableArtifact("captures/run-1.json", "0", 200),
     modelSettlement,
     taskOutcome,
     benchmarkResult,
@@ -222,57 +316,346 @@ function runReceiptV2() {
   };
 }
 
-function legacyModelSettlementMaterial() {
-  const material = runReceiptV2().modelSettlement.material;
-  return {
-    ...material,
-    schemaVersion: 1 as const,
-    calls: material.calls.map(
-      ({
-        generationId: _generationId,
-        status: _status,
-        startedAtMs: _startedAtMs,
-        endedAtMs: _endedAtMs,
-        ...call
-      }) => call,
-    ),
-  };
-}
-
-function runReceiptV1() {
-  const receipt = runReceiptV2();
-  const {
-    fixedUsage: _fixedUsage,
-    modelSettlement: _modelSettlement,
-    taskOutcome: _taskOutcome,
-    benchmarkResult: _benchmarkResult,
-    ...v1Fields
-  } = receipt;
-  return { ...v1Fields, schemaVersion: 1 as const };
-}
-
 describe("candidate outcome contracts", () => {
-  it("accepts a V2 receipt with exact spend and all three evidence surfaces", () => {
-    const receipt = runReceiptV2();
-    expect(agentCandidateRunReceiptV2Schema.parse(receipt)).toEqual(receipt);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(receipt)).toEqual(receipt);
+  it("owns the current proposal, review, and receipt-bearing execution evidence", () => {
+    const bundle = candidateFixture();
+    const evaluation = {
+      schemaVersion: 1 as const,
+      kind: "agent-improvement-measured-comparison" as const,
+      benchmark: { name: "pier", version: "0.3", splitDigest: candidateSha("9") },
+      baselineProfileDigest: candidateSha("8"),
+      candidateBundleDigest: bundle.digest,
+      overall: {
+        name: "composite" as const,
+        baseline: 0.5,
+        candidate: 0.75,
+        delta: 0.25,
+        confidenceInterval: {
+          level: 0.95,
+          lower: 0.1,
+          upper: 0.4,
+          method: "paired-bootstrap" as const,
+          statistic: "mean" as const,
+          resamples: 2_000,
+        },
+        n: 12,
+        direction: "higher-is-better" as const,
+        unit: "score" as const,
+      },
+      objectives: [
+        {
+          kind: "objective" as const,
+          name: "judge-quality",
+          availability: "measured" as const,
+          baseline: 0.5,
+          candidate: 0.75,
+          delta: 0.25,
+          confidenceInterval: {
+            level: 0.95,
+            lower: 0.1,
+            upper: 0.4,
+            method: "paired-bootstrap" as const,
+            statistic: "mean" as const,
+            resamples: 2_000,
+          },
+          n: 12,
+          direction: "higher-is-better" as const,
+          unit: "score" as const,
+        },
+        {
+          kind: "dimension" as const,
+          objective: "judge-quality",
+          name: "quality",
+          availability: "measured" as const,
+          baseline: 0.5,
+          candidate: 0.75,
+          delta: 0.25,
+          confidenceInterval: {
+            level: 0.95,
+            lower: 0.1,
+            upper: 0.4,
+            method: "paired-bootstrap" as const,
+            statistic: "mean" as const,
+            resamples: 2_000,
+          },
+          n: 12,
+          direction: "higher-is-better" as const,
+          unit: "score" as const,
+        },
+        {
+          kind: "cost" as const,
+          name: "cost",
+          availability: "measured" as const,
+          baseline: 0.01,
+          candidate: 0.02,
+          delta: 0.01,
+          confidenceInterval: {
+            level: 0.95,
+            lower: 0,
+            upper: 0.02,
+            method: "paired-bootstrap" as const,
+            statistic: "mean" as const,
+            resamples: 2_000,
+          },
+          n: 12,
+          direction: "lower-is-better" as const,
+          unit: "usd" as const,
+        },
+        {
+          kind: "latency" as const,
+          name: "latency",
+          availability: "measured" as const,
+          baseline: 100,
+          candidate: 90,
+          delta: -10,
+          confidenceInterval: {
+            level: 0.95,
+            lower: -20,
+            upper: 0,
+            method: "paired-bootstrap" as const,
+            statistic: "mean" as const,
+            resamples: 2_000,
+          },
+          n: 12,
+          direction: "lower-is-better" as const,
+          unit: "milliseconds" as const,
+        },
+      ],
+      candidate: {
+        label: "improved prompt",
+      },
+      decision: {
+        outcome: "ship" as const,
+        reasons: ["paired held-out interval cleared the promotion threshold"],
+        contributingChecks: [{ name: "heldout", passed: true }],
+      },
+      power: {
+        sufficient: true,
+        n: 12,
+        minimumDetectableDelta: 0.1,
+        confidenceLevel: 0.95,
+        scaleAssumed: true,
+        sharedScorerChannel: true,
+        reason: "paired holdout is sufficiently powered",
+      },
+      provenance: {
+        kind: "agent-eval-loop" as const,
+        schema: "tangle.loop-provenance.v2",
+        runId: "eval-1",
+        recordDigest: candidateSha("1"),
+        baselineContentHash: candidateSha("2"),
+        candidateContentHash: candidateSha("3"),
+      },
+      diff: "-old\n+new",
+      evaluation: { generationsExplored: 1, durationMs: 100, totalCostUsd: 0.5 },
+    };
+    const proposal = {
+      schemaVersion: 1 as const,
+      kind: "agent-improvement-proposal" as const,
+      runId: "eval-1",
+      changedSurfaces: ["prompt"] as const,
+      proposedAt: "2026-07-13T00:00:00.000Z",
+      baselineProfile: { name: "candidate" },
+      findings: [{ claim: "prompt omitted the requirement" }],
+      evaluation,
+      candidateBundle: bundle,
+      digest: candidateSha("2"),
+    };
+    expect(agentImprovementProposalSchema.parse(proposal)).toEqual(proposal);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: { ...evaluation, candidateBundleDigest: candidateSha("0") },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          objectives: evaluation.objectives.map((objective) =>
+            objective.kind === "cost"
+              ? {
+                  kind: "cost" as const,
+                  name: "cost",
+                  availability: "unavailable" as const,
+                  reason: "provider did not report cost",
+                  direction: "lower-is-better" as const,
+                  unit: "usd" as const,
+                }
+              : objective,
+          ),
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          objectives: evaluation.objectives.map((objective) =>
+            objective.kind === "latency"
+              ? {
+                  ...objective,
+                  availability: "unavailable" as const,
+                  reason: "clock evidence was not captured",
+                }
+              : objective,
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          objectives: evaluation.objectives.map((objective) =>
+            objective.kind === "dimension"
+              ? { ...objective, objective: "missing-parent" }
+              : objective,
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        changedSurfaces: ["research"],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({ ...proposal, changedSurfaces: [] }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        changedSurfaces: ["prompt", "prompt"],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        candidateProfile: { name: "duplicate" },
+        candidateProfileHash: candidateSha("3"),
+      }).success,
+    ).toBe(false);
+    const review = {
+      schemaVersion: 1 as const,
+      kind: "agent-improvement-review" as const,
+      proposalDigest: proposal.digest,
+      candidateBundleDigest: proposal.candidateBundle.digest,
+      decision: "approve" as const,
+      reviewedBy: "operator@example.com",
+      reviewedAt: "2026-07-13T00:01:00.000Z",
+      reason: "Measured winner passed review.",
+      digest: candidateSha("4"),
+    };
+    expect(agentImprovementReviewSchema.parse(review)).toEqual(review);
+    expect(
+      agentImprovementReviewSchema.safeParse({
+        ...review,
+        candidateBundleDigest: undefined,
+      }).success,
+    ).toBe(false);
+
+    const receipt = runReceipt();
+    const materialization = materializationReceipt(receipt);
+    const evidence = {
+      schemaVersion: 1 as const,
+      kind: "agent-candidate-execution-evidence" as const,
+      proposalDigest: proposal.digest,
+      reviewDigest: review.digest,
+      executionId: "candidate-execution-1",
+      succeeded: true as const,
+      materializationReceipt: materialization,
+      profileActivation: {
+        schemaVersion: 1 as const,
+        kind: "agent-candidate-profile-activation" as const,
+        profilePlan: materialization.profilePlan,
+        files: [],
+        digest: candidateSha("6"),
+      },
+      receipt,
+      digest: candidateSha("5"),
+    };
+    expect(candidateExecutionEvidenceSchema.parse(evidence)).toEqual(evidence);
+    expect(
+      candidateExecutionEvidenceSchema.safeParse({
+        ...evidence,
+        receipt: { ...receipt, termination: { kind: "timeout", timeoutMs: 1_000 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      candidateExecutionEvidenceSchema.safeParse({
+        ...evidence,
+        receipt: {
+          ...receipt,
+          taskOutcome: {
+            ...receipt.taskOutcome,
+            material: {
+              ...receipt.taskOutcome.material,
+              outcome: {
+                kind: "output",
+                spec: { mediaType: "text/plain", maxBytes: 1024 },
+                artifact: durableArtifact("outcomes/run-1/output.txt", "7", 10),
+              },
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      candidateExecutionEvidenceSchema.safeParse({
+        ...evidence,
+        receipt: undefined,
+        runReceiptDigest: evidence.receipt.digest,
+      }).success,
+    ).toBe(false);
   });
 
-  it("preserves V1 model settlements while requiring router provenance in V2", () => {
-    const legacy = legacyModelSettlementMaterial();
-    expect(agentCandidateModelSettlementMaterialV1Schema.parse(legacy)).toEqual(legacy);
-    expect(agentCandidateModelSettlementMaterialSchema.parse(legacy)).toEqual(legacy);
+  it("accepts a receipt with exact spend and all three evidence surfaces", () => {
+    const receipt = runReceipt();
+    expect(agentCandidateRunReceiptSchema.parse(receipt)).toEqual(receipt);
+  });
 
-    const current = runReceiptV2().modelSettlement.material;
-    expect(agentCandidateModelSettlementMaterialV2Schema.parse(current)).toEqual(current);
+  it("accepts every terminal result and rejects impossible trace counts", () => {
+    const receipt = runReceipt();
+    for (const termination of [
+      { kind: "exit", exitCode: 0 },
+      { kind: "timeout", timeoutMs: 60_000 },
+      { kind: "signal", signal: "SIGTERM" },
+      { kind: "cancelled" },
+    ] as const) {
+      expect(
+        agentCandidateRunReceiptSchema.parse({ ...receipt, termination }).termination,
+      ).toEqual(termination);
+    }
     expect(() =>
-      agentCandidateModelSettlementMaterialV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        trace: { ...receipt.trace, eventCount: 0 },
+      }),
+    ).toThrow();
+    expect(() =>
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        trace: { ...receipt.trace, modelCallCount: 3 },
+      }),
+    ).toThrow(/model-call count/);
+  });
+
+  it("requires router provenance in every model settlement", () => {
+    const current = runReceipt().modelSettlement.material;
+    expect(agentCandidateModelSettlementMaterialSchema.parse(current)).toEqual(current);
+    expect(() =>
+      agentCandidateModelSettlementMaterialSchema.parse({
         ...current,
         calls: [{ ...current.calls[0], traceSpanId: "caller-chosen" }, current.calls[1]],
       }),
     ).toThrow(/router generation id/);
     expect(() =>
-      agentCandidateModelSettlementMaterialV2Schema.parse({
+      agentCandidateModelSettlementMaterialSchema.parse({
         ...current,
         calls: [{ ...current.calls[0], endedAtMs: 119 }, current.calls[1]],
       }),
@@ -280,10 +663,10 @@ describe("candidate outcome contracts", () => {
   });
 
   it("requires safe fixed-point usage and exact per-call aggregates", () => {
-    const receipt = runReceiptV2();
+    const receipt = runReceipt();
     expect(() =>
       agentCandidateFixedSpendSchema.parse({
-        ...receipt.fixedUsage,
+        ...receipt.modelSettlement.material.usage,
         inputTokens: Number.MAX_SAFE_INTEGER + 1,
       }),
     ).toThrow(/safe integer/);
@@ -297,25 +680,24 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/exact per-call aggregate/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
-        fixedUsage: { ...receipt.fixedUsage, reasoningTokens: 6 },
-      }),
-    ).toThrow(/model settlement aggregate/);
-    expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
-        ...receipt,
-        usage: { ...receipt.usage, costUsd: 1.250_000_000_4 },
-        modelUsage: {
-          ...receipt.modelUsage,
-          usage: { ...receipt.modelUsage.usage, costUsd: 1.250_000_000_4 },
+        modelSettlement: {
+          ...receipt.modelSettlement,
+          material: {
+            ...receipt.modelSettlement.material,
+            usage: {
+              ...receipt.modelSettlement.material.usage,
+              reasoningTokens: 6,
+            },
+          },
         },
       }),
-    ).toThrow(/fixed usage/);
+    ).toThrow(/exact per-call aggregate/);
   });
 
   it("rejects duplicate call and trace-span identities", () => {
-    const material = runReceiptV2().modelSettlement.material;
+    const material = runReceipt().modelSettlement.material;
     expect(() =>
       agentCandidateModelSettlementMaterialSchema.parse({
         ...material,
@@ -334,47 +716,108 @@ describe("candidate outcome contracts", () => {
   });
 
   it("binds base and result states to one repository identity", () => {
-    const material = runReceiptV2().taskOutcome.material;
+    const material = runReceipt().taskOutcome.material;
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        resultRepository: {
-          ...material.resultRepository,
-          identity: "pier/different-task",
+        outcome: {
+          ...material.outcome,
+          resultRepository: {
+            ...material.outcome.resultRepository,
+            identity: "pier/different-task",
+          },
         },
       }),
     ).toThrow(/repository identities must match/);
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        resultRepository: {
-          ...material.resultRepository,
-          rootIdentity: "different-root",
+        outcome: {
+          ...material.outcome,
+          resultRepository: {
+            ...material.outcome.resultRepository,
+            rootIdentity: "different-root",
+          },
         },
       }),
     ).toThrow(/repository roots must match/);
   });
 
   it("requires a durable git-diff-binary artifact reference", () => {
-    const material = runReceiptV2().taskOutcome.material;
+    const material = runReceipt().taskOutcome.material;
     expect(() =>
       agentCandidateTaskOutcomeMaterialSchema.parse({
         ...material,
-        gitDiff: {
-          format: "git-diff-binary",
-          artifact: {
-            encoding: "base64",
-            content: "",
-            sha256: candidateSha("1"),
-            byteLength: 0,
+        outcome: {
+          ...material.outcome,
+          gitDiff: {
+            format: "git-diff-binary",
+            artifact: {
+              encoding: "base64",
+              content: "",
+              sha256: candidateSha("1"),
+              byteLength: 0,
+            },
           },
         },
       }),
     ).toThrow();
   });
 
+  it("accepts exact non-code output evidence", () => {
+    const material = runReceipt().taskOutcome.material;
+    const outputMaterial = {
+      ...material,
+      outcome: {
+        kind: "output" as const,
+        spec: { mediaType: "application/json", maxBytes: 100 },
+        artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
+      },
+    };
+    expect(agentCandidateTaskOutcomeMaterialSchema.parse(outputMaterial)).toEqual(
+      outputMaterial,
+    );
+    expect(() =>
+      agentCandidateTaskOutcomeMaterialSchema.parse({
+        ...outputMaterial,
+        outcome: {
+          ...outputMaterial.outcome,
+          artifact: { ...outputMaterial.outcome.artifact, byteLength: 0 },
+        },
+      }),
+    ).toThrow(/cannot be empty/);
+    expect(() =>
+      agentCandidateTaskOutcomeMaterialSchema.parse({
+        ...outputMaterial,
+        outcome: {
+          ...outputMaterial.outcome,
+          spec: { ...outputMaterial.outcome.spec, maxBytes: 49 },
+        },
+      }),
+    ).toThrow(/exceeds its signed byte limit/);
+  });
+
+  it("accepts a complete receipt for exact non-code output", () => {
+    const receipt = runReceipt();
+    const outputReceipt = {
+      ...receipt,
+      taskOutcome: {
+        ...receipt.taskOutcome,
+        material: {
+          ...receipt.taskOutcome.material,
+          outcome: {
+            kind: "output" as const,
+            spec: { mediaType: "application/json", maxBytes: 100 },
+            artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
+          },
+        },
+      },
+    };
+    expect(agentCandidateRunReceiptSchema.parse(outputReceipt)).toEqual(outputReceipt);
+  });
+
   it("requires normalized, sorted, unique dimensions and bounded scores", () => {
-    const material = runReceiptV2().benchmarkResult.material;
+    const material = runReceipt().benchmarkResult.material;
     expect(() =>
       agentCandidateBenchmarkResultMaterialSchema.parse({
         ...material,
@@ -461,25 +904,15 @@ describe("candidate outcome contracts", () => {
   });
 
   it("rejects unknown keys at every new contract boundary", () => {
-    const receipt = runReceiptV2();
-    const legacySettlement = legacyModelSettlementMaterial();
+    const receipt = runReceipt();
     const strictCases: Array<[{ parse(value: unknown): unknown }, unknown]> = [
-      [agentCandidateFixedSpendSchema, { ...receipt.fixedUsage, unexpected: true }],
+      [
+        agentCandidateFixedSpendSchema,
+        { ...receipt.modelSettlement.material.usage, unexpected: true },
+      ],
       [
         agentCandidateModelSettlementCallSchema,
-        { ...legacySettlement.calls[0], unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementCallV2Schema,
         { ...receipt.modelSettlement.material.calls[0], unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementMaterialV1Schema,
-        { ...legacySettlement, unexpected: true },
-      ],
-      [
-        agentCandidateModelSettlementMaterialV2Schema,
-        { ...receipt.modelSettlement.material, unexpected: true },
       ],
       [
         agentCandidateModelSettlementMaterialSchema,
@@ -497,7 +930,13 @@ describe("candidate outcome contracts", () => {
         agentCandidateTaskOutcomeMaterialSchema,
         {
           ...receipt.taskOutcome.material,
-          gitDiff: { ...receipt.taskOutcome.material.gitDiff, unexpected: true },
+          outcome: {
+            ...receipt.taskOutcome.material.outcome,
+            gitDiff: {
+              ...receipt.taskOutcome.material.outcome.gitDiff,
+              unexpected: true,
+            },
+          },
         },
       ],
       [
@@ -531,14 +970,14 @@ describe("candidate outcome contracts", () => {
       expect(() => schema.parse(value)).toThrow();
     }
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({ ...receipt, unexpected: true }),
+      agentCandidateRunReceiptSchema.parse({ ...receipt, unexpected: true }),
     ).toThrow();
   });
 
   it("binds outcome and benchmark evidence to the exact run", () => {
-    const receipt = runReceiptV2();
+    const receipt = runReceipt();
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         modelSettlement: {
           ...receipt.modelSettlement,
@@ -550,7 +989,7 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/model settlement must bind/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         taskOutcome: {
           ...receipt.taskOutcome,
@@ -562,7 +1001,7 @@ describe("candidate outcome contracts", () => {
       }),
     ).toThrow(/task outcome must bind/);
     expect(() =>
-      agentCandidateRunReceiptV2Schema.parse({
+      agentCandidateRunReceiptSchema.parse({
         ...receipt,
         benchmarkResult: {
           ...receipt.benchmarkResult,
@@ -575,15 +1014,4 @@ describe("candidate outcome contracts", () => {
     ).toThrow(/exact task outcome/);
   });
 
-  it("keeps the original V1 export unchanged and offers an explicit union", () => {
-    const v1 = runReceiptV1();
-    const v2 = runReceiptV2();
-    expect(agentCandidateRunReceiptV1Schema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptSchema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(v1)).toEqual(v1);
-    expect(agentCandidateRunReceiptAnyVersionSchema.parse(v2)).toEqual(v2);
-    expect(agentCandidateRunReceiptV2Schema.parse(v2)).toEqual(v2);
-    expect(() => agentCandidateRunReceiptSchema.parse(v2)).toThrow();
-    expect(() => agentCandidateRunReceiptV1Schema.parse(v2)).toThrow();
-  });
 });

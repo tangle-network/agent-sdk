@@ -1,3 +1,4 @@
+import { sha256 } from "@noble/hashes/sha256";
 import { z } from "zod";
 import type {
   AgentCandidateConfigValue,
@@ -9,6 +10,8 @@ const sha256Pattern = /^sha256:[a-f0-9]{64}$/;
 const gitObjectPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const environmentNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const headerNamePattern = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const mediaTypePattern =
+  /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/;
 const githubComponentPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
 const secretNamePattern =
   /(?:^|[_-])(?:api[_-]?key|access[_-]?key|private[_-]?key|token|secret|password|credentials?|authorization|cookie|database[_-]?url|dsn|pat)(?:[_-]|$)/i;
@@ -38,6 +41,13 @@ export const sha256DigestSchema = z
 export const gitObjectSchema = z.string().regex(gitObjectPattern);
 export const environmentNameSchema = z.string().regex(environmentNamePattern);
 export const headerNameSchema = z.string().regex(headerNamePattern);
+export const agentCandidateMediaTypeSchema = z.string().regex(mediaTypePattern);
+
+export function sha256Utf8(value: string): Sha256Digest {
+  const bytes = sha256(new TextEncoder().encode(value));
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hex}`;
+}
 
 export function isWellFormedUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index++) {

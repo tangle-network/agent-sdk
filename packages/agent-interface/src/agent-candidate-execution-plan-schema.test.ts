@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentCandidateExecutionPlanMaterialSchema,
+  agentCandidateProfileActivationSchema,
   agentCandidateProfilePlanMaterialSchema,
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
@@ -77,6 +78,7 @@ function planFixture() {
         baseCommit: "1".repeat(40),
         baseTree: "2".repeat(40),
       },
+      outcome: { kind: "workspace" as const },
       workspace: workspace("src/task.ts", "4"),
     },
     workspaces: {
@@ -153,6 +155,62 @@ function planFixture() {
 }
 
 describe("agentCandidateExecutionPlanMaterialSchema", () => {
+  it("binds native activation paths and modes to the canonical profile plan", () => {
+    const profilePlan = {
+      schemaVersion: 1 as const,
+      kind: "agent-profile-workspace-plan" as const,
+      digest: candidateSha("1"),
+      material: {
+        version: 1 as const,
+        harness: "codex" as const,
+        files: [
+          {
+            relPath: ".codex/instructions.md",
+            mode: 0o664,
+            contentSha256:
+              "sha256:fa79d4746c21cd960a17b92db8976ddef95a7e20b590721f8e0fa7847a05e486",
+          },
+        ],
+        env: {},
+        flags: [],
+        unsupported: [],
+      },
+      artifact: {
+        encoding: "base64" as const,
+        content: "e30=",
+        sha256: candidateSha("1"),
+        byteLength: 2,
+      },
+    };
+    const activation = {
+      schemaVersion: 1 as const,
+      kind: "agent-candidate-profile-activation" as const,
+      profilePlan,
+      files: [{ path: ".codex/instructions.md", mode: 0o664, content: "exact" }],
+      digest: candidateSha("3"),
+    };
+
+    expect(agentCandidateProfileActivationSchema.parse(activation)).toEqual(activation);
+    expect(
+      agentCandidateProfileActivationSchema.safeParse({
+        ...activation,
+        files: [{ ...activation.files[0], path: ".codex/different.md" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateProfileActivationSchema.safeParse({
+        ...activation,
+        files: [{ ...activation.files[0], mode: 0o755 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentCandidateProfileActivationSchema.safeParse({
+        ...activation,
+        files: [{ ...activation.files[0], content: "different" }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts one complete digest-free per-task identity document", () => {
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse(planFixture()),
@@ -211,6 +269,64 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         model: modelWithoutAccess,
       }),
     ).toThrow();
+  });
+
+  it("accepts a bounded exact output instead of a Git result", () => {
+    const plan = planFixture();
+    const outputPlan = {
+      ...plan,
+      task: {
+        ...plan.task,
+        workspace: {
+          ...plan.task.workspace,
+          material: { ...plan.task.workspace.material, files: [] },
+        },
+        outcome: {
+          kind: "output" as const,
+          mediaType: "application/json",
+          maxBytes: 1_048_576,
+        },
+      },
+    };
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse(outputPlan),
+    ).not.toThrow();
+    const { repository: _repository, ...taskWithoutRepository } = outputPlan.task;
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...outputPlan,
+        task: taskWithoutRepository,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...outputPlan,
+        task: {
+          ...outputPlan.task,
+          outcome: { ...outputPlan.task.outcome, mediaType: "Application/JSON" },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...outputPlan,
+        task: {
+          ...outputPlan.task,
+          outcome: { ...outputPlan.task.outcome, maxBytes: 64 * 1024 * 1024 + 1 },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("requires repository provenance only for workspace outcomes", () => {
+    const plan = planFixture();
+    const { repository: _repository, ...taskWithoutRepository } = plan.task;
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        task: taskWithoutRepository,
+      }),
+    ).toThrow(/require task repository provenance/);
   });
 
   it("rejects ambiguous roots and silently omitted profile behavior", () => {
