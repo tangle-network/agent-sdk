@@ -98,6 +98,46 @@ describe("candidate artifact schemas", () => {
         byteLength: 11,
       }),
     ).toThrow(/decoded base64/);
+
+    for (const content of [
+      "A",
+      "AAAA=",
+      "A===",
+      "AA=A",
+      "AA A",
+      "AA-_",
+    ]) {
+      expect(() =>
+        agentCandidateEmbeddedArtifactSchema.parse({
+          encoding: "base64",
+          content,
+          sha256: candidateSha("1"),
+          byteLength: 0,
+        }),
+      ).toThrow(/canonical base64/);
+    }
+  });
+
+  it("validates repository-sized base64 without overflowing the JavaScript stack", () => {
+    const content = "A".repeat(8_900_000);
+    expect(() =>
+      agentCandidateEmbeddedArtifactSchema.parse({
+        encoding: "base64",
+        content,
+        sha256: candidateSha("1"),
+        byteLength: (content.length / 4) * 3,
+      }),
+    ).not.toThrow();
+
+    const invalid = `${content.slice(0, -1)}!`;
+    expect(() =>
+      agentCandidateEmbeddedArtifactSchema.parse({
+        encoding: "base64",
+        content: invalid,
+        sha256: candidateSha("1"),
+        byteLength: (invalid.length / 4) * 3,
+      }),
+    ).toThrow(/canonical base64/);
   });
 
   it("checks UTF-8 inline byte length and well-formed Unicode", () => {
