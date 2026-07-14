@@ -22,8 +22,6 @@ import {
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 
-const base64Pattern =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const base64Alphabet =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const s3BucketPattern = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
@@ -34,6 +32,31 @@ function decodedBase64ByteLength(value: string): number {
   if (value.length === 0) return 0;
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
   return (value.length / 4) * 3 - padding;
+}
+
+function hasBase64Shape(value: string): boolean {
+  // Nested quantified regexes overflow V8's stack on multi-megabyte archives.
+  // A direct ASCII scan keeps validation linear without changing the wire format.
+  if (value.length % 4 !== 0) return false;
+
+  let contentLength = value.length;
+  while (contentLength > 0 && value.charCodeAt(contentLength - 1) === 0x3d) {
+    contentLength--;
+  }
+  const paddingLength = value.length - contentLength;
+  if (paddingLength > 2) return false;
+
+  for (let index = 0; index < contentLength; index++) {
+    const code = value.charCodeAt(index);
+    const isAlphabet =
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x30 && code <= 0x39) ||
+      code === 0x2b ||
+      code === 0x2f;
+    if (!isAlphabet) return false;
+  }
+  return true;
 }
 
 function hasCanonicalBase64Padding(value: string): boolean {
@@ -94,7 +117,9 @@ export const agentCandidateArtifactRefSchema = z
 export const agentCandidateEmbeddedArtifactSchema = z
   .object({
     encoding: z.literal("base64"),
-    content: z.string().regex(base64Pattern),
+    content: z
+      .string()
+      .refine(hasBase64Shape, "content must be canonical base64"),
     sha256: sha256DigestSchema,
     byteLength: z.number().int().nonnegative(),
   })
