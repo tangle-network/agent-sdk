@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.26.1
+
+### Patch Changes
+
+- 8f8d4bb: Validate large embedded base64 artifacts with a stack-safe linear scan instead of a backtracking regular expression.
+
 ## 0.26.0
 
 ### Minor Changes
