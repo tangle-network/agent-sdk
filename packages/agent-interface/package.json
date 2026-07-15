@@ -2,6 +2,7 @@
   "name": "@tangle-network/agent-interface",
   "version": "0.27.1",
   "type": "module",
+  "sideEffects": false,
   "license": "MIT",
   "main": "dist/index.js",
   "types": "src/index.ts",
