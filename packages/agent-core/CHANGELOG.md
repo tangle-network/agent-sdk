@@ -1,5 +1,12 @@
 # @tangle-network/agent-core
 
+## 0.4.16
+
+### Patch Changes
+
+- Updated dependencies [f6dfea0]
+  - @tangle-network/agent-interface@0.28.0
+
 ## 0.4.15
 
 ### Patch Changes
