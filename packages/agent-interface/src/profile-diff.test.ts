@@ -50,7 +50,6 @@ describe("AgentProfileDiff", () => {
 
     expect(
       applyAgentProfileDiff(profile, {
-        schemaVersion: 1,
         kind: "agent-profile-diff",
       }),
     ).toEqual(profile);
@@ -58,7 +57,6 @@ describe("AgentProfileDiff", () => {
 
   it("applies a full-profile overlay and named removals", () => {
     const diff = defineAgentProfileDiff({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       id: "stateful-small-model-pack",
       set: {
@@ -118,7 +116,6 @@ describe("AgentProfileDiff", () => {
 
   it("reports and prunes changed axes for causal ablations", () => {
     const diff = defineAgentProfileDiff({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       set: {
         prompt: { instructions: ["Use evidence first."] },
@@ -138,7 +135,6 @@ describe("AgentProfileDiff", () => {
 
   it("validates generated diffs with the public schema", () => {
     const parsed = agentProfileDiffSchema.parse({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       source: {
         kind: "frontier-author",
@@ -163,16 +159,23 @@ describe("AgentProfileDiff", () => {
     expect(changedAgentProfileAxes(parsed)).toEqual(["model", "subagents"]);
   });
 
+  it("rejects obsolete schema markers", () => {
+    expect(
+      agentProfileDiffSchema.safeParse({
+        schemaVersion: 1,
+        kind: "agent-profile-diff",
+      }).success,
+    ).toBe(false);
+  });
+
   it("sets only the harness axis", () => {
     const diff = defineAgentProfileDiff({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       set: { harness: "codex" },
     });
 
     const profile = applyAgentProfileDiff(baseProfile, diff);
     const control = applyAgentProfileDiff(baseProfile, {
-      schemaVersion: 1,
       kind: "agent-profile-diff",
     });
 
@@ -184,14 +187,12 @@ describe("AgentProfileDiff", () => {
 
   it("explicitly removes only the harness axis", () => {
     const diff = agentProfileDiffSchema.parse({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       remove: { harness: true },
     });
 
     const profile = applyAgentProfileDiff(baseProfile, diff);
     const control = applyAgentProfileDiff(baseProfile, {
-      schemaVersion: 1,
       kind: "agent-profile-diff",
     });
 
@@ -200,7 +201,6 @@ describe("AgentProfileDiff", () => {
     expect(profile).toEqual({ ...control, harness: undefined });
     expect(() =>
       agentProfileDiffSchema.parse({
-        schemaVersion: 1,
         kind: "agent-profile-diff",
         remove: { harness: false },
       }),
@@ -209,7 +209,6 @@ describe("AgentProfileDiff", () => {
 
   it("applies harness removal after a harness overlay", () => {
     const profile = applyAgentProfileDiff(baseProfile, {
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       set: { harness: "codex" },
       remove: { harness: true },
@@ -220,7 +219,6 @@ describe("AgentProfileDiff", () => {
 
   it("prunes harness set and removal without changing other axes", () => {
     const diff = defineAgentProfileDiff({
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       set: {
         harness: "codex",
@@ -233,7 +231,6 @@ describe("AgentProfileDiff", () => {
 
     const profile = applyAgentProfileDiff(baseProfile, pruned);
     const toolsOnlyControl = applyAgentProfileDiff(baseProfile, {
-      schemaVersion: 1,
       kind: "agent-profile-diff",
       set: { tools: { shell: true } },
     });

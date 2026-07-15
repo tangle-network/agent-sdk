@@ -83,7 +83,6 @@ export interface AgentProfileDiffRemoval {
  * AgentProfile instead of a benchmark-specific file mount.
  */
 export interface AgentProfileDiff {
-  schemaVersion: 1;
   kind: "agent-profile-diff";
   id?: string;
   title?: string;

@@ -73,7 +73,7 @@ describe("agentCandidateProfileSchema", () => {
     ).not.toThrow();
   });
 
-  it("rejects arbitrary backend extensions in frozen profile v1", () => {
+  it("rejects arbitrary backend extensions in a frozen profile", () => {
     expect(() =>
       agentCandidateProfileSchema.parse({
         extensions: { provider: { auth: "sk-live-abcdefghijkl" } },

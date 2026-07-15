@@ -115,7 +115,6 @@ export const agentCandidateResolvedModelSchema = z
 
 export const agentCandidateProfilePlanMaterialSchema = z
   .object({
-    version: z.literal(1),
     harness: harnessTypeSchema,
     files: z.array(
       z
@@ -227,7 +226,6 @@ export const agentCandidateTaskOutcomeSpecSchema = z.discriminatedUnion("kind", 
 
 export const agentCandidateExecutionPlanMaterialSchema = z
   .object({
-    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-execution-plan-material"),
     bundleDigest: sha256DigestSchema,
     executionId: z.string().min(1),
@@ -591,14 +589,12 @@ export const agentCandidateExecutionPlanMaterialSchema = z
     }
   }) satisfies z.ZodType<AgentCandidateExecutionPlanMaterial>;
 
-function planEvidenceSchema<
-  TVersion extends number,
-  TKind extends string,
-  TMaterial,
->(schemaVersion: TVersion, kind: TKind, material: z.ZodType<TMaterial>) {
+function planEvidenceSchema<TKind extends string, TMaterial>(
+  kind: TKind,
+  material: z.ZodType<TMaterial>,
+) {
   return z
     .object({
-      schemaVersion: z.literal(schemaVersion),
       kind: z.literal(kind),
       digest: sha256DigestSchema,
       material,
@@ -624,14 +620,12 @@ function planEvidenceSchema<
 }
 
 export const agentCandidateProfilePlanEvidenceSchema = planEvidenceSchema(
-  1,
   "agent-profile-workspace-plan",
   agentCandidateProfilePlanMaterialSchema,
 ) satisfies z.ZodType<AgentCandidateProfilePlanEvidence>;
 
 export const agentCandidateProfileActivationSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-candidate-profile-activation"),
     profilePlan: agentCandidateProfilePlanEvidenceSchema,
     files: z.array(
@@ -688,7 +682,6 @@ export const agentCandidateProfileActivationSchema = z
   }) satisfies z.ZodType<AgentCandidateProfileActivation>;
 
 export const agentCandidateExecutionPlanEvidenceSchema = planEvidenceSchema(
-  2,
   "agent-candidate-execution-plan",
   agentCandidateExecutionPlanMaterialSchema,
 ) satisfies z.ZodType<AgentCandidateExecutionPlanEvidence>;

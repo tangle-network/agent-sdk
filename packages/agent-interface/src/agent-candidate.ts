@@ -292,7 +292,6 @@ export interface AgentCandidateExecution {
 
 /** Exact frozen knowledge candidate admitted only through an approved review. */
 export interface AgentCandidateKnowledgeRef {
-  schemaVersion: 1;
   kind: "knowledge-improvement-candidate";
   runId: string;
   candidateId: string;
@@ -366,7 +365,6 @@ export interface AgentCandidateLineage {
  * artifact hashes are untrusted until recomputed.
  */
 export interface AgentCandidateBundle {
-  schemaVersion: 2;
   kind: "agent-candidate-bundle";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   profile: AgentCandidateProfile;
@@ -400,7 +398,6 @@ export interface AgentCandidateResolvedModel {
 
 /** Canonical, digest-free profile-plan identity document. */
 export interface AgentCandidateProfilePlanMaterial {
-  version: 1;
   harness: HarnessType;
   files: Array<{
     relPath: string;
@@ -413,7 +410,6 @@ export interface AgentCandidateProfilePlanMaterial {
 }
 
 export interface AgentCandidateWorkspaceManifestMaterial {
-  schemaVersion: 2;
   kind: "agent-candidate-workspace-manifest";
   files: Array<{
     path: string;
@@ -426,7 +422,6 @@ export interface AgentCandidateWorkspaceManifestMaterial {
 
 /** Content-addressed manifest of every file uploaded to one workspace. */
 export interface AgentCandidateWorkspaceSnapshotEvidence {
-  schemaVersion: 2;
   kind: "agent-candidate-workspace-snapshot";
   digest: Sha256Digest;
   material: AgentCandidateWorkspaceManifestMaterial;
@@ -507,7 +502,6 @@ export type AgentCandidateTaskOutcomeSpec =
  * its raw SHA-256 is the execution-plan digest.
  */
 export interface AgentCandidateExecutionPlanMaterial {
-  schemaVersion: 2;
   kind: "agent-candidate-execution-plan-material";
   bundleDigest: Sha256Digest;
   executionId: string;
@@ -577,7 +571,6 @@ export interface AgentCandidateExecutionPlanMaterial {
 }
 
 export interface AgentCandidateProfilePlanEvidence {
-  schemaVersion: 1;
   kind: "agent-profile-workspace-plan";
   digest: Sha256Digest;
   material: AgentCandidateProfilePlanMaterial;
@@ -586,7 +579,6 @@ export interface AgentCandidateProfilePlanEvidence {
 
 /** Exact native profile files and the canonical plan that activated them. */
 export interface AgentCandidateProfileActivation {
-  schemaVersion: 1;
   kind: "agent-candidate-profile-activation";
   profilePlan: AgentCandidateProfilePlanEvidence;
   files: Array<{
@@ -598,7 +590,6 @@ export interface AgentCandidateProfileActivation {
 }
 
 export interface AgentCandidateExecutionPlanEvidence {
-  schemaVersion: 2;
   kind: "agent-candidate-execution-plan";
   digest: Sha256Digest;
   material: AgentCandidateExecutionPlanMaterial;
@@ -606,7 +597,6 @@ export interface AgentCandidateExecutionPlanEvidence {
 }
 
 export interface AgentCandidateTraceEvidence {
-  schemaVersion: 1;
   artifact: AgentCandidateCapturedArtifact;
   eventCount: number;
   modelCallCount: number;
@@ -625,7 +615,6 @@ export type AgentCandidateMemoryReceipt =
 
 /** Proof emitted after a runtime materializes, but before it executes, a bundle. */
 export interface AgentCandidateMaterializationReceipt {
-  schemaVersion: 2;
   kind: "agent-candidate-materialization";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   bundleDigest: Sha256Digest;
@@ -658,7 +647,6 @@ export type AgentCandidateTermination =
 
 /** Proof emitted after the exact materialized plan finishes executing. */
 export interface AgentCandidateRunReceipt {
-  schemaVersion: 3;
   kind: "agent-candidate-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   bundleDigest: Sha256Digest;
@@ -688,7 +676,6 @@ export type AgentImprovementSurface =
 
 /** Portable paired held-out comparison produced by an evaluation package. */
 export interface AgentImprovementMeasuredComparison {
-  schemaVersion: 1;
   kind: "agent-improvement-measured-comparison";
   benchmark: {
     name: string;
@@ -802,7 +789,6 @@ export interface AgentImprovementMeasuredComparison {
 }
 
 export interface AgentImprovementProposal {
-  schemaVersion: 1;
   kind: "agent-improvement-proposal";
   runId: string;
   changedSurfaces: [AgentImprovementSurface, ...AgentImprovementSurface[]];
@@ -821,7 +807,6 @@ export type AgentImprovementReviewDecision =
 
 /** Human or tenant-policy decision bound to one exact proposal. */
 export interface AgentImprovementReview {
-  schemaVersion: 1;
   kind: "agent-improvement-review";
   proposalDigest: Sha256Digest;
   candidateBundleDigest: Sha256Digest;
@@ -835,7 +820,6 @@ export interface AgentImprovementReview {
 
 /** Successful post-approval execution, carrying the exact Runtime receipt. */
 export interface CandidateExecutionEvidence {
-  schemaVersion: 1;
   kind: "agent-candidate-execution-evidence";
   proposalDigest: Sha256Digest;
   reviewDigest: Sha256Digest;
@@ -865,7 +849,6 @@ export interface AgentCandidateModelSettlementCall {
 
 /** Canonical model-access ledger after the evaluator has revoked access. */
 export interface AgentCandidateModelSettlementMaterial {
-  schemaVersion: 2;
   kind: "agent-candidate-model-settlement-material";
   executionPlanDigest: Sha256Digest;
   preparationId: string;
@@ -877,7 +860,6 @@ export interface AgentCandidateModelSettlementMaterial {
 }
 
 export interface AgentCandidateModelSettlementEvidence {
-  schemaVersion: 2;
   kind: "agent-candidate-model-settlement";
   digest: Sha256Digest;
   material: AgentCandidateModelSettlementMaterial;
@@ -894,7 +876,6 @@ export interface AgentCandidateRepositoryState {
 
 /** Canonical result captured by the evaluator after one candidate task. */
 export interface AgentCandidateTaskOutcomeMaterial {
-  schemaVersion: 2;
   kind: "agent-candidate-task-outcome-material";
   executionPlanDigest: Sha256Digest;
   outcome:
@@ -916,7 +897,6 @@ export interface AgentCandidateTaskOutcomeMaterial {
 }
 
 export interface AgentCandidateTaskOutcomeEvidence {
-  schemaVersion: 2;
   kind: "agent-candidate-task-outcome";
   digest: Sha256Digest;
   material: AgentCandidateTaskOutcomeMaterial;
@@ -930,7 +910,6 @@ export interface AgentCandidateBenchmarkDimension {
 
 /** Canonical executable-grade result for one task outcome. */
 export interface AgentCandidateBenchmarkResultMaterial {
-  schemaVersion: 1;
   kind: "agent-candidate-benchmark-result-material";
   executionPlanDigest: Sha256Digest;
   taskOutcomeDigest: Sha256Digest;
@@ -953,7 +932,6 @@ export interface AgentCandidateBenchmarkResultMaterial {
 }
 
 export interface AgentCandidateBenchmarkResultEvidence {
-  schemaVersion: 1;
   kind: "agent-candidate-benchmark-result";
   digest: Sha256Digest;
   material: AgentCandidateBenchmarkResultMaterial;
