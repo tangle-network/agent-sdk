@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-daytona",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "AgentEnvironmentProvider adapter for Daytona workspaces",
   "type": "module",
   "license": "MIT",
