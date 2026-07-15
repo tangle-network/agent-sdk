@@ -95,7 +95,6 @@ const modelSettlementMaterialShape = {
 
 export const agentCandidateModelSettlementMaterialSchema = z
   .object({
-    schemaVersion: z.literal(2),
     ...modelSettlementMaterialShape,
     calls: z.array(agentCandidateModelSettlementCallSchema),
   })
@@ -189,7 +188,6 @@ function refineModelSettlementMaterial(
 }
 
 export const agentCandidateModelSettlementEvidenceSchema = evidenceSchema(
-  2,
   "agent-candidate-model-settlement",
   agentCandidateModelSettlementMaterialSchema,
   "model settlement",
@@ -215,7 +213,6 @@ export const agentCandidateRepositoryStateSchema = z
 
 export const agentCandidateTaskOutcomeMaterialSchema = z
   .object({
-    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-task-outcome-material"),
     executionPlanDigest: sha256DigestSchema,
     outcome: z.discriminatedUnion("kind", [
@@ -318,7 +315,6 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
   }) satisfies z.ZodType<AgentCandidateTaskOutcomeMaterial>;
 
 export const agentCandidateTaskOutcomeEvidenceSchema = evidenceSchema(
-  2,
   "agent-candidate-task-outcome",
   agentCandidateTaskOutcomeMaterialSchema,
   "task outcome",
@@ -333,7 +329,6 @@ export const agentCandidateBenchmarkDimensionSchema = z
 
 export const agentCandidateBenchmarkResultMaterialSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-candidate-benchmark-result-material"),
     executionPlanDigest: sha256DigestSchema,
     taskOutcomeDigest: sha256DigestSchema,
@@ -400,7 +395,6 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
   }) satisfies z.ZodType<AgentCandidateBenchmarkResultMaterial>;
 
 export const agentCandidateBenchmarkResultEvidenceSchema = evidenceSchema(
-  1,
   "agent-candidate-benchmark-result",
   agentCandidateBenchmarkResultMaterialSchema,
   "benchmark result",
@@ -420,15 +414,13 @@ function sameFixedSpend(
   );
 }
 
-function evidenceSchema<TVersion extends number, TKind extends string, TMaterial>(
-  schemaVersion: TVersion,
+function evidenceSchema<TKind extends string, TMaterial>(
   kind: TKind,
   material: z.ZodType<TMaterial>,
   label: string,
 ) {
   return z
     .object({
-      schemaVersion: z.literal(schemaVersion),
       kind: z.literal(kind),
       digest: sha256DigestSchema,
       material,

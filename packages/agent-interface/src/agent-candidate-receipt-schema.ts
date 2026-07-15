@@ -52,7 +52,6 @@ const ociPlatformSchema = z
 
 export const agentCandidateTraceEvidenceSchema = z
   .object({
-    schemaVersion: z.literal(1),
     artifact: agentCandidateCapturedArtifactSchema,
     eventCount: z.number().int().positive(),
     modelCallCount: z.number().int().nonnegative(),
@@ -108,7 +107,6 @@ export const agentCandidateTerminationSchema = z.discriminatedUnion("kind", [
 
 export const agentCandidateMaterializationReceiptSchema = z
   .object({
-    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-materialization"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     bundleDigest: sha256DigestSchema,
@@ -250,7 +248,6 @@ export const agentCandidateMaterializationReceiptSchema = z
 
 export const agentCandidateRunReceiptSchema = z
   .object({
-    schemaVersion: z.literal(3),
     kind: z.literal("agent-candidate-run"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     bundleDigest: sha256DigestSchema,

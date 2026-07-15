@@ -117,7 +117,6 @@ const improvementSurfaceSchema = z.enum([
 
 export const agentImprovementMeasuredComparisonSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-improvement-measured-comparison"),
     benchmark: z
       .object({
@@ -268,7 +267,6 @@ export const agentImprovementMeasuredComparisonSchema = z
 
 export const agentImprovementProposalSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-improvement-proposal"),
     runId: z.string().min(1).max(200),
     changedSurfaces: z
@@ -350,7 +348,6 @@ function refineEstimate(
 
 export const agentImprovementReviewSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-improvement-review"),
     proposalDigest: sha256DigestSchema,
     candidateBundleDigest: sha256DigestSchema,
@@ -366,7 +363,6 @@ export const agentImprovementReviewSchema = z
 
 export const candidateExecutionEvidenceSchema = z
   .object({
-    schemaVersion: z.literal(1),
     kind: z.literal("agent-candidate-execution-evidence"),
     proposalDigest: sha256DigestSchema,
     reviewDigest: sha256DigestSchema,

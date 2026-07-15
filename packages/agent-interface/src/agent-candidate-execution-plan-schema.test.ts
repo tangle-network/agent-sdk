@@ -9,11 +9,9 @@ import { candidateSha } from "./agent-candidate.test-fixture.js";
 
 function workspace(path: string, digit: string) {
   return {
-    schemaVersion: 2 as const,
     kind: "agent-candidate-workspace-snapshot" as const,
     digest: candidateSha(digit),
     material: {
-      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-manifest" as const,
       files: [
         {
@@ -48,7 +46,6 @@ function planFixture() {
     reasoningEffort: "high" as const,
   };
   return {
-    schemaVersion: 2 as const,
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "execution-1",
@@ -157,11 +154,9 @@ function planFixture() {
 describe("agentCandidateExecutionPlanMaterialSchema", () => {
   it("binds native activation paths and modes to the canonical profile plan", () => {
     const profilePlan = {
-      schemaVersion: 1 as const,
       kind: "agent-profile-workspace-plan" as const,
       digest: candidateSha("1"),
       material: {
-        version: 1 as const,
         harness: "codex" as const,
         files: [
           {
@@ -183,7 +178,6 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
       },
     };
     const activation = {
-      schemaVersion: 1 as const,
       kind: "agent-candidate-profile-activation" as const,
       profilePlan,
       files: [{ path: ".codex/instructions.md", mode: 0o664, content: "exact" }],
@@ -218,7 +212,7 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     expect(
       agentCandidateExecutionPlanMaterialSchema.safeParse({
         ...planFixture(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       }).success,
     ).toBe(false);
     expect(() =>
@@ -347,7 +341,6 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     }
 
     const profilePlan = {
-      version: 1,
       harness: "codex",
       files: [],
       env: {},

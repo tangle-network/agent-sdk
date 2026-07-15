@@ -186,30 +186,31 @@ export const agentProfileSchema = z.object({
     .optional(),
 });
 
-export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.object({
-  schemaVersion: z.literal(1),
-  kind: z.literal("agent-profile-diff"),
-  id: z.string().min(1).optional(),
-  title: z.string().min(1).optional(),
-  description: z.string().optional(),
-  rationale: z.string().optional(),
-  source: z
-    .object({
-      kind: z.enum([
-        "trace",
-        "frontier-author",
-        "human",
-        "optimizer",
-        "compound",
-      ]),
-      artifacts: z.array(z.string().min(1)).optional(),
-      notes: z.array(z.string()).optional(),
-    })
-    .optional(),
-  set: agentProfileSchema.optional(),
-  remove: agentProfileDiffRemovalSchema.optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z
+  .object({
+    kind: z.literal("agent-profile-diff"),
+    id: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    rationale: z.string().optional(),
+    source: z
+      .object({
+        kind: z.enum([
+          "trace",
+          "frontier-author",
+          "human",
+          "optimizer",
+          "compound",
+        ]),
+        artifacts: z.array(z.string().min(1)).optional(),
+        notes: z.array(z.string()).optional(),
+      })
+      .optional(),
+    set: agentProfileSchema.optional(),
+    remove: agentProfileDiffRemovalSchema.optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
 
 // ── Compile-time drift guard ──────────────────────────────────────────────────
 // The Zod schema and the hand-written {@link AgentProfile} interface must agree in

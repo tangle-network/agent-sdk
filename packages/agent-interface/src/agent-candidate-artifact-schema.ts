@@ -133,7 +133,6 @@ export const agentCandidateCapturedArtifactSchema = z.union([
 
 export const agentCandidateWorkspaceManifestMaterialSchema = z
   .object({
-    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-workspace-manifest"),
     files: z.array(
       z
@@ -168,7 +167,6 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
 
 export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
   .object({
-    schemaVersion: z.literal(2),
     kind: z.literal("agent-candidate-workspace-snapshot"),
     digest: sha256DigestSchema,
     material: agentCandidateWorkspaceManifestMaterialSchema,

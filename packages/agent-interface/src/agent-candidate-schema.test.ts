@@ -21,7 +21,7 @@ describe("agentCandidateBundleSchema", () => {
     expect(
       agentCandidateBundleSchema.safeParse({
         ...candidateFixture(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       }).success,
     ).toBe(false);
   });
@@ -316,13 +316,11 @@ describe("candidate receipts", () => {
     archiveName: string,
   ) => {
     const material = {
-      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-manifest" as const,
       files,
     };
     const manifest = capturedMaterial(material);
     return {
-      schemaVersion: 2 as const,
       kind: "agent-candidate-workspace-snapshot" as const,
       digest: manifest.digest,
       material,
@@ -362,7 +360,6 @@ describe("candidate receipts", () => {
     reasoningEffort: "high" as const,
   };
   const profilePlanMaterial = {
-    version: 1 as const,
     harness: "codex" as const,
     files: [],
     env: {},
@@ -371,7 +368,6 @@ describe("candidate receipts", () => {
   };
   const capturedProfilePlan = capturedMaterial(profilePlanMaterial);
   const profilePlan = {
-    schemaVersion: 1 as const,
     kind: "agent-profile-workspace-plan" as const,
     digest: capturedProfilePlan.digest,
     material: profilePlanMaterial,
@@ -379,7 +375,6 @@ describe("candidate receipts", () => {
   };
   const resetEvidence = embeddedBytes("fresh-memory-reset");
   const executionPlanMaterial = {
-    schemaVersion: 2 as const,
     kind: "agent-candidate-execution-plan-material" as const,
     bundleDigest: candidateSha("1"),
     executionId: "run-1",
@@ -480,13 +475,11 @@ describe("candidate receipts", () => {
   };
   const capturedExecutionPlan = capturedMaterial(executionPlanMaterial);
   const materialization = {
-    schemaVersion: 2,
     kind: "agent-candidate-materialization",
     digestAlgorithm: "rfc8785-sha256",
     bundleDigest: candidateSha("1"),
     profilePlan,
     executionPlan: {
-      schemaVersion: 2,
       kind: "agent-candidate-execution-plan",
       digest: capturedExecutionPlan.digest,
       material: executionPlanMaterial,

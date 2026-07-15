@@ -19,7 +19,6 @@ export const agentCandidateKnowledgeSchema = z
   .object({
     candidate: z
       .object({
-        schemaVersion: z.literal(1),
         kind: z.literal("knowledge-improvement-candidate"),
         runId: z.string().min(1),
         candidateId: z.string().min(1),
