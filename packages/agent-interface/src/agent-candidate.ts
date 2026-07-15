@@ -40,10 +40,16 @@ export interface AgentCandidateIpfsLocator {
   path?: string;
 }
 
+export interface AgentCandidateContentStoreLocator {
+  kind: "content-store";
+  store: string;
+}
+
 /** Closed locator set whose resolvers cannot choose arbitrary URL schemes. */
 export type AgentCandidateArtifactLocator =
   | AgentCandidateS3Locator
-  | AgentCandidateIpfsLocator;
+  | AgentCandidateIpfsLocator
+  | AgentCandidateContentStoreLocator;
 
 /** Content-addressed artifact stored outside the candidate manifest. */
 export interface AgentCandidateArtifactRef {

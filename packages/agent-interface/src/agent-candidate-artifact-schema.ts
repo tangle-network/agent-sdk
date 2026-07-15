@@ -2,6 +2,7 @@ import { z } from "zod";
 import type {
   AgentCandidateArtifactRef,
   AgentCandidateCapturedArtifact,
+  AgentCandidateContentStoreLocator,
   AgentCandidateEmbeddedArtifact,
   AgentCandidateFileMount,
   AgentCandidateGitHubResource,
@@ -27,6 +28,21 @@ const base64Alphabet =
 const s3BucketPattern = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const awsRegionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
 const ipfsCidPattern = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
+const contentStoreSlugPattern =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const credentialBearingSlugNamePattern =
+  /(?:^|-)(?:api-?keys?|access-?keys?|private-?keys?|tokens?|secrets?|passwords?|credentials?|authorizations?|bearers?|cookies?|database-?urls?|dsns?|pats?)(?:-|$)/;
+// These token formats remain valid lowercase slugs after delimiter restrictions.
+const slugShapedCredentialPattern =
+  /^(?:xox[abeoprs]|xapp|xwfp|glpat|gloas|gldt|glrt|glrtr|glptt|glcbt|glimt|glagent|glsoat|glffct|glft|glwt|grt|sq0atp|sq0csp)-[a-z0-9-]{8,}$/;
+
+function looksLikeContentStoreCredential(value: string): boolean {
+  return (
+    looksLikeCredential(value) ||
+    credentialBearingSlugNamePattern.test(value) ||
+    slugShapedCredentialPattern.test(value)
+  );
+}
 
 function decodedBase64ByteLength(value: string): number {
   if (value.length === 0) return 0;
@@ -101,9 +117,29 @@ export const agentCandidateIpfsLocatorSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateIpfsLocator>;
 
+export const agentCandidateContentStoreLocatorSchema = z
+  .object({
+    kind: z.literal("content-store"),
+    store: z
+      .string()
+      .regex(
+        contentStoreSlugPattern,
+        "content store must be a 1-63 character lowercase slug",
+      )
+      .refine(
+        (value) => !looksLikeContentStoreCredential(value),
+        "content store must not contain credentials",
+      ),
+  })
+  .strict() satisfies z.ZodType<AgentCandidateContentStoreLocator>;
+
 export const agentCandidateArtifactLocatorSchema = z.discriminatedUnion(
   "kind",
-  [agentCandidateS3LocatorSchema, agentCandidateIpfsLocatorSchema],
+  [
+    agentCandidateS3LocatorSchema,
+    agentCandidateIpfsLocatorSchema,
+    agentCandidateContentStoreLocatorSchema,
+  ],
 );
 
 export const agentCandidateArtifactRefSchema = z

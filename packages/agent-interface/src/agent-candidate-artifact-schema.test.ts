@@ -11,6 +11,14 @@ import {
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
 import { candidateGit, candidateSha } from "./agent-candidate.test-fixture.js";
+import type {
+  AgentCandidateArtifactLocator,
+  AgentCandidateContentStoreLocator,
+} from "./index.js";
+import {
+  agentCandidateArtifactLocatorSchema,
+  agentCandidateContentStoreLocatorSchema,
+} from "./index.js";
 
 const failClosedResources: AgentCandidateResources = { failOnError: true };
 // @ts-expect-error Candidate resources may never silently degrade.
@@ -19,20 +27,47 @@ void failClosedResources;
 void missingFailClosedPolicy;
 
 describe("candidate artifact schemas", () => {
-  it("accepts only closed, non-URL artifact locators", () => {
-    expect(() =>
-      agentCandidateArtifactRefSchema.parse({
-        locator: {
-          kind: "s3",
-          bucket: "agent-candidate-artifacts",
-          key: "runs/r360/trace.json",
-          region: "us-east-1",
-        },
-        sha256: candidateSha("1"),
-        byteLength: 42,
-      }),
-    ).not.toThrow();
+  it("accepts S3, IPFS, and content-store artifact locators", () => {
+    const contentStoreLocator: AgentCandidateContentStoreLocator = {
+      kind: "content-store",
+      store: "candidate-artifacts-2",
+    };
+    const locators: AgentCandidateArtifactLocator[] = [
+      {
+        kind: "s3",
+        bucket: "agent-candidate-artifacts",
+        key: "runs/r360/trace.json",
+        region: "us-east-1",
+      },
+      {
+        kind: "ipfs",
+        cid: `Qm${"1".repeat(44)}`,
+        path: "runs/r360/trace.json",
+      },
+      contentStoreLocator,
+    ];
 
+    for (const locator of locators) {
+      expect(agentCandidateArtifactLocatorSchema.parse(locator)).toEqual(
+        locator,
+      );
+      expect(
+        agentCandidateArtifactRefSchema.parse({
+          locator,
+          sha256: candidateSha("1"),
+          byteLength: 42,
+        }),
+      ).toEqual({ locator, sha256: candidateSha("1"), byteLength: 42 });
+    }
+    expect(
+      agentCandidateContentStoreLocatorSchema.parse({
+        kind: "content-store",
+        store: "a".repeat(63),
+      }),
+    ).toEqual({ kind: "content-store", store: "a".repeat(63) });
+  });
+
+  it("rejects arbitrary URL locator kinds", () => {
     for (const uri of [
       "file:///etc/passwd",
       "http://169.254.169.254/latest/meta-data",
@@ -45,6 +80,77 @@ describe("candidate artifact schemas", () => {
           locator: { kind: "url", uri },
           sha256: candidateSha("1"),
           byteLength: 42,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("rejects unsafe content-store names and unknown locator fields", () => {
+    for (const store of [
+      "",
+      "-candidate-artifacts",
+      "candidate-artifacts-",
+      "Candidate-Artifacts",
+      "candidate_artifacts",
+      "candidate.artifacts",
+      "candidate/artifacts",
+      "candidate\\artifacts",
+      "../candidate-artifacts",
+      "https://artifacts.example.com",
+      "s3://candidate-artifacts",
+      "sk-live-abcdefghijklmnop",
+      "ghp-abcdefghijklmnop",
+      ["xoxb", "123456789012", "123456789012", "abcdefghijklmnopqrstuvwx"].join(
+        "-",
+      ),
+      "xapp-1-abcdefghijklmnopqrstuvwx",
+      "xwfp-1-abcdefghijklmnopqrstuvwx",
+      "glpat-abcdefghijklmnopqrst",
+      "gloas-abcdefghijklmnopqrst",
+      "glrtr-abcdefghijklmnopqrst",
+      "glft-abcdefghijklmnopqrst",
+      "glwt-abcdefghijklmnopqrst",
+      "token-abcdefghijkl",
+      "tokens-prod",
+      "api-key-abcdefghijkl",
+      "api-keys-prod",
+      "access-key-abcdefghijkl",
+      "access-keys-prod",
+      "private-key-abcdefghijkl",
+      "private-keys-prod",
+      "secret-abcdefghijkl",
+      "secrets-prod",
+      "password-abcdefghijkl",
+      "passwords-prod",
+      "credentials-abcdefghijkl",
+      "authorization-abcdefghijkl",
+      "bearer-abcdefghijkl",
+      "cookie-abcdefghijkl",
+      "cookies-prod",
+      "database-url-abcdefghijkl",
+      "dsn-abcdefghijkl",
+      "pat-abcdefghijkl",
+      "pats-prod",
+      "a".repeat(64),
+    ]) {
+      expect(() =>
+        agentCandidateContentStoreLocatorSchema.parse({
+          kind: "content-store",
+          store,
+        }),
+      ).toThrow();
+    }
+
+    for (const extra of [
+      { url: "https://artifacts.example.com" },
+      { path: "runs/r360/trace.json" },
+      { token: "sk-live-abcdefghijklmnop" },
+    ]) {
+      expect(() =>
+        agentCandidateContentStoreLocatorSchema.parse({
+          kind: "content-store",
+          store: "candidate-artifacts",
+          ...extra,
         }),
       ).toThrow();
     }
