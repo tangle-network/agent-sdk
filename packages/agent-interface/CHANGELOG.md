@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.27.2
+
+### Patch Changes
+
+- d6685fa: Declare the package side-effect-free so bundlers tree-shake unused modules (the deprecated candidate compat schemas in particular) out of application bundles.
+
 ## 0.27.1
 
 ### Patch Changes
