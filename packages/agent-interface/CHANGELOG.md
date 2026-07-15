@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.27.0
+
+### Minor Changes
+
+- f10a949: Add the durable plan submission host, typed plan continuation, plan stream record, and required execution outcome contract.
+
 ## 0.26.1
 
 ### Patch Changes
