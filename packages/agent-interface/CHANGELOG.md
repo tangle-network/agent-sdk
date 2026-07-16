@@ -1,5 +1,15 @@
 # @tangle-network/agent-interface
 
+## 0.29.0
+
+### Minor Changes
+
+- e1c362e: Add one immutable candidate experiment shared by evaluation and execution, with exact baseline and candidate bundles, benchmark tasks, repetitions, seeds, and Runtime receipts.
+
+### Patch Changes
+
+- a00d0a3: Build only before publishing so installed package artifacts can be repacked with lifecycle scripts enabled.
+
 ## 0.28.0
 
 ### Minor Changes

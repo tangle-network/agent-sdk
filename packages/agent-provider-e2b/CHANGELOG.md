@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-e2b
 
+## 0.2.19
+
+### Patch Changes
+
+- a00d0a3: Build only before publishing so installed package artifacts can be repacked with lifecycle scripts enabled.
+- Updated dependencies [e1c362e]
+- Updated dependencies [a00d0a3]
+  - @tangle-network/agent-interface@0.29.0
+
 ## 0.2.18
 
 ### Patch Changes
