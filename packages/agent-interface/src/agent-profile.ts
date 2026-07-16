@@ -230,17 +230,47 @@ export interface AgentProfileConfidential {
 /**
  * Generic MCP server configuration.
  */
-export interface AgentProfileMcpServer {
-  transport?: "stdio" | "sse" | "http";
-  command?: string;
+interface AgentProfileMcpServerBase {
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentProfileLocalMcpServer extends AgentProfileMcpServerBase {
+  enabled?: true;
+  transport?: "stdio";
+  command: string;
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
-  url?: string;
-  headers?: Record<string, string>;
-  enabled?: boolean;
-  metadata?: Record<string, unknown>;
+  url?: never;
+  headers?: never;
 }
+
+interface AgentProfileRemoteMcpServer extends AgentProfileMcpServerBase {
+  enabled?: true;
+  transport?: "sse" | "http";
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+  url: string;
+  headers?: Record<string, string>;
+}
+
+interface AgentProfileDisabledMcpServer extends AgentProfileMcpServerBase {
+  enabled: false;
+  transport?: never;
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+  url?: never;
+  headers?: never;
+}
+
+export type AgentProfileMcpServer =
+  | AgentProfileLocalMcpServer
+  | AgentProfileRemoteMcpServer
+  | AgentProfileDisabledMcpServer;
 
 /**
  * Hub-managed integration grant. The sandbox runtime resolves each declared

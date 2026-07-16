@@ -2,7 +2,6 @@ import type {
   AgentProfile,
   AgentProfileFileMount,
   AgentProfileHookCommand,
-  AgentProfileMcpServer,
   AgentProfileMode,
   AgentProfileModelHints,
   AgentProfileResourceRef,
@@ -128,15 +127,27 @@ export interface AgentCandidateResources
   failOnError: true;
 }
 
-export interface AgentCandidateMcpServer
-  extends Omit<
-    AgentProfileMcpServer,
-    "transport" | "args" | "env" | "headers" | "url" | "metadata"
-  > {
+interface AgentCandidateLocalMcpServer {
   transport?: "stdio";
+  command: string;
   args?: AgentCandidateConfigValue[];
   env?: Record<string, AgentCandidateConfigValue>;
+  cwd?: string;
+  enabled?: true;
 }
+
+interface AgentCandidateDisabledMcpServer {
+  enabled: false;
+  transport?: never;
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+}
+
+export type AgentCandidateMcpServer =
+  | AgentCandidateLocalMcpServer
+  | AgentCandidateDisabledMcpServer;
 
 export type AgentCandidateModelHints = Omit<AgentProfileModelHints, "metadata">;
 export type AgentCandidateSubagentProfile = Omit<
