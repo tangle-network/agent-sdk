@@ -40,7 +40,7 @@
     "build": "tsc -p tsconfig.json",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "prepare": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
     "test": "vitest run"
   },
   "dependencies": {

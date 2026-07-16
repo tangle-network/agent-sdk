@@ -29,6 +29,8 @@ jobs:
       - run: |
           npm install -g npm@11.18.0
           test "$(npm --version)" = "11.18.0"
+      - run: pnpm -r build
+      - run: pnpm check:package-artifacts
       - uses: changesets/action@v1
         with:
           version: pnpm changeset:version
