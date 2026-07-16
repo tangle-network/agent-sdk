@@ -1,14 +1,18 @@
 import { z } from "zod";
 import type {
+  AgentCandidateExperiment,
   AgentCandidateJsonValue,
   AgentImprovementMeasuredComparison,
+  AgentImprovementActivation,
   AgentImprovementProposal,
   AgentImprovementReview,
   CandidateExecutionEvidence,
 } from "./agent-candidate.js";
 import { agentCandidateBundleSchema } from "./agent-candidate-schema.js";
-import { agentCandidateProfileActivationSchema } from "./agent-candidate-execution-plan-schema.js";
+import { agentCandidateLineageSchema } from "./agent-candidate-lineage-schema.js";
+import { agentCandidateBenchmarkSuiteInputsSchema } from "./agent-candidate-task-schema.js";
 import {
+  canonicalCandidateDigest,
   isCanonicalJsonValue,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
@@ -16,7 +20,6 @@ import {
   agentCandidateMaterializationReceiptSchema,
   agentCandidateRunReceiptSchema,
 } from "./agent-candidate-receipt-schema.js";
-import { agentProfileSchema } from "./profile-schema.js";
 
 const canonicalJsonSchema = z.custom<AgentCandidateJsonValue>(
   isCanonicalJsonValue,
@@ -97,9 +100,7 @@ const measuredObjectiveSchema = z.union([
   measuredObjectiveVariant(qualityDimensionFields),
   unavailableObjectiveVariant(qualityDimensionFields),
   measuredObjectiveVariant(costObjectiveFields),
-  unavailableObjectiveVariant(costObjectiveFields),
   measuredObjectiveVariant(latencyObjectiveFields),
-  unavailableObjectiveVariant(latencyObjectiveFields),
 ]);
 
 const improvementSurfaceSchema = z.enum([
@@ -115,18 +116,154 @@ const improvementSurfaceSchema = z.enum([
   "knowledge",
 ]);
 
+export const agentCandidateEvaluationPolicySchema = z
+  .object({
+    confidenceLevel: z.number().finite().gt(0).lt(1),
+    resamples: z.number().int().min(100),
+    bootstrapSeed: z.number().int().safe(),
+    deltaThreshold: z.number().finite().nonnegative(),
+    minProductiveRuns: z.number().int().min(3),
+    budgetUsd: z.number().finite().nonnegative().optional(),
+    criticalDimensions: z.array(z.string().min(1)),
+    regressionTolerance: z.number().finite().nonnegative(),
+  })
+  .strict()
+  .superRefine((policy, ctx) => {
+    if (
+      new Set(policy.criticalDimensions).size !== policy.criticalDimensions.length ||
+      policy.criticalDimensions.some(
+        (name, index) => index > 0 && policy.criticalDimensions[index - 1]! >= name,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["criticalDimensions"],
+        message: "critical dimensions must be sorted and unique",
+      });
+    }
+  });
+
+export const agentCandidateExperimentSchema = z
+  .object({
+    kind: z.literal("agent-candidate-experiment"),
+    digestAlgorithm: z.literal("rfc8785-sha256"),
+    baseline: agentCandidateBundleSchema,
+    candidate: agentCandidateBundleSchema,
+    candidateLineage: agentCandidateLineageSchema,
+    benchmark: agentCandidateBenchmarkSuiteInputsSchema,
+    policy: agentCandidateEvaluationPolicySchema,
+    digest: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((experiment, ctx) => {
+    const source = experiment.candidateLineage.source;
+    if (
+      (source === "optimizer" || source === "compound") &&
+      !experiment.candidateLineage.parentDigests?.includes(experiment.baseline.digest)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["candidateLineage", "parentDigests"],
+        message: "generated candidate lineage must include the experiment baseline",
+      });
+    }
+    if (experiment.candidateLineage.parentDigests?.includes(experiment.candidate.digest)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["candidateLineage", "parentDigests"],
+        message: "candidate lineage cannot name the candidate itself as a parent",
+      });
+    }
+    if (
+      experiment.candidateLineage.developmentSplitDigest !== undefined &&
+      experiment.benchmark.tasks.some(
+        (task) =>
+          task.benchmark.splitDigest ===
+          experiment.candidateLineage.developmentSplitDigest,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["candidateLineage", "developmentSplitDigest"],
+        message: "candidate development and held-out splits must be disjoint",
+      });
+    }
+    if (!isCanonicalJsonValue(experiment)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "candidate experiment must contain only RFC 8785 JSON values",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateExperiment>;
+
+export const candidateExecutionEvidenceSchema = z
+  .object({
+    kind: z.literal("agent-candidate-execution-evidence"),
+    materializationReceipt: agentCandidateMaterializationReceiptSchema,
+    receipt: agentCandidateRunReceiptSchema,
+    digest: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((evidence, ctx) => {
+    const materialization = evidence.materializationReceipt;
+    const plan = materialization.executionPlan;
+    const checks: Array<[boolean, (string | number)[], string]> = [
+      [
+        evidence.receipt.materializationReceiptDigest === materialization.digest,
+        ["receipt", "materializationReceiptDigest"],
+        "run receipt must bind the included materialization receipt",
+      ],
+      [
+        evidence.receipt.executionPlanDigest === plan.digest,
+        ["receipt", "executionPlanDigest"],
+        "run receipt must bind the included execution plan",
+      ],
+      [
+        evidence.receipt.bundleDigest === materialization.bundleDigest,
+        ["receipt", "bundleDigest"],
+        "run receipt and materialization must bind one bundle",
+      ],
+      [
+        evidence.receipt.runCellDigest === plan.material.runCell.digest,
+        ["receipt", "runCellDigest"],
+        "run receipt must bind the materialized run cell",
+      ],
+      [
+        materialization.profileActivation.profilePlan.digest ===
+          plan.material.profile.planDigest,
+        ["materializationReceipt", "profileActivation", "profilePlan", "digest"],
+        "profile activation must bind the materialized execution plan",
+      ],
+      [
+        evidence.receipt.modelSettlement.material.grantDigest ===
+          plan.material.model.access.grantDigest,
+        ["receipt", "modelSettlement", "material", "grantDigest"],
+        "model settlement must bind the execution plan grant",
+      ],
+    ];
+    for (const [valid, path, message] of checks) {
+      if (!valid) ctx.addIssue({ code: "custom", path, message });
+    }
+    if (!isCanonicalJsonValue(evidence)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "candidate execution evidence must contain only RFC 8785 JSON values",
+      });
+    }
+  }) satisfies z.ZodType<CandidateExecutionEvidence>;
+
 export const agentImprovementMeasuredComparisonSchema = z
   .object({
     kind: z.literal("agent-improvement-measured-comparison"),
-    benchmark: z
-      .object({
-        name: z.string().min(1),
-        version: z.string().min(1),
-        splitDigest: sha256DigestSchema,
-      })
-      .strict(),
-    baselineProfileDigest: sha256DigestSchema,
-    candidateBundleDigest: sha256DigestSchema,
+    experiment: agentCandidateExperimentSchema,
+    measurements: z.array(
+      z
+        .object({
+          baseline: candidateExecutionEvidenceSchema,
+          candidate: candidateExecutionEvidenceSchema,
+        })
+        .strict(),
+    ),
     overall: z
       .object({
         name: z.literal("composite"),
@@ -187,7 +324,11 @@ export const agentImprovementMeasuredComparisonSchema = z
     evaluation: z
       .object({
         generationsExplored: z.number().int().nonnegative(),
+        searchDurationMs: z.number().finite().nonnegative(),
+        executionDurationMs: z.number().finite().nonnegative(),
         durationMs: z.number().finite().nonnegative(),
+        searchCostUsd: z.number().finite().nonnegative(),
+        executionCostUsd: z.number().finite().nonnegative(),
         totalCostUsd: z.number().finite().nonnegative(),
       })
       .strict(),
@@ -196,6 +337,276 @@ export const agentImprovementMeasuredComparisonSchema = z
   .strict()
   .superRefine((comparison, ctx) => {
     refineEstimate(comparison.overall, ["overall"], ctx);
+    if (
+      !approximatelyEqual(
+        comparison.evaluation.durationMs,
+        comparison.evaluation.searchDurationMs + comparison.evaluation.executionDurationMs,
+      ) ||
+      !approximatelyEqual(
+        comparison.evaluation.totalCostUsd,
+        comparison.evaluation.searchCostUsd + comparison.evaluation.executionCostUsd,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evaluation"],
+        message: "evaluation totals must equal their search and execution components",
+      });
+    }
+    const { suite, tasks } = comparison.experiment.benchmark;
+    const expectedN = suite.taskDigests.length * suite.reps;
+    if (comparison.measurements.length !== expectedN) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["measurements"],
+        message: "measured comparison must contain every signed benchmark cell",
+      });
+    }
+    const executionIdentities = {
+      execution: new Set<string>(),
+      runCell: new Set<string>(),
+      materialization: new Set<string>(),
+      receipt: new Set<string>(),
+      evidence: new Set<string>(),
+    };
+    for (let taskIndex = 0; taskIndex < suite.taskDigests.length; taskIndex += 1) {
+      const task = tasks[taskIndex];
+      if (!task) continue;
+      for (let repetition = 0; repetition < suite.reps; repetition += 1) {
+        const index = taskIndex * suite.reps + repetition;
+        const measurement = comparison.measurements[index];
+        if (!measurement) continue;
+        const seed = suite.seeds[index];
+        for (const arm of ["baseline", "candidate"] as const) {
+          const evidence = measurement[arm];
+          const bundle = comparison.experiment[arm];
+          const materialization = evidence.materializationReceipt;
+          const plan = materialization.executionPlan;
+          const runCell = plan.material.runCell;
+          const result = evidence.receipt.benchmarkResult.material;
+          const outcome = evidence.receipt.taskOutcome.material.outcome;
+          const armPath = ["measurements", index, arm] as (string | number)[];
+          const expectedTree =
+            bundle.code.kind === "disabled"
+              ? undefined
+              : bundle.code.kind === "no-op"
+                ? bundle.code.baseTree
+                : bundle.code.candidateTree;
+          const containerMatches =
+            bundle.execution.environment.kind === "evaluator-task-container"
+              ? task.evaluatorTaskContainer !== undefined &&
+                plan.material.container.source === "evaluator-task-container" &&
+                JSON.stringify(plan.material.container) ===
+                  JSON.stringify(task.evaluatorTaskContainer)
+              : plan.material.container.source === "pinned-container" &&
+                plan.material.container.image ===
+                  bundle.execution.environment.container.image &&
+                plan.material.container.indexDigest ===
+                  bundle.execution.environment.container.indexDigest;
+          const checks: Array<[boolean, (string | number)[], string]> = [
+            [
+              runCell.experimentDigest === comparison.experiment.digest,
+              [...armPath, "materializationReceipt", "executionPlan", "material", "runCell", "experimentDigest"],
+              "execution evidence must bind the measured experiment",
+            ],
+            [
+              runCell.arm === arm,
+              [...armPath, "materializationReceipt", "executionPlan", "material", "runCell", "arm"],
+              "execution evidence must bind its measured arm",
+            ],
+            [
+              runCell.bundleDigest === bundle.digest && materialization.bundleDigest === bundle.digest,
+              [...armPath, "materializationReceipt", "bundleDigest"],
+              "execution evidence must bind the experiment arm bundle",
+            ],
+            [
+              runCell.suiteDigest === suite.digest &&
+                runCell.taskDigest === task.digest &&
+                runCell.taskIndex === taskIndex &&
+                runCell.repetition === repetition &&
+                runCell.seed === seed &&
+                runCell.attempt === 1,
+              [...armPath, "materializationReceipt", "executionPlan", "material", "runCell"],
+              "publishable execution evidence must use the first signed task attempt",
+            ],
+            [
+              materialization.codeKind === bundle.code.kind,
+              [...armPath, "materializationReceipt", "codeKind"],
+              "materialized code must match the experiment arm bundle",
+            ],
+            [
+              materialization.benchmark.suite.digest === suite.digest &&
+                materialization.benchmark.task.digest === task.digest,
+              [...armPath, "materializationReceipt", "benchmark"],
+              "execution evidence must capture the signed suite and selected task",
+            ],
+            [
+              materialization.harness === bundle.execution.harness &&
+                materialization.harnessVersion === bundle.execution.harnessVersion &&
+                plan.material.harness === bundle.execution.harness &&
+                plan.material.harnessVersion === bundle.execution.harnessVersion,
+              [...armPath, "materializationReceipt", "harness"],
+              "execution evidence must bind the candidate harness and version",
+            ],
+            [
+              JSON.stringify(plan.material.instructionDelivery) ===
+                JSON.stringify(bundle.execution.instructionDelivery),
+              [...armPath, "materializationReceipt", "executionPlan", "material", "instructionDelivery"],
+              "execution plan must bind the candidate instruction delivery",
+            ],
+            [
+              JSON.stringify(plan.material.limits) === JSON.stringify(task.limits),
+              [...armPath, "materializationReceipt", "executionPlan", "material", "limits"],
+              "execution plan must bind every signed task limit",
+            ],
+            [
+              containerMatches,
+              [...armPath, "materializationReceipt", "executionPlan", "material", "container"],
+              "execution plan must bind the candidate or evaluator task container",
+            ],
+            [
+              JSON.stringify(plan.material.candidateWorkspace) ===
+                JSON.stringify(bundle.execution.workspace) &&
+                JSON.stringify(materialization.candidateWorkspace) ===
+                  JSON.stringify(bundle.execution.workspace),
+              [...armPath, "materializationReceipt", "candidateWorkspace"],
+              "execution evidence must bind the candidate workspace",
+            ],
+            [
+              materialization.materializedTree === expectedTree,
+              [...armPath, "materializationReceipt", "materializedTree"],
+              "materialized tree must match the candidate code",
+            ],
+            [
+              plan.material.launch.cwd.workspace === bundle.execution.cwd.workspace &&
+                plan.material.launch.cwd.path === bundle.execution.cwd.path,
+              [...armPath, "materializationReceipt", "executionPlan", "material", "launch", "cwd"],
+              "execution plan must bind the candidate working directory",
+            ],
+            [
+              plan.material.knowledgeManifestDigest === bundle.knowledge?.snapshot.digest &&
+                materialization.knowledgeManifestDigest === bundle.knowledge?.snapshot.digest,
+              [...armPath, "materializationReceipt", "knowledgeManifestDigest"],
+              "execution evidence must bind the candidate knowledge snapshot",
+            ],
+            [
+              (bundle.memory.mode === "disabled" && plan.material.memory.mode === "disabled") ||
+                (bundle.memory.mode === "isolated" &&
+                  plan.material.memory.mode === "isolated" &&
+                  plan.material.memory.seedDigest === bundle.memory.seed?.sha256),
+              [...armPath, "materializationReceipt", "executionPlan", "material", "memory"],
+              "execution plan must bind the candidate memory policy",
+            ],
+            [
+              result.evidence.sha256 !== task.grader.artifact.sha256,
+              [...armPath, "receipt", "benchmarkResult", "material", "evidence", "sha256"],
+              "grading evidence must be distinct from the signed grader implementation",
+            ],
+            [
+              JSON.stringify(result.grader) === JSON.stringify(task.grader),
+              [...armPath, "receipt", "benchmarkResult", "material", "grader"],
+              "benchmark result must bind the signed grader",
+            ],
+            [
+              materialization.profileActivation.profilePlan.material.sourceProfileDigest ===
+                canonicalCandidateDigest(bundle.profile as AgentCandidateJsonValue),
+              [...armPath, "materializationReceipt", "profileActivation", "profilePlan", "material", "sourceProfileDigest"],
+              "materialized profile files must bind the experiment arm profile",
+            ],
+            [
+              JSON.stringify(materialization.resolvedModel) === JSON.stringify(task.model),
+              [...armPath, "materializationReceipt", "resolvedModel"],
+              "execution must use the selected task model",
+            ],
+            [
+              (task.limits.maxModelCalls === 0 &&
+                materialization.executionPlan.material.model.access.network.mode ===
+                  "disabled") ||
+                (task.limits.maxModelCalls > 0 &&
+                  materialization.executionPlan.material.model.access.network.mode ===
+                    "gateway-only"),
+              [
+                ...armPath,
+                "materializationReceipt",
+                "executionPlan",
+                "material",
+                "model",
+                "access",
+                "network",
+              ],
+              "model gateway access must match the signed model-call limit",
+            ],
+            [
+              outcome.kind === task.outcome.kind,
+              [...armPath, "receipt", "taskOutcome", "material", "outcome", "kind"],
+              "captured outcome must match the selected task contract",
+            ],
+            [
+              task.outcome.kind !== "output" ||
+                (outcome.kind === "output" &&
+                  outcome.spec.mediaType === task.outcome.mediaType &&
+                  outcome.spec.maxBytes === task.outcome.maxBytes),
+              [...armPath, "receipt", "taskOutcome", "material", "outcome", "spec"],
+              "captured output must match the selected task specification",
+            ],
+            [
+              task.outcome.kind !== "workspace" ||
+                (outcome.kind === "workspace" &&
+                  task.repository !== undefined &&
+                  outcome.baseRepository.identity === task.repository.identity &&
+                  outcome.baseRepository.rootIdentity === task.repository.rootIdentity &&
+                  outcome.baseRepository.commit === task.repository.baseCommit &&
+                  outcome.baseRepository.tree === task.repository.baseTree),
+              [...armPath, "receipt", "taskOutcome", "material", "outcome", "baseRepository"],
+              "captured workspace must start from the selected task repository",
+            ],
+          ];
+          for (const [valid, path, message] of checks) {
+            if (!valid) ctx.addIssue({ code: "custom", path, message });
+          }
+          const identitiesForRun = {
+            execution: plan.material.executionId,
+            runCell: runCell.digest,
+            materialization: materialization.digest,
+            receipt: evidence.receipt.digest,
+            evidence: evidence.digest,
+          };
+          for (const [kind, identity] of Object.entries(identitiesForRun) as Array<
+            [keyof typeof executionIdentities, string]
+          >) {
+            if (executionIdentities[kind].has(identity)) {
+              ctx.addIssue({
+                code: "custom",
+                path: armPath,
+                message: `measured executions must not reuse ${kind} identity`,
+              });
+            }
+            executionIdentities[kind].add(identity);
+          }
+        }
+      }
+    }
+    if (comparison.overall.n !== expectedN) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["overall", "n"],
+        message: "measured sample count must equal the complete benchmark suite",
+      });
+    }
+    if (comparison.measurements.length > 0) {
+      refineMeasuredMean(
+        comparison.overall.baseline,
+        comparison.measurements.map((row) => row.baseline.receipt.benchmarkResult.material.score),
+        ["overall", "baseline"],
+        ctx,
+      );
+      refineMeasuredMean(
+        comparison.overall.candidate,
+        comparison.measurements.map((row) => row.candidate.receipt.benchmarkResult.material.score),
+        ["overall", "candidate"],
+        ctx,
+      );
+    }
     const identities = new Set<string>();
     const qualityObjectives = new Set<string>();
     const dimensionParents: Array<{ index: number; objective: string }> = [];
@@ -204,6 +615,41 @@ export const agentImprovementMeasuredComparisonSchema = z
     for (const [index, objective] of comparison.objectives.entries()) {
       if (objective.availability === "measured") {
         refineEstimate(objective, ["objectives", index], ctx);
+        if (objective.n !== expectedN) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["objectives", index, "n"],
+            message: "measured objective count must equal the complete benchmark suite",
+          });
+        }
+        if (comparison.measurements.length > 0 && objective.kind === "cost") {
+          refineMeasuredMean(
+            objective.baseline,
+            comparison.measurements.map((row) => executionCostUsd(row.baseline)),
+            ["objectives", index, "baseline"],
+            ctx,
+          );
+          refineMeasuredMean(
+            objective.candidate,
+            comparison.measurements.map((row) => executionCostUsd(row.candidate)),
+            ["objectives", index, "candidate"],
+            ctx,
+          );
+        }
+        if (comparison.measurements.length > 0 && objective.kind === "latency") {
+          refineMeasuredMean(
+            objective.baseline,
+            comparison.measurements.map((row) => executionLatencyMs(row.baseline)),
+            ["objectives", index, "baseline"],
+            ctx,
+          );
+          refineMeasuredMean(
+            objective.candidate,
+            comparison.measurements.map((row) => executionLatencyMs(row.candidate)),
+            ["objectives", index, "candidate"],
+            ctx,
+          );
+        }
       }
       const identity =
         objective.kind === "dimension"
@@ -257,6 +703,33 @@ export const agentImprovementMeasuredComparisonSchema = z
         message: "power analysis must use the paired held-out sample",
       });
     }
+    if (
+      comparison.overall.confidenceInterval.level !==
+        comparison.experiment.policy.confidenceLevel ||
+      comparison.overall.confidenceInterval.resamples !==
+        comparison.experiment.policy.resamples ||
+      comparison.power.confidenceLevel !== comparison.experiment.policy.confidenceLevel
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["experiment", "policy"],
+        message: "reported uncertainty must use the frozen evaluation policy",
+      });
+    }
+    for (const [index, objective] of comparison.objectives.entries()) {
+      if (
+        objective.availability === "measured" &&
+        (objective.confidenceInterval.level !==
+          comparison.experiment.policy.confidenceLevel ||
+          objective.confidenceInterval.resamples !== comparison.experiment.policy.resamples)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["objectives", index, "confidenceInterval"],
+          message: "objective uncertainty must use the frozen evaluation policy",
+        });
+      }
+    }
     if (!isCanonicalJsonValue(comparison)) {
       ctx.addIssue({
         code: "custom",
@@ -277,33 +750,38 @@ export const agentImprovementProposalSchema = z
         "changed surfaces must be unique",
       ),
     proposedAt: z.iso.datetime(),
-    baselineProfile: agentProfileSchema,
     findings: z.array(canonicalJsonObjectSchema),
     evaluation: agentImprovementMeasuredComparisonSchema,
-    candidateBundle: agentCandidateBundleSchema,
     digest: sha256DigestSchema,
   })
   .strict()
   .superRefine((proposal, ctx) => {
-    const measuredBenchmark = proposal.evaluation.benchmark;
-    const bundleBenchmark = proposal.candidateBundle.lineage.benchmark;
+    if (proposal.evaluation.decision.outcome !== "ship") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evaluation", "decision", "outcome"],
+        message: "an improvement proposal requires a passing measured comparison",
+      });
+    }
     if (
-      !bundleBenchmark ||
-      measuredBenchmark.name !== bundleBenchmark.name ||
-      measuredBenchmark.version !== bundleBenchmark.version ||
-      measuredBenchmark.splitDigest !== bundleBenchmark.splitDigest
+      !proposal.evaluation.power.sufficient ||
+      proposal.evaluation.overall.n <
+        proposal.evaluation.experiment.policy.minProductiveRuns
     ) {
       ctx.addIssue({
         code: "custom",
-        path: ["evaluation", "benchmark"],
-        message: "measured comparison must bind the candidate development split",
+        path: ["evaluation", "power"],
+        message: "an improvement proposal requires sufficient pre-registered power",
       });
     }
-    if (proposal.evaluation.candidateBundleDigest !== proposal.candidateBundle.digest) {
+    if (
+      proposal.evaluation.experiment.baseline.digest ===
+      proposal.evaluation.experiment.candidate.digest
+    ) {
       ctx.addIssue({
         code: "custom",
-        path: ["evaluation", "candidateBundleDigest"],
-        message: "measured comparison must bind the exact candidate bundle",
+        path: ["evaluation", "experiment", "candidate", "digest"],
+        message: "an improvement proposal requires a changed candidate bundle",
       });
     }
     if (!isCanonicalJsonValue(proposal)) {
@@ -346,11 +824,46 @@ function refineEstimate(
   }
 }
 
+function refineMeasuredMean(
+  reported: number,
+  values: number[],
+  path: (string | number)[],
+  ctx: z.RefinementCtx,
+): void {
+  const measured = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(measured)) * values.length * 8;
+  if (Math.abs(reported - measured) > tolerance) {
+    ctx.addIssue({
+      code: "custom",
+      path,
+      message: "reported mean must equal the signed per-cell results",
+    });
+  }
+}
+
+function approximatelyEqual(left: number, right: number): boolean {
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
+  return Math.abs(left - right) <= tolerance;
+}
+
+function executionCostUsd(evidence: CandidateExecutionEvidence): number {
+  return (
+    evidence.receipt.modelSettlement.material.usage.costUsdNanos +
+    evidence.receipt.benchmarkResult.material.grading.usage.costUsdNanos
+  ) / 1_000_000_000;
+}
+
+function executionLatencyMs(evidence: CandidateExecutionEvidence): number {
+  return (
+    evidence.receipt.timing.durationMs +
+    evidence.receipt.benchmarkResult.material.grading.timing.durationMs
+  );
+}
+
 export const agentImprovementReviewSchema = z
   .object({
     kind: z.literal("agent-improvement-review"),
     proposalDigest: sha256DigestSchema,
-    candidateBundleDigest: sha256DigestSchema,
     decision: z.enum(["approve", "reject", "request-changes"]),
     reviewedBy: z.string().min(1),
     reviewedAt: z.iso.datetime(),
@@ -361,94 +874,50 @@ export const agentImprovementReviewSchema = z
   .strict()
   .refine(isCanonicalJsonValue, "review must contain only RFC 8785 JSON values") satisfies z.ZodType<AgentImprovementReview>;
 
-export const candidateExecutionEvidenceSchema = z
+export const agentImprovementActivationSchema = z
   .object({
-    kind: z.literal("agent-candidate-execution-evidence"),
+    kind: z.literal("agent-improvement-activation"),
     proposalDigest: sha256DigestSchema,
     reviewDigest: sha256DigestSchema,
-    executionId: z.string().regex(/^[A-Za-z0-9._:-]{1,200}$/),
-    succeeded: z.literal(true),
-    materializationReceipt: agentCandidateMaterializationReceiptSchema,
-    profileActivation: agentCandidateProfileActivationSchema,
-    receipt: agentCandidateRunReceiptSchema,
+    experimentDigest: sha256DigestSchema,
+    candidateBundleDigest: sha256DigestSchema,
+    targets: z
+      .tuple([
+        z
+          .object({
+            surface: improvementSurfaceSchema,
+            identity: z.string().min(1).max(500),
+            expectedBaseDigest: sha256DigestSchema,
+          })
+          .strict(),
+      ])
+      .rest(
+        z
+          .object({
+            surface: improvementSurfaceSchema,
+            identity: z.string().min(1).max(500),
+            expectedBaseDigest: sha256DigestSchema,
+          })
+          .strict(),
+      ),
+    fundingOwner: z.string().min(1).max(500),
+    authorizedBy: z.string().min(1).max(500),
+    authorizedAt: z.iso.datetime(),
     digest: sha256DigestSchema,
   })
   .strict()
-  .superRefine((evidence, ctx) => {
-    const materialization = evidence.materializationReceipt;
-    const plan = materialization.executionPlan;
-    const plannedOutcome = plan.material.task.outcome;
-    const capturedOutcome = evidence.receipt.taskOutcome.material.outcome;
-    const checks: Array<[boolean, (string | number)[], string]> = [
-      [
-        evidence.receipt.materializationReceiptDigest === materialization.digest,
-        ["receipt", "materializationReceiptDigest"],
-        "run receipt must bind the included materialization receipt",
-      ],
-      [
-        evidence.receipt.executionPlanDigest === plan.digest,
-        ["receipt", "executionPlanDigest"],
-        "run receipt must bind the included execution plan",
-      ],
-      [
-        evidence.receipt.bundleDigest === materialization.bundleDigest,
-        ["receipt", "bundleDigest"],
-        "run receipt and materialization must bind one bundle",
-      ],
-      [
-        evidence.executionId === plan.material.executionId,
-        ["executionId"],
-        "execution evidence must bind the materialized execution id",
-      ],
-      [
-        evidence.profileActivation.profilePlan.digest ===
-          materialization.profilePlan.digest,
-        ["profileActivation", "profilePlan", "digest"],
-        "profile activation must bind the materialized profile plan",
-      ],
-      [
-        capturedOutcome.kind === plannedOutcome.kind,
-        ["receipt", "taskOutcome", "material", "outcome", "kind"],
-        "task outcome kind must match the signed execution plan",
-      ],
-      [
-        evidence.receipt.termination.kind === "exit" &&
-          evidence.receipt.termination.exitCode === 0,
-        ["receipt", "termination"],
-        "successful execution evidence requires a zero exit status",
-      ],
-    ];
-    if (plannedOutcome.kind === "output" && capturedOutcome.kind === "output") {
-      checks.push([
-        capturedOutcome.spec.mediaType === plannedOutcome.mediaType &&
-          capturedOutcome.spec.maxBytes === plannedOutcome.maxBytes,
-        ["receipt", "taskOutcome", "material", "outcome", "spec"],
-        "task output constraints must match the signed execution plan",
-      ]);
-    }
-    if (
-      plannedOutcome.kind === "workspace" &&
-      capturedOutcome.kind === "workspace" &&
-      plan.material.task.repository
-    ) {
-      const repository = plan.material.task.repository;
-      const base = capturedOutcome.baseRepository;
-      checks.push([
-        base.identity === repository.identity &&
-          base.rootIdentity === repository.rootIdentity &&
-          base.commit === repository.baseCommit &&
-          base.tree === repository.baseTree,
-        ["receipt", "taskOutcome", "material", "outcome", "baseRepository"],
-        "workspace outcome must bind the signed repository base",
-      ]);
-    }
-    for (const [valid, path, message] of checks) {
-      if (!valid) ctx.addIssue({ code: "custom", path, message });
-    }
-    if (!isCanonicalJsonValue(evidence)) {
+  .superRefine((activation, ctx) => {
+    const identities = activation.targets.map(
+      (target) => `${target.surface}\u0000${target.identity}`,
+    );
+    if (new Set(identities).size !== identities.length) {
       ctx.addIssue({
         code: "custom",
-        message: "candidate execution evidence must contain only RFC 8785 JSON values",
+        path: ["targets"],
+        message: "activation targets must be unique by surface and identity",
       });
     }
-  }) satisfies z.ZodType<CandidateExecutionEvidence>;
+    if (!isCanonicalJsonValue(activation)) {
+      ctx.addIssue({ code: "custom", message: "activation must contain only RFC 8785 JSON values" });
+    }
+  }) satisfies z.ZodType<AgentImprovementActivation>;

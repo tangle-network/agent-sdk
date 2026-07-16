@@ -63,19 +63,18 @@ describe("agentCandidateBundleSchema", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({
         ...candidateFixture(),
-        code: { kind: "disabled", reason: "control" },
+        code: { kind: "disabled" },
         execution: {
           ...executionWithoutWorkspace,
           launch: { kind: "container-command", executable: "codex" },
           cwd: { workspace: "task", path: "." },
         },
-        lineage: { source: "human" },
       }),
     ).not.toThrow();
     expect(() =>
       agentCandidateBundleSchema.parse({
         ...candidateFixture(),
-        code: { kind: "disabled", reason: "control" },
+        code: { kind: "disabled" },
       }),
     ).toThrow(/disabled code controls/);
   });
@@ -87,7 +86,7 @@ describe("agentCandidateBundleSchema", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({
         ...candidate,
-        code: { kind: "disabled", reason: "not-applicable" },
+        code: { kind: "disabled" },
         execution: {
           ...executionWithoutWorkspace,
           launch: { kind: "container-command", executable: "codex" },
@@ -95,17 +94,6 @@ describe("agentCandidateBundleSchema", () => {
         },
       }),
     ).not.toThrow();
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidate,
-        code: { kind: "disabled", reason: "control" },
-        execution: {
-          ...executionWithoutWorkspace,
-          launch: { kind: "container-command", executable: "codex" },
-          cwd: { workspace: "task", path: "." },
-        },
-      }),
-    ).toThrow(/fixed controls cannot claim proposer lineage/);
   });
 
   it("requires active code to use its structured candidate entrypoint", () => {
@@ -193,80 +181,6 @@ describe("agentCandidateBundleSchema", () => {
         }),
       ).toThrow();
     }
-  });
-
-  it("requires compound lineage to retain distinct parents", () => {
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidateFixture(),
-        lineage: {
-          ...candidateFixture().lineage,
-          source: "compound",
-          parentDigests: [candidateSha("1")],
-        },
-      }),
-    ).toThrow(/at least two/);
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidateFixture(),
-        lineage: {
-          ...candidateFixture().lineage,
-          source: "compound",
-          parentDigests: [candidateSha("1"), candidateSha("1")],
-        },
-      }),
-    ).toThrow(/duplicate/);
-  });
-
-  it("fails closed when a generated candidate omits run, split, or spend", () => {
-    for (const lineage of [
-      {
-        ...candidateFixture().lineage,
-        parentDigests: [],
-      },
-      {
-        ...candidateFixture().lineage,
-        runIds: [],
-      },
-      {
-        ...candidateFixture().lineage,
-        benchmark: undefined,
-      },
-      {
-        ...candidateFixture().lineage,
-        spend: undefined,
-      },
-    ]) {
-      expect(() =>
-        agentCandidateBundleSchema.parse({ ...candidateFixture(), lineage }),
-      ).toThrow(/generated candidates/);
-    }
-  });
-
-  it("keeps proposer no-ops and parent identities honest", () => {
-    const candidate = candidateFixture();
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidate,
-        code: {
-          kind: "no-op",
-          reason: "proposer-no-change",
-          repository: candidate.code.repository,
-          baseCommit: candidate.code.baseCommit,
-          baseTree: candidate.code.baseTree,
-        },
-        lineage: { source: "human" },
-      }),
-    ).toThrow(/proposer no-op/);
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidate,
-        lineage: {
-          ...candidate.lineage,
-          parentDigests: [candidate.digest],
-        },
-      }),
-    ).toThrow(/cannot name itself/);
   });
 
   it("rejects malformed identities and unknown wire fields", () => {
@@ -360,6 +274,7 @@ describe("candidate receipts", () => {
     reasoningEffort: "high" as const,
   };
   const profilePlanMaterial = {
+    sourceProfileDigest: candidateSha("f"),
     harness: "codex" as const,
     files: [],
     env: {},
@@ -374,35 +289,33 @@ describe("candidate receipts", () => {
     artifact: capturedProfilePlan.artifact,
   };
   const resetEvidence = embeddedBytes("fresh-memory-reset");
+  const capturedSuite = capturedMaterial({
+    kind: "agent-candidate-benchmark-suite",
+    digestAlgorithm: "rfc8785-sha256",
+    taskDigests: [candidateSha("0")],
+    reps: 1,
+    seeds: [42],
+  });
+  const capturedTask = capturedMaterial({
+    kind: "agent-candidate-benchmark-task",
+    taskId: "pier-task-1",
+  });
   const executionPlanMaterial = {
     kind: "agent-candidate-execution-plan-material" as const,
-    bundleDigest: candidateSha("1"),
+    runCell: {
+      kind: "agent-candidate-run-cell" as const,
+      experimentDigest: candidateSha("e"),
+      arm: "candidate" as const,
+      bundleDigest: candidateSha("1"),
+      suiteDigest: capturedSuite.digest,
+      taskDigest: capturedTask.digest,
+      taskIndex: 0,
+      repetition: 0,
+      seed: 42,
+      attempt: 1,
+      digest: candidateSha("d"),
+    },
     executionId: "run-1",
-    attempt: {
-      number: 1,
-      maxAttempts: 1,
-      retryPolicy: "pre-model-infrastructure-only" as const,
-    },
-    task: {
-      benchmark: "pier",
-      benchmarkVersion: "0.3",
-      taskId: "pier-task-1",
-      splitDigest: candidateSha("f"),
-      instruction: {
-        encoding: "utf8" as const,
-        sha256: candidateSha("e"),
-        byteLength: 37,
-        delivery: { kind: "argv-append" as const },
-      },
-      repository: {
-        identity: "r360/pier-synthetic-task-1",
-        rootIdentity: "r360/pier-synthetic",
-        baseCommit: candidateGit("a"),
-        baseTree: candidateGit("b"),
-      },
-      outcome: { kind: "workspace" as const },
-      workspace: taskWorkspace,
-    },
     workspaces: {
       taskRoot: "/work/task",
       candidateRoot: "/work/candidate",
@@ -416,6 +329,15 @@ describe("candidate receipts", () => {
     },
     harness: "codex" as const,
     harnessVersion: "0.1.0",
+    instructionDelivery: { kind: "stdin-utf8" as const },
+    limits: {
+      timeoutMs: 120_000,
+      maxSteps: 50,
+      maxModelCalls: 12,
+      maxInputTokens: 100_000,
+      maxOutputTokens: 20_000,
+      maxCostUsd: 5,
+    },
     container: {
       source: "evaluator-task-container" as const,
       image: "pier-task:0.3",
@@ -436,15 +358,6 @@ describe("candidate receipts", () => {
       },
       routes: [{ kind: "primary" as const, requested: "openai/gpt-5.4" }],
     },
-    grader: {
-      name: "fixture-grader",
-      version: "1.0.0",
-      artifact: {
-        locator: { kind: "s3" as const, bucket: "test-artifacts", key: "grader" },
-        sha256: candidateSha("c"),
-        byteLength: 1,
-      },
-    },
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
@@ -463,14 +376,6 @@ describe("candidate receipts", () => {
       },
       beforeState: memoryWorkspace,
     },
-    limits: {
-      timeoutMs: 600_000,
-      maxSteps: 500,
-      maxModelCalls: 100,
-      maxInputTokens: 1_000_000,
-      maxOutputTokens: 100_000,
-      maxCostUsd: 100,
-    },
     network: { mode: "disabled" as const },
   };
   const capturedExecutionPlan = capturedMaterial(executionPlanMaterial);
@@ -478,7 +383,22 @@ describe("candidate receipts", () => {
     kind: "agent-candidate-materialization",
     digestAlgorithm: "rfc8785-sha256",
     bundleDigest: candidateSha("1"),
-    profilePlan,
+    benchmark: {
+      suite: {
+        digest: capturedSuite.digest,
+        material: capturedSuite.artifact,
+      },
+      task: {
+        digest: capturedTask.digest,
+        material: capturedTask.artifact,
+      },
+    },
+    profileActivation: {
+      kind: "agent-candidate-profile-activation",
+      profilePlan,
+      files: [],
+      digest: candidateSha("c"),
+    },
     executionPlan: {
       kind: "agent-candidate-execution-plan",
       digest: capturedExecutionPlan.digest,
@@ -565,12 +485,15 @@ describe("candidate receipts", () => {
     expect(() =>
       agentCandidateMaterializationReceiptSchema.parse({
         ...materialization,
-        profilePlan: {
-          ...materialization.profilePlan,
-          artifact: {
-            ...materialization.profilePlan.artifact,
-            content: "",
-            byteLength: 0,
+        profileActivation: {
+          ...materialization.profileActivation,
+          profilePlan: {
+            ...materialization.profileActivation.profilePlan,
+            artifact: {
+              ...materialization.profileActivation.profilePlan.artifact,
+              content: "",
+              byteLength: 0,
+            },
           },
         },
       }),

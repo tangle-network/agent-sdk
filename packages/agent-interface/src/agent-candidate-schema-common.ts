@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   AgentCandidateConfigValue,
   AgentCandidateGitHubRepository,
+  AgentCandidateJsonValue,
   Sha256Digest,
 } from "./agent-candidate.js";
 
@@ -44,9 +45,57 @@ export const headerNameSchema = z.string().regex(headerNamePattern);
 export const agentCandidateMediaTypeSchema = z.string().regex(mediaTypePattern);
 
 export function sha256Utf8(value: string): Sha256Digest {
-  const bytes = sha256(new TextEncoder().encode(value));
+  return sha256Bytes(new TextEncoder().encode(value));
+}
+
+export function sha256Bytes(value: Uint8Array): Sha256Digest {
+  const bytes = sha256(value);
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `sha256:${hex}`;
+}
+
+/** RFC 8785 serialization used by every candidate-producing package. */
+export function canonicalCandidateJson(value: unknown): string {
+  if (!isCanonicalJsonValue(value)) {
+    throw new Error("candidate document must be finite, acyclic RFC 8785 JSON");
+  }
+  return serializeCanonicalCandidate(value as AgentCandidateJsonValue);
+}
+
+export function canonicalCandidateBytes(
+  value: unknown,
+): Uint8Array {
+  return new TextEncoder().encode(canonicalCandidateJson(value));
+}
+
+export function canonicalCandidateDigest(
+  value: unknown,
+): Sha256Digest {
+  return sha256Bytes(canonicalCandidateBytes(value));
+}
+
+export function omitTopLevelDigest<T extends { digest: Sha256Digest }>(
+  value: T,
+): Omit<T, "digest"> {
+  const { digest: _digest, ...material } = value;
+  return material;
+}
+
+function serializeCanonicalCandidate(value: AgentCandidateJsonValue): string {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(serializeCanonicalCandidate).join(",")}]`;
+  }
+  return `{${Object.keys(value)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${serializeCanonicalCandidate(value[key] as AgentCandidateJsonValue)}`,
+    )
+    .join(",")}}`;
 }
 
 export function isWellFormedUnicode(value: string): boolean {

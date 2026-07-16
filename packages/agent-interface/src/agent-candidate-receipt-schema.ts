@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  AgentCandidateBenchmarkInputEvidence,
   AgentCandidateMaterializationReceipt,
   AgentCandidateMemoryReceipt,
   AgentCandidateRunReceipt,
@@ -13,7 +14,7 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import {
   agentCandidateExecutionPlanEvidenceSchema,
-  agentCandidateProfilePlanEvidenceSchema,
+  agentCandidateProfileActivationSchema,
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
 import {
@@ -49,6 +50,36 @@ const ociPlatformSchema = z
     variant: z.string().min(1).optional(),
   })
   .strict();
+
+const benchmarkMaterialEvidenceSchema = z
+  .object({
+    digest: sha256DigestSchema,
+    material: agentCandidateCapturedArtifactSchema,
+  })
+  .strict()
+  .superRefine((evidence, ctx) => {
+    if (evidence.material.sha256 !== evidence.digest) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["material", "sha256"],
+        message: "benchmark material artifact must match its canonical digest",
+      });
+    }
+    if (evidence.material.byteLength === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["material", "byteLength"],
+        message: "benchmark material artifact must contain canonical bytes",
+      });
+    }
+  });
+
+export const agentCandidateBenchmarkInputEvidenceSchema = z
+  .object({
+    suite: benchmarkMaterialEvidenceSchema,
+    task: benchmarkMaterialEvidenceSchema,
+  })
+  .strict() satisfies z.ZodType<AgentCandidateBenchmarkInputEvidence>;
 
 export const agentCandidateTraceEvidenceSchema = z
   .object({
@@ -110,7 +141,8 @@ export const agentCandidateMaterializationReceiptSchema = z
     kind: z.literal("agent-candidate-materialization"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     bundleDigest: sha256DigestSchema,
-    profilePlan: agentCandidateProfilePlanEvidenceSchema,
+    benchmark: agentCandidateBenchmarkInputEvidenceSchema,
+    profileActivation: agentCandidateProfileActivationSchema,
     executionPlan: agentCandidateExecutionPlanEvidenceSchema,
     candidateWorkspace: agentCandidateWorkspaceSnapshotEvidenceSchema.optional(),
     codeKind: z.enum(["disabled", "no-op", "git-patch"]),
@@ -172,19 +204,29 @@ export const agentCandidateMaterializationReceiptSchema = z
     }
     const checks: Array<[boolean, (string | number)[], string]> = [
       [
-        receipt.bundleDigest === plan.bundleDigest,
-        ["executionPlan", "material", "bundleDigest"],
+        receipt.bundleDigest === plan.runCell.bundleDigest,
+        ["executionPlan", "material", "runCell", "bundleDigest"],
         "execution plan must bind the receipt bundle",
       ],
       [
-        receipt.profilePlan.digest === plan.profile.planDigest,
+        receipt.benchmark.suite.digest === plan.runCell.suiteDigest,
+        ["benchmark", "suite", "digest"],
+        "execution plan must bind the captured benchmark suite",
+      ],
+      [
+        receipt.benchmark.task.digest === plan.runCell.taskDigest,
+        ["benchmark", "task", "digest"],
+        "execution plan must bind the captured benchmark task",
+      ],
+      [
+        receipt.profileActivation.profilePlan.digest === plan.profile.planDigest,
         ["executionPlan", "material", "profile", "planDigest"],
         "execution plan must bind the exact profile plan",
       ],
       [
         JSON.stringify(plan.profile.mountPaths) ===
           JSON.stringify(
-            receipt.profilePlan.material.files.map((file) => file.relPath),
+            receipt.profileActivation.profilePlan.material.files.map((file) => file.relPath),
           ),
         ["executionPlan", "material", "profile", "mountPaths"],
         "execution plan must bind every profile mount path",
@@ -230,8 +272,8 @@ export const agentCandidateMaterializationReceiptSchema = z
         "execution plan must bind the exact uploaded candidate workspace",
       ],
       [
-        receipt.profilePlan.material.harness === receipt.harness,
-        ["profilePlan", "material", "harness"],
+        receipt.profileActivation.profilePlan.material.harness === receipt.harness,
+        ["profileActivation", "profilePlan", "material", "harness"],
         "profile plan harness must match materialization",
       ],
     ];
@@ -251,8 +293,16 @@ export const agentCandidateRunReceiptSchema = z
     kind: z.literal("agent-candidate-run"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     bundleDigest: sha256DigestSchema,
+    runCellDigest: sha256DigestSchema,
     materializationReceiptDigest: sha256DigestSchema,
     executionPlanDigest: sha256DigestSchema,
+    timing: z
+      .object({
+        startedAtMs: z.number().int().nonnegative().safe(),
+        endedAtMs: z.number().int().nonnegative().safe(),
+        durationMs: z.number().int().nonnegative().safe(),
+      })
+      .strict(),
     memory: agentCandidateMemoryReceiptSchema,
     trace: agentCandidateTraceEvidenceSchema,
     termination: agentCandidateTerminationSchema,
@@ -265,6 +315,17 @@ export const agentCandidateRunReceiptSchema = z
   .strict()
   .superRefine((receipt, ctx) => {
     if (
+      receipt.timing.endedAtMs < receipt.timing.startedAtMs ||
+      receipt.timing.durationMs !==
+        receipt.timing.endedAtMs - receipt.timing.startedAtMs
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["timing"],
+        message: "run timing must be ordered and internally consistent",
+      });
+    }
+    if (
       receipt.modelSettlement.material.executionPlanDigest !==
       receipt.executionPlanDigest
     ) {
@@ -272,6 +333,28 @@ export const agentCandidateRunReceiptSchema = z
         code: "custom",
         path: ["modelSettlement", "material", "executionPlanDigest"],
         message: "model settlement must bind the executed plan",
+      });
+    }
+    for (const [index, call] of receipt.modelSettlement.material.calls.entries()) {
+      if (
+        call.startedAtMs < receipt.timing.startedAtMs ||
+        call.endedAtMs > receipt.timing.endedAtMs
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["modelSettlement", "material", "calls", index],
+          message: "model calls must occur within the recorded run",
+        });
+      }
+    }
+    if (
+      receipt.benchmarkResult.material.grading.timing.startedAtMs <
+      receipt.timing.endedAtMs
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["benchmarkResult", "material", "grading", "timing", "startedAtMs"],
+        message: "grading must start after candidate execution ends",
       });
     }
     if (

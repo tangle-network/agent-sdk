@@ -21,9 +21,7 @@ const instructionDelivery = { kind: "argv-append" as const };
 
 describe("candidate code and execution schemas", () => {
   it("distinguishes disabled, proposer no-op, and real changes", () => {
-    expect(() =>
-      agentCandidateCodeSchema.parse({ kind: "disabled", reason: "control" }),
-    ).not.toThrow();
+    expect(() => agentCandidateCodeSchema.parse({ kind: "disabled" })).not.toThrow();
     expect(() =>
       agentCandidateCodeSchema.parse({
         kind: "no-op",

@@ -14,7 +14,10 @@ import {
   agentCandidateCapturedArtifactSchema,
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
-import { agentCandidateResolvedModelSchema } from "./agent-candidate-execution-plan-schema.js";
+import {
+  agentCandidateBenchmarkGraderIdentitySchema,
+  agentCandidateResolvedModelSchema,
+} from "./agent-candidate-execution-plan-schema.js";
 import {
   agentCandidateMediaTypeSchema,
   gitObjectSchema,
@@ -332,35 +335,26 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
     kind: z.literal("agent-candidate-benchmark-result-material"),
     executionPlanDigest: sha256DigestSchema,
     taskOutcomeDigest: sha256DigestSchema,
-    benchmark: z
-      .object({
-        name: z.string().min(1),
-        version: z.string().min(1),
-        taskId: z.string().min(1),
-        splitDigest: sha256DigestSchema,
-      })
-      .strict(),
-    grader: z
-      .object({
-        name: z.string().min(1),
-        version: z.string().min(1),
-        artifact: agentCandidateArtifactRefSchema,
-      })
-      .strict(),
+    grader: agentCandidateBenchmarkGraderIdentitySchema,
     evidence: agentCandidateArtifactRefSchema,
+    grading: z
+      .object({
+        usage: agentCandidateFixedSpendSchema,
+        timing: z
+          .object({
+            startedAtMs: safeCountSchema,
+            endedAtMs: safeCountSchema,
+            durationMs: safeCountSchema,
+          })
+          .strict(),
+      })
+      .strict(),
     score: normalizedScoreSchema,
     passed: z.boolean(),
     dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
   })
   .strict()
   .superRefine((material, ctx) => {
-    if (material.grader.artifact.byteLength === 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["grader", "artifact", "byteLength"],
-        message: "pinned grader artifact must contain executable grader bytes",
-      });
-    }
     if (material.evidence.byteLength === 0) {
       ctx.addIssue({
         code: "custom",
@@ -368,11 +362,17 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
         message: "benchmark result must contain non-empty durable grading evidence",
       });
     }
-    if (material.evidence.sha256 === material.grader.artifact.sha256) {
+    if (
+      material.grading.timing.endedAtMs <
+        material.grading.timing.startedAtMs ||
+      material.grading.timing.durationMs !==
+        material.grading.timing.endedAtMs -
+          material.grading.timing.startedAtMs
+    ) {
       ctx.addIssue({
         code: "custom",
-        path: ["evidence", "sha256"],
-        message: "grading evidence must be distinct from the grader implementation",
+        path: ["grading", "timing"],
+        message: "grader timing must be ordered and internally consistent",
       });
     }
     for (let index = 1; index < material.dimensions.length; index++) {

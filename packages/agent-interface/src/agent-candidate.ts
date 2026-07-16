@@ -180,8 +180,6 @@ export interface AgentCandidateProfile
 
 export interface AgentCandidateCodeDisabled {
   kind: "disabled";
-  /** `control` marks a comparison arm; `not-applicable` disables only the code surface. */
-  reason: "control" | "not-applicable";
 }
 
 /** A code proposer ran against this exact tree and returned no change. */
@@ -318,15 +316,6 @@ export type AgentCandidateMemoryPolicy =
       seed?: AgentCandidateArtifactRef;
     };
 
-/** Captured model spend for one phase of candidate production. */
-export interface AgentCandidateSpend {
-  costUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens?: number;
-  modelCalls: number;
-}
-
 /** Lossless evaluator-owned usage totals for one candidate execution. */
 export interface AgentCandidateFixedSpend {
   inputTokens: number;
@@ -345,15 +334,8 @@ export interface AgentCandidateLineage {
   runIds?: string[];
   profileDiffIds?: string[];
   modelSnapshots?: string[];
-  benchmark?: {
-    name: string;
-    version: string;
-    splitDigest: Sha256Digest;
-  };
-  spend?: {
-    proposal: AgentCandidateSpend;
-    evaluation: AgentCandidateSpend;
-  };
+  /** Exact development split used to produce a generated candidate. */
+  developmentSplitDigest?: Sha256Digest;
 }
 
 /**
@@ -372,7 +354,6 @@ export interface AgentCandidateBundle {
   execution: AgentCandidateExecution;
   knowledge?: AgentCandidateKnowledge;
   memory: AgentCandidateMemoryPolicy;
-  lineage: AgentCandidateLineage;
   digest: Sha256Digest;
 }
 
@@ -388,6 +369,15 @@ export interface AgentCandidateOciPlatform {
   variant?: string;
 }
 
+/** Exact evaluator-selected task image used when the candidate does not pin one. */
+export interface AgentCandidateResolvedTaskContainer {
+  source: "evaluator-task-container";
+  image: string;
+  indexDigest: Sha256Digest;
+  manifestDigest: Sha256Digest;
+  platform: AgentCandidateOciPlatform;
+}
+
 export interface AgentCandidateResolvedModel {
   requested: string;
   provider: string;
@@ -398,6 +388,8 @@ export interface AgentCandidateResolvedModel {
 
 /** Canonical, digest-free profile-plan identity document. */
 export interface AgentCandidateProfilePlanMaterial {
+  /** Canonical digest of the complete frozen profile that produced this plan. */
+  sourceProfileDigest: Sha256Digest;
   harness: HarnessType;
   files: Array<{
     relPath: string;
@@ -495,6 +487,119 @@ export type AgentCandidateTaskOutcomeSpec =
   | { kind: "workspace" }
   | ({ kind: "output" } & AgentCandidateTaskOutputSpec);
 
+/** Immutable grader identity admitted for one benchmark task. */
+export interface AgentCandidateBenchmarkGraderIdentity {
+  name: string;
+  version: string;
+  format: "tangle-grader";
+  artifact: AgentCandidateArtifactRef;
+}
+
+/** Portable task bytes shared by evaluation, approval, and execution. */
+export interface AgentCandidateBenchmarkTaskMaterial {
+  kind: "agent-candidate-benchmark-task";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  benchmark: {
+    name: string;
+    version: string;
+    splitDigest: Sha256Digest;
+  };
+  scenario: {
+    id: string;
+    kind: string;
+    scenarioDigest: Sha256Digest;
+  };
+  datasetSnapshot?: AgentCandidateArtifactRef;
+  instruction: string;
+  repository?: AgentCandidateTaskRepository;
+  outcome: AgentCandidateTaskOutcomeSpec;
+  workspace: AgentCandidateWorkspaceSnapshotEvidence;
+  grader: AgentCandidateBenchmarkGraderIdentity;
+  model: AgentCandidateResolvedModel;
+  attempt: Omit<AgentCandidateAttemptPolicy, "number">;
+  evaluatorTaskContainer?: AgentCandidateResolvedTaskContainer;
+  limits: AgentCandidateExecutionLimits;
+}
+
+/** Content-addressed benchmark task approved and executed without reinterpretation. */
+export interface AgentCandidateBenchmarkTask
+  extends AgentCandidateBenchmarkTaskMaterial {
+  digest: Sha256Digest;
+}
+
+/** Complete measured denominator shared by evaluation and execution. */
+export interface AgentCandidateBenchmarkSuiteMaterial {
+  kind: "agent-candidate-benchmark-suite";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  taskDigests: [Sha256Digest, ...Sha256Digest[]];
+  reps: number;
+  /** Task-major, then repetition-major: seeds[taskIndex * reps + repetition]. */
+  seeds: [number, ...number[]];
+}
+
+export interface AgentCandidateBenchmarkSuite
+  extends AgentCandidateBenchmarkSuiteMaterial {
+  digest: Sha256Digest;
+}
+
+/** Canonical task documents transported alongside their signed suite. */
+export interface AgentCandidateBenchmarkSuiteInputs {
+  suite: AgentCandidateBenchmarkSuite;
+  tasks: [AgentCandidateBenchmarkTask, ...AgentCandidateBenchmarkTask[]];
+}
+
+/** One cell in a signed suite; task identity and seed are derived by position. */
+export interface AgentCandidateBenchmarkCellRef {
+  suiteDigest: Sha256Digest;
+  taskIndex: number;
+  repetition: number;
+}
+
+/** Decision rules frozen before either experiment arm executes. */
+export interface AgentCandidateEvaluationPolicy {
+  confidenceLevel: number;
+  resamples: number;
+  bootstrapSeed: number;
+  deltaThreshold: number;
+  minProductiveRuns: number;
+  budgetUsd?: number;
+  criticalDimensions: string[];
+  regressionTolerance: number;
+}
+
+/** Both complete agent states and the exact held-out work used to compare them. */
+export interface AgentCandidateExperimentMaterial {
+  kind: "agent-candidate-experiment";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  baseline: AgentCandidateBundle;
+  candidate: AgentCandidateBundle;
+  candidateLineage: AgentCandidateLineage;
+  benchmark: AgentCandidateBenchmarkSuiteInputs;
+  policy: AgentCandidateEvaluationPolicy;
+}
+
+export interface AgentCandidateExperiment
+  extends AgentCandidateExperimentMaterial {
+  digest: Sha256Digest;
+}
+
+/** Digest-free identity of one exact attempt in a frozen experiment. */
+export interface AgentCandidateRunCellMaterial
+  extends AgentCandidateBenchmarkCellRef {
+  kind: "agent-candidate-run-cell";
+  experimentDigest: Sha256Digest;
+  arm: "baseline" | "candidate";
+  bundleDigest: Sha256Digest;
+  taskDigest: Sha256Digest;
+  seed: number;
+  attempt: number;
+}
+
+/** One immutable experiment attempt used by plans, receipts, traces, and results. */
+export interface AgentCandidateRunCell extends AgentCandidateRunCellMaterial {
+  digest: Sha256Digest;
+}
+
 /**
  * Canonical, digest-free per-task execution identity document.
  *
@@ -503,24 +608,8 @@ export type AgentCandidateTaskOutcomeSpec =
  */
 export interface AgentCandidateExecutionPlanMaterial {
   kind: "agent-candidate-execution-plan-material";
-  bundleDigest: Sha256Digest;
+  runCell: AgentCandidateRunCell;
   executionId: string;
-  attempt: AgentCandidateAttemptPolicy;
-  task: {
-    benchmark: string;
-    benchmarkVersion: string;
-    taskId: string;
-    splitDigest: Sha256Digest;
-    instruction: {
-      encoding: "utf8";
-      sha256: Sha256Digest;
-      byteLength: number;
-      delivery: AgentCandidateInstructionDelivery;
-    };
-    repository?: AgentCandidateTaskRepository;
-    outcome: AgentCandidateTaskOutcomeSpec;
-    workspace: AgentCandidateWorkspaceSnapshotEvidence;
-  };
   workspaces: {
     taskRoot: string;
     candidateRoot?: string;
@@ -530,6 +619,8 @@ export interface AgentCandidateExecutionPlanMaterial {
   profile: AgentCandidateProfileApplication;
   harness: HarnessType;
   harnessVersion: string;
+  instructionDelivery: AgentCandidateInstructionDelivery;
+  limits: AgentCandidateExecutionLimits;
   container: {
     source: AgentCandidateExecutionEnvironment["kind"];
     image: string;
@@ -552,12 +643,6 @@ export interface AgentCandidateExecutionPlanMaterial {
       | { kind: "subagent"; name: string; requested: string }
     >;
   };
-  /** Exact evaluator grader implementation admitted for this plan. */
-  grader: {
-    name: string;
-    version: string;
-    artifact: AgentCandidateArtifactRef;
-  };
   launch: {
     executable: string;
     args: AgentCandidateConfigValue[];
@@ -566,7 +651,6 @@ export interface AgentCandidateExecutionPlanMaterial {
   };
   knowledgeManifestDigest?: Sha256Digest;
   memory: AgentCandidateEffectiveMemory;
-  limits: AgentCandidateExecutionLimits;
   network: { mode: "disabled" };
 }
 
@@ -596,6 +680,18 @@ export interface AgentCandidateExecutionPlanEvidence {
   artifact: AgentCandidateCapturedArtifact;
 }
 
+/** Exact suite and task material selected for one execution plan. */
+export interface AgentCandidateBenchmarkInputEvidence {
+  suite: {
+    digest: Sha256Digest;
+    material: AgentCandidateCapturedArtifact;
+  };
+  task: {
+    digest: Sha256Digest;
+    material: AgentCandidateCapturedArtifact;
+  };
+}
+
 export interface AgentCandidateTraceEvidence {
   artifact: AgentCandidateCapturedArtifact;
   eventCount: number;
@@ -618,7 +714,8 @@ export interface AgentCandidateMaterializationReceipt {
   kind: "agent-candidate-materialization";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   bundleDigest: Sha256Digest;
-  profilePlan: AgentCandidateProfilePlanEvidence;
+  benchmark: AgentCandidateBenchmarkInputEvidence;
+  profileActivation: AgentCandidateProfileActivation;
   executionPlan: AgentCandidateExecutionPlanEvidence;
   candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
   codeKind: AgentCandidateCode["kind"];
@@ -650,8 +747,14 @@ export interface AgentCandidateRunReceipt {
   kind: "agent-candidate-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   bundleDigest: Sha256Digest;
+  runCellDigest: Sha256Digest;
   materializationReceiptDigest: Sha256Digest;
   executionPlanDigest: Sha256Digest;
+  timing: {
+    startedAtMs: number;
+    endedAtMs: number;
+    durationMs: number;
+  };
   memory: AgentCandidateMemoryReceipt;
   trace: AgentCandidateTraceEvidence;
   termination: AgentCandidateTermination;
@@ -674,16 +777,17 @@ export type AgentImprovementSurface =
   | "code"
   | "knowledge";
 
+/** One paired Runtime execution from the exact signed experiment. */
+export interface AgentCandidateExperimentMeasurement {
+  baseline: CandidateExecutionEvidence;
+  candidate: CandidateExecutionEvidence;
+}
+
 /** Portable paired held-out comparison produced by an evaluation package. */
 export interface AgentImprovementMeasuredComparison {
   kind: "agent-improvement-measured-comparison";
-  benchmark: {
-    name: string;
-    version: string;
-    splitDigest: Sha256Digest;
-  };
-  baselineProfileDigest: Sha256Digest;
-  candidateBundleDigest: Sha256Digest;
+  experiment: AgentCandidateExperiment;
+  measurements: AgentCandidateExperimentMeasurement[];
   overall: {
     name: "composite";
     baseline: number;
@@ -782,7 +886,11 @@ export interface AgentImprovementMeasuredComparison {
   diff: string;
   evaluation: {
     generationsExplored: number;
+    searchDurationMs: number;
+    executionDurationMs: number;
     durationMs: number;
+    searchCostUsd: number;
+    executionCostUsd: number;
     totalCostUsd: number;
   };
   metadata?: { [key: string]: AgentCandidateJsonValue };
@@ -793,10 +901,8 @@ export interface AgentImprovementProposal {
   runId: string;
   changedSurfaces: [AgentImprovementSurface, ...AgentImprovementSurface[]];
   proposedAt: string;
-  baselineProfile: AgentProfile;
   findings: { [key: string]: AgentCandidateJsonValue }[];
   evaluation: AgentImprovementMeasuredComparison;
-  candidateBundle: AgentCandidateBundle;
   digest: Sha256Digest;
 }
 
@@ -809,7 +915,6 @@ export type AgentImprovementReviewDecision =
 export interface AgentImprovementReview {
   kind: "agent-improvement-review";
   proposalDigest: Sha256Digest;
-  candidateBundleDigest: Sha256Digest;
   decision: AgentImprovementReviewDecision;
   reviewedBy: string;
   reviewedAt: string;
@@ -818,15 +923,32 @@ export interface AgentImprovementReview {
   digest: Sha256Digest;
 }
 
-/** Successful post-approval execution, carrying the exact Runtime receipt. */
-export interface CandidateExecutionEvidence {
-  kind: "agent-candidate-execution-evidence";
+export interface AgentImprovementActivationTarget {
+  surface: AgentImprovementSurface;
+  /** Product-owned stable identity, such as an agent profile, repository, or knowledge base. */
+  identity: string;
+  /** Current target state that activation is allowed to replace. */
+  expectedBaseDigest: Sha256Digest;
+}
+
+/** Authority receipt permitting activation of one already-measured candidate. */
+export interface AgentImprovementActivation {
+  kind: "agent-improvement-activation";
   proposalDigest: Sha256Digest;
   reviewDigest: Sha256Digest;
-  executionId: string;
-  succeeded: true;
+  experimentDigest: Sha256Digest;
+  candidateBundleDigest: Sha256Digest;
+  targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];
+  fundingOwner: string;
+  authorizedBy: string;
+  authorizedAt: string;
+  digest: Sha256Digest;
+}
+
+/** Complete execution of one exact experiment attempt. */
+export interface CandidateExecutionEvidence {
+  kind: "agent-candidate-execution-evidence";
   materializationReceipt: AgentCandidateMaterializationReceipt;
-  profileActivation: AgentCandidateProfileActivation;
   receipt: AgentCandidateRunReceipt;
   digest: Sha256Digest;
 }
@@ -913,19 +1035,18 @@ export interface AgentCandidateBenchmarkResultMaterial {
   kind: "agent-candidate-benchmark-result-material";
   executionPlanDigest: Sha256Digest;
   taskOutcomeDigest: Sha256Digest;
-  benchmark: {
-    name: string;
-    version: string;
-    taskId: string;
-    splitDigest: Sha256Digest;
-  };
-  grader: {
-    name: string;
-    version: string;
-    artifact: AgentCandidateArtifactRef;
-  };
+  grader: AgentCandidateBenchmarkGraderIdentity;
   /** Raw grader output required to independently audit the reported verdict. */
   evidence: AgentCandidateArtifactRef;
+  /** Evaluator-owned model usage and elapsed time, separate from candidate usage. */
+  grading: {
+    usage: AgentCandidateFixedSpend;
+    timing: {
+      startedAtMs: number;
+      endedAtMs: number;
+      durationMs: number;
+    };
+  };
   score: number;
   passed: boolean;
   dimensions: AgentCandidateBenchmarkDimension[];

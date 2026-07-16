@@ -151,32 +151,6 @@ export function candidateFixture() {
       mode: "isolated",
       scope: "task",
     },
-    lineage: {
-      source: "optimizer",
-      parentDigests: [candidateSha("8")],
-      runIds: ["r360-search"],
-      profileDiffIds: ["profile-diff-3"],
-      modelSnapshots: ["openai/gpt-5.4-2026-06-15"],
-      benchmark: {
-        name: "pier",
-        version: "0.3",
-        splitDigest: candidateSha("9"),
-      },
-      spend: {
-        proposal: {
-          costUsd: 3.5,
-          inputTokens: 100,
-          outputTokens: 20,
-          modelCalls: 2,
-        },
-        evaluation: {
-          costUsd: 9,
-          inputTokens: 900,
-          outputTokens: 200,
-          modelCalls: 8,
-        },
-      },
-    },
     digest: candidateSha("a"),
   });
 }

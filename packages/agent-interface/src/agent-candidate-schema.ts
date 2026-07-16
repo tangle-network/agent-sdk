@@ -4,7 +4,6 @@ import { agentCandidateCodeSchema, agentCandidateExecutionSchema } from "./agent
 import { agentCandidateProfileSchema } from "./agent-candidate-profile-schema.js";
 import {
   agentCandidateKnowledgeSchema,
-  agentCandidateLineageSchema,
   agentCandidateMemoryPolicySchema,
 } from "./agent-candidate-lineage-schema.js";
 import {
@@ -30,7 +29,6 @@ export const agentCandidateBundleSchema = z
     execution: agentCandidateExecutionSchema,
     knowledge: agentCandidateKnowledgeSchema.optional(),
     memory: agentCandidateMemoryPolicySchema,
-    lineage: agentCandidateLineageSchema,
     digest: sha256DigestSchema,
   })
   .strict()
@@ -52,14 +50,6 @@ export const agentCandidateBundleSchema = z
         message: "execution harness must match the candidate profile preference",
       });
     }
-    if (bundle.lineage.parentDigests?.includes(bundle.digest)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lineage", "parentDigests"],
-        message: "a candidate cannot name itself as a parent",
-      });
-    }
-
     if (bundle.code.kind === "disabled") {
       if (bundle.execution.cwd.workspace !== "task") {
         ctx.addIssue({
@@ -80,17 +70,6 @@ export const agentCandidateBundleSchema = z
           code: "custom",
           path: ["execution", "workspace"],
           message: "disabled code cannot carry a candidate workspace",
-        });
-      }
-      if (
-        bundle.code.reason === "control" &&
-        (bundle.lineage.source === "optimizer" ||
-          bundle.lineage.source === "compound")
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["lineage", "source"],
-          message: "fixed controls cannot claim proposer lineage",
         });
       }
     } else {
@@ -137,17 +116,6 @@ export const agentCandidateBundleSchema = z
           });
         }
       }
-      if (
-        bundle.code.kind === "no-op" &&
-        bundle.lineage.source !== "optimizer" &&
-        bundle.lineage.source !== "compound"
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["lineage", "source"],
-          message: "proposer no-op candidates require optimizer or compound lineage",
-        });
-      }
     }
   }) satisfies z.ZodType<AgentCandidateBundle>;
 
@@ -170,4 +138,13 @@ export * from "./agent-candidate-lineage-schema.js";
 export * from "./agent-candidate-outcome-schema.js";
 export * from "./agent-candidate-profile-schema.js";
 export * from "./agent-candidate-receipt-schema.js";
-export { sha256DigestSchema } from "./agent-candidate-schema-common.js";
+export * from "./agent-candidate-task-schema.js";
+export {
+  canonicalCandidateBytes,
+  canonicalCandidateDigest,
+  canonicalCandidateJson,
+  omitTopLevelDigest,
+  sha256Bytes,
+  sha256DigestSchema,
+  sha256Utf8,
+} from "./agent-candidate-schema-common.js";
