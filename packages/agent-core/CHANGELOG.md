@@ -1,5 +1,14 @@
 # @tangle-network/agent-core
 
+## 0.4.17
+
+### Patch Changes
+
+- a00d0a3: Build only before publishing so installed package artifacts can be repacked with lifecycle scripts enabled.
+- Updated dependencies [e1c362e]
+- Updated dependencies [a00d0a3]
+  - @tangle-network/agent-interface@0.29.0
+
 ## 0.4.16
 
 ### Patch Changes

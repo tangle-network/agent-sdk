@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-computesdk",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "description": "AgentEnvironmentProvider adapter for ComputeSDK-compatible sandboxes",
   "type": "module",
   "license": "MIT",
