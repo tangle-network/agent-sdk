@@ -47,37 +47,20 @@ function planFixture() {
   };
   return {
     kind: "agent-candidate-execution-plan-material" as const,
-    bundleDigest: candidateSha("1"),
+    runCell: {
+      kind: "agent-candidate-run-cell" as const,
+      experimentDigest: candidateSha("0"),
+      arm: "candidate" as const,
+      bundleDigest: candidateSha("1"),
+      suiteDigest: candidateSha("9"),
+      taskDigest: candidateSha("2"),
+      taskIndex: 0,
+      repetition: 0,
+      seed: 42,
+      attempt: 1,
+      digest: candidateSha("3"),
+    },
     executionId: "execution-1",
-    attempt: {
-      number: 1,
-      maxAttempts: 1,
-      retryPolicy: "pre-model-infrastructure-only" as const,
-    },
-    task: {
-      benchmark: "pier",
-      benchmarkVersion: "0.3",
-      taskId: "task-1",
-      splitDigest: candidateSha("2"),
-      instruction: {
-        encoding: "utf8" as const,
-        sha256: candidateSha("3"),
-        byteLength: 42,
-        delivery: {
-          kind: "utf8-file" as const,
-          env: "TANGLE_CANDIDATE_TASK_PATH" as const,
-          path: "/tangle/input/task.txt" as const,
-        },
-      },
-      repository: {
-        identity: "tangle-network/agent-runtime",
-        rootIdentity: "tangle-network/agent-runtime",
-        baseCommit: "1".repeat(40),
-        baseTree: "2".repeat(40),
-      },
-      outcome: { kind: "workspace" as const },
-      workspace: workspace("src/task.ts", "4"),
-    },
     workspaces: {
       taskRoot: "/work/task",
       candidateRoot: "/work/candidate",
@@ -91,6 +74,19 @@ function planFixture() {
     },
     harness: "codex" as const,
     harnessVersion: "0.1.0",
+    instructionDelivery: {
+      kind: "utf8-file" as const,
+      env: "TANGLE_CANDIDATE_TASK_PATH" as const,
+      path: "/tangle/input/task.txt" as const,
+    },
+    limits: {
+      timeoutMs: 120_000,
+      maxSteps: 50,
+      maxModelCalls: 12,
+      maxInputTokens: 100_000,
+      maxOutputTokens: 20_000,
+      maxCostUsd: 5,
+    },
     container: {
       source: "evaluator-task-container" as const,
       image: "pier-task:0.3",
@@ -118,15 +114,6 @@ function planFixture() {
         },
       ],
     },
-    grader: {
-      name: "fixture-grader",
-      version: "1.0.0",
-      artifact: {
-        locator: { kind: "s3" as const, bucket: "test-artifacts", key: "grader" },
-        sha256: candidateSha("a"),
-        byteLength: 1,
-      },
-    },
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
@@ -139,14 +126,6 @@ function planFixture() {
       cwd: { workspace: "task" as const, path: "." },
     },
     memory: { mode: "disabled" as const },
-    limits: {
-      timeoutMs: 60_000,
-      maxSteps: 200,
-      maxModelCalls: 20,
-      maxInputTokens: 200_000,
-      maxOutputTokens: 20_000,
-      maxCostUsd: 20,
-    },
     network: { mode: "disabled" as const },
   };
 }
@@ -157,6 +136,7 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
       kind: "agent-profile-workspace-plan" as const,
       digest: candidateSha("1"),
       material: {
+        sourceProfileDigest: candidateSha("0"),
         harness: "codex" as const,
         files: [
           {
@@ -223,36 +203,8 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     ).toThrow(/Unrecognized key/);
   });
 
-  it("requires the split, fixed disjoint roots, and evaluator model access", () => {
+  it("requires fixed disjoint roots and evaluator model access", () => {
     const plan = planFixture();
-    const { splitDigest: _splitDigest, ...taskWithoutSplit } = plan.task;
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        task: taskWithoutSplit,
-      }),
-    ).toThrow();
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        task: {
-          ...plan.task,
-          repository: {
-            ...plan.task.repository,
-            baseTree: "2".repeat(64),
-          },
-        },
-      }),
-    ).toThrow(/one object format/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        task: {
-          ...plan.task,
-          instruction: { ...plan.task.instruction, byteLength: 0 },
-        },
-      }),
-    ).toThrow();
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
@@ -262,6 +214,26 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         },
       }),
     ).toThrow(/disjoint/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        workspaces: { ...plan.workspaces, taskRoot: "/tangle/input" },
+      }),
+    ).toThrow(/task file delivery must be outside/);
+    expect(() =>
+      agentCandidateExecutionPlanMaterialSchema.parse({
+        ...plan,
+        launch: {
+          ...plan.launch,
+          env: {
+            TANGLE_CANDIDATE_TASK_PATH: {
+              kind: "public",
+              value: "/tmp/task.txt",
+            },
+          },
+        },
+      }),
+    ).toThrow(/fixed evaluator-owned path/);
     const { access: _access, ...modelWithoutAccess } = plan.model;
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
@@ -271,62 +243,16 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     ).toThrow();
   });
 
-  it("accepts a bounded exact output instead of a Git result", () => {
+  it("rejects task-owned fields so they cannot drift from the signed suite", () => {
     const plan = planFixture();
-    const outputPlan = {
-      ...plan,
-      task: {
-        ...plan.task,
-        workspace: {
-          ...plan.task.workspace,
-          material: { ...plan.task.workspace.material, files: [] },
-        },
-        outcome: {
-          kind: "output" as const,
-          mediaType: "application/json",
-          maxBytes: 1_048_576,
-        },
-      },
-    };
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse(outputPlan),
-    ).not.toThrow();
-    const { repository: _repository, ...taskWithoutRepository } = outputPlan.task;
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...outputPlan,
-        task: taskWithoutRepository,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...outputPlan,
-        task: {
-          ...outputPlan.task,
-          outcome: { ...outputPlan.task.outcome, mediaType: "Application/JSON" },
-        },
-      }),
-    ).toThrow();
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...outputPlan,
-        task: {
-          ...outputPlan.task,
-          outcome: { ...outputPlan.task.outcome, maxBytes: 64 * 1024 * 1024 + 1 },
-        },
-      }),
-    ).toThrow();
-  });
-
-  it("requires repository provenance only for workspace outcomes", () => {
-    const plan = planFixture();
-    const { repository: _repository, ...taskWithoutRepository } = plan.task;
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        task: taskWithoutRepository,
-      }),
-    ).toThrow(/require task repository provenance/);
+    for (const field of ["task", "grader", "limits"] as const) {
+      expect(
+        agentCandidateExecutionPlanMaterialSchema.safeParse({
+          ...plan,
+          [field]: {},
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("rejects ambiguous roots and silently omitted profile behavior", () => {
@@ -341,6 +267,7 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     }
 
     const profilePlan = {
+      sourceProfileDigest: candidateSha("0"),
       harness: "codex",
       files: [],
       env: {},
@@ -398,7 +325,7 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     expect(() => agentCandidateResolvedModelSchema.parse(withoutEffort)).toThrow();
   });
 
-  it("freezes only exact model-gateway domains and disables them for zero-call plans", () => {
+  it("freezes only exact model-gateway domains", () => {
     const plan = planFixture();
     for (const domain of [
       "*.tangle.tools",
@@ -436,75 +363,22 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
         },
       }),
     ).toThrow(/lexicographically sorted/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        limits: { ...plan.limits, maxModelCalls: 0 },
-        model: {
-          ...plan.model,
-          access: { ...plan.model.access, network: { mode: "disabled" } },
-        },
-      }),
-    ).not.toThrow();
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        model: {
-          ...plan.model,
-          access: { ...plan.model.access, network: { mode: "disabled" } },
-        },
-      }),
-    ).toThrow(/require one frozen gateway allowlist/);
   });
 
-  it("freezes counted attempts, retry policy, and tool-loop steps", () => {
+  it("keeps only the exact attempt number in the run cell", () => {
     const plan = planFixture();
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
-        attempt: { ...plan.attempt, number: 2 },
-      }),
-    ).toThrow(/cannot exceed/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        attempt: { number: 1, maxAttempts: 2, retryPolicy: "none" },
-      }),
-    ).toThrow(/exactly one attempt/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        limits: { ...plan.limits, maxSteps: 0 },
+        runCell: { ...plan.runCell, attempt: 0 },
       }),
     ).toThrow();
-  });
-
-  it("binds exact task-instruction delivery outside both workspaces", () => {
-    const plan = planFixture();
     expect(() =>
       agentCandidateExecutionPlanMaterialSchema.parse({
         ...plan,
-        launch: { ...plan.launch, env: {} },
+        runCell: { ...plan.runCell, maxAttempts: 2 },
       }),
-    ).toThrow(/signed fixed task path/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        workspaces: { ...plan.workspaces, taskRoot: "/tangle" },
-      }),
-    ).toThrow(/outside both workspaces/);
-    expect(() =>
-      agentCandidateExecutionPlanMaterialSchema.parse({
-        ...plan,
-        task: {
-          ...plan.task,
-          instruction: {
-            ...plan.task.instruction,
-            delivery: { kind: "argv-append" },
-          },
-        },
-      }),
-    ).toThrow(/cannot expose an instruction path/);
+    ).toThrow(/Unrecognized key/);
   });
 
   it("requires active workspace bytes and fresh reset evidence", () => {

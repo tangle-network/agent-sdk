@@ -62,7 +62,6 @@ const executableSchema = z
 export const agentCandidateCodeDisabledSchema = z
   .object({
     kind: z.literal("disabled"),
-    reason: z.enum(["control", "not-applicable"]),
   })
   .strict() satisfies z.ZodType<AgentCandidateCodeDisabled>;
 

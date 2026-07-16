@@ -1,14 +1,21 @@
 import { z } from "zod";
 import type {
+  AgentCandidateBenchmarkCellRef,
+  AgentCandidateBenchmarkGraderIdentity,
   AgentCandidateEffectiveMemory,
   AgentCandidateExecutionLimits,
   AgentCandidateExecutionPlanEvidence,
   AgentCandidateExecutionPlanMaterial,
+  AgentCandidateInstructionDelivery,
   AgentCandidateModelAccessNetwork,
   AgentCandidateProfileActivation,
   AgentCandidateProfilePlanEvidence,
   AgentCandidateProfilePlanMaterial,
   AgentCandidateResolvedModel,
+  AgentCandidateResolvedTaskContainer,
+  AgentCandidateRunCell,
+  AgentCandidateRunCellMaterial,
+  AgentCandidateTaskRepository,
   AgentCandidateTaskOutcomeSpec,
 } from "./agent-candidate.js";
 import {
@@ -21,6 +28,7 @@ import {
   agentCandidateInstructionDeliverySchema,
   agentCandidateWorkingDirectorySchema,
 } from "./agent-candidate-code-schema.js";
+import { reasoningEffortSchema } from "./profile-schema.js";
 import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
@@ -37,16 +45,6 @@ import {
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
-
-const reasoningEffortSchema = z.enum([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "ultracode",
-]);
 
 function isCanonicalAbsolutePath(value: string): boolean {
   return (
@@ -113,8 +111,64 @@ export const agentCandidateResolvedModelSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateResolvedModel>;
 
+export const agentCandidateBenchmarkGraderIdentitySchema = z
+  .object({
+    name: z.string().min(1),
+    version: z.string().min(1),
+    format: z.literal("tangle-grader"),
+    artifact: agentCandidateArtifactRefSchema,
+  })
+  .strict()
+  .superRefine((grader, ctx) => {
+    if (grader.artifact.byteLength === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["artifact", "byteLength"],
+        message: "pinned grader artifact must contain executable grader bytes",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateBenchmarkGraderIdentity>;
+
+export const agentCandidateTaskRepositorySchema = z
+  .object({
+    identity: z.string().min(1).max(512),
+    rootIdentity: z.string().min(1).max(512),
+    baseCommit: gitObjectSchema,
+    baseTree: gitObjectSchema,
+  })
+  .strict()
+  .superRefine((repository, ctx) => {
+    if (!sameGitObjectFormat(repository.baseCommit, repository.baseTree)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "task Git object ids must use one object format",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateTaskRepository>;
+
+export const agentCandidateResolvedTaskContainerSchema =
+  agentCandidateContainerSchema
+    .extend({
+      source: z.literal("evaluator-task-container"),
+      manifestDigest: sha256DigestSchema,
+      platform: z
+        .object({
+          os: z.string().min(1).max(100),
+          architecture: z.string().min(1).max(100),
+          variant: z.string().min(1).max(100).optional(),
+        })
+        .strict(),
+    })
+    .strict() satisfies z.ZodType<AgentCandidateResolvedTaskContainer>;
+
+export const agentCandidateRetryPolicySchema = z.enum([
+  "pre-model-infrastructure-only",
+  "none",
+]);
+
 export const agentCandidateProfilePlanMaterialSchema = z
   .object({
+    sourceProfileDigest: sha256DigestSchema,
     harness: harnessTypeSchema,
     files: z.array(
       z
@@ -224,45 +278,38 @@ export const agentCandidateTaskOutcomeSpecSchema = z.discriminatedUnion("kind", 
     .strict(),
 ]) satisfies z.ZodType<AgentCandidateTaskOutcomeSpec>;
 
+export const agentCandidateBenchmarkCellRefSchema = z
+  .object({
+    suiteDigest: sha256DigestSchema,
+    taskIndex: z.number().int().nonnegative(),
+    repetition: z.number().int().nonnegative(),
+  })
+  .strict() satisfies z.ZodType<AgentCandidateBenchmarkCellRef>;
+
+export const agentCandidateRunCellMaterialSchema = z
+  .object({
+    kind: z.literal("agent-candidate-run-cell"),
+    experimentDigest: sha256DigestSchema,
+    arm: z.enum(["baseline", "candidate"]),
+    bundleDigest: sha256DigestSchema,
+    suiteDigest: sha256DigestSchema,
+    taskDigest: sha256DigestSchema,
+    taskIndex: z.number().int().nonnegative(),
+    repetition: z.number().int().nonnegative(),
+    seed: z.number().int().safe(),
+    attempt: z.number().int().positive(),
+  })
+  .strict() satisfies z.ZodType<AgentCandidateRunCellMaterial>;
+
+export const agentCandidateRunCellSchema = agentCandidateRunCellMaterialSchema
+  .extend({ digest: sha256DigestSchema })
+  .strict() satisfies z.ZodType<AgentCandidateRunCell>;
+
 export const agentCandidateExecutionPlanMaterialSchema = z
   .object({
     kind: z.literal("agent-candidate-execution-plan-material"),
-    bundleDigest: sha256DigestSchema,
+    runCell: agentCandidateRunCellSchema,
     executionId: z.string().min(1),
-    attempt: z
-      .object({
-        number: z.number().int().min(1),
-        maxAttempts: z.number().int().min(1),
-        retryPolicy: z.enum(["pre-model-infrastructure-only", "none"]),
-      })
-      .strict(),
-    task: z
-      .object({
-        benchmark: z.string().min(1),
-        benchmarkVersion: z.string().min(1),
-        taskId: z.string().min(1),
-        splitDigest: sha256DigestSchema,
-        instruction: z
-          .object({
-            encoding: z.literal("utf8"),
-            sha256: sha256DigestSchema,
-            byteLength: z.number().int().positive(),
-            delivery: agentCandidateInstructionDeliverySchema,
-          })
-          .strict(),
-        repository: z
-          .object({
-            identity: z.string().min(1),
-            rootIdentity: z.string().min(1),
-            baseCommit: gitObjectSchema,
-            baseTree: gitObjectSchema,
-          })
-          .strict()
-          .optional(),
-        outcome: agentCandidateTaskOutcomeSpecSchema,
-        workspace: agentCandidateWorkspaceSnapshotEvidenceSchema,
-      })
-      .strict(),
     workspaces: z
       .object({
         taskRoot: z
@@ -295,6 +342,9 @@ export const agentCandidateExecutionPlanMaterialSchema = z
       .strict(),
     harness: harnessTypeSchema,
     harnessVersion: z.string().min(1),
+    instructionDelivery:
+      agentCandidateInstructionDeliverySchema satisfies z.ZodType<AgentCandidateInstructionDelivery>,
+    limits: agentCandidateExecutionLimitsSchema,
     container: agentCandidateContainerSchema
       .extend({
         source: z.enum(["pinned-container", "evaluator-task-container"]),
@@ -353,13 +403,6 @@ export const agentCandidateExecutionPlanMaterialSchema = z
           .min(1),
       })
       .strict(),
-    grader: z
-      .object({
-        name: z.string().min(1),
-        version: z.string().min(1),
-        artifact: agentCandidateArtifactRefSchema,
-      })
-      .strict(),
     launch: z
       .object({
         executable: z
@@ -372,51 +415,10 @@ export const agentCandidateExecutionPlanMaterialSchema = z
       .strict(),
     knowledgeManifestDigest: sha256DigestSchema.optional(),
     memory: agentCandidateEffectiveMemorySchema,
-    limits: agentCandidateExecutionLimitsSchema,
     network: z.object({ mode: z.literal("disabled") }).strict(),
   })
   .strict()
   .superRefine((material, ctx) => {
-    if (
-      material.task.repository !== undefined &&
-      !sameGitObjectFormat(
-        material.task.repository.baseCommit,
-        material.task.repository.baseTree,
-      )
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["task", "repository"],
-        message: "task Git object ids must use one object format",
-      });
-    }
-    if (
-      material.task.outcome.kind === "workspace" &&
-      material.task.repository === undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["task", "repository"],
-        message: "workspace outcomes require task repository provenance",
-      });
-    }
-    if (material.attempt.number > material.attempt.maxAttempts) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["attempt", "number"],
-        message: "attempt number cannot exceed the frozen maximum",
-      });
-    }
-    if (
-      material.attempt.retryPolicy === "none" &&
-      material.attempt.maxAttempts !== 1
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["attempt", "maxAttempts"],
-        message: "a no-retry plan must allow exactly one attempt",
-      });
-    }
     const routeIds = material.model.routes.map((route) =>
       route.kind === "mode" || route.kind === "subagent"
         ? `${route.kind}:${route.name}`
@@ -460,20 +462,6 @@ export const agentCandidateExecutionPlanMaterialSchema = z
       }
     }
     const modelNetwork = material.model.access.network;
-    if (material.limits.maxModelCalls === 0 && modelNetwork.mode !== "disabled") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["model", "access", "network"],
-        message: "zero-call plans cannot expose a model gateway",
-      });
-    }
-    if (material.limits.maxModelCalls > 0 && modelNetwork.mode !== "gateway-only") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["model", "access", "network"],
-        message: "model-calling plans require one frozen gateway allowlist",
-      });
-    }
     if (modelNetwork.mode === "gateway-only") {
       addDuplicateIssues(
         modelNetwork.domains,
@@ -515,6 +503,27 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         message: "task and candidate workspace roots must be disjoint",
       });
     }
+    const taskPath = material.launch.env.TANGLE_CANDIDATE_TASK_PATH;
+    if (taskPath !== undefined) {
+      if (taskPath.value !== "/tangle/input/task.txt") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
+          message: "task file delivery must use the fixed evaluator-owned path",
+        });
+      }
+      if (
+        pathsOverlap(taskPath.value, material.workspaces.taskRoot) ||
+        (material.workspaces.candidateRoot !== undefined &&
+          pathsOverlap(taskPath.value, material.workspaces.candidateRoot))
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
+          message: "task file delivery must be outside both workspaces",
+        });
+      }
+    }
     if (
       material.launch.cwd.workspace === "candidate" &&
       material.workspaces.candidateRoot === undefined
@@ -536,49 +545,11 @@ export const agentCandidateExecutionPlanMaterialSchema = z
           "candidate-targeted profile files require a candidate workspace root",
       });
     }
-    const delivery = material.task.instruction.delivery;
-    const taskPath = material.launch.env.TANGLE_CANDIDATE_TASK_PATH;
-    if (delivery.kind === "utf8-file") {
-      if (taskPath?.value !== delivery.path) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
-          message: "file delivery requires the signed fixed task path",
-        });
-      }
-      if (
-        pathsOverlap(material.workspaces.taskRoot, delivery.path) ||
-        (material.workspaces.candidateRoot !== undefined &&
-          pathsOverlap(material.workspaces.candidateRoot, delivery.path))
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["workspaces"],
-          message: "the task instruction file must be outside both workspaces",
-        });
-      }
-    } else if (taskPath !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
-        message: "non-file delivery cannot expose an instruction path",
-      });
-    }
     if (activeCode && material.candidateWorkspace?.material.files.length === 0) {
       ctx.addIssue({
         code: "custom",
         path: ["candidateWorkspace", "material", "files"],
         message: "active candidate workspaces cannot be empty",
-      });
-    }
-    if (
-      material.task.outcome.kind === "workspace" &&
-      material.task.workspace.material.files.length === 0
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["task", "workspace", "material", "files"],
-        message: "task workspace snapshots cannot be empty",
       });
     }
     if (!isCanonicalJsonValue(material)) {

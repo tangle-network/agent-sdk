@@ -50,13 +50,21 @@ export const agentProfileResourcesSchema = z.object({
   failOnError: z.boolean().optional(),
 });
 
+export const reasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "ultracode",
+]);
+
 export const agentProfileModelHintsSchema = z.object({
   default: z.string().optional(),
   small: z.string().optional(),
   provider: z.string().optional(),
-  reasoningEffort: z
-    .enum(["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"])
-    .optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 

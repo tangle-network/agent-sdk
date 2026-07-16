@@ -3,7 +3,6 @@ import type {
   AgentCandidateKnowledge,
   AgentCandidateLineage,
   AgentCandidateMemoryPolicy,
-  AgentCandidateSpend,
 } from "./agent-candidate.js";
 import {
   agentCandidateArtifactRefSchema,
@@ -46,16 +45,6 @@ export const agentCandidateMemoryPolicySchema = z.discriminatedUnion("mode", [
     .strict(),
 ]) satisfies z.ZodType<AgentCandidateMemoryPolicy>;
 
-export const agentCandidateSpendSchema = z
-  .object({
-    costUsd: z.number().finite().nonnegative(),
-    inputTokens: z.number().int().nonnegative(),
-    outputTokens: z.number().int().nonnegative(),
-    cachedInputTokens: z.number().int().nonnegative().optional(),
-    modelCalls: z.number().int().nonnegative(),
-  })
-  .strict() satisfies z.ZodType<AgentCandidateSpend>;
-
 export const agentCandidateLineageSchema = z
   .object({
     source: z.enum(["optimizer", "human", "import", "compound"]),
@@ -63,21 +52,7 @@ export const agentCandidateLineageSchema = z
     runIds: z.array(z.string().min(1)).optional(),
     profileDiffIds: z.array(z.string().min(1)).optional(),
     modelSnapshots: z.array(z.string().min(1)).optional(),
-    benchmark: z
-      .object({
-        name: z.string().min(1),
-        version: z.string().min(1),
-        splitDigest: sha256DigestSchema,
-      })
-      .strict()
-      .optional(),
-    spend: z
-      .object({
-        proposal: agentCandidateSpendSchema,
-        evaluation: agentCandidateSpendSchema,
-      })
-      .strict()
-      .optional(),
+    developmentSplitDigest: sha256DigestSchema.optional(),
   })
   .strict()
   .superRefine((lineage, ctx) => {
@@ -110,18 +85,11 @@ export const agentCandidateLineageSchema = z
           message: "generated candidates must name their producing run",
         });
       }
-      if (lineage.benchmark === undefined) {
+      if (lineage.developmentSplitDigest === undefined) {
         ctx.addIssue({
           code: "custom",
-          path: ["benchmark"],
+          path: ["developmentSplitDigest"],
           message: "generated candidates must pin their development split",
-        });
-      }
-      if (lineage.spend === undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["spend"],
-          message: "generated candidates must record proposal and evaluation spend",
         });
       }
     }

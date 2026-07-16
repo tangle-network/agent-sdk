@@ -24,6 +24,7 @@ import {
   candidateGit,
   candidateSha,
 } from "./agent-candidate.test-fixture.js";
+import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 
 function durableArtifact(key: string, digit: string, byteLength = 1) {
   return {
@@ -66,11 +67,21 @@ const resolvedModel = {
   reasoningEffort: "high" as const,
 };
 
-function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
+function materializationReceipt(
+  receipt: ReturnType<typeof runReceipt>,
+  options: {
+    executionId: string;
+    experimentDigest: ReturnType<typeof candidateSha>;
+    arm: "baseline" | "candidate";
+    sourceProfileDigest: ReturnType<typeof candidateSha>;
+    repetition?: number;
+  },
+) {
   const profilePlan = {
     kind: "agent-profile-workspace-plan" as const,
     digest: candidateSha("1"),
     material: {
+      sourceProfileDigest: options.sourceProfileDigest,
       harness: "codex" as const,
       files: [],
       env: {},
@@ -81,39 +92,39 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
   };
   const executionPlanMaterial = {
     kind: "agent-candidate-execution-plan-material" as const,
-    bundleDigest: receipt.bundleDigest,
-    executionId: "candidate-execution-1",
-    attempt: { number: 1, maxAttempts: 1, retryPolicy: "none" as const },
-    task: {
-      benchmark: "output",
-      benchmarkVersion: "1.0.0",
-      taskId: "task-1",
-      splitDigest: candidateSha("2"),
-      instruction: {
-        encoding: "utf8" as const,
-        sha256: candidateSha("3"),
-        byteLength: 1,
-        delivery: { kind: "stdin-utf8" as const },
-      },
-      repository: {
-        identity: receipt.taskOutcome.material.outcome.baseRepository.identity,
-        rootIdentity: receipt.taskOutcome.material.outcome.baseRepository.rootIdentity,
-        baseCommit: receipt.taskOutcome.material.outcome.baseRepository.commit,
-        baseTree: receipt.taskOutcome.material.outcome.baseRepository.tree,
-      },
-      outcome: { kind: "workspace" as const },
-      workspace: workspaceSnapshot("input", "4"),
+    runCell: {
+      kind: "agent-candidate-run-cell" as const,
+      experimentDigest: options.experimentDigest,
+      arm: options.arm,
+      bundleDigest: receipt.bundleDigest,
+      suiteDigest: candidateSha("9"),
+      taskDigest: candidateSha("0"),
+      taskIndex: 0,
+      repetition: options.repetition ?? 0,
+      seed: 42 + (options.repetition ?? 0),
+      attempt: 1,
+      digest: receipt.runCellDigest,
     },
+    executionId: options.executionId,
     workspaces: { taskRoot: "/work/task" },
     codeKind: "disabled" as const,
     profile: { planDigest: profilePlan.digest, targetWorkspace: "task" as const, mountPaths: [] },
     harness: "codex" as const,
     harnessVersion: "0.1.0",
+    instructionDelivery: { kind: "stdin-utf8" as const },
+    limits: {
+      timeoutMs: 60_000,
+      maxSteps: 20,
+      maxModelCalls: 10,
+      maxInputTokens: 100_000,
+      maxOutputTokens: 20_000,
+      maxCostUsd: 5,
+    },
     container: {
       source: "evaluator-task-container" as const,
       image: "candidate:1.0.0",
-      indexDigest: candidateSha("5"),
-      manifestDigest: candidateSha("6"),
+      indexDigest: candidateSha("6"),
+      manifestDigest: candidateSha("7"),
       platform: { os: "linux", architecture: "amd64" },
     },
     model: {
@@ -121,15 +132,13 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
       resolved: resolvedModel,
       access: {
         kind: "evaluator-mediated" as const,
-        grantDigest: candidateSha("7"),
-        network: { mode: "disabled" as const },
+        grantDigest: candidateSha("4"),
+        network: {
+          mode: "gateway-only" as const,
+          domains: ["router.tangle.tools"],
+        },
       },
       routes: [{ kind: "primary" as const, requested: "openai/gpt-5.4" }],
-    },
-    grader: {
-      name: "output-grader",
-      version: "1.0.0",
-      artifact: durableArtifact("graders/output.tar", "8", 100),
     },
     launch: {
       executable: "node",
@@ -138,26 +147,36 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
       cwd: { workspace: "task" as const, path: "." },
     },
     memory: { mode: "disabled" as const },
-    limits: {
-      timeoutMs: 1_000,
-      maxSteps: 1,
-      maxModelCalls: 0,
-      maxInputTokens: 0,
-      maxOutputTokens: 0,
-      maxCostUsd: 0,
-    },
     network: { mode: "disabled" as const },
   };
   return {
     kind: "agent-candidate-materialization" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
     bundleDigest: receipt.bundleDigest,
-    profilePlan,
+    benchmark: {
+      suite: {
+        digest: candidateSha("9"),
+        material: durableArtifact("benchmarks/suite.json", "9", 100),
+      },
+      task: {
+        digest: candidateSha("0"),
+        material: durableArtifact("benchmarks/task-1.json", "0", 100),
+      },
+    },
+    profileActivation: {
+      kind: "agent-candidate-profile-activation" as const,
+      profilePlan,
+      files: [],
+      digest: candidateSha(options.arm === "baseline" ? "6" : "7"),
+    },
     executionPlan: {
       kind: "agent-candidate-execution-plan" as const,
       digest: receipt.executionPlanDigest,
       material: executionPlanMaterial,
-      artifact: durableArtifact("plans/execution.json", "3", 800),
+      artifact: {
+        ...durableArtifact(`plans/${options.executionId}.json`, "3", 800),
+        sha256: receipt.executionPlanDigest,
+      },
     },
     codeKind: "disabled" as const,
     harness: "codex" as const,
@@ -168,8 +187,14 @@ function materializationReceipt(receipt: ReturnType<typeof runReceipt>) {
   };
 }
 
-function runReceipt() {
-  const executionPlanDigest = candidateSha("3");
+function runReceipt(options: {
+  bundleDigest?: ReturnType<typeof candidateSha>;
+  score?: number;
+  startedAtMs?: number;
+  endedAtMs?: number;
+  identityDigit?: string;
+} = {}) {
+  const executionPlanDigest = candidateSha(options.identityDigit ?? "3");
   const fixedUsage = {
     inputTokens: 30,
     outputTokens: 12,
@@ -192,8 +217,8 @@ function runReceipt() {
         traceSpanId: "span-1",
         status: "succeeded" as const,
         model: "gpt-5.4",
-        startedAtMs: 120,
-        endedAtMs: 180,
+        startedAtMs: 1_010,
+        endedAtMs: 1_030,
         inputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 3,
@@ -206,8 +231,8 @@ function runReceipt() {
         traceSpanId: "span-2",
         status: "succeeded" as const,
         model: "gpt-5.4",
-        startedAtMs: 220,
-        endedAtMs: 280,
+        startedAtMs: 1_040,
+        endedAtMs: 1_060,
         inputTokens: 20,
         outputTokens: 7,
         cachedInputTokens: 4,
@@ -257,19 +282,25 @@ function runReceipt() {
     kind: "agent-candidate-benchmark-result-material" as const,
     executionPlanDigest,
     taskOutcomeDigest: taskOutcome.digest,
-    benchmark: {
-      name: "pier",
-      version: "0.3.0",
-      taskId: "task-1",
-      splitDigest: candidateSha("9"),
-    },
     grader: {
       name: "pier-executable-grader",
       version: "0.3.0",
+      format: "tangle-grader" as const,
       artifact: durableArtifact("graders/pier-0.3.0.tar", "a", 1_000),
     },
     evidence: durableArtifact("results/run-1/grader-output.json", "c", 500),
-    score: 0.75,
+    grading: {
+      usage: {
+        inputTokens: 20,
+        outputTokens: 5,
+        cachedInputTokens: 0,
+        reasoningTokens: 0,
+        modelCalls: 1,
+        costUsdNanos: 25_000_000,
+      },
+      timing: { startedAtMs: 1_101, endedAtMs: 1_121, durationMs: 20 },
+    },
+    score: options.score ?? 0.75,
     passed: true,
     dimensions: [
       { name: "lint", score: 1 },
@@ -286,9 +317,15 @@ function runReceipt() {
   return {
     kind: "agent-candidate-run" as const,
     digestAlgorithm: "rfc8785-sha256" as const,
-    bundleDigest: candidateSha("c"),
-    materializationReceiptDigest: candidateSha("d"),
+    bundleDigest: options.bundleDigest ?? candidateSha("c"),
+    runCellDigest: candidateSha(options.identityDigit ?? "4"),
+    materializationReceiptDigest: candidateSha(options.identityDigit ?? "d"),
     executionPlanDigest,
+    timing: {
+      startedAtMs: options.startedAtMs ?? 1_000,
+      endedAtMs: options.endedAtMs ?? 1_100,
+      durationMs: (options.endedAtMs ?? 1_100) - (options.startedAtMs ?? 1_000),
+    },
     memory: { mode: "disabled" as const },
     trace: {
       artifact: durableArtifact("traces/run-1.json", "e", 500),
@@ -300,18 +337,189 @@ function runReceipt() {
     modelSettlement,
     taskOutcome,
     benchmarkResult,
-    digest: candidateSha("f"),
+    digest: candidateSha(options.identityDigit ?? "f"),
+  };
+}
+
+function measuredBundle(digit: string, prompt: string) {
+  const fixture = candidateFixture();
+  const { knowledge: _knowledge, ...withoutKnowledge } = fixture;
+  return {
+    ...withoutKnowledge,
+    profile: {
+      ...fixture.profile,
+      prompt: { systemPrompt: prompt },
+    },
+    code: {
+      kind: "disabled" as const,
+    },
+    execution: {
+      harness: "codex" as const,
+      harnessVersion: "0.1.0",
+      launch: {
+        kind: "container-command" as const,
+        executable: "node",
+        args: [],
+      },
+      instructionDelivery: { kind: "stdin-utf8" as const },
+      cwd: { workspace: "task" as const, path: "." },
+      environment: { kind: "evaluator-task-container" as const },
+      isolation: {
+        network: "disabled" as const,
+        remoteIntegrations: "disabled" as const,
+        candidateSecrets: "disabled" as const,
+      },
+    },
+    memory: { mode: "disabled" as const },
+    digest: candidateSha(digit),
+  };
+}
+
+function executionEvidence(
+  experimentDigest: ReturnType<typeof candidateSha>,
+  arm: "baseline" | "candidate",
+  bundle: ReturnType<typeof measuredBundle>,
+  score: number,
+  repetition = 0,
+) {
+  const identityDigit = arm === "baseline" ? String(repetition + 1) : String(repetition + 4);
+  const receipt = runReceipt({
+    bundleDigest: bundle.digest,
+    score,
+    identityDigit,
+  });
+  const executionId = `${arm}-execution-${repetition + 1}`;
+  const materialization = materializationReceipt(receipt, {
+    executionId,
+    experimentDigest,
+    arm,
+    sourceProfileDigest: canonicalCandidateDigest(bundle.profile),
+    repetition,
+  });
+  return {
+    kind: "agent-candidate-execution-evidence" as const,
+    materializationReceipt: materialization,
+    receipt,
+    digest: candidateSha(identityDigit),
   };
 }
 
 describe("candidate outcome contracts", () => {
   it("owns the current proposal, review, and receipt-bearing execution evidence", () => {
-    const bundle = candidateFixture();
+    const baselineBundle = measuredBundle("b", "Solve the task.");
+    const candidateBundle = measuredBundle(
+      "a",
+      "Solve the task and verify the result.",
+    );
+    const benchmarkTask = {
+      kind: "agent-candidate-benchmark-task" as const,
+      digestAlgorithm: "rfc8785-sha256" as const,
+      benchmark: {
+        name: "pier",
+        version: "0.3",
+        splitDigest: candidateSha("9"),
+      },
+      scenario: {
+        id: "task-1",
+        kind: "repository-task",
+        scenarioDigest: candidateSha("1"),
+      },
+      instruction: "Implement the requested repository change.",
+      repository: {
+        identity: "pier/task-1",
+        rootIdentity: "pier",
+        baseCommit: candidateGit("1"),
+        baseTree: candidateGit("2"),
+      },
+      outcome: { kind: "workspace" as const },
+      workspace: workspaceSnapshot("benchmark-task", "4"),
+      grader: {
+        name: "pier-executable-grader",
+        version: "0.3.0",
+        format: "tangle-grader" as const,
+        artifact: durableArtifact("graders/pier-0.3.0.tar", "a", 1_000),
+      },
+      model: resolvedModel,
+      attempt: { maxAttempts: 1, retryPolicy: "none" as const },
+      evaluatorTaskContainer: {
+        source: "evaluator-task-container" as const,
+        image: "candidate:1.0.0",
+        indexDigest: candidateSha("6"),
+        manifestDigest: candidateSha("7"),
+        platform: { os: "linux", architecture: "amd64" },
+      },
+      limits: {
+        timeoutMs: 60_000,
+        maxSteps: 20,
+        maxModelCalls: 10,
+        maxInputTokens: 100_000,
+        maxOutputTokens: 20_000,
+        maxCostUsd: 5,
+      },
+      digest: candidateSha("0"),
+    };
+    const suite = {
+        kind: "agent-candidate-benchmark-suite" as const,
+        digestAlgorithm: "rfc8785-sha256" as const,
+        taskDigests: [benchmarkTask.digest] as const,
+        reps: 3,
+        seeds: [42, 43, 44] as const,
+        digest: candidateSha("9"),
+      };
+    const experimentDigest = candidateSha("e");
+    const experiment = {
+      kind: "agent-candidate-experiment" as const,
+      digestAlgorithm: "rfc8785-sha256" as const,
+      baseline: baselineBundle,
+      candidate: candidateBundle,
+      candidateLineage: {
+        source: "optimizer" as const,
+        parentDigests: [baselineBundle.digest],
+        runIds: ["eval-1"],
+        developmentSplitDigest: candidateSha("8"),
+      },
+      benchmark: { suite, tasks: [benchmarkTask] as const },
+      policy: {
+        confidenceLevel: 0.95,
+        resamples: 2_000,
+        bootstrapSeed: 1_337,
+        deltaThreshold: 0,
+        minProductiveRuns: 3,
+        budgetUsd: 10,
+        criticalDimensions: ["tests"],
+        regressionTolerance: 0.05,
+      },
+      digest: experimentDigest,
+    };
+    const baselineEvidence = executionEvidence(
+      experimentDigest,
+      "baseline",
+      baselineBundle,
+      0.5,
+    );
+    const candidateEvidence = executionEvidence(
+      experimentDigest,
+      "candidate",
+      candidateBundle,
+      0.75,
+    );
     const evaluation = {
       kind: "agent-improvement-measured-comparison" as const,
-      benchmark: { name: "pier", version: "0.3", splitDigest: candidateSha("9") },
-      baselineProfileDigest: candidateSha("8"),
-      candidateBundleDigest: bundle.digest,
+      experiment,
+      measurements: [
+        {
+          baseline: baselineEvidence,
+          candidate: candidateEvidence,
+        },
+        {
+          baseline: executionEvidence(experimentDigest, "baseline", baselineBundle, 0.5, 1),
+          candidate: executionEvidence(experimentDigest, "candidate", candidateBundle, 0.75, 1),
+        },
+        {
+          baseline: executionEvidence(experimentDigest, "baseline", baselineBundle, 0.5, 2),
+          candidate: executionEvidence(experimentDigest, "candidate", candidateBundle, 0.75, 2),
+        },
+      ],
       overall: {
         name: "composite" as const,
         baseline: 0.5,
@@ -325,7 +533,7 @@ describe("candidate outcome contracts", () => {
           statistic: "mean" as const,
           resamples: 2_000,
         },
-        n: 12,
+        n: 3,
         direction: "higher-is-better" as const,
         unit: "score" as const,
       },
@@ -345,7 +553,7 @@ describe("candidate outcome contracts", () => {
             statistic: "mean" as const,
             resamples: 2_000,
           },
-          n: 12,
+          n: 3,
           direction: "higher-is-better" as const,
           unit: "score" as const,
         },
@@ -365,7 +573,7 @@ describe("candidate outcome contracts", () => {
             statistic: "mean" as const,
             resamples: 2_000,
           },
-          n: 12,
+          n: 3,
           direction: "higher-is-better" as const,
           unit: "score" as const,
         },
@@ -373,18 +581,18 @@ describe("candidate outcome contracts", () => {
           kind: "cost" as const,
           name: "cost",
           availability: "measured" as const,
-          baseline: 0.01,
-          candidate: 0.02,
-          delta: 0.01,
+          baseline: 1.275,
+          candidate: 1.275,
+          delta: 0,
           confidenceInterval: {
             level: 0.95,
             lower: 0,
-            upper: 0.02,
+            upper: 0,
             method: "paired-bootstrap" as const,
             statistic: "mean" as const,
             resamples: 2_000,
           },
-          n: 12,
+          n: 3,
           direction: "lower-is-better" as const,
           unit: "usd" as const,
         },
@@ -392,18 +600,18 @@ describe("candidate outcome contracts", () => {
           kind: "latency" as const,
           name: "latency",
           availability: "measured" as const,
-          baseline: 100,
-          candidate: 90,
-          delta: -10,
+          baseline: 120,
+          candidate: 120,
+          delta: 0,
           confidenceInterval: {
             level: 0.95,
-            lower: -20,
+            lower: 0,
             upper: 0,
             method: "paired-bootstrap" as const,
             statistic: "mean" as const,
             resamples: 2_000,
           },
-          n: 12,
+          n: 3,
           direction: "lower-is-better" as const,
           unit: "milliseconds" as const,
         },
@@ -418,7 +626,7 @@ describe("candidate outcome contracts", () => {
       },
       power: {
         sufficient: true,
-        n: 12,
+        n: 3,
         minimumDetectableDelta: 0.1,
         confidenceLevel: 0.95,
         scaleAssumed: true,
@@ -434,24 +642,380 @@ describe("candidate outcome contracts", () => {
         candidateContentHash: candidateSha("3"),
       },
       diff: "-old\n+new",
-      evaluation: { generationsExplored: 1, durationMs: 100, totalCostUsd: 0.5 },
+      evaluation: {
+        generationsExplored: 1,
+        searchDurationMs: 40,
+        executionDurationMs: 60,
+        durationMs: 100,
+        searchCostUsd: 0.2,
+        executionCostUsd: 0.3,
+        totalCostUsd: 0.5,
+      },
     };
     const proposal = {
       kind: "agent-improvement-proposal" as const,
       runId: "eval-1",
       changedSurfaces: ["prompt"] as const,
       proposedAt: "2026-07-13T00:00:00.000Z",
-      baselineProfile: { name: "candidate" },
       findings: [{ claim: "prompt omitted the requirement" }],
       evaluation,
-      candidateBundle: bundle,
       digest: candidateSha("2"),
     };
     expect(agentImprovementProposalSchema.parse(proposal)).toEqual(proposal);
+    const firstCandidate = evaluation.measurements[0]!.candidate;
+    expect(
+      candidateExecutionEvidenceSchema.safeParse({
+        ...firstCandidate,
+        receipt: {
+          ...firstCandidate.receipt,
+          modelSettlement: {
+            ...firstCandidate.receipt.modelSettlement,
+            material: {
+              ...firstCandidate.receipt.modelSettlement.material,
+              grantDigest: candidateSha("f"),
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
     expect(
       agentImprovementProposalSchema.safeParse({
         ...proposal,
-        evaluation: { ...evaluation, candidateBundleDigest: candidateSha("0") },
+        evaluation: {
+          ...evaluation,
+          objectives: evaluation.objectives.map((objective) =>
+            objective.kind === "cost"
+              ? { ...objective, candidate: 0.02, delta: 0.02 }
+              : objective,
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    for (const materialMutation of [
+      {
+        limits: {
+          ...firstCandidate.materializationReceipt.executionPlan.material.limits,
+          maxCostUsd: 4,
+        },
+      },
+      {
+        container: {
+          ...firstCandidate.materializationReceipt.executionPlan.material.container,
+          manifestDigest: candidateSha("f"),
+        },
+      },
+      {
+        runCell: {
+          ...firstCandidate.materializationReceipt.executionPlan.material.runCell,
+          attempt: 2,
+        },
+      },
+    ]) {
+      expect(
+        agentImprovementProposalSchema.safeParse({
+          ...proposal,
+          evaluation: {
+            ...evaluation,
+            measurements: evaluation.measurements.map((measurement, index) =>
+              index === 0
+                ? {
+                    ...measurement,
+                    candidate: {
+                      ...measurement.candidate,
+                      materializationReceipt: {
+                        ...measurement.candidate.materializationReceipt,
+                        executionPlan: {
+                          ...measurement.candidate.materializationReceipt.executionPlan,
+                          material: {
+                            ...measurement.candidate.materializationReceipt.executionPlan.material,
+                            ...materialMutation,
+                          },
+                        },
+                      },
+                    },
+                  }
+                : measurement,
+            ),
+          },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: evaluation.measurements.map((measurement, index) =>
+            index === 1
+              ? {
+                  ...measurement,
+                  candidate: {
+                    ...measurement.candidate,
+                    receipt: {
+                      ...measurement.candidate.receipt,
+                      digest: evaluation.measurements[0]!.candidate.receipt.digest,
+                    },
+                  },
+                }
+              : measurement,
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          experiment: {
+            ...experiment,
+            policy: { ...experiment.policy, confidenceLevel: 0.99 },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: evaluation.measurements.map((measurement, index) =>
+            index === 0
+              ? {
+                  ...measurement,
+                  candidate: {
+                    ...measurement.candidate,
+                    receipt: {
+                      ...measurement.candidate.receipt,
+                      benchmarkResult: {
+                        ...measurement.candidate.receipt.benchmarkResult,
+                        material: {
+                          ...measurement.candidate.receipt.benchmarkResult.material,
+                          grader: {
+                            ...measurement.candidate.receipt.benchmarkResult.material.grader,
+                            version: "0.4.0",
+                          },
+                        },
+                      },
+                    },
+                  },
+                }
+              : measurement,
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          experiment: {
+            ...experiment,
+            candidateLineage: {
+              source: "optimizer",
+              parentDigests: [baselineBundle.digest],
+              runIds: ["eval-1"],
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          experiment: {
+            ...experiment,
+            candidateLineage: {
+              ...experiment.candidateLineage,
+              developmentSplitDigest: benchmarkTask.benchmark.splitDigest,
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: evaluation.measurements.map((measurement) => ({
+            ...measurement,
+            candidate: {
+              ...measurement.candidate,
+              materializationReceipt: {
+                ...measurement.candidate.materializationReceipt,
+                executionPlan: {
+                  ...measurement.candidate.materializationReceipt.executionPlan,
+                  material: {
+                    ...measurement.candidate.materializationReceipt.executionPlan.material,
+                    model: {
+                      ...measurement.candidate.materializationReceipt.executionPlan.material.model,
+                      access: {
+                        ...measurement.candidate.materializationReceipt.executionPlan.material.model
+                          .access,
+                        network: { mode: "disabled" as const },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          })),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          overall: { ...evaluation.overall, n: 12 },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: [
+            {
+              ...evaluation.measurements[0],
+              candidate: {
+                ...candidateEvidence,
+                materializationReceipt: {
+                  ...candidateEvidence.materializationReceipt,
+                  codeKind: "patch" as const,
+                  executionPlan: {
+                    ...candidateEvidence.materializationReceipt.executionPlan,
+                    material: {
+                      ...candidateEvidence.materializationReceipt.executionPlan.material,
+                      codeKind: "patch" as const,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          experiment: {
+            ...experiment,
+            benchmark: {
+              ...experiment.benchmark,
+              tasks: [
+                {
+                  ...benchmarkTask,
+                  repository: {
+                    ...benchmarkTask.repository,
+                    baseCommit: candidateGit("5"),
+                  },
+                },
+              ] as const,
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    const outputEvidence = (
+      evidence: typeof baselineEvidence | typeof candidateEvidence,
+      mediaType: string,
+    ) => ({
+      ...evidence,
+      receipt: {
+        ...evidence.receipt,
+        taskOutcome: {
+          ...evidence.receipt.taskOutcome,
+          material: {
+            ...evidence.receipt.taskOutcome.material,
+            outcome: {
+              kind: "output" as const,
+              spec: { mediaType, maxBytes: 100 },
+              artifact: durableArtifact("outcomes/run-1/output.json", "7", 50),
+            },
+          },
+        },
+      },
+    });
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          experiment: {
+            ...experiment,
+            benchmark: {
+              ...experiment.benchmark,
+              tasks: [
+                {
+                  ...benchmarkTask,
+                  repository: undefined,
+                  outcome: {
+                    kind: "output" as const,
+                    mediaType: "application/json",
+                    maxBytes: 100,
+                  },
+                },
+              ] as const,
+            },
+          },
+          measurements: [
+            {
+              ...evaluation.measurements[0],
+              baseline: outputEvidence(baselineEvidence, "application/json"),
+              candidate: outputEvidence(candidateEvidence, "text/plain"),
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          overall: { ...evaluation.overall, baseline: 0.9, delta: -0.15 },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: [
+            {
+              ...evaluation.measurements[0],
+              candidate: { ...baselineEvidence, arm: "candidate" as const },
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: [
+            {
+              ...evaluation.measurements[0],
+              candidate: {
+                ...candidateEvidence,
+                experimentDigest: candidateSha("0"),
+              },
+            },
+          ],
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -473,7 +1037,7 @@ describe("candidate outcome contracts", () => {
           ),
         },
       }).success,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       agentImprovementProposalSchema.safeParse({
         ...proposal,
@@ -529,7 +1093,6 @@ describe("candidate outcome contracts", () => {
     const review = {
       kind: "agent-improvement-review" as const,
       proposalDigest: proposal.digest,
-      candidateBundleDigest: proposal.candidateBundle.digest,
       decision: "approve" as const,
       reviewedBy: "operator@example.com",
       reviewedAt: "2026-07-13T00:01:00.000Z",
@@ -540,51 +1103,56 @@ describe("candidate outcome contracts", () => {
     expect(
       agentImprovementReviewSchema.safeParse({
         ...review,
-        candidateBundleDigest: undefined,
+        proposalDigest: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentImprovementReviewSchema.safeParse({
+        ...review,
+        candidateBundleDigest: candidateBundle.digest,
       }).success,
     ).toBe(false);
 
-    const receipt = runReceipt();
-    const materialization = materializationReceipt(receipt);
-    const evidence = {
-      kind: "agent-candidate-execution-evidence" as const,
-      proposalDigest: proposal.digest,
-      reviewDigest: review.digest,
-      executionId: "candidate-execution-1",
-      succeeded: true as const,
-      materializationReceipt: materialization,
-      profileActivation: {
-        kind: "agent-candidate-profile-activation" as const,
-        profilePlan: materialization.profilePlan,
-        files: [],
-        digest: candidateSha("6"),
-      },
-      receipt,
-      digest: candidateSha("5"),
-    };
+    const evidence = candidateEvidence;
+    const receipt = evidence.receipt;
     expect(candidateExecutionEvidenceSchema.parse(evidence)).toEqual(evidence);
     expect(
       candidateExecutionEvidenceSchema.safeParse({
         ...evidence,
         receipt: { ...receipt, termination: { kind: "timeout", timeoutMs: 1_000 } },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      candidateExecutionEvidenceSchema.safeParse({
-        ...evidence,
-        receipt: {
-          ...receipt,
-          taskOutcome: {
-            ...receipt.taskOutcome,
-            material: {
-              ...receipt.taskOutcome.material,
-              outcome: {
-                kind: "output",
-                spec: { mediaType: "text/plain", maxBytes: 1024 },
-                artifact: durableArtifact("outcomes/run-1/output.txt", "7", 10),
+      agentImprovementProposalSchema.safeParse({
+        ...proposal,
+        evaluation: {
+          ...evaluation,
+          measurements: [
+            {
+              ...evaluation.measurements[0],
+              candidate: {
+                ...evidence,
+                receipt: {
+                  ...receipt,
+                  taskOutcome: {
+                    ...receipt.taskOutcome,
+                    material: {
+                      ...receipt.taskOutcome.material,
+                      outcome: {
+                        kind: "output",
+                        spec: { mediaType: "text/plain", maxBytes: 1024 },
+                        artifact: durableArtifact(
+                          "outcomes/run-1/output.txt",
+                          "7",
+                          10,
+                        ),
+                      },
+                    },
+                  },
+                },
               },
             },
-          },
+          ],
         },
       }).success,
     ).toBe(false);
@@ -604,7 +1172,12 @@ describe("candidate outcome contracts", () => {
 
   it("rejects obsolete schema version markers", () => {
     const receipt = runReceipt();
-    const materialization = materializationReceipt(receipt);
+    const materialization = materializationReceipt(receipt, {
+      executionId: "candidate-execution-1",
+      experimentDigest: candidateSha("e"),
+      arm: "candidate",
+      sourceProfileDigest: candidateSha("f"),
+    });
     expect(
       agentCandidateRunReceiptSchema.safeParse({ ...receipt, schemaVersion: 3 }).success,
     ).toBe(false);
@@ -640,6 +1213,40 @@ describe("candidate outcome contracts", () => {
         trace: { ...receipt.trace, modelCallCount: 3 },
       }),
     ).toThrow(/model-call count/);
+    expect(() =>
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        modelSettlement: {
+          ...receipt.modelSettlement,
+          material: {
+            ...receipt.modelSettlement.material,
+            calls: [
+              { ...receipt.modelSettlement.material.calls[0], startedAtMs: 999 },
+              receipt.modelSettlement.material.calls[1],
+            ],
+          },
+        },
+      }),
+    ).toThrow(/within the recorded run/);
+    expect(() =>
+      agentCandidateRunReceiptSchema.parse({
+        ...receipt,
+        benchmarkResult: {
+          ...receipt.benchmarkResult,
+          material: {
+            ...receipt.benchmarkResult.material,
+            grading: {
+              ...receipt.benchmarkResult.material.grading,
+              timing: {
+                startedAtMs: 1_099,
+                endedAtMs: 1_119,
+                durationMs: 20,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow(/after candidate execution/);
   });
 
   it("requires router provenance in every model settlement", () => {
@@ -859,15 +1466,6 @@ describe("candidate outcome contracts", () => {
         passed: false,
       }),
     ).not.toThrow();
-    expect(() =>
-      agentCandidateBenchmarkResultMaterialSchema.parse({
-        ...material,
-        grader: {
-          ...material.grader,
-          artifact: { ...material.grader.artifact, byteLength: 0 },
-        },
-      }),
-    ).toThrow(/grader bytes/);
     const { evidence: _evidence, ...withoutEvidence } = material;
     expect(() =>
       agentCandidateBenchmarkResultMaterialSchema.parse(withoutEvidence),
@@ -878,15 +1476,6 @@ describe("candidate outcome contracts", () => {
         evidence: { ...material.evidence, byteLength: 0 },
       }),
     ).toThrow(/non-empty durable grading evidence/);
-    expect(() =>
-      agentCandidateBenchmarkResultMaterialSchema.parse({
-        ...material,
-        evidence: {
-          ...material.evidence,
-          sha256: material.grader.artifact.sha256,
-        },
-      }),
-    ).toThrow(/distinct from the grader implementation/);
     expect(() =>
       agentCandidateBenchmarkResultMaterialSchema.parse({
         ...material,
