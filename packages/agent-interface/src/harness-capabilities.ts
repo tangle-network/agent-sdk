@@ -12,8 +12,8 @@ import { canonicalizeHarness, type HarnessType } from "./harness.js";
  * cli-bridge backends, the sandbox UI pickers, and the router all read one truth instead of each
  * hand-rolling a divergent copy.
  *
- * Grounded in cli-bridge's real backend clamps (codex is `low..xhigh` for current models, kimi is
- * binary on/off, claude carries the full range, cli-base has no agent) — NOT a guessed matrix. The
+ * Grounded in the native CLI controls (Codex is `minimal..ultra`, Kimi is binary on/off, Claude is
+ * `low..max`, cli-base has no agent) — NOT a guessed matrix. The
  * per-MODEL reasoning capability (does this specific model reason at all) is dynamic catalog data the
  * caller supplies.
  */
@@ -150,23 +150,32 @@ export function snapHarnessToModel(
 /**
  * The explicit reasoning-effort set a harness's runtime accepts when it ISN'T a plain `none…ceiling`
  * slice — grounded in the cli-bridge adapters (NOT the canonical ladder):
- *   - codex: current models advertise `low|medium|high|xhigh`; `none` is omitted (use `auto`) and
- *     legacy `minimal` requests clamp up to `low`.
- *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`. `ultracode` is the ladder's stand-in
- *     for claude's `max` (clamped at runtime); `minimal`→`low` and `none`/`auto`→no flag, so both are
- *     dropped as redundant.
- *   - pi / openclaw: `--thinking` accepts `minimal…xhigh` (max/ultracode clamp to `xhigh`; no `none`).
- *   - kimi-code: `--thinking` is BINARY (off/on) — `minimal` is the only value that emits
- *     `--no-thinking`, `high` is "thinking on". So two levels, not five.
+ *   - codex: `model_reasoning_effort` accepts `minimal|low|medium|high|xhigh|max|ultra`; canonical
+ *     `ultracode` maps to native `ultra`. Per-model catalog data narrows this list.
+ *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`; canonical `ultracode` maps to
+ *     native `max`. It cannot express `none` or `minimal`.
+ *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh`; canonical `none` maps to `off`.
+ *   - openclaw: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max`; canonical `none` maps
+ *     to `off` and `ultracode` maps to `max`.
+ *   - kimi-code: `--thinking` is binary. Canonical `none` emits `--no-thinking`; any non-none level
+ *     emits `--thinking`, represented here by `high`.
  */
 const harnessReasoningEffortsOverride: Partial<
   Record<HarnessType, readonly ReasoningEffort[]>
 > = {
-  codex: ["low", "medium", "high", "xhigh"],
+  codex: ["minimal", "low", "medium", "high", "xhigh", "ultracode"],
   "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
-  pi: ["minimal", "low", "medium", "high", "xhigh"],
-  openclaw: ["minimal", "low", "medium", "high", "xhigh"],
-  "kimi-code": ["minimal", "high"],
+  pi: ["none", "minimal", "low", "medium", "high", "xhigh"],
+  openclaw: [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "ultracode",
+  ],
+  "kimi-code": ["none", "high"],
 };
 
 /**

@@ -117,9 +117,9 @@ export interface AgentProfileResources {
  *   - `none`     — extended thinking OFF (no reasoning budget at all)
  *   - `minimal`  — thinking ON, the lowest budget (distinct from `none`)
  *   - `low` / `medium` / `high` / `xhigh`
- *   - `ultracode` — maximum (claude-code's "ultracode" run mode; codex's `max` reconciles here).
- * A backend without a matching native tier clamps to its nearest (e.g. codex maps `ultracode` → `xhigh`
- * on models that support it).
+ *   - `ultracode` — maximum (Claude Code's `max` and Codex's `ultra` reconcile here).
+ * A backend without a matching native tier may clamp down to its strongest supported level, but it
+ * must never turn reasoning on for `none` or silently increase a requested effort.
  */
 export type ReasoningEffort =
   | "none"
