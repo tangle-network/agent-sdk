@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.30.0
+
+### Minor Changes
+
+- 4074c47: Reject unknown fields at every defined AgentProfile object boundary, make profile and candidate MCP definitions exact local, remote, or disabled configurations, align reasoning capabilities with the native CLI controls, and bind exact system-prompt replacement to candidate profile-plan identity.
+
 ## 0.29.0
 
 ### Minor Changes
