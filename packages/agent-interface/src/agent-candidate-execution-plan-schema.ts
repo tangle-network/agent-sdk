@@ -186,6 +186,7 @@ export const agentCandidateProfilePlanMaterialSchema = z
     ),
     env: environmentConfigSchema,
     flags: z.array(agentCandidateConfigValueSchema),
+    systemPrompt: agentCandidateConfigValueSchema.optional(),
     unsupported: z
       .array(
         z

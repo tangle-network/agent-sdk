@@ -409,6 +409,8 @@ export interface AgentCandidateProfilePlanMaterial {
   }>;
   env: Record<string, AgentCandidateConfigValue>;
   flags: AgentCandidateConfigValue[];
+  /** Exact system-prompt replacement supplied to the harness, when supported. */
+  systemPrompt?: AgentCandidateConfigValue;
   unsupported: Array<{ dimension: string; reason: string }>;
 }
 

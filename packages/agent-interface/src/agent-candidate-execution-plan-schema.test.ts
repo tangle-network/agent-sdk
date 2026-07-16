@@ -287,6 +287,27 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
     ).toThrow(/lexicographically sorted/);
   });
 
+  it("carries an exact typed system-prompt replacement in profile-plan identity", () => {
+    const material = {
+      sourceProfileDigest: candidateSha("0"),
+      harness: "claude-code",
+      files: [],
+      env: {},
+      flags: [],
+      systemPrompt: { kind: "public", value: "Use the repository rules." },
+      unsupported: [],
+    };
+    expect(agentCandidateProfilePlanMaterialSchema.parse(material)).toEqual(
+      material,
+    );
+    expect(() =>
+      agentCandidateProfilePlanMaterialSchema.parse({
+        ...material,
+        systemPrompt: "Use the repository rules.",
+      }),
+    ).toThrow();
+  });
+
   it("requires a workspace root for candidate-targeted profile files", () => {
     const plan = planFixture();
     expect(() =>
