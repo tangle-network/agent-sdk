@@ -27,46 +27,35 @@ const executableSchema = z
   .string()
   .refine(isSafeExecutable, "executable must be a canonical non-shell command");
 
-export const agentCandidateMcpServerSchema = z
-  .object({
-    transport: z.literal("stdio").optional(),
-    command: executableSchema.optional(),
-    args: z.array(agentCandidateConfigValueSchema).optional(),
-    env: environmentConfigSchema.optional(),
-    cwd: z
-      .string()
-      .refine(
-        (value) => isSafeRelativePath(value, true),
-        "MCP cwd must be a canonical workspace-relative path",
-      )
-      .optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict()
-  .superRefine((server, ctx) => {
-    if (server.enabled === false) {
-      if (
-        server.transport !== undefined ||
-        server.command !== undefined ||
-        server.args !== undefined ||
-        server.env !== undefined ||
-        server.cwd !== undefined
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          message: "disabled MCP servers cannot carry process fields",
-        });
-      }
-      return;
-    }
-    if (server.command === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["command"],
-        message: "enabled stdio MCP servers require a command",
-      });
-    }
-  }) satisfies z.ZodType<AgentCandidateMcpServer>;
+const agentCandidateLocalMcpServerSchema = z.strictObject({
+  transport: z.literal("stdio").optional(),
+  command: executableSchema,
+  args: z.array(agentCandidateConfigValueSchema).optional(),
+  env: environmentConfigSchema.optional(),
+  cwd: z
+    .string()
+    .refine(
+      (value) => isSafeRelativePath(value, true),
+      "MCP cwd must be a canonical workspace-relative path",
+    )
+    .optional(),
+  enabled: z.literal(true).optional(),
+});
+
+const agentCandidateDisabledMcpServerSchema = z.strictObject({
+  enabled: z.literal(false),
+  transport: z.undefined().optional(),
+  command: z.undefined().optional(),
+  args: z.undefined().optional(),
+  env: z.undefined().optional(),
+  cwd: z.undefined().optional(),
+});
+
+export const agentCandidateMcpServerSchema: z.ZodType<AgentCandidateMcpServer> =
+  z.union([
+    agentCandidateLocalMcpServerSchema,
+    agentCandidateDisabledMcpServerSchema,
+  ]);
 
 export const agentCandidateHookCommandSchema = z
   .object({

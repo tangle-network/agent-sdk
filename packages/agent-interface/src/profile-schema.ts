@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { AgentProfile } from "./agent-profile.js";
+import type {
+  AgentProfile,
+  AgentProfileMcpServer,
+} from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import { harnessTypeSchema } from "./harness.js";
 import {
@@ -20,12 +23,12 @@ export const agentProfilePermissionSchema = z.union([
 
 // Mirrors the canonical AgentProfileResourceRef (inline | github), kind-discriminated.
 export const agentProfileResourceRefSchema = z.union([
-  z.object({
+  z.strictObject({
     kind: z.literal("inline"),
     name: z.string(),
     content: z.string(),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("github"),
     repository: z.string().optional(),
     path: z.string(),
@@ -34,19 +37,21 @@ export const agentProfileResourceRefSchema = z.union([
   }),
 ]);
 
-export const agentProfileFileMountSchema = z.object({
+export const agentProfileFileMountSchema = z.strictObject({
   path: z.string(),
   resource: agentProfileResourceRefSchema,
   executable: z.boolean().optional(),
 });
 
-export const agentProfileResourcesSchema = z.object({
+export const agentProfileResourcesSchema = z.strictObject({
   files: z.array(agentProfileFileMountSchema).optional(),
   tools: z.array(agentProfileResourceRefSchema).optional(),
   skills: z.array(agentProfileResourceRefSchema).optional(),
   agents: z.array(agentProfileResourceRefSchema).optional(),
   commands: z.array(agentProfileResourceRefSchema).optional(),
-  instructions: z.union([z.string(), agentProfileResourceRefSchema]).optional(),
+  instructions: z
+    .union([z.string(), agentProfileResourceRefSchema])
+    .optional(),
   failOnError: z.boolean().optional(),
 });
 
@@ -60,7 +65,7 @@ export const reasoningEffortSchema = z.enum([
   "ultracode",
 ]);
 
-export const agentProfileModelHintsSchema = z.object({
+export const agentProfileModelHintsSchema = z.strictObject({
   default: z.string().optional(),
   small: z.string().optional(),
   provider: z.string().optional(),
@@ -68,12 +73,12 @@ export const agentProfileModelHintsSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const agentProfilePromptSchema = z.object({
+export const agentProfilePromptSchema = z.strictObject({
   systemPrompt: z.string().optional(),
   instructions: z.array(z.string()).optional(),
 });
 
-export const agentSubagentProfileSchema = z.object({
+export const agentSubagentProfileSchema = z.strictObject({
   description: z.string().optional(),
   prompt: z.string().optional(),
   model: z.string().optional(),
@@ -83,7 +88,7 @@ export const agentSubagentProfileSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const agentProfileHookCommandSchema = z.object({
+export const agentProfileHookCommandSchema = z.strictObject({
   command: z.string(),
   timeoutMs: z.number().positive().optional(),
   blocking: z.boolean().optional(),
@@ -91,7 +96,7 @@ export const agentProfileHookCommandSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
 });
 
-export const agentProfileModeSchema = z.object({
+export const agentProfileModeSchema = z.strictObject({
   description: z.string().optional(),
   model: z.string().optional(),
   prompt: z.string().optional(),
@@ -100,26 +105,70 @@ export const agentProfileModeSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const agentProfileConfidentialSchema = z.object({
+export const agentProfileConfidentialSchema = z.strictObject({
   tee: z.string().optional(),
   attestationNonce: z.string().optional(),
   sealed: z.boolean().optional(),
   attestationRefresh: z.boolean().optional(),
 });
 
-export const agentProfileMcpServerSchema = z.object({
-  transport: z.enum(["stdio", "sse", "http"]).optional(),
-  command: z.string().optional(),
+const nonBlankMcpValueSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, "value cannot be blank");
+
+const remoteMcpUrlSchema = nonBlankMcpValueSchema.refine((value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}, "remote MCP url must be an absolute HTTP(S) URL");
+
+const agentProfileLocalMcpServerSchema = z.strictObject({
+  transport: z.literal("stdio").optional(),
+  command: nonBlankMcpValueSchema,
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   cwd: z.string().optional(),
-  url: z.string().optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  enabled: z.boolean().optional(),
+  url: z.undefined().optional(),
+  headers: z.undefined().optional(),
+  enabled: z.literal(true).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const agentProfileConnectionSchema = z.object({
+const agentProfileRemoteMcpServerSchema = z.strictObject({
+  transport: z.enum(["sse", "http"]).optional(),
+  command: z.undefined().optional(),
+  args: z.undefined().optional(),
+  env: z.undefined().optional(),
+  cwd: z.undefined().optional(),
+  url: remoteMcpUrlSchema,
+  headers: z.record(z.string(), z.string()).optional(),
+  enabled: z.literal(true).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const agentProfileDisabledMcpServerSchema = z.strictObject({
+  enabled: z.literal(false),
+  transport: z.undefined().optional(),
+  command: z.undefined().optional(),
+  args: z.undefined().optional(),
+  env: z.undefined().optional(),
+  cwd: z.undefined().optional(),
+  url: z.undefined().optional(),
+  headers: z.undefined().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const agentProfileMcpServerSchema: z.ZodType<AgentProfileMcpServer> =
+  z.union([
+    agentProfileLocalMcpServerSchema,
+    agentProfileRemoteMcpServerSchema,
+    agentProfileDisabledMcpServerSchema,
+  ]);
+
+export const agentProfileConnectionSchema = z.strictObject({
   connectionId: z.string().min(1),
   capabilities: z.array(z.string().min(1)).min(1),
   alias: z.string().min(1).optional(),
@@ -127,12 +176,12 @@ export const agentProfileConnectionSchema = z.object({
 
 const removeListSchema = z.union([z.literal(true), z.array(z.string().min(1))]);
 
-export const agentProfilePromptRemovalSchema = z.object({
+export const agentProfilePromptRemovalSchema = z.strictObject({
   systemPrompt: z.literal(true).optional(),
   instructions: removeListSchema.optional(),
 });
 
-export const agentProfileResourceRemovalSchema = z.object({
+export const agentProfileResourceRemovalSchema = z.strictObject({
   files: removeListSchema.optional(),
   tools: removeListSchema.optional(),
   skills: removeListSchema.optional(),
@@ -142,10 +191,12 @@ export const agentProfileResourceRemovalSchema = z.object({
   failOnError: z.literal(true).optional(),
 });
 
-export const agentProfileDiffRemovalSchema = z.object({
+export const agentProfileDiffRemovalSchema = z.strictObject({
   identity: z.literal(true).optional(),
   tags: removeListSchema.optional(),
-  prompt: z.union([z.literal(true), agentProfilePromptRemovalSchema]).optional(),
+  prompt: z
+    .union([z.literal(true), agentProfilePromptRemovalSchema])
+    .optional(),
   model: removeListSchema.optional(),
   harness: z.literal(true).optional(),
   permissions: removeListSchema.optional(),
@@ -153,7 +204,9 @@ export const agentProfileDiffRemovalSchema = z.object({
   mcp: removeListSchema.optional(),
   connections: removeListSchema.optional(),
   subagents: removeListSchema.optional(),
-  resources: z.union([z.literal(true), agentProfileResourceRemovalSchema]).optional(),
+  resources: z
+    .union([z.literal(true), agentProfileResourceRemovalSchema])
+    .optional(),
   hooks: removeListSchema.optional(),
   modes: removeListSchema.optional(),
   confidential: z.literal(true).optional(),
@@ -166,7 +219,7 @@ export const agentProfileDiffRemovalSchema = z.object({
  * the canonical {@link AgentProfile} TS contract. Kept structurally in lock-step
  * with that interface by the compile-time guard at the bottom of this file.
  */
-export const agentProfileSchema = z.object({
+export const agentProfileSchema = z.strictObject({
   name: z.string().optional(),
   description: z.string().optional(),
   version: z.string().optional(),
@@ -194,15 +247,15 @@ export const agentProfileSchema = z.object({
     .optional(),
 });
 
-export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z
-  .object({
+export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObject(
+  {
     kind: z.literal("agent-profile-diff"),
     id: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
     description: z.string().optional(),
     rationale: z.string().optional(),
     source: z
-      .object({
+      .strictObject({
         kind: z.enum([
           "trace",
           "frontier-author",
@@ -217,8 +270,8 @@ export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z
     set: agentProfileSchema.optional(),
     remove: agentProfileDiffRemovalSchema.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strict();
+  },
+);
 
 // ── Compile-time drift guard ──────────────────────────────────────────────────
 // The Zod schema and the hand-written {@link AgentProfile} interface must agree in
@@ -257,8 +310,8 @@ export interface Capability {
   recommendedSize?: SandboxSizePreset;
 }
 
-export const capabilitySchema: z.ZodType<Capability> = z.object({
-  id: z.string().min(1),
-  definition: agentProfileSchema as z.ZodType<AgentProfile>,
-  recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
+export const capabilitySchema: z.ZodType<Capability> = z.strictObject({
+    id: z.string().min(1),
+    definition: agentProfileSchema as z.ZodType<AgentProfile>,
+    recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
 });

@@ -117,9 +117,9 @@ export interface AgentProfileResources {
  *   - `none`     — extended thinking OFF (no reasoning budget at all)
  *   - `minimal`  — thinking ON, the lowest budget (distinct from `none`)
  *   - `low` / `medium` / `high` / `xhigh`
- *   - `ultracode` — maximum (claude-code's "ultracode" run mode; codex's `max` reconciles here).
- * A backend without a matching native tier clamps to its nearest (e.g. codex maps `ultracode` → `xhigh`
- * on models that support it).
+ *   - `ultracode` — maximum (Claude Code's `max` and Codex's `ultra` reconcile here).
+ * A backend without a matching native tier may clamp down to its strongest supported level, but it
+ * must never turn reasoning on for `none` or silently increase a requested effort.
  */
 export type ReasoningEffort =
   | "none"
@@ -230,17 +230,47 @@ export interface AgentProfileConfidential {
 /**
  * Generic MCP server configuration.
  */
-export interface AgentProfileMcpServer {
-  transport?: "stdio" | "sse" | "http";
-  command?: string;
+interface AgentProfileMcpServerBase {
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentProfileLocalMcpServer extends AgentProfileMcpServerBase {
+  enabled?: true;
+  transport?: "stdio";
+  command: string;
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
-  url?: string;
-  headers?: Record<string, string>;
-  enabled?: boolean;
-  metadata?: Record<string, unknown>;
+  url?: never;
+  headers?: never;
 }
+
+interface AgentProfileRemoteMcpServer extends AgentProfileMcpServerBase {
+  enabled?: true;
+  transport?: "sse" | "http";
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+  url: string;
+  headers?: Record<string, string>;
+}
+
+interface AgentProfileDisabledMcpServer extends AgentProfileMcpServerBase {
+  enabled: false;
+  transport?: never;
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+  url?: never;
+  headers?: never;
+}
+
+export type AgentProfileMcpServer =
+  | AgentProfileLocalMcpServer
+  | AgentProfileRemoteMcpServer
+  | AgentProfileDisabledMcpServer;
 
 /**
  * Hub-managed integration grant. The sandbox runtime resolves each declared

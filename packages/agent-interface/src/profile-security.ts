@@ -151,6 +151,7 @@ export function validateAgentProfileSecurity(
   const issues: AgentProfileValidationIssue[] = [];
 
   for (const [name, server] of Object.entries(profile.mcp ?? {})) {
+    if (server.enabled === false) continue;
     if (isLocalMcpServer(server)) {
       if (!policy.allowLocalMcp) {
         issues.push({

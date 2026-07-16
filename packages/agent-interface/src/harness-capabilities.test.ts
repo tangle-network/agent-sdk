@@ -115,10 +115,32 @@ describe("reasoning effort support", () => {
   it("offers each harness its real adapter set, not the generic ladder", () => {
     // no-thinking runners
     expect(harnessReasoningEfforts("cli-base")).toEqual(["none"]);
-    // clamp-based: `none` dropped (inert ≡ auto); capped at the adapter's real ceiling
-    expect(harnessReasoningEfforts("codex")).toEqual(["low", "medium", "high", "xhigh"]);
-    expect(harnessReasoningEfforts("pi")).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
-    expect(harnessReasoningEfforts("openclaw")).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+    // Explicit sets match each native CLI; model data narrows them later.
+    expect(harnessReasoningEfforts("codex")).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "ultracode",
+    ]);
+    expect(harnessReasoningEfforts("pi")).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(harnessReasoningEfforts("openclaw")).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "ultracode",
+    ]);
     // claude: real `--effort` ladder low…max (ultracode stands in for max); no none/minimal
     expect(harnessReasoningEfforts("claude-code")).toEqual([
       "low",
@@ -127,8 +149,8 @@ describe("reasoning effort support", () => {
       "xhigh",
       "ultracode",
     ]);
-    // kimi: binary toggle (minimal = off, high = on)
-    expect(harnessReasoningEfforts("kimi-code")).toEqual(["minimal", "high"]);
+    // kimi: binary toggle (none = off, high = on)
+    expect(harnessReasoningEfforts("kimi-code")).toEqual(["none", "high"]);
     // pass-through / router-driven: full ladder (narrowed later by the model)
     expect(harnessReasoningEfforts("opencode")).toContain("ultracode");
   });
@@ -145,6 +167,7 @@ describe("reasoning effort support", () => {
       "medium",
     ]);
     expect(reasoningEffortsFor("codex", { maxEffort: "high" })).toEqual([
+      "minimal",
       "low",
       "medium",
       "high",
