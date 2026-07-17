@@ -60,6 +60,13 @@ describe("agentImprovementActivationSchema", () => {
     expect(agentImprovementActivationSchema.parse(activation())).toEqual(activation());
   });
 
+  it("accepts restore authority", () => {
+    const { digest: _digest, ...authority } = activation();
+    const material = { ...authority, intent: "restore-baseline" as const };
+    const restore = { ...material, digest: canonicalCandidateDigest(material) };
+    expect(agentImprovementActivationSchema.parse(restore)).toEqual(restore);
+  });
+
   it("rejects duplicate surface identities", () => {
     const input = activation();
     expect(() =>
@@ -136,6 +143,23 @@ describe("agentImprovementActivationResultSchema", () => {
     );
   });
 
+  it("rejects duplicate applied targets", () => {
+    const target = {
+      surface: "prompt",
+      identity: "agent-profile:support",
+      beforeDigest: sha("5"),
+      afterDigest: sha("6"),
+    };
+    const input = activationResult({
+      status: "applied",
+      transactionId: "profile-transaction:123",
+      targets: [target, target],
+    });
+    expect(() => agentImprovementActivationResultSchema.parse(input)).toThrow(
+      /unique by surface and identity/,
+    );
+  });
+
   it("rejects a completion before its attempt", () => {
     const input = activationResult();
     expect(() =>
@@ -145,5 +169,4 @@ describe("agentImprovementActivationResultSchema", () => {
       }),
     ).toThrow(/cannot predate/);
   });
-
 });
