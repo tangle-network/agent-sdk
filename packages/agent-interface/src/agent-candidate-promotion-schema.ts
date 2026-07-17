@@ -4,6 +4,7 @@ import type {
   AgentCandidateJsonValue,
   AgentImprovementMeasuredComparison,
   AgentImprovementActivation,
+  AgentImprovementActivationResult,
   AgentImprovementProposal,
   AgentImprovementReview,
   CandidateExecutionEvidence,
@@ -874,6 +875,14 @@ export const agentImprovementReviewSchema = z
   .strict()
   .refine(isCanonicalJsonValue, "review must contain only RFC 8785 JSON values") satisfies z.ZodType<AgentImprovementReview>;
 
+const improvementActivationTargetSchema = z
+  .object({
+    surface: improvementSurfaceSchema,
+    identity: z.string().min(1).max(500),
+    expectedBaseDigest: sha256DigestSchema,
+  })
+  .strict();
+
 export const agentImprovementActivationSchema = z
   .object({
     kind: z.literal("agent-improvement-activation"),
@@ -881,28 +890,14 @@ export const agentImprovementActivationSchema = z
     reviewDigest: sha256DigestSchema,
     experimentDigest: sha256DigestSchema,
     candidateBundleDigest: sha256DigestSchema,
+    intent: z.enum(["activate-candidate", "restore-baseline"]),
     targets: z
-      .tuple([
-        z
-          .object({
-            surface: improvementSurfaceSchema,
-            identity: z.string().min(1).max(500),
-            expectedBaseDigest: sha256DigestSchema,
-          })
-          .strict(),
-      ])
-      .rest(
-        z
-          .object({
-            surface: improvementSurfaceSchema,
-            identity: z.string().min(1).max(500),
-            expectedBaseDigest: sha256DigestSchema,
-          })
-          .strict(),
-      ),
+      .tuple([improvementActivationTargetSchema])
+      .rest(improvementActivationTargetSchema),
     fundingOwner: z.string().min(1).max(500),
     authorizedBy: z.string().min(1).max(500),
     authorizedAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
     digest: sha256DigestSchema,
   })
   .strict()
@@ -917,7 +912,116 @@ export const agentImprovementActivationSchema = z
         message: "activation targets must be unique by surface and identity",
       });
     }
+    if (Date.parse(activation.expiresAt) <= Date.parse(activation.authorizedAt)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "activation expiry must follow its authorization time",
+      });
+    }
     if (!isCanonicalJsonValue(activation)) {
       ctx.addIssue({ code: "custom", message: "activation must contain only RFC 8785 JSON values" });
     }
   }) satisfies z.ZodType<AgentImprovementActivation>;
+
+const improvementActivationTargetTransitionSchema = z
+  .object({
+    surface: improvementSurfaceSchema,
+    identity: z.string().min(1).max(500),
+    beforeDigest: sha256DigestSchema,
+    afterDigest: sha256DigestSchema,
+  })
+  .strict();
+
+const improvementActivationTargetStateSchema = z
+  .object({
+    surface: improvementSurfaceSchema,
+    identity: z.string().min(1).max(500),
+    currentDigest: sha256DigestSchema,
+  })
+  .strict();
+
+const improvementActivationOutcomeSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("applied"),
+      transactionId: z.string().min(1).max(500),
+      targets: z
+        .tuple([improvementActivationTargetTransitionSchema])
+        .rest(improvementActivationTargetTransitionSchema),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("already-applied"),
+      targets: z
+        .tuple([improvementActivationTargetStateSchema])
+        .rest(improvementActivationTargetStateSchema),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("conflict"),
+      targets: z
+        .tuple([improvementActivationTargetStateSchema])
+        .rest(improvementActivationTargetStateSchema),
+    })
+    .strict(),
+  z.object({ status: z.literal("expired") }).strict(),
+  z
+    .object({
+      status: z.literal("unsupported"),
+      code: z.string().min(1).max(100),
+      message: z.string().min(1).max(2_000),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      code: z.string().min(1).max(100),
+      message: z.string().min(1).max(2_000),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("indeterminate"),
+      code: z.string().min(1).max(100),
+      message: z.string().min(1).max(2_000),
+    })
+    .strict(),
+]);
+
+export const agentImprovementActivationResultSchema = z
+  .object({
+    kind: z.literal("agent-improvement-activation-result"),
+    idempotencyKey: sha256DigestSchema,
+    attemptedAt: z.iso.datetime(),
+    completedAt: z.iso.datetime(),
+    outcome: improvementActivationOutcomeSchema,
+    digest: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((result, ctx) => {
+    if (Date.parse(result.completedAt) < Date.parse(result.attemptedAt)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["completedAt"],
+        message: "activation completion cannot predate its attempt",
+      });
+    }
+    const targets = "targets" in result.outcome ? result.outcome.targets : [];
+    const identities = targets.map((target) => `${target.surface}\u0000${target.identity}`);
+    if (new Set(identities).size !== identities.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["outcome", "targets"],
+        message: "activation outcome targets must be unique by surface and identity",
+      });
+    }
+    if (!isCanonicalJsonValue(result)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "activation result must contain only RFC 8785 JSON values",
+      });
+    }
+  }) satisfies z.ZodType<AgentImprovementActivationResult>;

@@ -944,6 +944,10 @@ export interface AgentImprovementActivationTarget {
   expectedBaseDigest: Sha256Digest;
 }
 
+export type AgentImprovementActivationIntent =
+  | "activate-candidate"
+  | "restore-baseline";
+
 /** Authority receipt permitting activation of one already-measured candidate. */
 export interface AgentImprovementActivation {
   kind: "agent-improvement-activation";
@@ -951,10 +955,62 @@ export interface AgentImprovementActivation {
   reviewDigest: Sha256Digest;
   experimentDigest: Sha256Digest;
   candidateBundleDigest: Sha256Digest;
+  intent: AgentImprovementActivationIntent;
   targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];
   fundingOwner: string;
   authorizedBy: string;
   authorizedAt: string;
+  expiresAt: string;
+  digest: Sha256Digest;
+}
+
+export interface AgentImprovementActivationTargetTransition {
+  surface: AgentImprovementSurface;
+  identity: string;
+  beforeDigest: Sha256Digest;
+  afterDigest: Sha256Digest;
+}
+
+export interface AgentImprovementActivationTargetState {
+  surface: AgentImprovementSurface;
+  identity: string;
+  currentDigest: Sha256Digest;
+}
+
+export type AgentImprovementActivationOutcome =
+  | {
+      /** Every target changed atomically from the authorized state to the requested bundle. */
+      status: "applied";
+      transactionId: string;
+      targets: [
+        AgentImprovementActivationTargetTransition,
+        ...AgentImprovementActivationTargetTransition[],
+      ];
+    }
+  | {
+      /** No write occurred; targets are already desired or no longer match the authorized base. */
+      status: "already-applied" | "conflict";
+      targets: [
+        AgentImprovementActivationTargetState,
+        ...AgentImprovementActivationTargetState[],
+      ];
+    }
+  | { status: "expired" }
+  | {
+      /** `failed` proves no write; `indeterminate` means commit state must be reconciled. */
+      status: "unsupported" | "failed" | "indeterminate";
+      code: string;
+      message: string;
+    };
+
+/** Immutable outcome of one idempotent, transaction-wide activation attempt. */
+export interface AgentImprovementActivationResult {
+  kind: "agent-improvement-activation-result";
+  /** The activation digest is also its stable retry key. */
+  idempotencyKey: Sha256Digest;
+  attemptedAt: string;
+  completedAt: string;
+  outcome: AgentImprovementActivationOutcome;
   digest: Sha256Digest;
 }
 
