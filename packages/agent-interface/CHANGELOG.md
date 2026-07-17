@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.31.0
+
+### Minor Changes
+
+- d8227eb: Add expiring apply/restore authorizations and typed idempotent activation outcomes.
+
 ## 0.30.0
 
 ### Minor Changes
