@@ -62,6 +62,13 @@ const provider: AgentEnvironmentProvider = {
 };
 ```
 
+## Exact process environments
+
+Providers may expose the optional `exactProcess` capability for isolated, reproducible process execution.
+It is separate from agent-backed `create()` because it guarantees a fresh environment, immutable image identity, explicit resources, bounded exact-byte file reads, shell-free argv, replacement process environment, recoverable output and terminal reason, bounded network access, and collision-safe idempotent recovery without starting a provider-managed agent.
+Higher-level runtimes can use this primitive for measured candidates without making candidate lifecycle part of the provider contract.
+Providers must omit the capability unless every property is enforced on their real execution path.
+
 ## Frozen improvement candidates
 
 `AgentCandidateBundle` is the portable output of an improvement run: a recursively strict profile, an explicit disabled/no-op/changed code result, a shell-free launch, optional knowledge, isolated memory, ancestry, and spend.

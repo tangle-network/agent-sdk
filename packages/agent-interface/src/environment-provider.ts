@@ -3,6 +3,7 @@ import type {
   AgentProfileCapabilities,
   AgentProfileValidationResult,
 } from "./agent-profile.js";
+import type { AgentCandidateTermination } from "./agent-candidate.js";
 import type { InputPart, StreamEvent, TokenUsage } from "./index.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
@@ -70,6 +71,138 @@ export interface ExecResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+}
+
+export type AgentExactProcessEgressMode = "blocked" | "strict";
+
+/**
+ * Outbound network policy for an exact process environment. `blocked` denies
+ * every protocol. `strict` permits only the named domains; direct-address,
+ * alternate-protocol, and cross-environment bypasses must fail.
+ */
+export type AgentExactProcessEgressPolicy =
+  | { mode: "blocked" }
+  | { mode: "strict"; allowDomains: readonly string[] };
+
+/** Explicit portable limits for an exact process environment. */
+export interface AgentExactProcessResources {
+  /** Positive CPU core count. */
+  cpu: number;
+  /** Positive integer mebibytes of memory. */
+  memoryMb: number;
+  /** Positive integer mebibytes of disk. */
+  diskMb: number;
+}
+
+/** Terminal or running state reported by an exact process host. */
+export interface AgentExactProcessStatus {
+  pid: number;
+  running: boolean;
+  /** -1 while running; the exact process exit code after termination. */
+  exitCode: number;
+  exitSignal?: string;
+  /** Required after termination; absent only while running. */
+  termination?: AgentCandidateTermination;
+}
+
+/** Recoverable handle for one shell-free process. */
+export interface AgentExactProcess {
+  readonly pid: number;
+  status(): Promise<AgentExactProcessStatus>;
+  wait(): Promise<AgentCandidateTermination>;
+  /** Force-stop the full process tree. Idempotent after the process exits. */
+  kill(): Promise<void>;
+  /** Replay buffered UTF-8 stdout, then continue until the process exits. */
+  stdout(): AsyncIterable<string>;
+  /** Replay buffered UTF-8 stderr, then continue until the process exits. */
+  stderr(): AsyncIterable<string>;
+}
+
+/** Shell-free launch whose environment replaces, rather than extends, ambient variables. */
+export interface AgentExactProcessLaunch {
+  /** Absolute path unless {@link env} supplies an explicit `PATH`. */
+  executable: string;
+  args: readonly string[];
+  cwd: string;
+  env: Readonly<Record<string, string>>;
+  stdin?: string;
+  /** Positive integer milliseconds, or zero to disable the process timeout. */
+  timeoutMs: number;
+}
+
+export interface AgentExactProcessManager {
+  list(): Promise<AgentExactProcessStatus[]>;
+  get(pid: number): Promise<AgentExactProcess | null>;
+  /** Providers must honor the abort signal when supplied. */
+  spawn(
+    input: AgentExactProcessLaunch,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentExactProcess>;
+}
+
+/**
+ * Fresh environment with no provider-managed user workload.
+ *
+ * Authenticated provider control services may exist, but no customer workload
+ * ingress or provider-managed user process may exist. The launched process
+ * sees only its supplied environment variables, with no ambient or injected
+ * secrets.
+ */
+export interface AgentExactProcessEnvironment {
+  readonly id: string;
+  readonly provider: string;
+  readonly metadata?: Record<string, unknown>;
+  readonly process: AgentExactProcessManager;
+  /** Write exact bytes to an absolute path with a POSIX mode from 0 through 07777. */
+  /** Providers must honor the abort signal when supplied. */
+  writeFile(
+    path: string,
+    bytes: Uint8Array,
+    options: { mode: number; signal?: AbortSignal },
+  ): Promise<void>;
+  /** Read exact bytes or fail before content is loaded when the file exceeds maxBytes. */
+  readFile(
+    path: string,
+    options: { maxBytes: number; signal?: AbortSignal },
+  ): Promise<Uint8Array>;
+  destroy(): Promise<void>;
+}
+
+export interface AgentExactProcessEnvironmentQuery {
+  /** Every supplied key/value must match persisted environment metadata exactly. */
+  metadata?: Record<string, unknown>;
+  providerOptions?: Record<string, unknown>;
+}
+
+/** Input for a fresh environment with no provider-managed agent process. */
+export interface CreateAgentExactProcessEnvironmentInput {
+  /** Provider-specific immutable image reference. */
+  image: string;
+  egress: AgentExactProcessEgressPolicy;
+  /** Positive integer milliseconds. */
+  maxLifetimeMs: number;
+  /** Positive integer milliseconds when supplied. */
+  provisionTimeoutMs?: number;
+  /** Required limits; exact execution never inherits provider defaults. */
+  resources: AgentExactProcessResources;
+  metadata: Record<string, unknown>;
+  idempotencyKey: string;
+  signal?: AbortSignal;
+  /** Provider-native fields may narrow, but never weaken, the isolation contract. */
+  providerOptions?: Record<string, unknown>;
+}
+
+/** Optional all-or-nothing exact process capability of an environment provider. */
+export interface AgentExactProcessProvider {
+  /**
+   * Repeating the same idempotency key and input returns the same environment.
+   * Reusing the key with any different create input must fail.
+   */
+  create(input: CreateAgentExactProcessEnvironmentInput): Promise<AgentExactProcessEnvironment>;
+  /** Ordinary environments must return null. */
+  get(id: string): Promise<AgentExactProcessEnvironment | null>;
+  /** Return every matching exact environment; providers own any native pagination. */
+  list(query?: AgentExactProcessEnvironmentQuery): Promise<AgentExactProcessEnvironment[]>;
 }
 
 export interface CheckpointRequest {
@@ -202,6 +335,10 @@ export interface AgentEnvironmentCapabilities {
   placement: boolean;
   usage: boolean;
   confidential: boolean;
+  /** Present only when {@link AgentEnvironmentProvider.exactProcess} is implemented. */
+  exactProcess?: {
+    egress: readonly AgentExactProcessEgressMode[];
+  };
 }
 
 export interface CreateAgentEnvironmentInput {
@@ -221,6 +358,7 @@ export interface CreateAgentEnvironmentInput {
 
 export interface AgentEnvironmentProvider {
   readonly name: string;
+  readonly exactProcess?: AgentExactProcessProvider;
   capabilities():
     | AgentEnvironmentCapabilities
     | Promise<AgentEnvironmentCapabilities>;
