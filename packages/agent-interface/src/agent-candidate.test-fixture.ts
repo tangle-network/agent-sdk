@@ -65,6 +65,7 @@ export function candidateFixture() {
       cwd: { workspace: "candidate", path: "." },
       env: {
         NODE_ENV: { kind: "public", value: "production" },
+        PATH: { kind: "public", value: "/usr/local/bin:/usr/bin:/bin" },
       },
       environment: {
         kind: "pinned-container",
