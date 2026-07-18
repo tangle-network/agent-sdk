@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type {
   AgentEnvironmentProvider,
+  AgentExactProcessEnvironment,
   AgentTurnInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import { runAgentEnvironmentProviderConformance } from "./index.js";
+import {
+  runAgentEnvironmentProviderConformance,
+  runAgentExactProcessProviderLifecycleChecks,
+} from "./index.js";
 
 describe("runAgentEnvironmentProviderConformance", () => {
   it("accepts a provider that implements the required lifecycle", async () => {
@@ -15,6 +19,43 @@ describe("runAgentEnvironmentProviderConformance", () => {
     expect(report.provider).toBe("fake");
     expect(report.checked).toContain("stream");
     expect(report.checked).toContain("workspace-exec");
+  });
+});
+
+describe("runAgentExactProcessProviderLifecycleChecks", () => {
+  it("checks exact launch, recovery, lookup, and deletion", async () => {
+    const report = await runAgentExactProcessProviderLifecycleChecks({
+      createProvider: () => fakeExactProcessProvider(),
+      createInput: {
+        image: "example@sha256:123",
+        egress: { mode: "blocked" },
+        maxLifetimeMs: 10_000,
+        resources: { cpu: 1, memoryMb: 512, diskMb: 1024 },
+        metadata: { executionId: "execution-1" },
+        idempotencyKey: "execution-1",
+      },
+      launch: {
+        executable: "/bin/example",
+        args: ["ok"],
+        cwd: "/tmp",
+        env: {},
+        timeoutMs: 1_000,
+      },
+      expectedStdout: "ok",
+      expectedStderr: "",
+    });
+
+    expect(report.checked).toEqual([
+      "exact-process-capability",
+      "exact-process-idempotency",
+      "exact-process-idempotency-collision",
+      "fresh-environment",
+      "exact-file-roundtrip",
+      "exact-process-run",
+      "exact-process-recovery",
+      "exact-process-list",
+      "exact-process-destroy",
+    ]);
   });
 });
 
@@ -73,4 +114,88 @@ function fakeProvider(): AgentEnvironmentProvider {
       };
     },
   };
+}
+
+function fakeExactProcessProvider(): AgentEnvironmentProvider {
+  const environments = new Map<string, AgentExactProcessEnvironment>();
+  const createInputs = new Map<string, string>();
+  const files = new Map<string, Uint8Array>();
+  const provider: AgentEnvironmentProvider = {
+    ...fakeProvider(),
+    capabilities: async () => ({
+      ...(await fakeProvider().capabilities()),
+      exactProcess: { egress: ["blocked", "strict"] },
+    }),
+    exactProcess: {
+      async create(input) {
+        const existing = environments.get("exact-1");
+        const createIdentity = JSON.stringify(input);
+        if (existing) {
+          if (createInputs.get(input.idempotencyKey) !== createIdentity) {
+            throw new Error("idempotency collision");
+          }
+          return existing;
+        }
+        let deleted = false;
+        let spawned = false;
+        const output = "ok";
+        const status = {
+          pid: 41,
+          running: false,
+          exitCode: 0,
+          termination: { kind: "exit" as const, exitCode: 0 },
+        };
+        const process = {
+          pid: 41,
+          status: async () => status,
+          wait: async () => status.termination,
+          kill: async () => {},
+          async *stdout() {
+            yield output;
+          },
+          async *stderr() {},
+        };
+        const environment: AgentExactProcessEnvironment = {
+          id: "exact-1",
+          provider: "fake",
+          metadata: input.metadata,
+          process: {
+            list: async () => (deleted || !spawned ? [] : [status]),
+            get: async (pid) => (!deleted && spawned && pid === process.pid ? process : null),
+            spawn: async () => {
+              spawned = true;
+              return process;
+            },
+          },
+          async writeFile(path, bytes) {
+            files.set(path, Uint8Array.from(bytes));
+          },
+          async readFile(path, options) {
+            const bytes = files.get(path);
+            if (!bytes) throw new Error("not found");
+            if (bytes.byteLength > options.maxBytes) {
+              throw new Error("file exceeds maxBytes");
+            }
+            return Uint8Array.from(bytes);
+          },
+          async destroy() {
+            deleted = true;
+            environments.delete(environment.id);
+            files.clear();
+          },
+        };
+        createInputs.set(input.idempotencyKey, createIdentity);
+        environments.set(environment.id, environment);
+        return environment;
+      },
+      get: async (id) => environments.get(id) ?? null,
+      list: async (query) =>
+        [...environments.values()].filter((environment) =>
+          Object.entries(query?.metadata ?? {}).every(
+            ([key, value]) => environment.metadata?.[key] === value,
+          ),
+        ),
+    },
+  };
+  return provider;
 }

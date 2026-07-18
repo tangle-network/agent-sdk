@@ -3,7 +3,9 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
+  AgentExactProcessLaunch,
   CreateAgentEnvironmentInput,
+  CreateAgentExactProcessEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 
 export interface ProviderConformanceOptions {
@@ -20,6 +22,21 @@ export interface ProviderConformanceReport {
   environmentId: string;
   capabilities: AgentEnvironmentCapabilities;
   events: number;
+  checked: string[];
+}
+
+export interface ExactProcessProviderLifecycleOptions {
+  createProvider(): AgentEnvironmentProvider | Promise<AgentEnvironmentProvider>;
+  createInput: CreateAgentExactProcessEnvironmentInput;
+  launch: AgentExactProcessLaunch;
+  expectedStdout: string;
+  expectedStderr: string;
+}
+
+export interface ExactProcessProviderLifecycleReport {
+  provider: string;
+  environmentId: string;
+  pid: number;
   checked: string[];
 }
 
@@ -104,6 +121,146 @@ export async function runAgentEnvironmentProviderConformance(
   };
 }
 
+/** Check exact launch, output, recovery, lookup, and deletion behavior. */
+export async function runAgentExactProcessProviderLifecycleChecks(
+  options: ExactProcessProviderLifecycleOptions,
+): Promise<ExactProcessProviderLifecycleReport> {
+  const checked: string[] = [];
+  const provider = await options.createProvider();
+  const capabilities = await provider.capabilities();
+  assert(provider.exactProcess, "provider.exactProcess is required", checked);
+  assert(capabilities.exactProcess, "capabilities.exactProcess is required", checked);
+  assert(
+    capabilities.exactProcess.egress.includes(options.createInput.egress.mode),
+    `provider does not declare ${options.createInput.egress.mode} egress support`,
+    checked,
+  );
+  checked.push("exact-process-capability");
+
+  const environment = await provider.exactProcess.create(options.createInput);
+  let destroyed = false;
+  try {
+    const repeated = await provider.exactProcess.create(options.createInput);
+    assert(
+      repeated.id === environment.id,
+      "repeated exact create must recover the same environment",
+      checked,
+    );
+    checked.push("exact-process-idempotency");
+
+    let collisionRejected = false;
+    try {
+      await provider.exactProcess.create({
+        ...options.createInput,
+        maxLifetimeMs: options.createInput.maxLifetimeMs + 1_000,
+      });
+    } catch {
+      collisionRejected = true;
+    }
+    assert(
+      collisionRejected,
+      "reusing an exact idempotency key with different input must fail",
+      checked,
+    );
+    checked.push("exact-process-idempotency-collision");
+
+    assert((await environment.process.list()).length === 0, "exact environment must start empty", checked);
+    checked.push("fresh-environment");
+
+    const expectedFile = Uint8Array.of(0, 1, 2, 255);
+    const operation = new AbortController();
+    await environment.writeFile("/tmp/agent-provider-testkit.bin", expectedFile, {
+      mode: 0o640,
+      signal: operation.signal,
+    });
+    const actualFile = await environment.readFile(
+      "/tmp/agent-provider-testkit.bin",
+      { maxBytes: expectedFile.byteLength, signal: operation.signal },
+    );
+    assert(
+      bytesEqual(actualFile, expectedFile),
+      "exact file read must return the bytes that were written",
+      checked,
+    );
+    let boundedReadRejected = false;
+    try {
+      await environment.readFile("/tmp/agent-provider-testkit.bin", {
+        maxBytes: expectedFile.byteLength - 1,
+        signal: operation.signal,
+      });
+    } catch {
+      boundedReadRejected = true;
+    }
+    assert(
+      boundedReadRejected,
+      "exact file read must reject content above maxBytes",
+      checked,
+    );
+    checked.push("exact-file-roundtrip");
+
+    const process = await environment.process.spawn(options.launch, {
+      signal: operation.signal,
+    });
+    const stdout = (await collect(process.stdout())).join("");
+    const stderr = (await collect(process.stderr())).join("");
+    const termination = await process.wait();
+    const status = await process.status();
+    assert(!status.running, "exact process must reach a terminal status", checked);
+    assert(status.termination, "terminal exact process status requires a reason", checked);
+    assert(
+      JSON.stringify(status.termination) === JSON.stringify(termination),
+      "wait() and status() termination reasons must match",
+      checked,
+    );
+    assert(stdout === options.expectedStdout, "exact process stdout differs", checked);
+    assert(stderr === options.expectedStderr, "exact process stderr differs", checked);
+    await process.kill();
+    checked.push("exact-process-run");
+
+    const recovered = await provider.exactProcess.get(environment.id);
+    assert(recovered, "exact environment must be recoverable by id", checked);
+    const recoveredProcess = await recovered.process.get(process.pid);
+    assert(recoveredProcess, "exact process must be recoverable by pid", checked);
+    assert(
+      (await collect(recoveredProcess.stdout())).join("") === options.expectedStdout,
+      "recovered exact process stdout differs",
+      checked,
+    );
+    assert(
+      (await collect(recoveredProcess.stderr())).join("") === options.expectedStderr,
+      "recovered exact process stderr differs",
+      checked,
+    );
+    checked.push("exact-process-recovery");
+
+    const listed = await provider.exactProcess.list({ metadata: options.createInput.metadata });
+    assert(
+      listed.filter((candidate) => candidate.id === environment.id).length === 1,
+      "exact environment metadata lookup must return one matching id",
+      checked,
+    );
+    checked.push("exact-process-list");
+
+    await environment.destroy();
+    destroyed = true;
+    assert(
+      (await provider.exactProcess.get(environment.id)) === null,
+      "destroyed exact environment must not be recoverable",
+      checked,
+    );
+    checked.push("exact-process-destroy");
+
+    return {
+      provider: provider.name,
+      environmentId: environment.id,
+      pid: process.pid,
+      checked,
+    };
+  } finally {
+    if (!destroyed) await environment.destroy();
+  }
+}
+
 async function checkWorkspace(
   environment: AgentEnvironment,
   capabilities: AgentEnvironmentCapabilities,
@@ -137,6 +294,11 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 
 function assert(value: unknown, message: string, checked: string[]): asserts value {
   if (!value) throw new ProviderConformanceError(message, checked);
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  return left.every((byte, index) => byte === right[index]);
 }
 
 function isTerminalEvent(event: AgentEnvironmentEvent): boolean {

@@ -1,6 +1,7 @@
 import type {
   BackendType,
   CreateSandboxOptions,
+  ExactProcessAttestation,
   ExecResult as SandboxExecResult,
   PromptOptions,
   PromptResult,
@@ -29,13 +30,61 @@ import type {
   PlacementInfo,
   ResourceRequest,
 } from "@tangle-network/agent-interface/environment-provider";
-import type { InputPart, TokenUsage } from "@tangle-network/agent-interface";
+import type {
+  AgentCandidateTermination,
+  InputPart,
+  TokenUsage,
+} from "@tangle-network/agent-interface";
+import {
+  createTangleExactProcessProvider,
+  type TangleExactProcessOptions,
+} from "./exact-process.js";
+
+export type { TangleExactProcessOptions } from "./exact-process.js";
 
 export interface SandboxClientLike {
-  create(options?: CreateSandboxOptions): Promise<SandboxInstanceLike>;
+  create(
+    options?: CreateSandboxOptions,
+    requestOptions?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<SandboxInstanceLike>;
   get?(id: string): Promise<SandboxInstanceLike | null>;
   list?(options?: unknown): Promise<SandboxInstanceLike[]>;
   describePlacement?(box: SandboxInstanceLike): unknown;
+}
+
+export interface SandboxProcessStatusLike {
+  pid: number;
+  running: boolean;
+  exitCode: number;
+  exitSignal?: string;
+  termination?: AgentCandidateTermination;
+}
+
+export interface SandboxProcessLike {
+  readonly pid: number;
+  status(): Promise<SandboxProcessStatusLike>;
+  wait(): Promise<number>;
+  waitForTermination(): Promise<AgentCandidateTermination>;
+  kill(signal?: "SIGKILL", options?: { tree?: boolean }): Promise<void>;
+  stdout(): AsyncIterable<string>;
+  stderr(): AsyncIterable<string>;
+}
+
+export interface SandboxProcessManagerLike {
+  list(): Promise<SandboxProcessStatusLike[]>;
+  get(pid: number): Promise<SandboxProcessLike | null>;
+  spawnExact(
+    executable: string,
+    args: readonly string[],
+    options?: {
+      cwd?: string;
+      env?: Record<string, string>;
+      inheritEnv?: boolean;
+      stdin?: string;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<SandboxProcessLike>;
 }
 
 export interface SandboxInstanceLike {
@@ -43,6 +92,8 @@ export interface SandboxInstanceLike {
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
+  exactProcess?: ExactProcessAttestation;
+  teamId?: string;
   streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
   prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
   dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
@@ -50,6 +101,19 @@ export interface SandboxInstanceLike {
   read?(path: string, options?: { sessionId?: string }): Promise<string>;
   write?(path: string, content: string, options?: { sessionId?: string }): Promise<void>;
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
+  fs?: {
+    supportsWriteMode?: true;
+    readBytes(
+      path: string,
+      options: { maxBytes: number; signal?: AbortSignal },
+    ): Promise<Uint8Array>;
+    write(
+      path: string,
+      content: string,
+      options: { encoding: "base64"; mode: number; signal?: AbortSignal },
+    ): Promise<unknown>;
+  };
+  process?: SandboxProcessManagerLike;
   checkpoint?(options?: unknown): Promise<unknown>;
   fork?(checkpointId: string, options?: unknown): Promise<SandboxInstanceLike>;
   refresh?(): Promise<void>;
@@ -72,17 +136,37 @@ export interface TangleProviderOptions {
   capabilities?: AgentEnvironmentCapabilities | (() => AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities>);
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
+  exactProcess?: TangleExactProcessOptions;
 }
 
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
+  const exactProcess = options.exactProcess
+    ? createTangleExactProcessProvider({
+        client: options.client,
+        options: options.exactProcess,
+        providerName,
+      })
+    : undefined;
   return {
     name: providerName,
+    ...(exactProcess ? { exactProcess } : {}),
     capabilities: async () => {
-      if (!options.capabilities) return defaultTangleSandboxCapabilities();
-      return typeof options.capabilities === "function" ? options.capabilities() : options.capabilities;
+      const capabilities = options.capabilities
+        ? typeof options.capabilities === "function"
+          ? await options.capabilities()
+          : options.capabilities
+        : defaultTangleSandboxCapabilities();
+      if (!exactProcess && capabilities.exactProcess) {
+        throw new Error(
+          "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
+        );
+      }
+      return exactProcess
+        ? { ...capabilities, exactProcess: { egress: ["blocked", "strict"] } }
+        : capabilities;
     },
     ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
     async create(input) {

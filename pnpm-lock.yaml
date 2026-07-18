@@ -160,8 +160,8 @@ importers:
         specifier: workspace:*
         version: link:../agent-provider-testkit
       '@tangle-network/sandbox':
-        specifier: ^0.8.2
-        version: 0.8.2
+        specifier: ^0.11.1
+        version: 0.11.1
       '@types/node':
         specifier: 'catalog:'
         version: 25.6.0
@@ -964,11 +964,17 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tangle-network/agent-interface@0.8.0':
-    resolution: {integrity: sha512-okz9LGKwPNKODNyT9Y7+T+sQsJ4g6oTy/hpWpxR6r2BI7pS6WqIdgCOQcx98+WtlPoibkY3ewRRAb8YJMrPHog==}
+  '@tangle-network/agent-core@0.4.19':
+    resolution: {integrity: sha512-GzygwJ6mmY4tgkFonc4yq2vU+kJSTo6JuZCUNsPQgjZigZeSpWjX+3r+ZxEi38VqAzt79MEn43/Txu+ZflqazQ==}
 
-  '@tangle-network/sandbox@0.8.2':
-    resolution: {integrity: sha512-MG3dj7SnF7vI8CagW1OwpkJSUq3IREpADBWp6knOukKxSYYCMGwJ0nPZz+O2eotI+Nl2A2LIGiHqPB82jgOvjw==}
+  '@tangle-network/agent-interface@0.30.0':
+    resolution: {integrity: sha512-GmwPwamrzOFPn+Qx7W0nt9QRUF9VUiZrMNLmF6QpL23R+7TD21HllPblVOYB5MVqA728FpDLXit3HfqY8mStwg==}
+
+  '@tangle-network/agent-interface@0.31.0':
+    resolution: {integrity: sha512-OvP8OebhbFd4d/Mxt1QDPAckJdBIA9omxoXU17dBbyEwhZKsiM6rbuOPaPDcv0Sf4koNLI25CfOYuzqlDR6ypQ==}
+
+  '@tangle-network/sandbox@0.11.1':
+    resolution: {integrity: sha512-9I5G1UHNhwTNFToe+Y0iQO1Joemd+7ba3LXIjfYUj+apRww6Eqq+1UGV2a11XaWUTlEqyhAc37F5OHBUj/xxCg==}
     peerDependencies:
       '@mastra/core': ^1.36.0
       '@modelcontextprotocol/sdk': ^1.29.0
@@ -3143,13 +3149,25 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tangle-network/agent-interface@0.8.0':
+  '@tangle-network/agent-core@0.4.19':
     dependencies:
+      '@tangle-network/agent-interface': 0.31.0
       zod: 4.4.3
 
-  '@tangle-network/sandbox@0.8.2':
+  '@tangle-network/agent-interface@0.30.0':
     dependencies:
-      '@tangle-network/agent-interface': 0.8.0
+      '@noble/hashes': 1.8.0
+      zod: 4.4.3
+
+  '@tangle-network/agent-interface@0.31.0':
+    dependencies:
+      '@noble/hashes': 1.8.0
+      zod: 4.4.3
+
+  '@tangle-network/sandbox@0.11.1':
+    dependencies:
+      '@tangle-network/agent-core': 0.4.19
+      '@tangle-network/agent-interface': 0.30.0
 
   '@tybys/wasm-util@0.10.3':
     dependencies:
