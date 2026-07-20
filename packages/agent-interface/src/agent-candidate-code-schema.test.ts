@@ -18,6 +18,9 @@ const isolation = {
 };
 
 const instructionDelivery = { kind: "argv-append" as const };
+const exactPath = {
+  PATH: { kind: "public" as const, value: "/usr/local/bin:/usr/bin:/bin" },
+};
 
 describe("candidate code and execution schemas", () => {
   it("distinguishes disabled, proposer no-op, and real changes", () => {
@@ -106,6 +109,7 @@ describe("candidate code and execution schemas", () => {
         },
         instructionDelivery,
         cwd: { workspace: "candidate", path: "." },
+        env: exactPath,
         environment: {
           kind: "pinned-container",
           container: { image: "node:22", indexDigest: candidateSha("1") },
@@ -138,6 +142,7 @@ describe("candidate code and execution schemas", () => {
         },
         instructionDelivery: { kind: "stdin-utf8" },
         cwd: { workspace: "task", path: "." },
+        env: exactPath,
         environment: { kind: "evaluator-task-container" },
         isolation,
       }),
@@ -179,6 +184,7 @@ describe("candidate code and execution schemas", () => {
         launch: { kind: "container-command", executable: "codex" },
         instructionDelivery,
         cwd: { workspace: "task", path: "." },
+        env: exactPath,
         environment: {
           kind: "pinned-container",
           container: {
@@ -197,6 +203,7 @@ describe("candidate code and execution schemas", () => {
       harnessVersion: "0.1.0",
       launch: { kind: "container-command" as const, executable: "codex" },
       cwd: { workspace: "task" as const, path: "." },
+      env: exactPath,
       environment: { kind: "evaluator-task-container" as const },
       isolation,
     };
@@ -238,5 +245,39 @@ describe("candidate code and execution schemas", () => {
         },
       }),
     ).toThrow(/evaluator exclusively owns/);
+  });
+
+  it("requires an explicit PATH for relative container binaries and interpreters", () => {
+    const base = {
+      harness: "codex" as const,
+      harnessVersion: "0.1.0",
+      instructionDelivery,
+      cwd: { workspace: "task" as const, path: "." },
+      environment: { kind: "evaluator-task-container" as const },
+      isolation,
+    };
+    for (const launch of [
+      { kind: "container-command" as const, executable: "codex" },
+      {
+        kind: "candidate-entrypoint" as const,
+        entrypoint: "run.js",
+        interpreter: "node" as const,
+      },
+    ]) {
+      expect(() => agentCandidateExecutionSchema.parse({ ...base, launch })).toThrow(/PATH/);
+      expect(() =>
+        agentCandidateExecutionSchema.parse({
+          ...base,
+          launch,
+          env: { PATH: { kind: "public", value: "/usr/local/bin:/usr/bin:/bin" } },
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      agentCandidateExecutionSchema.parse({
+        ...base,
+        launch: { kind: "container-command", executable: "/usr/local/bin/codex" },
+      }),
+    ).not.toThrow();
   });
 });

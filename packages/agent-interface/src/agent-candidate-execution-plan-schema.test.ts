@@ -118,6 +118,10 @@ function planFixture() {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
       env: {
+        PATH: {
+          kind: "public" as const,
+          value: "/usr/local/bin:/usr/bin:/bin",
+        },
         TANGLE_CANDIDATE_TASK_PATH: {
           kind: "public" as const,
           value: "/tangle/input/task.txt",

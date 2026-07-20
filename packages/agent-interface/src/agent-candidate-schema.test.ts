@@ -361,7 +361,9 @@ describe("candidate receipts", () => {
     launch: {
       executable: "node",
       args: [{ kind: "public" as const, value: "dist/agent.js" }],
-      env: {},
+      env: {
+        PATH: { kind: "public" as const, value: "/usr/local/bin:/usr/bin:/bin" },
+      },
       cwd: { workspace: "task" as const, path: "." },
     },
     knowledgeManifestDigest: candidateSha("7"),

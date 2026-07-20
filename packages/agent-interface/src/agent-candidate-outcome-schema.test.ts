@@ -143,7 +143,9 @@ function materializationReceipt(
     launch: {
       executable: "node",
       args: [],
-      env: {},
+      env: {
+        PATH: { kind: "public" as const, value: "/usr/local/bin:/usr/bin:/bin" },
+      },
       cwd: { workspace: "task" as const, path: "." },
     },
     memory: { mode: "disabled" as const },
@@ -363,6 +365,9 @@ function measuredBundle(digit: string, prompt: string) {
       },
       instructionDelivery: { kind: "stdin-utf8" as const },
       cwd: { workspace: "task" as const, path: "." },
+      env: {
+        PATH: { kind: "public" as const, value: "/usr/local/bin:/usr/bin:/bin" },
+      },
       environment: { kind: "evaluator-task-container" as const },
       isolation: {
         network: "disabled" as const,

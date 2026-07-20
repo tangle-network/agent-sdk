@@ -420,6 +420,13 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
+    if (!material.launch.executable.startsWith("/") && !material.launch.env.PATH?.value.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["launch", "env", "PATH"],
+        message: "relative execution-plan executables require an explicit public PATH",
+      });
+    }
     const routeIds = material.model.routes.map((route) =>
       route.kind === "mode" || route.kind === "subagent"
         ? `${route.kind}:${route.name}`

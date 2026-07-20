@@ -30,12 +30,54 @@ import type {
   ResourceRequest,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { InputPart, TokenUsage } from "@tangle-network/agent-interface";
+import {
+  createTangleExactProcessProvider,
+  type TangleExactProcessOptions,
+} from "./exact-process.js";
+
+export type { TangleExactProcessOptions } from "./exact-process.js";
 
 export interface SandboxClientLike {
-  create(options?: CreateSandboxOptions): Promise<SandboxInstanceLike>;
+  create(
+    options?: CreateSandboxOptions,
+    requestOptions?: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<SandboxInstanceLike>;
   get?(id: string): Promise<SandboxInstanceLike | null>;
   list?(options?: unknown): Promise<SandboxInstanceLike[]>;
   describePlacement?(box: SandboxInstanceLike): unknown;
+}
+
+export interface SandboxProcessStatusLike {
+  pid: number;
+  running: boolean;
+  exitCode: number;
+  exitSignal?: string;
+}
+
+export interface SandboxProcessLike {
+  readonly pid: number;
+  status(): Promise<SandboxProcessStatusLike>;
+  wait(): Promise<number>;
+  kill(signal?: "SIGKILL", options?: { tree?: boolean }): Promise<void>;
+  stdout(): AsyncIterable<string>;
+  stderr(): AsyncIterable<string>;
+}
+
+export interface SandboxProcessManagerLike {
+  list(): Promise<SandboxProcessStatusLike[]>;
+  get(pid: number): Promise<SandboxProcessLike | null>;
+  spawnExact(
+    executable: string,
+    args: readonly string[],
+    options?: {
+      cwd?: string;
+      env?: Record<string, string>;
+      inheritEnv?: boolean;
+      stdin?: string;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<SandboxProcessLike>;
 }
 
 export interface SandboxInstanceLike {
@@ -50,6 +92,28 @@ export interface SandboxInstanceLike {
   read?(path: string, options?: { sessionId?: string }): Promise<string>;
   write?(path: string, content: string, options?: { sessionId?: string }): Promise<void>;
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
+  fs?: {
+    supportsWriteMode?: true;
+    stat(path: string): Promise<{ size: number; isFile: boolean }>;
+    readBatch(
+      paths: string[],
+      options?: { encoding?: "utf8" | "base64" },
+    ): Promise<{
+      files: Array<{
+        path: string;
+        content: string;
+        encoding: "utf8" | "base64";
+        size: number;
+      }>;
+      errors: Array<{ path: string; error: string; code?: string }>;
+    }>;
+    write(
+      path: string,
+      content: string,
+      options: { encoding: "base64"; mode: number },
+    ): Promise<unknown>;
+  };
+  process?: SandboxProcessManagerLike;
   checkpoint?(options?: unknown): Promise<unknown>;
   fork?(checkpointId: string, options?: unknown): Promise<SandboxInstanceLike>;
   refresh?(): Promise<void>;
@@ -72,17 +136,37 @@ export interface TangleProviderOptions {
   capabilities?: AgentEnvironmentCapabilities | (() => AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities>);
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
+  exactProcess?: TangleExactProcessOptions;
 }
 
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
+  const exactProcess = options.exactProcess
+    ? createTangleExactProcessProvider({
+        client: options.client,
+        options: options.exactProcess,
+        providerName,
+      })
+    : undefined;
   return {
     name: providerName,
+    ...(exactProcess ? { exactProcess } : {}),
     capabilities: async () => {
-      if (!options.capabilities) return defaultTangleSandboxCapabilities();
-      return typeof options.capabilities === "function" ? options.capabilities() : options.capabilities;
+      const capabilities = options.capabilities
+        ? typeof options.capabilities === "function"
+          ? await options.capabilities()
+          : options.capabilities
+        : defaultTangleSandboxCapabilities();
+      if (!exactProcess && capabilities.exactProcess) {
+        throw new Error(
+          "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
+        );
+      }
+      return exactProcess
+        ? { ...capabilities, exactProcess: { egress: ["blocked", "strict"] } }
+        : capabilities;
     },
     ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
     async create(input) {

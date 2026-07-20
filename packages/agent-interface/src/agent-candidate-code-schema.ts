@@ -243,6 +243,17 @@ export const agentCandidateExecutionSchema = z
   })
   .strict()
   .superRefine((execution, ctx) => {
+    const requiresPath =
+      execution.launch.kind === "container-command"
+        ? !execution.launch.executable.startsWith("/")
+        : execution.launch.interpreter !== undefined;
+    if (requiresPath && !execution.env?.PATH?.value.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["env", "PATH"],
+        message: "relative candidate executables require an explicit public PATH",
+      });
+    }
     if (execution.env?.TANGLE_CANDIDATE_TASK_PATH !== undefined) {
       ctx.addIssue({
         code: "custom",
