@@ -112,9 +112,9 @@ export interface AgentExactProcess {
   wait(): Promise<AgentCandidateTermination>;
   /** Force-stop the full process tree. Idempotent after the process exits. */
   kill(): Promise<void>;
-  /** Replay buffered UTF-8 stdout, then continue until the process exits. */
+  /** Each iteration replays buffered UTF-8 stdout, then continues until exit. */
   stdout(): AsyncIterable<string>;
-  /** Replay buffered UTF-8 stderr, then continue until the process exits. */
+  /** Each iteration replays buffered UTF-8 stderr, then continues until exit. */
   stderr(): AsyncIterable<string>;
 }
 
@@ -153,8 +153,7 @@ export interface AgentExactProcessEnvironment {
   readonly provider: string;
   readonly metadata?: Record<string, unknown>;
   readonly process: AgentExactProcessManager;
-  /** Write exact bytes to an absolute path with a POSIX mode from 0 through 07777. */
-  /** Providers must honor the abort signal when supplied. */
+  /** Write exact bytes to an absolute path with a POSIX mode from 0 through 07777. Providers must honor the abort signal when supplied. */
   writeFile(
     path: string,
     bytes: Uint8Array,
@@ -197,6 +196,7 @@ export interface AgentExactProcessProvider {
   /**
    * Repeating the same idempotency key and input returns the same environment.
    * Reusing the key with any different create input must fail.
+   * Unsupported egress modes must fail instead of weakening the policy.
    */
   create(input: CreateAgentExactProcessEnvironmentInput): Promise<AgentExactProcessEnvironment>;
   /** Ordinary environments must return null. */

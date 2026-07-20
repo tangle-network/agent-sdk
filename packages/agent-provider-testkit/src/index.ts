@@ -3,10 +3,12 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
+  AgentExactProcessEnvironment,
   AgentExactProcessLaunch,
   CreateAgentEnvironmentInput,
   CreateAgentExactProcessEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
+import type { AgentCandidateTermination } from "@tangle-network/agent-interface";
 
 export interface ProviderConformanceOptions {
   name: string;
@@ -31,6 +33,8 @@ export interface ExactProcessProviderLifecycleOptions {
   launch: AgentExactProcessLaunch;
   expectedStdout: string;
   expectedStderr: string;
+  /** Overall wall-clock bound for one lifecycle check. Defaults to 30 seconds. */
+  timeoutMs?: number;
 }
 
 export interface ExactProcessProviderLifecycleReport {
@@ -137,10 +141,30 @@ export async function runAgentExactProcessProviderLifecycleChecks(
   );
   checked.push("exact-process-capability");
 
-  const environment = await provider.exactProcess.create(options.createInput);
-  let destroyed = false;
+  const operation = new AbortController();
+  const timeout = setTimeout(
+    () => operation.abort(new Error("exact process lifecycle check timed out")),
+    options.timeoutMs ?? 30_000,
+  );
+  const signal = options.createInput.signal
+    ? AbortSignal.any([options.createInput.signal, operation.signal])
+    : operation.signal;
+  let environment: AgentExactProcessEnvironment;
   try {
-    const repeated = await provider.exactProcess.create(options.createInput);
+    environment = await abortable(
+      provider.exactProcess.create({ ...options.createInput, signal }),
+      signal,
+    );
+  } catch (error) {
+    clearTimeout(timeout);
+    throw error;
+  }
+  let destroyAttempted = false;
+  try {
+    const repeated = await abortable(
+      provider.exactProcess.create({ ...options.createInput, signal }),
+      signal,
+    );
     assert(
       repeated.id === environment.id,
       "repeated exact create must recover the same environment",
@@ -149,13 +173,28 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     checked.push("exact-process-idempotency");
 
     let collisionRejected = false;
+    let collisionEnvironment: AgentExactProcessEnvironment | undefined;
     try {
-      await provider.exactProcess.create({
-        ...options.createInput,
-        maxLifetimeMs: options.createInput.maxLifetimeMs + 1_000,
-      });
+      collisionEnvironment = await abortable(
+        provider.exactProcess.create({
+          ...options.createInput,
+          maxLifetimeMs: options.createInput.maxLifetimeMs + 1_000,
+          signal,
+        }),
+        signal,
+      );
     } catch {
       collisionRejected = true;
+    } finally {
+      if (
+        collisionEnvironment?.id &&
+        collisionEnvironment.id !== environment.id
+      ) {
+        await abortable(
+          collisionEnvironment.destroy(),
+          signal,
+        );
+      }
     }
     assert(
       collisionRejected,
@@ -168,14 +207,13 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     checked.push("fresh-environment");
 
     const expectedFile = Uint8Array.of(0, 1, 2, 255);
-    const operation = new AbortController();
     await environment.writeFile("/tmp/agent-provider-testkit.bin", expectedFile, {
       mode: 0o640,
-      signal: operation.signal,
+      signal,
     });
     const actualFile = await environment.readFile(
       "/tmp/agent-provider-testkit.bin",
-      { maxBytes: expectedFile.byteLength, signal: operation.signal },
+      { maxBytes: expectedFile.byteLength, signal },
     );
     assert(
       bytesEqual(actualFile, expectedFile),
@@ -186,7 +224,7 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     try {
       await environment.readFile("/tmp/agent-provider-testkit.bin", {
         maxBytes: expectedFile.byteLength - 1,
-        signal: operation.signal,
+        signal,
       });
     } catch {
       boundedReadRejected = true;
@@ -199,16 +237,21 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     checked.push("exact-file-roundtrip");
 
     const process = await environment.process.spawn(options.launch, {
-      signal: operation.signal,
+      signal,
     });
+    assert(
+      (await environment.process.list()).some((entry) => entry.pid === process.pid),
+      "spawned exact process must appear in process.list()",
+      checked,
+    );
     const stdout = (await collect(process.stdout())).join("");
     const stderr = (await collect(process.stderr())).join("");
-    const termination = await process.wait();
+    const termination = await abortable(process.wait(), signal);
     const status = await process.status();
     assert(!status.running, "exact process must reach a terminal status", checked);
     assert(status.termination, "terminal exact process status requires a reason", checked);
     assert(
-      JSON.stringify(status.termination) === JSON.stringify(termination),
+      terminationEqual(status.termination, termination),
       "wait() and status() termination reasons must match",
       checked,
     );
@@ -241,11 +284,18 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     );
     checked.push("exact-process-list");
 
-    await environment.destroy();
-    destroyed = true;
+    destroyAttempted = true;
+    await abortable(environment.destroy(), signal);
     assert(
       (await provider.exactProcess.get(environment.id)) === null,
       "destroyed exact environment must not be recoverable",
+      checked,
+    );
+    assert(
+      !(await provider.exactProcess.list({
+        metadata: options.createInput.metadata,
+      })).some((candidate) => candidate.id === environment.id),
+      "destroyed exact environment must disappear from list()",
       checked,
     );
     checked.push("exact-process-destroy");
@@ -257,7 +307,8 @@ export async function runAgentExactProcessProviderLifecycleChecks(
       checked,
     };
   } finally {
-    if (!destroyed) await environment.destroy();
+    clearTimeout(timeout);
+    if (!destroyAttempted) await environment.destroy();
   }
 }
 
@@ -299,6 +350,46 @@ function assert(value: unknown, message: string, checked: string[]): asserts val
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false;
   return left.every((byte, index) => byte === right[index]);
+}
+
+function terminationEqual(
+  left: AgentCandidateTermination,
+  right: AgentCandidateTermination,
+): boolean {
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+  const a = left as Record<string, unknown>;
+  const b = right as Record<string, unknown>;
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "exit":
+      return a.exitCode === b.exitCode;
+    case "timeout":
+      return a.timeoutMs === b.timeoutMs;
+    case "signal":
+      return a.signal === b.signal;
+    case "cancelled":
+      return true;
+    default:
+      return false;
+  }
+}
+
+async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason ?? new Error("operation aborted"));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 function isTerminalEvent(event: AgentEnvironmentEvent): boolean {

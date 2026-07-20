@@ -1,7 +1,6 @@
 import type {
   BackendType,
   CreateSandboxOptions,
-  ExactProcessAttestation,
   ExecResult as SandboxExecResult,
   PromptOptions,
   PromptResult,
@@ -30,11 +29,7 @@ import type {
   PlacementInfo,
   ResourceRequest,
 } from "@tangle-network/agent-interface/environment-provider";
-import type {
-  AgentCandidateTermination,
-  InputPart,
-  TokenUsage,
-} from "@tangle-network/agent-interface";
+import type { InputPart, TokenUsage } from "@tangle-network/agent-interface";
 import {
   createTangleExactProcessProvider,
   type TangleExactProcessOptions,
@@ -57,14 +52,12 @@ export interface SandboxProcessStatusLike {
   running: boolean;
   exitCode: number;
   exitSignal?: string;
-  termination?: AgentCandidateTermination;
 }
 
 export interface SandboxProcessLike {
   readonly pid: number;
   status(): Promise<SandboxProcessStatusLike>;
   wait(): Promise<number>;
-  waitForTermination(): Promise<AgentCandidateTermination>;
   kill(signal?: "SIGKILL", options?: { tree?: boolean }): Promise<void>;
   stdout(): AsyncIterable<string>;
   stderr(): AsyncIterable<string>;
@@ -92,8 +85,6 @@ export interface SandboxInstanceLike {
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
-  exactProcess?: ExactProcessAttestation;
-  teamId?: string;
   streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
   prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
   dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
@@ -103,14 +94,23 @@ export interface SandboxInstanceLike {
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
   fs?: {
     supportsWriteMode?: true;
-    readBytes(
-      path: string,
-      options: { maxBytes: number; signal?: AbortSignal },
-    ): Promise<Uint8Array>;
+    stat(path: string): Promise<{ size: number; isFile: boolean }>;
+    readBatch(
+      paths: string[],
+      options?: { encoding?: "utf8" | "base64" },
+    ): Promise<{
+      files: Array<{
+        path: string;
+        content: string;
+        encoding: "utf8" | "base64";
+        size: number;
+      }>;
+      errors: Array<{ path: string; error: string; code?: string }>;
+    }>;
     write(
       path: string,
       content: string,
-      options: { encoding: "base64"; mode: number; signal?: AbortSignal },
+      options: { encoding: "base64"; mode: number },
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
