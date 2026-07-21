@@ -97,6 +97,8 @@ export interface AgentExactProcessResources {
 /** Terminal or running state reported by an exact process host. */
 export interface AgentExactProcessStatus {
   pid: number;
+  /** Opaque launch identity when the process was started with one. */
+  idempotencyKey?: string;
   running: boolean;
   /** -1 while running; the exact process exit code after termination. */
   exitCode: number;
@@ -128,12 +130,33 @@ export interface AgentExactProcessLaunch {
   stdin?: string;
   /** Positive integer milliseconds, or zero to disable the process timeout. */
   timeoutMs: number;
+  /**
+   * Opaque, non-secret launch identity.
+   * Repeating the same key and identical launch returns the same process while
+   * its terminal record is retained; a changed launch with the same key fails.
+   */
+  idempotencyKey?: string;
+  /**
+   * Minimum terminal-record retention after exit.
+   * Valid only with {@link idempotencyKey}; providers fail before launch when
+   * they cannot honor it.
+   */
+  retentionMs?: number;
+}
+
+/** Select retained exact-process records by their stable launch identity. */
+export interface AgentExactProcessQuery {
+  idempotencyKey?: string;
 }
 
 export interface AgentExactProcessManager {
-  list(): Promise<AgentExactProcessStatus[]>;
+  /** Every supplied query field must match the returned process status exactly. */
+  list(query?: AgentExactProcessQuery): Promise<AgentExactProcessStatus[]>;
   get(pid: number): Promise<AgentExactProcess | null>;
-  /** Providers must honor the abort signal when supplied. */
+  /**
+   * Providers must honor the abort signal when supplied.
+   * A keyed launch returns a process whose status preserves that key.
+   */
   spawn(
     input: AgentExactProcessLaunch,
     options?: { signal?: AbortSignal },

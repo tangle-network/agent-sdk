@@ -141,6 +141,21 @@ export async function runAgentExactProcessProviderLifecycleChecks(
   );
   checked.push("exact-process-capability");
 
+  const processKey = options.launch.idempotencyKey;
+  assert(
+    typeof processKey === "string" && processKey.trim().length > 0,
+    "exact process lifecycle recovery requires launch.idempotencyKey",
+    checked,
+  );
+  const retentionMs = options.launch.retentionMs;
+  assert(
+    typeof retentionMs === "number" &&
+      Number.isSafeInteger(retentionMs) &&
+      retentionMs > 0,
+    "exact process lifecycle recovery requires a positive launch.retentionMs",
+    checked,
+  );
+
   const operation = new AbortController();
   const timeout = setTimeout(
     () => operation.abort(new Error("exact process lifecycle check timed out")),
@@ -244,11 +259,52 @@ export async function runAgentExactProcessProviderLifecycleChecks(
       "spawned exact process must appear in process.list()",
       checked,
     );
+    const keyed = await environment.process.list({ idempotencyKey: processKey });
+    assert(
+      keyed.length === 1 && keyed[0]?.pid === process.pid,
+      "exact process lookup by idempotency key must return only the launched process",
+      checked,
+    );
+    assert(
+      keyed[0]?.idempotencyKey === processKey,
+      "exact process lookup must preserve the idempotency key",
+      checked,
+    );
+    const repeatedProcess = await environment.process.spawn(options.launch, {
+      signal,
+    });
+    assert(
+      repeatedProcess.pid === process.pid,
+      "repeated exact process launch must return the existing process",
+      checked,
+    );
+    let launchCollisionRejected = false;
+    try {
+      await environment.process.spawn(
+        {
+          ...options.launch,
+          args: [...options.launch.args, "--different-launch"],
+        },
+        { signal },
+      );
+    } catch {
+      launchCollisionRejected = true;
+    }
+    assert(
+      launchCollisionRejected,
+      "reusing a process idempotency key with a different launch must fail",
+      checked,
+    );
     const stdout = (await collect(process.stdout())).join("");
     const stderr = (await collect(process.stderr())).join("");
     const termination = await abortable(process.wait(), signal);
     const status = await process.status();
     assert(!status.running, "exact process must reach a terminal status", checked);
+    assert(
+      status.idempotencyKey === processKey,
+      "terminal exact process status must preserve its idempotency key",
+      checked,
+    );
     assert(status.termination, "terminal exact process status requires a reason", checked);
     assert(
       terminationEqual(status.termination, termination),
@@ -258,12 +314,21 @@ export async function runAgentExactProcessProviderLifecycleChecks(
     assert(stdout === options.expectedStdout, "exact process stdout differs", checked);
     assert(stderr === options.expectedStderr, "exact process stderr differs", checked);
     await process.kill();
+    checked.push("exact-process-launch-idempotency");
     checked.push("exact-process-run");
 
     const recovered = await provider.exactProcess.get(environment.id);
     assert(recovered, "exact environment must be recoverable by id", checked);
     const recoveredProcess = await recovered.process.get(process.pid);
     assert(recoveredProcess, "exact process must be recoverable by pid", checked);
+    const recoveredByKey = await recovered.process.list({
+      idempotencyKey: processKey,
+    });
+    assert(
+      recoveredByKey.length === 1 && recoveredByKey[0]?.pid === process.pid,
+      "recovered environment must retain its exact process lookup by idempotency key",
+      checked,
+    );
     assert(
       (await collect(recoveredProcess.stdout())).join("") === options.expectedStdout,
       "recovered exact process stdout differs",

@@ -40,6 +40,8 @@ describe("runAgentExactProcessProviderLifecycleChecks", () => {
         cwd: "/tmp",
         env: {},
         timeoutMs: 1_000,
+        idempotencyKey: "execution-1-process",
+        retentionMs: 60_000,
       },
       expectedStdout: "ok",
       expectedStderr: "",
@@ -51,6 +53,7 @@ describe("runAgentExactProcessProviderLifecycleChecks", () => {
       "exact-process-idempotency-collision",
       "fresh-environment",
       "exact-file-roundtrip",
+      "exact-process-launch-idempotency",
       "exact-process-run",
       "exact-process-recovery",
       "exact-process-list",
@@ -138,9 +141,11 @@ function fakeExactProcessProvider(): AgentEnvironmentProvider {
         }
         let deleted = false;
         let spawned = false;
+        let launchFingerprint: string | undefined;
         const output = "ok";
         const status = {
           pid: 41,
+          idempotencyKey: undefined as string | undefined,
           running: false,
           exitCode: 0,
           termination: { kind: "exit" as const, exitCode: 0 },
@@ -160,9 +165,36 @@ function fakeExactProcessProvider(): AgentEnvironmentProvider {
           provider: "fake",
           metadata: input.metadata,
           process: {
-            list: async () => (deleted || !spawned ? [] : [status]),
+            list: async (query) =>
+              deleted ||
+              !spawned ||
+              (query?.idempotencyKey !== undefined &&
+                query.idempotencyKey !== status.idempotencyKey)
+                ? []
+                : [status],
             get: async (pid) => (!deleted && spawned && pid === process.pid ? process : null),
-            spawn: async () => {
+            spawn: async (launch) => {
+              if (!launch.idempotencyKey || !launch.retentionMs) {
+                throw new Error("missing exact process recovery fields");
+              }
+              const fingerprint = JSON.stringify({
+                executable: launch.executable,
+                args: launch.args,
+                cwd: launch.cwd,
+                env: launch.env,
+                stdin: launch.stdin,
+                timeoutMs: launch.timeoutMs,
+                idempotencyKey: launch.idempotencyKey,
+                retentionMs: launch.retentionMs,
+              });
+              if (
+                launchFingerprint !== undefined &&
+                launchFingerprint !== fingerprint
+              ) {
+                throw new Error("process idempotency collision");
+              }
+              launchFingerprint = fingerprint;
+              status.idempotencyKey = launch.idempotencyKey;
               spawned = true;
               return process;
             },
