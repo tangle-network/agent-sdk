@@ -13,7 +13,7 @@ function activation() {
     proposalDigest: sha("1"),
     reviewDigest: sha("2"),
     experimentDigest: sha("3"),
-    candidateBundleDigest: sha("4"),
+    candidateDigest: sha("4"),
     intent: "activate-candidate" as const,
     targets: [
       {

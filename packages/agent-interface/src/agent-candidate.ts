@@ -10,6 +10,7 @@ import type {
   ReasoningEffort,
 } from "./agent-profile.js";
 import type { HarnessType } from "./harness.js";
+import type { AgentImprovementSource } from "./agent-improvement-source.js";
 
 /** Full SHA-256 digest with an explicit algorithm prefix. */
 export type Sha256Digest = `sha256:${string}`;
@@ -796,11 +797,15 @@ export interface AgentCandidateExperimentMeasurement {
   candidate: CandidateExecutionEvidence;
 }
 
-/** Portable paired held-out comparison produced by an evaluation package. */
-export interface AgentImprovementMeasuredComparison {
-  kind: "agent-improvement-measured-comparison";
-  experiment: AgentCandidateExperiment;
-  measurements: AgentCandidateExperimentMeasurement[];
+/** Common measured result shared by sealed and normal-profile experiments. */
+export interface AgentImprovementMeasuredComparisonBase<
+  TExperiment,
+  TMeasurement,
+  TKind extends string,
+> {
+  kind: TKind;
+  experiment: TExperiment;
+  measurements: TMeasurement[];
   overall: {
     name: "composite";
     baseline: number;
@@ -909,13 +914,182 @@ export interface AgentImprovementMeasuredComparison {
   metadata?: { [key: string]: AgentCandidateJsonValue };
 }
 
+/** Portable paired held-out comparison produced by a sealed candidate executor. */
+export interface AgentImprovementMeasuredComparison
+  extends AgentImprovementMeasuredComparisonBase<
+    AgentCandidateExperiment,
+    AgentCandidateExperimentMeasurement,
+    "agent-improvement-measured-comparison"
+  > {}
+
+/** Profile surfaces whose changed values are safe to retain in a reviewable proposal. */
+export type AgentProfileImprovementSurface = "prompt" | "skills";
+
+/** One exact changed profile surface, separate from the credential-bearing full profile. */
+export type AgentProfileImprovementSurfaceValue =
+  | {
+      surface: "prompt";
+      value: { prompt: AgentProfile["prompt"] | null };
+      digest: Sha256Digest;
+    }
+  | {
+      surface: "skills";
+      value: AgentProfileResourceRef[] | null;
+      digest: Sha256Digest;
+    };
+
+/** An access-controlled evidence record emitted by a host-owned normal profile run. */
+export interface AgentProfileImprovementEvidence {
+  kind: string;
+  identity: string;
+  digest: Sha256Digest;
+}
+
+/** One profile task whose content and evaluator are frozen before either arm runs. */
+export interface AgentProfileImprovementTaskMaterial {
+  kind: "agent-profile-improvement-task";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  scenario: {
+    id: string;
+    kind: string;
+    digest: Sha256Digest;
+  };
+  grader: AgentCandidateBenchmarkGraderIdentity;
+}
+
+export interface AgentProfileImprovementTask extends AgentProfileImprovementTaskMaterial {
+  digest: Sha256Digest;
+}
+
+/** The full paired denominator for normal profile executions. */
+export interface AgentProfileImprovementSuiteMaterial {
+  kind: "agent-profile-improvement-suite";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  splitDigest: Sha256Digest;
+  taskDigests: [Sha256Digest, ...Sha256Digest[]];
+  reps: number;
+  /** Task-major, then repetition-major. */
+  seeds: [number, ...number[]];
+}
+
+export interface AgentProfileImprovementSuite extends AgentProfileImprovementSuiteMaterial {
+  digest: Sha256Digest;
+}
+
+export interface AgentProfileImprovementSuiteInputs {
+  suite: AgentProfileImprovementSuite;
+  tasks: [AgentProfileImprovementTask, ...AgentProfileImprovementTask[]];
+}
+
+/** Safe retained profile state; the full credential-bearing profile stays with its host. */
+export interface AgentProfileImprovementArm {
+  stateDigest: Sha256Digest;
+  surfaces: [AgentProfileImprovementSurfaceValue, ...AgentProfileImprovementSurfaceValue[]];
+}
+
+/** A normal paid profile comparison. Host credentials remain in the executor and never enter this record. */
+export interface AgentProfileImprovementExperimentMaterial {
+  kind: "agent-profile-improvement-experiment";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  source: AgentImprovementSource;
+  baseline: AgentProfileImprovementArm;
+  candidate: AgentProfileImprovementArm;
+  candidateLineage: AgentCandidateLineage;
+  benchmark: AgentProfileImprovementSuiteInputs;
+  policy: AgentCandidateEvaluationPolicy;
+}
+
+export interface AgentProfileImprovementExperiment
+  extends AgentProfileImprovementExperimentMaterial {
+  digest: Sha256Digest;
+}
+
+/** Exact identity for one normal-profile attempt in a frozen experiment. */
+export interface AgentProfileImprovementRunCellMaterial {
+  kind: "agent-profile-improvement-run-cell";
+  experimentDigest: Sha256Digest;
+  arm: "baseline" | "candidate";
+  stateDigest: Sha256Digest;
+  suiteDigest: Sha256Digest;
+  taskDigest: Sha256Digest;
+  taskIndex: number;
+  repetition: number;
+  seed: number;
+}
+
+export interface AgentProfileImprovementRunCell
+  extends AgentProfileImprovementRunCellMaterial {
+  digest: Sha256Digest;
+}
+
+/** Verifiable output from one normal paid profile execution and its frozen evaluator. */
+export interface AgentProfileImprovementRunReceipt {
+  kind: "agent-profile-improvement-run";
+  digestAlgorithm: AgentCandidateDigestAlgorithm;
+  executionId: string;
+  runCell: AgentProfileImprovementRunCell;
+  runRecord: AgentProfileImprovementEvidence;
+  billing: [AgentProfileImprovementEvidence, ...AgentProfileImprovementEvidence[]];
+  timing: {
+    startedAtMs: number;
+    endedAtMs: number;
+    durationMs: number;
+  };
+  resolvedModel: string;
+  usage: AgentCandidateFixedSpend;
+  trace: {
+    evidence: AgentProfileImprovementEvidence;
+    eventCount: number;
+    modelCallCount: number;
+  };
+  output: AgentProfileImprovementEvidence;
+  outcome:
+    | { status: "succeeded" }
+    | { status: "failed"; code: string; message: string };
+  grading: {
+    grader: AgentCandidateBenchmarkGraderIdentity;
+    evidence: AgentProfileImprovementEvidence;
+    timing: {
+      startedAtMs: number;
+      endedAtMs: number;
+      durationMs: number;
+    };
+    usage: AgentCandidateFixedSpend;
+    score: number;
+    passed: boolean;
+    dimensions: AgentCandidateBenchmarkDimension[];
+  };
+  digest: Sha256Digest;
+}
+
+/** One paired normal-profile result from the exact same task, seed, and evaluator. */
+export interface AgentProfileImprovementMeasurement {
+  baseline: AgentProfileImprovementRunReceipt;
+  candidate: AgentProfileImprovementRunReceipt;
+}
+
+/** Portable paired comparison from normal paid profile executions. */
+export interface AgentProfileImprovementMeasuredComparison
+  extends AgentImprovementMeasuredComparisonBase<
+    AgentProfileImprovementExperiment,
+    AgentProfileImprovementMeasurement,
+    "agent-profile-improvement-measured-comparison"
+  > {
+  kind: "agent-profile-improvement-measured-comparison";
+}
+
+/** A reviewable measured result can come from a sealed executor or a normal profile executor. */
+export type AgentImprovementEvaluation =
+  | AgentImprovementMeasuredComparison
+  | AgentProfileImprovementMeasuredComparison;
+
 export interface AgentImprovementProposal {
   kind: "agent-improvement-proposal";
   runId: string;
   changedSurfaces: [AgentImprovementSurface, ...AgentImprovementSurface[]];
   proposedAt: string;
   findings: { [key: string]: AgentCandidateJsonValue }[];
-  evaluation: AgentImprovementMeasuredComparison;
+  evaluation: AgentImprovementEvaluation;
   digest: Sha256Digest;
 }
 
@@ -954,7 +1128,8 @@ export interface AgentImprovementActivation {
   proposalDigest: Sha256Digest;
   reviewDigest: Sha256Digest;
   experimentDigest: Sha256Digest;
-  candidateBundleDigest: Sha256Digest;
+  /** Exact proposed state, whether it is a sealed bundle or a normal profile. */
+  candidateDigest: Sha256Digest;
   intent: AgentImprovementActivationIntent;
   targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];
   fundingOwner: string;

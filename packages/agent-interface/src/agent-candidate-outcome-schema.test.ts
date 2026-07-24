@@ -1114,7 +1114,7 @@ describe("candidate outcome contracts", () => {
     expect(
       agentImprovementReviewSchema.safeParse({
         ...review,
-        candidateBundleDigest: candidateBundle.digest,
+        candidateDigest: candidateBundle.digest,
       }).success,
     ).toBe(false);
 
