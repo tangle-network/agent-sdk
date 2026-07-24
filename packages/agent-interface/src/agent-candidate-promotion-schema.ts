@@ -15,7 +15,6 @@ import { agentCandidateBenchmarkSuiteInputsSchema } from "./agent-candidate-task
 import {
   canonicalCandidateDigest,
   isCanonicalJsonValue,
-  omitTopLevelDigest,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import {
@@ -433,7 +432,7 @@ export const agentImprovementProposalSchema = z
       ),
     proposedAt: z.iso.datetime(),
     findings: z.array(canonicalJsonObjectSchema),
-    evaluation: z.union([
+    evaluation: z.discriminatedUnion("kind", [
       agentImprovementMeasuredComparisonSchema,
       agentProfileImprovementMeasuredComparisonSchema,
     ]),
@@ -472,7 +471,7 @@ export const agentImprovementProposalSchema = z
       }
     } else {
       const changed = changedProfileImprovementSurfaces(proposal.evaluation.experiment.change);
-      if (JSON.stringify(proposal.changedSurfaces) !== JSON.stringify(changed)) {
+      if (!sameSurfaces(proposal.changedSurfaces, changed)) {
         ctx.addIssue({
           code: "custom",
           path: ["changedSurfaces"],
@@ -488,6 +487,9 @@ export const agentImprovementProposalSchema = z
     }
   }) satisfies z.ZodType<AgentImprovementProposal>;
 
+function sameSurfaces(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((surface) => right.includes(surface));
+}
 
 function executionCostUsd(evidence: CandidateExecutionEvidence): number {
   return (

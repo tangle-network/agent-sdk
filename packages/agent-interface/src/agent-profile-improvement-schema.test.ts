@@ -401,6 +401,51 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     expect(agentImprovementProposalSchema.safeParse(input).success).toBe(false);
   });
 
+  it("accepts a multi-surface proposal regardless of display order", () => {
+    const { comparison, proposal } = fixture();
+    const experiment = resign({
+      ...comparison.experiment,
+      change: [
+        {
+          kind: "agent-profile-diff" as const,
+          id: "add-source-and-uncertainty",
+          source: { kind: "optimizer" as const, artifacts: ["traces://run/intelligence-run-1"] },
+          set: {
+            prompt: {
+              systemPrompt: "Answer directly, cite the source, and state uncertainty.",
+            },
+            resources: {
+              skills: [
+                {
+                  kind: "inline" as const,
+                  name: "support-policy",
+                  content: "Cite the applicable policy and state uncertainty.",
+                },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    const measurements = comparison.measurements.map(({ baseline, candidate }) => {
+      const rebind = (receipt: typeof baseline) =>
+        resign({
+          ...receipt,
+          runCell: resign({ ...receipt.runCell, experimentDigest: experiment.digest }),
+        });
+      return { baseline: rebind(baseline), candidate: rebind(candidate) };
+    });
+    const evaluation = { ...comparison, experiment, measurements };
+    const { digest: _digest, ...material } = proposal;
+    const reordered = signed({
+      ...material,
+      changedSurfaces: ["skills", "prompt"] as ["skills", "prompt"],
+      evaluation,
+    });
+
+    expect(agentImprovementProposalSchema.parse(reordered)).toEqual(reordered);
+  });
+
   it("rejects a run that changes the frozen model snapshot", () => {
     const { comparison } = fixture();
     const candidate = resign({

@@ -5,6 +5,8 @@ import type {
   AgentProfileImprovementMeasuredComparison,
   AgentProfileImprovementMeasurement,
   AgentProfileImprovementRunReceipt,
+  AgentProfileImprovementRunCell,
+  AgentProfileImprovementSuite,
   AgentProfileImprovementSuiteInputs,
   AgentProfileImprovementTask,
 } from "./agent-profile-improvement.js";
@@ -82,7 +84,7 @@ export const agentProfileImprovementSuiteSchema = z
         message: "profile improvement suite digest is invalid",
       });
     }
-  });
+  }) satisfies z.ZodType<AgentProfileImprovementSuite>;
 
 export const agentProfileImprovementSuiteInputsSchema = z
   .object({
@@ -300,7 +302,7 @@ export const agentProfileImprovementRunCellSchema = z
         message: "profile improvement run cell digest is invalid",
       });
     }
-  });
+  }) satisfies z.ZodType<AgentProfileImprovementRunCell>;
 
 const timingSchema = z
   .object({
