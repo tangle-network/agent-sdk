@@ -388,11 +388,21 @@ function executionEvidence(
   repetition = 0,
 ) {
   const identityDigit = arm === "baseline" ? String(repetition + 1) : String(repetition + 4);
-  const receipt = runReceipt({
+  const capturedReceipt = runReceipt({
     bundleDigest: bundle.digest,
     score,
     identityDigit,
   });
+  const receipt = {
+    ...capturedReceipt,
+    benchmarkResult: {
+      ...capturedReceipt.benchmarkResult,
+      material: {
+        ...capturedReceipt.benchmarkResult.material,
+        dimensions: [{ name: "quality", score }],
+      },
+    },
+  };
   const executionId = `${arm}-execution-${repetition + 1}`;
   const materialization = materializationReceipt(receipt, {
     executionId,
@@ -1114,7 +1124,7 @@ describe("candidate outcome contracts", () => {
     expect(
       agentImprovementReviewSchema.safeParse({
         ...review,
-        candidateBundleDigest: candidateBundle.digest,
+        candidateDigest: candidateBundle.digest,
       }).success,
     ).toBe(false);
 
