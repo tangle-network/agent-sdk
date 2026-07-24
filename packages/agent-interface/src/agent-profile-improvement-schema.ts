@@ -27,6 +27,7 @@ import {
 } from "./agent-candidate-outcome-schema.js";
 import {
   agentCandidateEvaluationPolicySchema,
+  createMeasuredComparisonIdentityRegistry,
   measuredComparisonCommonShape,
   refineMeasuredComparisonSummary,
 } from "./agent-improvement-measurement-schema.js";
@@ -484,13 +485,10 @@ function refineProfileImprovementComparison(
     });
   }
 
-  const identities = {
-    execution: new Set<string>(),
-    runCell: new Set<string>(),
-    receipt: new Set<string>(),
-    runRecord: new Set<string>(),
-    billing: new Set<string>(),
-  };
+  const recordProfileIdentities = createMeasuredComparisonIdentityRegistry({
+    ctx,
+    identityLabel: "profile measurements",
+  });
   const expectedDimensions = measurementDimensionNames(comparison.measurements[0]);
   for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
     const task = tasks[taskIndex];
@@ -556,35 +554,20 @@ function refineProfileImprovementComparison(
         for (const [valid, path, message] of checks) {
           if (!valid) ctx.addIssue({ code: "custom", path, message });
         }
-        const identitiesForRun = {
-          execution: receipt.executionId,
-          runCell: cell.digest,
-          receipt: receipt.digest,
-          runRecord: evidenceKey(receipt.runRecord),
-        };
-        for (const [kind, identity] of Object.entries(identitiesForRun) as Array<
-          [keyof typeof identities, string]
-        >) {
-          if (identities[kind].has(identity)) {
-            ctx.addIssue({
-              code: "custom",
-              path: armPath,
-              message: `profile measurements must not reuse ${kind} identity`,
-            });
-          }
-          identities[kind].add(identity);
-        }
-        for (const billing of receipt.billing) {
-          const identity = evidenceKey(billing);
-          if (identities.billing.has(identity)) {
-            ctx.addIssue({
-              code: "custom",
+        recordProfileIdentities(
+          [
+            { kind: "execution", value: receipt.executionId },
+            { kind: "runCell", value: cell.digest },
+            { kind: "receipt", value: receipt.digest },
+            { kind: "runRecord", value: evidenceKey(receipt.runRecord) },
+            ...receipt.billing.map((billing) => ({
+              kind: "billing",
+              value: evidenceKey(billing),
               path: [...armPath, "billing"],
-              message: "profile measurements must not reuse billing evidence",
-            });
-          }
-          identities.billing.add(identity);
-        }
+            })),
+          ],
+          armPath,
+        );
       }
       if (
         measurement.baseline.executionId === measurement.candidate.executionId ||

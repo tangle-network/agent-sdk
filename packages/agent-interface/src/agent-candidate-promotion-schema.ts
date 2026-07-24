@@ -25,6 +25,7 @@ import {
 import {
   agentCandidateEvaluationPolicySchema,
   canonicalJsonObjectSchema,
+  createMeasuredComparisonIdentityRegistry,
   measuredComparisonCommonShape,
   refineMeasuredComparisonSummary,
 } from "./agent-improvement-measurement-schema.js";
@@ -182,13 +183,10 @@ export const agentImprovementMeasuredComparisonSchema = z
         message: "measured comparison must contain every signed benchmark cell",
       });
     }
-    const executionIdentities = {
-      execution: new Set<string>(),
-      runCell: new Set<string>(),
-      materialization: new Set<string>(),
-      receipt: new Set<string>(),
-      evidence: new Set<string>(),
-    };
+    const recordExecutionIdentities = createMeasuredComparisonIdentityRegistry({
+      ctx,
+      identityLabel: "measured executions",
+    });
     for (let taskIndex = 0; taskIndex < suite.taskDigests.length; taskIndex += 1) {
       const task = tasks[taskIndex];
       if (!task) continue;
@@ -384,25 +382,16 @@ export const agentImprovementMeasuredComparisonSchema = z
           for (const [valid, path, message] of checks) {
             if (!valid) ctx.addIssue({ code: "custom", path, message });
           }
-          const identitiesForRun = {
-            execution: plan.material.executionId,
-            runCell: runCell.digest,
-            materialization: materialization.digest,
-            receipt: evidence.receipt.digest,
-            evidence: evidence.digest,
-          };
-          for (const [kind, identity] of Object.entries(identitiesForRun) as Array<
-            [keyof typeof executionIdentities, string]
-          >) {
-            if (executionIdentities[kind].has(identity)) {
-              ctx.addIssue({
-                code: "custom",
-                path: armPath,
-                message: `measured executions must not reuse ${kind} identity`,
-              });
-            }
-            executionIdentities[kind].add(identity);
-          }
+          recordExecutionIdentities(
+            [
+              { kind: "execution", value: plan.material.executionId },
+              { kind: "runCell", value: runCell.digest },
+              { kind: "materialization", value: materialization.digest },
+              { kind: "receipt", value: evidence.receipt.digest },
+              { kind: "evidence", value: evidence.digest },
+            ],
+            armPath,
+          );
         }
       }
     }

@@ -455,6 +455,23 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
   });
 
+  it("rejects billing evidence reused across measured arms", () => {
+    const { comparison } = fixture();
+    const candidate = resign({
+      ...comparison.measurements[0]!.candidate,
+      billing: comparison.measurements[0]!.baseline.billing,
+    });
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
   it("rejects a reported dimension mean that does not equal the signed receipts", () => {
     const { comparison } = fixture();
     const input = {

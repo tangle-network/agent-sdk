@@ -196,6 +196,37 @@ type MeasuredComparison = Pick<
   "overall" | "objectives" | "power" | "evaluation"
 >;
 
+interface MeasuredComparisonIdentity {
+  kind: string;
+  value: string;
+  path?: (string | number)[];
+}
+
+/** Keep receipt identity reuse rules identical across measured source formats. */
+export function createMeasuredComparisonIdentityRegistry(options: {
+  ctx: z.RefinementCtx;
+  identityLabel: string;
+}): (
+  identities: readonly MeasuredComparisonIdentity[],
+  fallbackPath: (string | number)[],
+) => void {
+  const seen = new Map<string, Set<string>>();
+  return (identities, fallbackPath) => {
+    for (const identity of identities) {
+      const used = seen.get(identity.kind) ?? new Set<string>();
+      if (used.has(identity.value)) {
+        options.ctx.addIssue({
+          code: "custom",
+          path: identity.path ?? fallbackPath,
+          message: `${options.identityLabel} must not reuse ${identity.kind} identity`,
+        });
+      }
+      used.add(identity.value);
+      seen.set(identity.kind, used);
+    }
+  };
+}
+
 export function refineMeasuredComparisonSummary<TReceipt>(
   comparison: MeasuredComparison,
   policy: Pick<AgentCandidateEvaluationPolicy, "confidenceLevel" | "resamples">,
