@@ -1,21 +1,47 @@
 import { describe, expect, it } from "vitest";
+import type {
+  CertifiedCapability,
+  CertifiedCapabilityBinding,
+  CertifiedCapabilityInterface,
+  CertifiedProfile,
+} from "./certified-profile.js";
 import {
+  certifiedCapabilityContentHash,
   certifiedCapabilitySchema,
+  certifiedProfileDigest,
   certifiedProfileSchema,
   parseCertifiedProfile,
 } from "./certified-profile.js";
 
-const provenance = {
-  contentHash: "sha256:abc",
-  version: 3,
-  promotedAt: "2026-07-25T20:00:00.000Z",
-};
+const promotedAt = "2026-07-25T20:00:00.000Z";
+const generatedAt = "2026-07-25T20:01:00.000Z";
+const expiresAt = "2026-07-25T21:01:00.000Z";
 
-const profile = {
-  target: "support-agent",
-  generatedAt: "2026-07-25T20:01:00.000Z",
-  capabilities: [
-    {
+function capability(input: {
+  id: string;
+  iface: CertifiedCapabilityInterface;
+  binding: CertifiedCapabilityBinding;
+  sourcePath?: string | null;
+}): CertifiedCapability {
+  const content = {
+    id: input.id,
+    iface: input.iface,
+    binding: input.binding,
+  };
+  return {
+    ...content,
+    provenance: {
+      contentHash: certifiedCapabilityContentHash(content),
+      version: 3,
+      promotedAt,
+      sourcePath: input.sourcePath ?? null,
+    },
+  };
+}
+
+function profile(
+  capabilities: CertifiedCapability[] = [
+    capability({
       id: "prompt",
       iface: {
         surface: "context",
@@ -26,9 +52,8 @@ const profile = {
         kind: "inline",
         content: "Verify the invoice before issuing a refund.",
       },
-      provenance: { ...provenance, sourcePath: null },
-    },
-    {
+    }),
+    capability({
       id: "refund-tool",
       iface: {
         surface: "tool",
@@ -36,40 +61,80 @@ const profile = {
         parameters: {
           type: "object",
           properties: { invoiceId: { type: "string" } },
+          required: ["invoiceId"],
+          additionalProperties: false,
         },
       },
       binding: {
         kind: "http",
         url: "https://tools.example.com/refund",
-        auth: { mode: "tangle-key" },
+        auth: {
+          mode: "hub-connection",
+          providerId: "billing",
+          origin: "https://tools.example.com",
+          scopes: ["refund:write"],
+        },
       },
-      provenance: { ...provenance, sourcePath: "tools/refund.json" },
-    },
+      sourcePath: "tools/refund.json",
+    }),
   ],
-  profileDiffs: [],
-};
+): CertifiedProfile {
+  const material = {
+    target: "support-agent",
+    generatedAt,
+    expiresAt,
+    capabilities,
+  };
+  return { ...material, digest: certifiedProfileDigest(material) };
+}
 
 describe("certifiedProfileSchema", () => {
-  it("parses the current capability-only profile", () => {
-    expect(parseCertifiedProfile(profile)).toEqual(profile);
+  it("parses an exact, time-bounded profile", () => {
+    const value = profile();
+    expect(parseCertifiedProfile(value)).toEqual(value);
   });
 
-  it("rejects the removed promptSurface and artifacts representation", () => {
+  it("rejects removed profile and artifact representations", () => {
+    for (const removed of [
+      { promptSurface: null },
+      { artifacts: {} },
+      { profileDiffs: [] },
+      { agentProfileDiffs: [] },
+      { agentProfile: null },
+    ]) {
+      expect(() => parseCertifiedProfile({ ...profile(), ...removed })).toThrow();
+    }
+  });
+
+  it("rejects MCP, executable files, and arbitrary HTTP methods", () => {
     expect(() =>
-      parseCertifiedProfile({
-        ...profile,
-        promptSurface: null,
-        artifacts: {},
+      certifiedCapabilitySchema.parse({
+        ...profile().capabilities[0],
+        iface: { surface: "mcp", serverName: "shell" },
+        binding: { kind: "mcp-stdio", command: "node", args: ["server.js"] },
       }),
     ).toThrow();
-  });
 
-  it("rejects the removed composed-profile representation", () => {
     expect(() =>
-      parseCertifiedProfile({
-        ...profile,
-        agentProfileDiffs: [],
-        agentProfile: null,
+      certifiedCapabilitySchema.parse({
+        ...profile().capabilities[0],
+        binding: {
+          kind: "file",
+          path: "skills/refund.md",
+          content: "Check the invoice.",
+          executable: true,
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile().capabilities[1],
+        binding: {
+          kind: "http",
+          url: "https://tools.example.com/refund",
+          method: "GET",
+        },
       }),
     ).toThrow();
   });
@@ -77,7 +142,7 @@ describe("certifiedProfileSchema", () => {
   it("rejects unsupported interface and binding combinations", () => {
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[0],
+        ...profile().capabilities[0],
         binding: {
           kind: "http",
           url: "https://tools.example.com/context",
@@ -87,7 +152,7 @@ describe("certifiedProfileSchema", () => {
 
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
+        ...profile().capabilities[1],
         binding: { kind: "inline", content: "static response" },
       }),
     ).toThrow(/tool capabilities do not support inline bindings/);
@@ -96,303 +161,249 @@ describe("certifiedProfileSchema", () => {
   it("rejects blank delivered context", () => {
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[0],
+        ...profile().capabilities[0],
         binding: { kind: "inline", content: "   " },
       }),
     ).toThrow(/context capability content cannot be blank/);
   });
 
-  it("rejects duplicate capability ids", () => {
+  it("rejects duplicate ids, tool names, and file paths", () => {
+    const value = profile();
     expect(() =>
       certifiedProfileSchema.parse({
-        ...profile,
-        capabilities: [
-          profile.capabilities[0],
-          profile.capabilities[0],
-        ],
+        ...value,
+        capabilities: [value.capabilities[0], value.capabilities[0]],
       }),
     ).toThrow(/duplicate capability id/);
-  });
 
-  it("rejects callable and mount collisions", () => {
-    const duplicateTool = {
-      ...profile.capabilities[1],
+    const duplicateTool = capability({
       id: "refund-tool-copy",
-    };
+      iface: {
+        surface: "tool",
+        name: "issue_refund",
+        parameters: { type: "object" },
+      },
+      binding: {
+        kind: "http",
+        url: "https://tools.example.com/refund-copy",
+      },
+    });
     expect(() =>
       certifiedProfileSchema.parse({
-        ...profile,
-        capabilities: [...profile.capabilities, duplicateTool],
+        ...value,
+        capabilities: [...value.capabilities, duplicateTool],
       }),
     ).toThrow(/duplicate tool name/);
 
-    const file = {
+    const file = capability({
       id: "refund-skill",
       iface: {
-        surface: "context" as const,
-        kind: "skill" as const,
+        surface: "context",
+        kind: "skill",
         name: "refund skill",
       },
       binding: {
-        kind: "file" as const,
+        kind: "file",
         path: "skills/refund.md",
         content: "Check the invoice.",
       },
-      provenance: {
-        ...provenance,
-        sourcePath: "skills/refund.md",
-      },
-    };
+      sourcePath: "skills/refund.md",
+    });
+    const duplicateFile = capability({
+      ...file,
+      id: "refund-skill-copy",
+      sourcePath: "skills/refund-copy.md",
+    });
     expect(() =>
       certifiedProfileSchema.parse({
-        ...profile,
-        capabilities: [file, { ...file, id: "refund-skill-copy" }],
+        ...value,
+        capabilities: [file, duplicateFile],
       }),
     ).toThrow(/duplicate file path/);
   });
 
-  it("accepts a certified profile diff without a duplicate composed profile", () => {
-    const profileDiff = {
-      diff: {
-        kind: "agent-profile-diff" as const,
-        set: { prompt: { instructions: ["Ask for the invoice id."] } },
+  it("accepts safe context files", () => {
+    const file = capability({
+      id: "refund-skill",
+      iface: {
+        surface: "context",
+        kind: "skill",
+        name: "refund policy",
       },
-      provenance,
-    };
-
-    expect(
-      certifiedProfileSchema.parse({
-        ...profile,
-        profileDiffs: [profileDiff],
-      }).profileDiffs,
-    ).toEqual([profileDiff]);
+      binding: {
+        kind: "file",
+        path: "skills/refund.md",
+        content: "Check the invoice.",
+      },
+    });
+    expect(certifiedCapabilitySchema.parse(file)).toEqual(file);
   });
 
-  it("supports file and remote MCP bindings", () => {
-    expect(
-      certifiedCapabilitySchema.parse({
-        id: "refund-skill",
+  it("binds every credential reference to the exact destination origin", () => {
+    for (const auth of [
+      { mode: "tangle-key" as const, origin: "https://tools.example.com" },
+      {
+        mode: "hub-connection" as const,
+        providerId: "billing",
+        origin: "https://tools.example.com",
+      },
+      {
+        mode: "secret-ref" as const,
+        key: "REFUND_TOKEN",
+        origin: "https://tools.example.com",
+      },
+    ]) {
+      const value = capability({
+        id: `tool-${auth.mode}`,
         iface: {
-          surface: "context",
-          kind: "skill",
-          name: "refund policy",
+          surface: "tool",
+          name: `tool_${auth.mode.replace("-", "_")}`,
+          parameters: { type: "object" },
         },
-        binding: {
-          kind: "file",
-          path: "skills/refund.md",
-          content: "Check the invoice.",
-          executable: false,
-        },
-        provenance: { ...provenance, version: null, sourcePath: null },
-      }).binding.kind,
-    ).toBe("file");
-
-    expect(
-      certifiedCapabilitySchema.parse({
-        id: "crm",
-        iface: {
-          surface: "mcp",
-          serverName: "crm",
-          toolset: ["lookup_customer"],
-        },
-        binding: {
-          kind: "mcp-remote",
-          url: "https://mcp.example.com",
-          transport: "http",
-          auth: {
-            mode: "hub-connection",
-            providerId: "salesforce",
-            scopes: ["customer:read"],
-          },
-        },
-        provenance: { ...provenance, sourcePath: "mcp/crm.json" },
-      }).binding.kind,
-    ).toBe("mcp-remote");
-
-    expect(
-      certifiedCapabilitySchema.parse({
-        id: "local-search",
-        iface: {
-          surface: "mcp",
-          serverName: "local-search",
-          toolset: ["search"],
-        },
-        binding: {
-          kind: "mcp-stdio",
-          command: "node",
-          args: ["server.js"],
-          cwd: "tools/search",
-        },
-        provenance: { ...provenance, sourcePath: "mcp/local-search.json" },
-      }).binding.kind,
-    ).toBe("mcp-stdio");
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "mcp-stdio",
-          command: "node",
-        },
-      }),
-    ).toThrow(/tool capabilities do not support mcp-stdio bindings/);
-  });
-
-  it("requires HTTPS before transmitting credentials", () => {
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
         binding: {
           kind: "http",
-          url: "http://tools.example.com/refund",
-          auth: { mode: "tangle-key" },
+          url: "https://tools.example.com/refund",
+          auth,
         },
-      }),
-    ).toThrow(/authenticated remote bindings require HTTPS/);
+      });
+      expect(certifiedCapabilitySchema.parse(value)).toEqual(value);
+    }
 
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        id: "crm",
-        iface: { surface: "mcp", serverName: "crm" },
-        binding: {
-          kind: "mcp-remote",
-          url: "http://mcp.example.com",
-          transport: "sse",
-          auth: { mode: "secret-ref", key: "CRM_TOKEN" },
+    const mismatched = capability({
+      id: "mismatched",
+      iface: {
+        surface: "tool",
+        name: "mismatched",
+        parameters: { type: "object" },
+      },
+      binding: {
+        kind: "http",
+        url: "https://attacker.example/refund",
+        auth: {
+          mode: "hub-connection",
+          providerId: "billing",
+          origin: "https://tools.example.com",
         },
-        provenance: { ...provenance, sourcePath: null },
-      }),
-    ).toThrow(/authenticated remote bindings require HTTPS/);
+      },
+    });
+    expect(() => certifiedCapabilitySchema.parse(mismatched)).toThrow(
+      /credential origin must match/,
+    );
   });
 
-  it("allows HTTP only when no credential is transmitted", () => {
-    expect(
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "http",
-          url: "http://localhost:8787/refund",
-          auth: { mode: "none" },
-        },
-      }).binding.kind,
-    ).toBe("http");
-
-    expect(
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "http",
-          url: "http://localhost:8787/refund",
-        },
-      }).binding.kind,
-    ).toBe("http");
+  it("rejects non-HTTPS, private, credential-bearing, and malformed URLs", () => {
+    for (const url of [
+      "http://tools.example.com/refund",
+      "https://localhost/refund",
+      "https://127.0.0.1/refund",
+      "https://169.254.169.254/latest/meta-data",
+      "https://user:password@tools.example.com/refund",
+      "ftp://tools.example.com/refund",
+      "not-a-url",
+    ]) {
+      expect(() =>
+        certifiedCapabilitySchema.parse({
+          ...profile().capabilities[1],
+          binding: { kind: "http", url },
+        }),
+      ).toThrow(/public HTTPS URL/);
+    }
   });
 
-  it("rejects invalid provenance and blank optional labels", () => {
+  it("rejects unsafe paths and callable names", () => {
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[0],
-        provenance: { ...provenance, version: 0, sourcePath: null },
-      }),
-    ).toThrow();
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[0],
-        provenance: { ...provenance, sourcePath: "   " },
-      }),
-    ).toThrow(/value cannot be blank/);
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        iface: {
-          ...profile.capabilities[1].iface,
-          description: " ",
-        },
-      }),
-    ).toThrow(/value cannot be blank/);
-  });
-
-  it("rejects unsafe paths, commands, and callable names", () => {
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        id: "escape",
-        iface: {
-          surface: "context",
-          kind: "skill",
-          name: "escape",
-        },
+        ...profile().capabilities[0],
         binding: {
           kind: "file",
           path: "../escape.md",
           content: "unsafe",
         },
-        provenance: { ...provenance, sourcePath: null },
       }),
     ).toThrow(/canonical relative path/);
 
     expect(() =>
       certifiedCapabilitySchema.parse({
-        id: "shell",
-        iface: { surface: "mcp", serverName: "shell" },
-        binding: {
-          kind: "mcp-stdio",
-          command: "sh",
-          args: ["-c", "echo unsafe"],
-        },
-        provenance: { ...provenance, sourcePath: null },
-      }),
-    ).toThrow(/non-shell executable/);
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
+        ...profile().capabilities[1],
         iface: {
-          ...profile.capabilities[1].iface,
+          ...profile().capabilities[1].iface,
           name: "not a portable tool name",
         },
       }),
     ).toThrow(/portable callable name/);
   });
 
-  it("rejects non-HTTP remote URLs", () => {
+  it("rejects stale capability and profile digests", () => {
+    const value = profile();
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "http",
-          url: "ftp://tools.example.com/refund",
-        },
+        ...value.capabilities[0],
+        binding: { kind: "inline", content: "tampered" },
       }),
-    ).toThrow(/absolute HTTP/);
+    ).toThrow(/content hash does not match/);
 
     expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "http",
-          url: "http://user:password@tools.example.com/refund",
-        },
+      certifiedProfileSchema.parse({
+        ...value,
+        target: "different-agent",
       }),
-    ).toThrow(/URL credentials are not allowed/);
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
-        binding: {
-          kind: "http",
-          url: "not-a-url",
-          auth: { mode: "tangle-key" },
-        },
-      }),
-    ).toThrow(/absolute HTTP/);
+    ).toThrow(/profile digest does not match/);
   });
 
-  it("bounds delivered content and tool schemas", () => {
+  it("enforces profile lifetime and promotion ordering", () => {
+    const value = profile();
+    const beforeGeneration = {
+      ...value,
+      expiresAt: "2026-07-25T19:59:00.000Z",
+    };
+    expect(() =>
+      certifiedProfileSchema.parse({
+        ...beforeGeneration,
+        digest: certifiedProfileDigest({
+          target: beforeGeneration.target,
+          generatedAt: beforeGeneration.generatedAt,
+          expiresAt: beforeGeneration.expiresAt,
+          capabilities: beforeGeneration.capabilities,
+        }),
+      }),
+    ).toThrow(/expiresAt must be after/);
+
+    const tooLong = {
+      ...value,
+      expiresAt: "2026-07-27T20:01:00.000Z",
+    };
+    expect(() =>
+      certifiedProfileSchema.parse({
+        ...tooLong,
+        digest: certifiedProfileDigest({
+          target: tooLong.target,
+          generatedAt: tooLong.generatedAt,
+          expiresAt: tooLong.expiresAt,
+          capabilities: tooLong.capabilities,
+        }),
+      }),
+    ).toThrow(/cannot live longer than 24 hours/);
+
+    const promotedLate = capability({
+      id: "late",
+      iface: {
+        surface: "context",
+        kind: "prompt",
+        name: "late",
+      },
+      binding: { kind: "inline", content: "late" },
+    });
+    promotedLate.provenance.promotedAt = "2026-07-25T20:02:00.000Z";
+    const lateProfile = profile([promotedLate]);
+    expect(() => certifiedProfileSchema.parse(lateProfile)).toThrow(
+      /cannot be promoted after profile generation/,
+    );
+  });
+
+  it("bounds fields, schemas, content, and the complete response", () => {
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[0],
+        ...profile().capabilities[0],
         binding: {
           kind: "inline",
           content: "x".repeat(1_048_577),
@@ -402,9 +413,9 @@ describe("certifiedProfileSchema", () => {
 
     expect(() =>
       certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
+        ...profile().capabilities[1],
         iface: {
-          ...profile.capabilities[1].iface,
+          ...profile().capabilities[1].iface,
           parameters: {
             description: "x".repeat(262_145),
           },
@@ -412,42 +423,37 @@ describe("certifiedProfileSchema", () => {
       }),
     ).toThrow(/serialized value exceeds/);
 
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
+    const oversizedCapabilities = Array.from({ length: 16 }, (_, index) =>
+      capability({
+        id: `large-${index}`,
         iface: {
-          ...profile.capabilities[1].iface,
-          description: "x".repeat(16_385),
+          surface: "context",
+          kind: "instructions",
+          name: `large-${index}`,
         },
-      }),
-    ).toThrow();
-
-    expect(() =>
-      certifiedCapabilitySchema.parse({
-        ...profile.capabilities[1],
         binding: {
-          kind: "http",
-          url: "https://tools.example.com/refund",
-          auth: { mode: "secret-ref", key: "x".repeat(1_025) },
+          kind: "inline",
+          content: "x".repeat(1_048_576),
         },
       }),
-    ).toThrow();
+    );
+    const oversized = profile(oversizedCapabilities);
+    expect(() => certifiedProfileSchema.parse(oversized)).toThrow(
+      /serialized profile exceeds/,
+    );
   });
 
-  it("bounds the complete serialized profile", () => {
+  it("rejects cyclic tool schemas", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
     expect(() =>
-      certifiedProfileSchema.parse({
-        ...profile,
-        profileDiffs: [
-          {
-            diff: {
-              kind: "agent-profile-diff",
-              metadata: { oversized: "x".repeat(16_777_216) },
-            },
-            provenance,
-          },
-        ],
+      certifiedCapabilitySchema.parse({
+        ...profile().capabilities[1],
+        iface: {
+          ...profile().capabilities[1].iface,
+          parameters: cyclic,
+        },
       }),
-    ).toThrow(/serialized profile exceeds/);
+    ).toThrow(/finite, acyclic JSON/);
   });
 });

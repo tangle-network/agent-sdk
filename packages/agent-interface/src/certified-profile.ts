@@ -1,11 +1,12 @@
 import { z } from "zod";
+import type { Sha256Digest } from "./agent-candidate.js";
 import {
+  canonicalCandidateDigest,
   isCanonicalJsonValue,
-  isSafeExecutable,
+  isObviouslyPrivateHostname,
   isSafeRelativePath,
+  sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
-import type { AgentProfileDiff } from "./profile-diff.js";
-import { agentProfileDiffSchema } from "./profile-schema.js";
 
 export type CertifiedCapabilityInterface =
   | {
@@ -19,43 +20,31 @@ export type CertifiedCapabilityInterface =
       description?: string;
       parameters: Record<string, unknown>;
       returns?: Record<string, unknown>;
-    }
-  | {
-      surface: "mcp";
-      serverName: string;
-      toolset?: string[];
     };
 
 export type CertifiedCapabilityAuth =
   | { mode: "none" }
-  | { mode: "tangle-key" }
-  | { mode: "hub-connection"; providerId: string; scopes?: string[] }
-  | { mode: "secret-ref"; key: string };
+  | { mode: "tangle-key"; origin: string }
+  | {
+      mode: "hub-connection";
+      providerId: string;
+      origin: string;
+      scopes?: string[];
+    }
+  | { mode: "secret-ref"; key: string; origin: string };
 
 export type CertifiedCapabilityBinding =
   | { kind: "inline"; content: string }
-  | { kind: "file"; path: string; content: string; executable?: boolean }
+  | { kind: "file"; path: string; content: string }
   | {
       kind: "http";
       url: string;
-      method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-      auth?: CertifiedCapabilityAuth;
-    }
-  | {
-      kind: "mcp-stdio";
-      command: string;
-      args?: string[];
-      cwd?: string;
-    }
-  | {
-      kind: "mcp-remote";
-      url: string;
-      transport: "http" | "sse";
       auth?: CertifiedCapabilityAuth;
     };
 
 export interface CertificationProvenance {
-  contentHash: string;
+  /** SHA-256 of the capability id, interface, and binding. */
+  contentHash: Sha256Digest;
   /** Positive release number, or null when the source has no released version. */
   version: number | null;
   promotedAt: string;
@@ -73,20 +62,16 @@ export interface CertifiedCapability {
   provenance: CertifiedCapabilityProvenance;
 }
 
-export interface CertifiedProfileDiff {
-  diff: AgentProfileDiff;
-  provenance: CertificationProvenance;
-}
-
 /**
  * The exact response returned by the certified-profile delivery endpoint.
- * It contains only the current capability representation.
+ * The digest covers the target, lifetime, capabilities, and provenance.
  */
 export interface CertifiedProfile {
   target: string;
   generatedAt: string;
+  expiresAt: string;
   capabilities: CertifiedCapability[];
-  profileDiffs: CertifiedProfileDiff[];
+  digest: Sha256Digest;
 }
 
 const nonBlankStringSchema = z
@@ -96,53 +81,47 @@ const nonBlankStringSchema = z
 const identifierSchema = nonBlankStringSchema.max(256);
 const boundedTextSchema = nonBlankStringSchema.max(16_384);
 const referenceSchema = nonBlankStringSchema.max(1_024);
-const MAX_CERTIFIED_PROFILE_SERIALIZED_CHARS = 16_777_216;
-
 const callableNameSchema = nonBlankStringSchema.refine(
   (value) => /^[A-Za-z0-9_-]{1,64}$/.test(value),
   "value must be a portable callable name",
 );
-
 const relativePathSchema = nonBlankStringSchema
-  .max(1024)
+  .max(1_024)
   .refine(
     (value) => isSafeRelativePath(value, false),
     "value must be a canonical relative path",
   );
+const MAX_CERTIFIED_PROFILE_SERIALIZED_CHARS = 16_777_216;
+const MAX_CERTIFIED_PROFILE_LIFETIME_MS = 86_400_000;
 
-const executableSchema = nonBlankStringSchema
-  .max(1024)
-  .refine(
-    isSafeExecutable,
-    "value must be a canonical non-shell executable",
-  );
-
-const httpUrlSchema = nonBlankStringSchema
-  .max(2048)
-  .refine((value) => {
-    try {
-      const url = new URL(value);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch {
-      return false;
-    }
-  }, "value must be an absolute HTTP(S) URL")
-  .refine((value) => {
-    try {
-      const url = new URL(value);
-      return url.username === "" && url.password === "";
-    } catch {
-      return true;
-    }
-  }, "URL credentials are not allowed");
-
-function isHttpsUrl(value: string): boolean {
+function parsePublicHttpsUrl(value: string): URL | null {
   try {
-    return new URL(value).protocol === "https:";
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      isObviouslyPrivateHostname(url.hostname)
+    ) {
+      return null;
+    }
+    return url;
   } catch {
-    return false;
+    return null;
   }
 }
+
+const publicHttpsUrlSchema = nonBlankStringSchema
+  .max(2_048)
+  .refine(
+    (value) => parsePublicHttpsUrl(value) !== null,
+    "value must be a public HTTPS URL without embedded credentials",
+  );
+
+const publicHttpsOriginSchema = publicHttpsUrlSchema.refine((value) => {
+  const url = parsePublicHttpsUrl(value);
+  return url !== null && url.origin === value;
+}, "value must be a canonical public HTTPS origin");
 
 const jsonObjectSchema = z
   .record(z.string(), z.unknown())
@@ -182,34 +161,27 @@ export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
       parameters: jsonObjectSchema,
       returns: jsonObjectSchema.optional(),
     }),
-    z.strictObject({
-      surface: z.literal("mcp"),
-      serverName: callableNameSchema,
-      toolset: z
-        .array(callableNameSchema)
-        .max(256)
-        .refine(
-          (names) => new Set(names).size === names.length,
-          "toolset names must be unique",
-        )
-        .optional(),
-    }),
   ],
 ) satisfies z.ZodType<CertifiedCapabilityInterface>;
 
 export const certifiedCapabilityAuthSchema = z.discriminatedUnion("mode", [
-    z.strictObject({ mode: z.literal("none") }),
-    z.strictObject({ mode: z.literal("tangle-key") }),
-    z.strictObject({
-      mode: z.literal("hub-connection"),
-      providerId: identifierSchema,
-      scopes: z.array(referenceSchema).max(256).optional(),
-    }),
-    z.strictObject({
-      mode: z.literal("secret-ref"),
-      key: referenceSchema,
-    }),
-  ]) satisfies z.ZodType<CertifiedCapabilityAuth>;
+  z.strictObject({ mode: z.literal("none") }),
+  z.strictObject({
+    mode: z.literal("tangle-key"),
+    origin: publicHttpsOriginSchema,
+  }),
+  z.strictObject({
+    mode: z.literal("hub-connection"),
+    providerId: identifierSchema,
+    origin: publicHttpsOriginSchema,
+    scopes: z.array(referenceSchema).max(256).optional(),
+  }),
+  z.strictObject({
+    mode: z.literal("secret-ref"),
+    key: referenceSchema,
+    origin: publicHttpsOriginSchema,
+  }),
+]) satisfies z.ZodType<CertifiedCapabilityAuth>;
 
 export const certifiedCapabilityBindingSchema = z
   .discriminatedUnion("kind", [
@@ -221,50 +193,30 @@ export const certifiedCapabilityBindingSchema = z
       kind: z.literal("file"),
       path: relativePathSchema,
       content: deliveredContentSchema,
-      executable: z.boolean().optional(),
     }),
     z.strictObject({
       kind: z.literal("http"),
-      url: httpUrlSchema,
-      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
-      auth: certifiedCapabilityAuthSchema.optional(),
-    }),
-    z.strictObject({
-      kind: z.literal("mcp-stdio"),
-      command: executableSchema,
-      args: z.array(z.string().max(16_384)).max(256).optional(),
-      cwd: z
-        .string()
-        .refine(
-          (value) => isSafeRelativePath(value, true),
-          "value must be a canonical relative path",
-        )
-        .optional(),
-    }),
-    z.strictObject({
-      kind: z.literal("mcp-remote"),
-      url: httpUrlSchema,
-      transport: z.enum(["http", "sse"]),
+      url: publicHttpsUrlSchema,
       auth: certifiedCapabilityAuthSchema.optional(),
     }),
   ])
   .superRefine((binding, context) => {
     if (
-      (binding.kind === "http" || binding.kind === "mcp-remote") &&
+      binding.kind === "http" &&
       binding.auth !== undefined &&
       binding.auth.mode !== "none" &&
-      !isHttpsUrl(binding.url)
+      new URL(binding.url).origin !== binding.auth.origin
     ) {
       context.addIssue({
         code: "custom",
-        path: ["url"],
-        message: "authenticated remote bindings require HTTPS",
+        path: ["auth", "origin"],
+        message: "credential origin must match the HTTP destination",
       });
     }
   }) satisfies z.ZodType<CertifiedCapabilityBinding>;
 
 export const certificationProvenanceSchema = z.strictObject({
-  contentHash: referenceSchema,
+  contentHash: sha256DigestSchema,
   version: z.number().int().positive().nullable(),
   promotedAt: z.iso.datetime(),
 }) satisfies z.ZodType<CertificationProvenance>;
@@ -274,13 +226,30 @@ export const certifiedCapabilityProvenanceSchema =
     sourcePath: relativePathSchema.nullable(),
   }) satisfies z.ZodType<CertifiedCapabilityProvenance>;
 
+function jsonMaterial(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("certified profile material must be JSON serializable");
+  }
+  return JSON.parse(serialized) as unknown;
+}
+
+/** Compute the exact digest stored in a capability's provenance. */
+export function certifiedCapabilityContentHash(
+  capability: Pick<CertifiedCapability, "id" | "iface" | "binding">,
+): Sha256Digest {
+  return canonicalCandidateDigest(
+    jsonMaterial({
+      id: capability.id,
+      iface: capability.iface,
+      binding: capability.binding,
+    }),
+  );
+}
+
 const bindingKindsBySurface = {
   context: new Set<CertifiedCapabilityBinding["kind"]>(["inline", "file"]),
   tool: new Set<CertifiedCapabilityBinding["kind"]>(["http"]),
-  mcp: new Set<CertifiedCapabilityBinding["kind"]>([
-    "mcp-stdio",
-    "mcp-remote",
-  ]),
 } as const;
 
 export const certifiedCapabilitySchema = z
@@ -311,21 +280,57 @@ export const certifiedCapabilitySchema = z
         message: "context capability content cannot be blank",
       });
     }
+    let contentHash: Sha256Digest;
+    try {
+      contentHash = certifiedCapabilityContentHash(capability);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "capability must contain only finite, acyclic JSON data",
+      });
+      return;
+    }
+    if (capability.provenance.contentHash !== contentHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["provenance", "contentHash"],
+        message: "capability content hash does not match the delivered capability",
+      });
+    }
   }) satisfies z.ZodType<CertifiedCapability>;
 
-export const certifiedProfileDiffSchema = z.strictObject({
-  diff: agentProfileDiffSchema,
-  provenance: certificationProvenanceSchema,
-}) satisfies z.ZodType<CertifiedProfileDiff>;
+/** Compute the digest over a certified profile without its digest field. */
+export function certifiedProfileDigest(
+  profile: Omit<CertifiedProfile, "digest">,
+): Sha256Digest {
+  return canonicalCandidateDigest(jsonMaterial(profile));
+}
 
 export const certifiedProfileSchema = z
   .strictObject({
     target: identifierSchema,
     generatedAt: z.iso.datetime(),
-    capabilities: z.array(certifiedCapabilitySchema).max(512),
-    profileDiffs: z.array(certifiedProfileDiffSchema).max(512),
+    expiresAt: z.iso.datetime(),
+    capabilities: z.array(certifiedCapabilitySchema).max(128),
+    digest: sha256DigestSchema,
   })
   .superRefine((profile, context) => {
+    const generatedAt = Date.parse(profile.generatedAt);
+    const expiresAt = Date.parse(profile.expiresAt);
+    if (expiresAt <= generatedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "expiresAt must be after generatedAt",
+      });
+    } else if (expiresAt - generatedAt > MAX_CERTIFIED_PROFILE_LIFETIME_MS) {
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "certified profiles cannot live longer than 24 hours",
+      });
+    }
+
     let serializedLength: number;
     try {
       serializedLength = JSON.stringify(profile).length;
@@ -348,7 +353,6 @@ export const certifiedProfileSchema = z
 
     const ids = new Set<string>();
     const toolNames = new Set<string>();
-    const serverNames = new Set<string>();
     const filePaths = new Set<string>();
     for (const [index, capability] of profile.capabilities.entries()) {
       if (ids.has(capability.id)) {
@@ -371,17 +375,6 @@ export const certifiedProfileSchema = z
         toolNames.add(capability.iface.name);
       }
 
-      if (capability.iface.surface === "mcp") {
-        if (serverNames.has(capability.iface.serverName)) {
-          context.addIssue({
-            code: "custom",
-            path: ["capabilities", index, "iface", "serverName"],
-            message: `duplicate MCP server name: ${capability.iface.serverName}`,
-          });
-        }
-        serverNames.add(capability.iface.serverName);
-      }
-
       if (capability.binding.kind === "file") {
         if (filePaths.has(capability.binding.path)) {
           context.addIssue({
@@ -392,6 +385,23 @@ export const certifiedProfileSchema = z
         }
         filePaths.add(capability.binding.path);
       }
+
+      if (Date.parse(capability.provenance.promotedAt) > generatedAt) {
+        context.addIssue({
+          code: "custom",
+          path: ["capabilities", index, "provenance", "promotedAt"],
+          message: "capability cannot be promoted after profile generation",
+        });
+      }
+    }
+
+    const { digest: _digest, ...material } = profile;
+    if (profile.digest !== certifiedProfileDigest(material)) {
+      context.addIssue({
+        code: "custom",
+        path: ["digest"],
+        message: "profile digest does not match the delivered profile",
+      });
     }
   }) satisfies z.ZodType<CertifiedProfile>;
 
@@ -417,10 +427,6 @@ const _certifiedCapabilitySchemaMatches: MutuallyAssignable<
   z.infer<typeof certifiedCapabilitySchema>,
   CertifiedCapability
 > = true;
-const _certifiedProfileDiffSchemaMatches: MutuallyAssignable<
-  z.infer<typeof certifiedProfileDiffSchema>,
-  CertifiedProfileDiff
-> = true;
 const _certifiedProfileSchemaMatches: MutuallyAssignable<
   z.infer<typeof certifiedProfileSchema>,
   CertifiedProfile
@@ -430,7 +436,6 @@ void [
   _certifiedCapabilityAuthSchemaMatches,
   _certifiedCapabilityBindingSchemaMatches,
   _certifiedCapabilitySchemaMatches,
-  _certifiedProfileDiffSchemaMatches,
   _certifiedProfileSchemaMatches,
 ];
 
