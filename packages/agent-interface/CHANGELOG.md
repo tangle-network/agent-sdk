@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.33.0
+
+### Minor Changes
+
+- b24db38: Define immutable, tenant-bound context delivery for Tangle Intelligence.
+
 ## 0.32.0
 
 ### Minor Changes
