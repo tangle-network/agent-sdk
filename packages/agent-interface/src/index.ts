@@ -825,6 +825,7 @@ export * from "./agent-candidate.js";
 export * from "./agent-candidate-schema.js";
 export * from "./agent-candidate-promotion-schema.js";
 export * from "./agent-profile.js";
+export * from "./certified-context.js";
 export * from "./profile-diff.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
