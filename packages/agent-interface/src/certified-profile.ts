@@ -94,6 +94,9 @@ const nonBlankStringSchema = z
   .refine((value) => value.trim().length > 0, "value cannot be blank");
 
 const identifierSchema = nonBlankStringSchema.max(256);
+const boundedTextSchema = nonBlankStringSchema.max(16_384);
+const referenceSchema = nonBlankStringSchema.max(1_024);
+const MAX_CERTIFIED_PROFILE_SERIALIZED_CHARS = 16_777_216;
 
 const callableNameSchema = nonBlankStringSchema.refine(
   (value) => /^[A-Za-z0-9_-]{1,64}$/.test(value),
@@ -175,7 +178,7 @@ export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
     z.strictObject({
       surface: z.literal("tool"),
       name: callableNameSchema,
-      description: nonBlankStringSchema.optional(),
+      description: boundedTextSchema.optional(),
       parameters: jsonObjectSchema,
       returns: jsonObjectSchema.optional(),
     }),
@@ -199,12 +202,12 @@ export const certifiedCapabilityAuthSchema = z.discriminatedUnion("mode", [
     z.strictObject({ mode: z.literal("tangle-key") }),
     z.strictObject({
       mode: z.literal("hub-connection"),
-      providerId: nonBlankStringSchema,
-      scopes: z.array(nonBlankStringSchema).optional(),
+      providerId: identifierSchema,
+      scopes: z.array(referenceSchema).max(256).optional(),
     }),
     z.strictObject({
       mode: z.literal("secret-ref"),
-      key: nonBlankStringSchema,
+      key: referenceSchema,
     }),
   ]) satisfies z.ZodType<CertifiedCapabilityAuth>;
 
@@ -261,7 +264,7 @@ export const certifiedCapabilityBindingSchema = z
   }) satisfies z.ZodType<CertifiedCapabilityBinding>;
 
 export const certificationProvenanceSchema = z.strictObject({
-  contentHash: nonBlankStringSchema,
+  contentHash: referenceSchema,
   version: z.number().int().positive().nullable(),
   promotedAt: z.iso.datetime(),
 }) satisfies z.ZodType<CertificationProvenance>;
@@ -323,6 +326,26 @@ export const certifiedProfileSchema = z
     profileDiffs: z.array(certifiedProfileDiffSchema).max(512),
   })
   .superRefine((profile, context) => {
+    let serializedLength: number;
+    try {
+      serializedLength = JSON.stringify(profile).length;
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "profile must be JSON serializable",
+      });
+      return;
+    }
+    if (serializedLength > MAX_CERTIFIED_PROFILE_SERIALIZED_CHARS) {
+      context.addIssue({
+        code: "too_big",
+        maximum: MAX_CERTIFIED_PROFILE_SERIALIZED_CHARS,
+        origin: "string",
+        inclusive: true,
+        message: "serialized profile exceeds 16777216 characters",
+      });
+    }
+
     const ids = new Set<string>();
     const toolNames = new Set<string>();
     const serverNames = new Set<string>();

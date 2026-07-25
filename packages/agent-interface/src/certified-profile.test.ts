@@ -411,5 +411,43 @@ describe("certifiedProfileSchema", () => {
         },
       }),
     ).toThrow(/serialized value exceeds/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        iface: {
+          ...profile.capabilities[1].iface,
+          description: "x".repeat(16_385),
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "https://tools.example.com/refund",
+          auth: { mode: "secret-ref", key: "x".repeat(1_025) },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("bounds the complete serialized profile", () => {
+    expect(() =>
+      certifiedProfileSchema.parse({
+        ...profile,
+        profileDiffs: [
+          {
+            diff: {
+              kind: "agent-profile-diff",
+              metadata: { oversized: "x".repeat(16_777_216) },
+            },
+            provenance,
+          },
+        ],
+      }),
+    ).toThrow(/serialized profile exceeds/);
   });
 });
