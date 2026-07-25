@@ -1,10 +1,6 @@
 import { z } from "zod";
-import type { AgentProfile } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
-import {
-  agentProfileDiffSchema,
-  agentProfileSchema,
-} from "./profile-schema.js";
+import { agentProfileDiffSchema } from "./profile-schema.js";
 
 export type CertifiedCapabilityInterface =
   | {
@@ -55,6 +51,7 @@ export type CertifiedCapabilityBinding =
 
 export interface CertificationProvenance {
   contentHash: string;
+  /** Positive release number, or null when the source has no released version. */
   version: number | null;
   lift: string | null;
   promotedAt: string;
@@ -85,8 +82,7 @@ export interface CertifiedProfile {
   target: string;
   generatedAt: string;
   capabilities: CertifiedCapability[];
-  agentProfileDiffs: CertifiedProfileDiff[];
-  agentProfile: AgentProfile | null;
+  profileDiffs: CertifiedProfileDiff[];
 }
 
 const nonBlankStringSchema = z
@@ -102,10 +98,19 @@ const httpUrlSchema = nonBlankStringSchema.refine((value) => {
   }
 }, "value must be an absolute HTTP(S) URL");
 
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 
-export const certifiedCapabilityInterfaceSchema: z.ZodType<CertifiedCapabilityInterface> =
-  z.discriminatedUnion("surface", [
+export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
+  "surface",
+  [
     z.strictObject({
       surface: z.literal("context"),
       kind: z.enum(["prompt", "skill", "instructions"]),
@@ -114,7 +119,7 @@ export const certifiedCapabilityInterfaceSchema: z.ZodType<CertifiedCapabilityIn
     z.strictObject({
       surface: z.literal("tool"),
       name: nonBlankStringSchema,
-      description: z.string().optional(),
+      description: nonBlankStringSchema.optional(),
       parameters: jsonObjectSchema,
       returns: jsonObjectSchema.optional(),
     }),
@@ -123,10 +128,10 @@ export const certifiedCapabilityInterfaceSchema: z.ZodType<CertifiedCapabilityIn
       serverName: nonBlankStringSchema,
       toolset: z.array(nonBlankStringSchema).optional(),
     }),
-  ]);
+  ],
+) satisfies z.ZodType<CertifiedCapabilityInterface>;
 
-export const certifiedCapabilityAuthSchema: z.ZodType<CertifiedCapabilityAuth> =
-  z.discriminatedUnion("mode", [
+export const certifiedCapabilityAuthSchema = z.discriminatedUnion("mode", [
     z.strictObject({ mode: z.literal("none") }),
     z.strictObject({ mode: z.literal("tangle-key") }),
     z.strictObject({
@@ -138,10 +143,10 @@ export const certifiedCapabilityAuthSchema: z.ZodType<CertifiedCapabilityAuth> =
       mode: z.literal("secret-ref"),
       key: nonBlankStringSchema,
     }),
-  ]);
+  ]) satisfies z.ZodType<CertifiedCapabilityAuth>;
 
-export const certifiedCapabilityBindingSchema: z.ZodType<CertifiedCapabilityBinding> =
-  z.discriminatedUnion("kind", [
+export const certifiedCapabilityBindingSchema = z
+  .discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("inline"),
       content: z.string(),
@@ -170,19 +175,33 @@ export const certifiedCapabilityBindingSchema: z.ZodType<CertifiedCapabilityBind
       transport: z.enum(["http", "sse"]),
       auth: certifiedCapabilityAuthSchema.optional(),
     }),
-  ]);
+  ])
+  .superRefine((binding, context) => {
+    if (
+      (binding.kind === "http" || binding.kind === "mcp-remote") &&
+      binding.auth !== undefined &&
+      binding.auth.mode !== "none" &&
+      !isHttpsUrl(binding.url)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "authenticated remote bindings require HTTPS",
+      });
+    }
+  }) satisfies z.ZodType<CertifiedCapabilityBinding>;
 
 export const certificationProvenanceSchema = z.strictObject({
   contentHash: nonBlankStringSchema,
   version: z.number().int().positive().nullable(),
-  lift: z.string().nullable(),
+  lift: nonBlankStringSchema.nullable(),
   promotedAt: z.iso.datetime(),
-});
+}) satisfies z.ZodType<CertificationProvenance>;
 
 export const certifiedCapabilityProvenanceSchema =
   certificationProvenanceSchema.extend({
-    sourcePath: z.string().nullable(),
-  });
+    sourcePath: nonBlankStringSchema.nullable(),
+  }) satisfies z.ZodType<CertifiedCapabilityProvenance>;
 
 const bindingKindsBySurface = {
   context: new Set<CertifiedCapabilityBinding["kind"]>(["inline", "file"]),
@@ -193,50 +212,47 @@ const bindingKindsBySurface = {
   ]),
 } as const;
 
-export const certifiedCapabilitySchema: z.ZodType<CertifiedCapability> =
-  z
-    .strictObject({
-      id: nonBlankStringSchema,
-      iface: certifiedCapabilityInterfaceSchema,
-      binding: certifiedCapabilityBindingSchema,
-      provenance: certifiedCapabilityProvenanceSchema,
-    })
-    .superRefine((capability, context) => {
-      const supported = bindingKindsBySurface[capability.iface.surface];
-      if (!supported.has(capability.binding.kind)) {
-        context.addIssue({
-          code: "custom",
-          path: ["binding", "kind"],
-          message: `${capability.iface.surface} capabilities do not support ${capability.binding.kind} bindings`,
-        });
-      }
-      if (
-        capability.iface.surface === "context" &&
-        (capability.binding.kind === "inline" ||
-          capability.binding.kind === "file") &&
-        capability.binding.content.trim().length === 0
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["binding", "content"],
-          message: "context capability content cannot be blank",
-        });
-      }
-    });
+export const certifiedCapabilitySchema = z
+  .strictObject({
+    id: nonBlankStringSchema,
+    iface: certifiedCapabilityInterfaceSchema,
+    binding: certifiedCapabilityBindingSchema,
+    provenance: certifiedCapabilityProvenanceSchema,
+  })
+  .superRefine((capability, context) => {
+    const supported = bindingKindsBySurface[capability.iface.surface];
+    if (!supported.has(capability.binding.kind)) {
+      context.addIssue({
+        code: "custom",
+        path: ["binding", "kind"],
+        message: `${capability.iface.surface} capabilities do not support ${capability.binding.kind} bindings`,
+      });
+    }
+    if (
+      capability.iface.surface === "context" &&
+      (capability.binding.kind === "inline" ||
+        capability.binding.kind === "file") &&
+      capability.binding.content.trim().length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["binding", "content"],
+        message: "context capability content cannot be blank",
+      });
+    }
+  }) satisfies z.ZodType<CertifiedCapability>;
 
-export const certifiedProfileDiffSchema: z.ZodType<CertifiedProfileDiff> =
-  z.strictObject({
-    diff: agentProfileDiffSchema,
-    provenance: certificationProvenanceSchema,
-  });
+export const certifiedProfileDiffSchema = z.strictObject({
+  diff: agentProfileDiffSchema,
+  provenance: certificationProvenanceSchema,
+}) satisfies z.ZodType<CertifiedProfileDiff>;
 
-export const certifiedProfileSchema: z.ZodType<CertifiedProfile> = z
+export const certifiedProfileSchema = z
   .strictObject({
     target: nonBlankStringSchema,
     generatedAt: z.iso.datetime(),
     capabilities: z.array(certifiedCapabilitySchema),
-    agentProfileDiffs: z.array(certifiedProfileDiffSchema),
-    agentProfile: agentProfileSchema.nullable(),
+    profileDiffs: z.array(certifiedProfileDiffSchema),
   })
   .superRefine((profile, context) => {
     const ids = new Set<string>();
@@ -250,19 +266,46 @@ export const certifiedProfileSchema: z.ZodType<CertifiedProfile> = z
       }
       ids.add(capability.id);
     }
+  }) satisfies z.ZodType<CertifiedProfile>;
 
-    if (
-      (profile.agentProfileDiffs.length === 0) !==
-      (profile.agentProfile === null)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["agentProfile"],
-        message:
-          "agentProfile must be null exactly when agentProfileDiffs is empty",
-      });
-    }
-  });
+type MutuallyAssignable<A, B> = [A] extends [B]
+  ? [B] extends [A]
+    ? true
+    : never
+  : never;
+
+const _certifiedCapabilityInterfaceSchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedCapabilityInterfaceSchema>,
+  CertifiedCapabilityInterface
+> = true;
+const _certifiedCapabilityAuthSchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedCapabilityAuthSchema>,
+  CertifiedCapabilityAuth
+> = true;
+const _certifiedCapabilityBindingSchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedCapabilityBindingSchema>,
+  CertifiedCapabilityBinding
+> = true;
+const _certifiedCapabilitySchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedCapabilitySchema>,
+  CertifiedCapability
+> = true;
+const _certifiedProfileDiffSchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedProfileDiffSchema>,
+  CertifiedProfileDiff
+> = true;
+const _certifiedProfileSchemaMatches: MutuallyAssignable<
+  z.infer<typeof certifiedProfileSchema>,
+  CertifiedProfile
+> = true;
+void [
+  _certifiedCapabilityInterfaceSchemaMatches,
+  _certifiedCapabilityAuthSchemaMatches,
+  _certifiedCapabilityBindingSchemaMatches,
+  _certifiedCapabilitySchemaMatches,
+  _certifiedProfileDiffSchemaMatches,
+  _certifiedProfileSchemaMatches,
+];
 
 export function parseCertifiedProfile(value: unknown): CertifiedProfile {
   return certifiedProfileSchema.parse(value);

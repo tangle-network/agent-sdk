@@ -47,8 +47,7 @@ const profile = {
       provenance: { ...provenance, sourcePath: "tools/refund.json" },
     },
   ],
-  agentProfileDiffs: [],
-  agentProfile: null,
+  profileDiffs: [],
 };
 
 describe("certifiedProfileSchema", () => {
@@ -62,6 +61,16 @@ describe("certifiedProfileSchema", () => {
         ...profile,
         promptSurface: null,
         artifacts: {},
+      }),
+    ).toThrow();
+  });
+
+  it("rejects the removed composed-profile representation", () => {
+    expect(() =>
+      parseCertifiedProfile({
+        ...profile,
+        agentProfileDiffs: [],
+        agentProfile: null,
       }),
     ).toThrow();
   });
@@ -106,38 +115,151 @@ describe("certifiedProfileSchema", () => {
     ).toThrow(/duplicate capability id/);
   });
 
-  it("requires profile diffs and the composed profile to agree", () => {
-    expect(() =>
-      certifiedProfileSchema.parse({
-        ...profile,
-        agentProfile: { name: "support-agent" },
-      }),
-    ).toThrow(
-      /agentProfile must be null exactly when agentProfileDiffs is empty/,
-    );
-  });
+  it("accepts a certified profile diff without a duplicate composed profile", () => {
+    const profileDiff = {
+      diff: {
+        kind: "agent-profile-diff" as const,
+        set: { prompt: { instructions: ["Ask for the invoice id."] } },
+      },
+      provenance,
+    };
 
-  it("accepts a composed profile when a certified diff is present", () => {
     expect(
       certifiedProfileSchema.parse({
         ...profile,
-        agentProfileDiffs: [
-          {
-            diff: {
-              kind: "agent-profile-diff",
-              set: { prompt: { instructions: ["Ask for the invoice id."] } },
-            },
-            provenance,
-          },
-        ],
-        agentProfile: {
-          name: "support-agent",
-          prompt: { instructions: ["Ask for the invoice id."] },
+        profileDiffs: [profileDiff],
+      }).profileDiffs,
+    ).toEqual([profileDiff]);
+  });
+
+  it("supports file and remote MCP bindings", () => {
+    expect(
+      certifiedCapabilitySchema.parse({
+        id: "refund-skill",
+        iface: {
+          surface: "context",
+          kind: "skill",
+          name: "refund policy",
         },
-      }).agentProfile,
-    ).toEqual({
-      name: "support-agent",
-      prompt: { instructions: ["Ask for the invoice id."] },
-    });
+        binding: {
+          kind: "file",
+          path: "skills/refund.md",
+          content: "Check the invoice.",
+          executable: false,
+        },
+        provenance: { ...provenance, version: null, lift: null, sourcePath: null },
+      }).binding.kind,
+    ).toBe("file");
+
+    expect(
+      certifiedCapabilitySchema.parse({
+        id: "crm",
+        iface: {
+          surface: "mcp",
+          serverName: "crm",
+          toolset: ["lookup_customer"],
+        },
+        binding: {
+          kind: "mcp-remote",
+          url: "https://mcp.example.com",
+          transport: "http",
+          auth: {
+            mode: "hub-connection",
+            providerId: "salesforce",
+            scopes: ["customer:read"],
+          },
+        },
+        provenance: { ...provenance, sourcePath: "mcp/crm.json" },
+      }).binding.kind,
+    ).toBe("mcp-remote");
+  });
+
+  it("requires HTTPS before transmitting credentials", () => {
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "http://tools.example.com/refund",
+          auth: { mode: "tangle-key" },
+        },
+      }),
+    ).toThrow(/authenticated remote bindings require HTTPS/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        id: "crm",
+        iface: { surface: "mcp", serverName: "crm" },
+        binding: {
+          kind: "mcp-remote",
+          url: "http://mcp.example.com",
+          transport: "sse",
+          auth: { mode: "secret-ref", key: "CRM_TOKEN" },
+        },
+        provenance: { ...provenance, sourcePath: null },
+      }),
+    ).toThrow(/authenticated remote bindings require HTTPS/);
+  });
+
+  it("allows HTTP only when no credential is transmitted", () => {
+    expect(
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "http://localhost:8787/refund",
+          auth: { mode: "none" },
+        },
+      }).binding.kind,
+    ).toBe("http");
+  });
+
+  it("rejects invalid provenance and blank optional labels", () => {
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[0],
+        provenance: { ...provenance, version: 0, sourcePath: null },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[0],
+        provenance: { ...provenance, sourcePath: "   " },
+      }),
+    ).toThrow(/value cannot be blank/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        iface: {
+          ...profile.capabilities[1].iface,
+          description: " ",
+        },
+      }),
+    ).toThrow(/value cannot be blank/);
+  });
+
+  it("rejects non-HTTP remote URLs", () => {
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "ftp://tools.example.com/refund",
+        },
+      }),
+    ).toThrow(/absolute HTTP/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "not-a-url",
+          auth: { mode: "tangle-key" },
+        },
+      }),
+    ).toThrow(/absolute HTTP/);
   });
 });
