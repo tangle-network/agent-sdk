@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.2.23
+
+### Patch Changes
+
+- Updated dependencies [b24db38]
+  - @tangle-network/agent-interface@0.33.0
+
 ## 0.2.22
 
 ### Patch Changes
