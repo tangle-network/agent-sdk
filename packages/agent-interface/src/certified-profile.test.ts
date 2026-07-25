@@ -115,6 +115,43 @@ describe("certifiedProfileSchema", () => {
     ).toThrow(/duplicate capability id/);
   });
 
+  it("rejects callable and mount collisions", () => {
+    const duplicateTool = {
+      ...profile.capabilities[1],
+      id: "refund-tool-copy",
+    };
+    expect(() =>
+      certifiedProfileSchema.parse({
+        ...profile,
+        capabilities: [...profile.capabilities, duplicateTool],
+      }),
+    ).toThrow(/duplicate tool name/);
+
+    const file = {
+      id: "refund-skill",
+      iface: {
+        surface: "context" as const,
+        kind: "skill" as const,
+        name: "refund skill",
+      },
+      binding: {
+        kind: "file" as const,
+        path: "skills/refund.md",
+        content: "Check the invoice.",
+      },
+      provenance: {
+        ...provenance,
+        sourcePath: "skills/refund.md",
+      },
+    };
+    expect(() =>
+      certifiedProfileSchema.parse({
+        ...profile,
+        capabilities: [file, { ...file, id: "refund-skill-copy" }],
+      }),
+    ).toThrow(/duplicate file path/);
+  });
+
   it("accepts a certified profile diff without a duplicate composed profile", () => {
     const profileDiff = {
       diff: {
@@ -238,6 +275,48 @@ describe("certifiedProfileSchema", () => {
         },
       }),
     ).toThrow(/value cannot be blank/);
+  });
+
+  it("rejects unsafe paths, commands, and callable names", () => {
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        id: "escape",
+        iface: {
+          surface: "context",
+          kind: "skill",
+          name: "escape",
+        },
+        binding: {
+          kind: "file",
+          path: "../escape.md",
+          content: "unsafe",
+        },
+        provenance: { ...provenance, sourcePath: null },
+      }),
+    ).toThrow(/canonical relative path/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        id: "shell",
+        iface: { surface: "mcp", serverName: "shell" },
+        binding: {
+          kind: "mcp-stdio",
+          command: "sh",
+          args: ["-c", "echo unsafe"],
+        },
+        provenance: { ...provenance, sourcePath: null },
+      }),
+    ).toThrow(/non-shell executable/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        iface: {
+          ...profile.capabilities[1].iface,
+          name: "not a portable tool name",
+        },
+      }),
+    ).toThrow(/portable callable name/);
   });
 
   it("rejects non-HTTP remote URLs", () => {

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  isSafeExecutable,
+  isSafeRelativePath,
+} from "./agent-candidate-schema-common.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import { agentProfileDiffSchema } from "./profile-schema.js";
 
@@ -89,6 +93,23 @@ const nonBlankStringSchema = z
   .string()
   .refine((value) => value.trim().length > 0, "value cannot be blank");
 
+const callableNameSchema = nonBlankStringSchema.refine(
+  (value) => /^[A-Za-z0-9_-]{1,64}$/.test(value),
+  "value must be a portable callable name",
+);
+
+const relativePathSchema = nonBlankStringSchema
+  .refine(
+    (value) => isSafeRelativePath(value, false),
+    "value must be a canonical relative path",
+  );
+
+const executableSchema = nonBlankStringSchema
+  .refine(
+    isSafeExecutable,
+    "value must be a canonical non-shell executable",
+  );
+
 const httpUrlSchema = nonBlankStringSchema.refine((value) => {
   try {
     const url = new URL(value);
@@ -118,15 +139,15 @@ export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
     }),
     z.strictObject({
       surface: z.literal("tool"),
-      name: nonBlankStringSchema,
+      name: callableNameSchema,
       description: nonBlankStringSchema.optional(),
       parameters: jsonObjectSchema,
       returns: jsonObjectSchema.optional(),
     }),
     z.strictObject({
       surface: z.literal("mcp"),
-      serverName: nonBlankStringSchema,
-      toolset: z.array(nonBlankStringSchema).optional(),
+      serverName: callableNameSchema,
+      toolset: z.array(callableNameSchema).optional(),
     }),
   ],
 ) satisfies z.ZodType<CertifiedCapabilityInterface>;
@@ -153,7 +174,7 @@ export const certifiedCapabilityBindingSchema = z
     }),
     z.strictObject({
       kind: z.literal("file"),
-      path: nonBlankStringSchema,
+      path: relativePathSchema,
       content: z.string(),
       executable: z.boolean().optional(),
     }),
@@ -165,9 +186,15 @@ export const certifiedCapabilityBindingSchema = z
     }),
     z.strictObject({
       kind: z.literal("mcp-stdio"),
-      command: nonBlankStringSchema,
+      command: executableSchema,
       args: z.array(z.string()).optional(),
-      cwd: z.string().optional(),
+      cwd: z
+        .string()
+        .refine(
+          (value) => isSafeRelativePath(value, true),
+          "value must be a canonical relative path",
+        )
+        .optional(),
     }),
     z.strictObject({
       kind: z.literal("mcp-remote"),
@@ -200,7 +227,7 @@ export const certificationProvenanceSchema = z.strictObject({
 
 export const certifiedCapabilityProvenanceSchema =
   certificationProvenanceSchema.extend({
-    sourcePath: nonBlankStringSchema.nullable(),
+    sourcePath: relativePathSchema.nullable(),
   }) satisfies z.ZodType<CertifiedCapabilityProvenance>;
 
 const bindingKindsBySurface = {
@@ -256,6 +283,9 @@ export const certifiedProfileSchema = z
   })
   .superRefine((profile, context) => {
     const ids = new Set<string>();
+    const toolNames = new Set<string>();
+    const serverNames = new Set<string>();
+    const filePaths = new Set<string>();
     for (const [index, capability] of profile.capabilities.entries()) {
       if (ids.has(capability.id)) {
         context.addIssue({
@@ -265,6 +295,39 @@ export const certifiedProfileSchema = z
         });
       }
       ids.add(capability.id);
+
+      if (capability.iface.surface === "tool") {
+        if (toolNames.has(capability.iface.name)) {
+          context.addIssue({
+            code: "custom",
+            path: ["capabilities", index, "iface", "name"],
+            message: `duplicate tool name: ${capability.iface.name}`,
+          });
+        }
+        toolNames.add(capability.iface.name);
+      }
+
+      if (capability.iface.surface === "mcp") {
+        if (serverNames.has(capability.iface.serverName)) {
+          context.addIssue({
+            code: "custom",
+            path: ["capabilities", index, "iface", "serverName"],
+            message: `duplicate MCP server name: ${capability.iface.serverName}`,
+          });
+        }
+        serverNames.add(capability.iface.serverName);
+      }
+
+      if (capability.binding.kind === "file") {
+        if (filePaths.has(capability.binding.path)) {
+          context.addIssue({
+            code: "custom",
+            path: ["capabilities", index, "binding", "path"],
+            message: `duplicate file path: ${capability.binding.path}`,
+          });
+        }
+        filePaths.add(capability.binding.path);
+      }
     }
   }) satisfies z.ZodType<CertifiedProfile>;
 
