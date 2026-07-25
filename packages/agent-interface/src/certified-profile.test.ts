@@ -8,7 +8,6 @@ import {
 const provenance = {
   contentHash: "sha256:abc",
   version: 3,
-  lift: "+3.1pp",
   promotedAt: "2026-07-25T20:00:00.000Z",
 };
 
@@ -184,7 +183,7 @@ describe("certifiedProfileSchema", () => {
           content: "Check the invoice.",
           executable: false,
         },
-        provenance: { ...provenance, version: null, lift: null, sourcePath: null },
+        provenance: { ...provenance, version: null, sourcePath: null },
       }).binding.kind,
     ).toBe("file");
 
@@ -209,6 +208,34 @@ describe("certifiedProfileSchema", () => {
         provenance: { ...provenance, sourcePath: "mcp/crm.json" },
       }).binding.kind,
     ).toBe("mcp-remote");
+
+    expect(
+      certifiedCapabilitySchema.parse({
+        id: "local-search",
+        iface: {
+          surface: "mcp",
+          serverName: "local-search",
+          toolset: ["search"],
+        },
+        binding: {
+          kind: "mcp-stdio",
+          command: "node",
+          args: ["server.js"],
+          cwd: "tools/search",
+        },
+        provenance: { ...provenance, sourcePath: "mcp/local-search.json" },
+      }).binding.kind,
+    ).toBe("mcp-stdio");
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "mcp-stdio",
+          command: "node",
+        },
+      }),
+    ).toThrow(/tool capabilities do not support mcp-stdio bindings/);
   });
 
   it("requires HTTPS before transmitting credentials", () => {
@@ -246,6 +273,16 @@ describe("certifiedProfileSchema", () => {
           kind: "http",
           url: "http://localhost:8787/refund",
           auth: { mode: "none" },
+        },
+      }).binding.kind,
+    ).toBe("http");
+
+    expect(
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
+          url: "http://localhost:8787/refund",
         },
       }).binding.kind,
     ).toBe("http");
@@ -335,10 +372,44 @@ describe("certifiedProfileSchema", () => {
         ...profile.capabilities[1],
         binding: {
           kind: "http",
+          url: "http://user:password@tools.example.com/refund",
+        },
+      }),
+    ).toThrow(/URL credentials are not allowed/);
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        binding: {
+          kind: "http",
           url: "not-a-url",
           auth: { mode: "tangle-key" },
         },
       }),
     ).toThrow(/absolute HTTP/);
+  });
+
+  it("bounds delivered content and tool schemas", () => {
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[0],
+        binding: {
+          kind: "inline",
+          content: "x".repeat(1_048_577),
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      certifiedCapabilitySchema.parse({
+        ...profile.capabilities[1],
+        iface: {
+          ...profile.capabilities[1].iface,
+          parameters: {
+            description: "x".repeat(262_145),
+          },
+        },
+      }),
+    ).toThrow(/serialized value exceeds/);
   });
 });

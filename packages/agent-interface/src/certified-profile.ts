@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  isCanonicalJsonValue,
   isSafeExecutable,
   isSafeRelativePath,
 } from "./agent-candidate-schema-common.js";
@@ -57,7 +58,6 @@ export interface CertificationProvenance {
   contentHash: string;
   /** Positive release number, or null when the source has no released version. */
   version: number | null;
-  lift: string | null;
   promotedAt: string;
 }
 
@@ -93,31 +93,45 @@ const nonBlankStringSchema = z
   .string()
   .refine((value) => value.trim().length > 0, "value cannot be blank");
 
+const identifierSchema = nonBlankStringSchema.max(256);
+
 const callableNameSchema = nonBlankStringSchema.refine(
   (value) => /^[A-Za-z0-9_-]{1,64}$/.test(value),
   "value must be a portable callable name",
 );
 
 const relativePathSchema = nonBlankStringSchema
+  .max(1024)
   .refine(
     (value) => isSafeRelativePath(value, false),
     "value must be a canonical relative path",
   );
 
 const executableSchema = nonBlankStringSchema
+  .max(1024)
   .refine(
     isSafeExecutable,
     "value must be a canonical non-shell executable",
   );
 
-const httpUrlSchema = nonBlankStringSchema.refine((value) => {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}, "value must be an absolute HTTP(S) URL");
+const httpUrlSchema = nonBlankStringSchema
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "value must be an absolute HTTP(S) URL")
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.username === "" && url.password === "";
+    } catch {
+      return true;
+    }
+  }, "URL credentials are not allowed");
 
 function isHttpsUrl(value: string): boolean {
   try {
@@ -127,7 +141,28 @@ function isHttpsUrl(value: string): boolean {
   }
 }
 
-const jsonObjectSchema = z.record(z.string(), z.unknown());
+const jsonObjectSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((value, context) => {
+    if (!isCanonicalJsonValue(value)) {
+      context.addIssue({
+        code: "custom",
+        message: "value must contain only finite, acyclic JSON data",
+      });
+      return;
+    }
+    if (JSON.stringify(value).length > 262_144) {
+      context.addIssue({
+        code: "too_big",
+        maximum: 262_144,
+        origin: "string",
+        inclusive: true,
+        message: "serialized value exceeds 262144 characters",
+      });
+    }
+  });
+
+const deliveredContentSchema = z.string().max(1_048_576);
 
 export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
   "surface",
@@ -135,7 +170,7 @@ export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
     z.strictObject({
       surface: z.literal("context"),
       kind: z.enum(["prompt", "skill", "instructions"]),
-      name: nonBlankStringSchema,
+      name: identifierSchema,
     }),
     z.strictObject({
       surface: z.literal("tool"),
@@ -147,7 +182,14 @@ export const certifiedCapabilityInterfaceSchema = z.discriminatedUnion(
     z.strictObject({
       surface: z.literal("mcp"),
       serverName: callableNameSchema,
-      toolset: z.array(callableNameSchema).optional(),
+      toolset: z
+        .array(callableNameSchema)
+        .max(256)
+        .refine(
+          (names) => new Set(names).size === names.length,
+          "toolset names must be unique",
+        )
+        .optional(),
     }),
   ],
 ) satisfies z.ZodType<CertifiedCapabilityInterface>;
@@ -170,12 +212,12 @@ export const certifiedCapabilityBindingSchema = z
   .discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("inline"),
-      content: z.string(),
+      content: deliveredContentSchema,
     }),
     z.strictObject({
       kind: z.literal("file"),
       path: relativePathSchema,
-      content: z.string(),
+      content: deliveredContentSchema,
       executable: z.boolean().optional(),
     }),
     z.strictObject({
@@ -187,7 +229,7 @@ export const certifiedCapabilityBindingSchema = z
     z.strictObject({
       kind: z.literal("mcp-stdio"),
       command: executableSchema,
-      args: z.array(z.string()).optional(),
+      args: z.array(z.string().max(16_384)).max(256).optional(),
       cwd: z
         .string()
         .refine(
@@ -221,7 +263,6 @@ export const certifiedCapabilityBindingSchema = z
 export const certificationProvenanceSchema = z.strictObject({
   contentHash: nonBlankStringSchema,
   version: z.number().int().positive().nullable(),
-  lift: nonBlankStringSchema.nullable(),
   promotedAt: z.iso.datetime(),
 }) satisfies z.ZodType<CertificationProvenance>;
 
@@ -241,7 +282,7 @@ const bindingKindsBySurface = {
 
 export const certifiedCapabilitySchema = z
   .strictObject({
-    id: nonBlankStringSchema,
+    id: identifierSchema,
     iface: certifiedCapabilityInterfaceSchema,
     binding: certifiedCapabilityBindingSchema,
     provenance: certifiedCapabilityProvenanceSchema,
@@ -276,10 +317,10 @@ export const certifiedProfileDiffSchema = z.strictObject({
 
 export const certifiedProfileSchema = z
   .strictObject({
-    target: nonBlankStringSchema,
+    target: identifierSchema,
     generatedAt: z.iso.datetime(),
-    capabilities: z.array(certifiedCapabilitySchema),
-    profileDiffs: z.array(certifiedProfileDiffSchema),
+    capabilities: z.array(certifiedCapabilitySchema).max(512),
+    profileDiffs: z.array(certifiedProfileDiffSchema).max(512),
   })
   .superRefine((profile, context) => {
     const ids = new Set<string>();
