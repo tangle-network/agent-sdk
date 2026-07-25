@@ -214,6 +214,12 @@ describe("certifiedContextSchema", () => {
 
   it("limits revisions and artifact versions to exactly representable ranges", () => {
     const value = context();
+    expect(
+      certifiedContextSchema.safeParse({
+        ...value,
+        revision: "not-a-revision",
+      }).success,
+    ).toBe(false);
     expect(() =>
       certifiedContextSchema.parse({
         ...value,

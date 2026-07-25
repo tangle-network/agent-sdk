@@ -59,6 +59,7 @@ const MAX_TOTAL_INLINE_CONTEXT_BYTES = 131_072;
 const MAX_FILE_CONTEXT_BYTES = 1_048_576;
 const MAX_CERTIFIED_CONTEXT_BYTES = 16_777_216;
 const MAX_CERTIFIED_CONTEXT_LIFETIME_MS = 900_000;
+const revisionPattern = /^(0|[1-9]\d{0,18})$/;
 
 const nonBlankStringSchema = z
   .string()
@@ -188,9 +189,11 @@ export const certifiedContextSchema = z
     state: z.enum(["active", "revoked"]),
     revision: z
       .string()
-      .regex(/^(0|[1-9]\d{0,18})$/)
+      .regex(revisionPattern)
       .refine(
-        (value) => BigInt(value) <= 9_223_372_036_854_775_807n,
+        (value) =>
+          !revisionPattern.test(value) ||
+          BigInt(value) <= 9_223_372_036_854_775_807n,
         "revision exceeds signed 64-bit range",
       ),
     generatedAt: z.iso.datetime(),
