@@ -15,18 +15,13 @@ import { z } from "zod";
  * a one-shot) with no full coding-agent harness. The rest are full agentic harnesses run in a
  * sandbox or locally via the CLI bridge.
  *
- * Some values are input aliases that collapse to a base runner (`claude`/`claudish` → `claude-code`,
- * `kimi` → `kimi-code`); normalize with {@link canonicalizeHarness} before keying per-runner config.
  */
 export type HarnessType =
   | "claude-code"
-  | "claude"
-  | "claudish"
   | "nanoclaw"
   | "codex"
   | "opencode"
   | "kimi-code"
-  | "kimi"
   | "pi"
   | "gemini"
   | "hermes"
@@ -39,13 +34,10 @@ export type HarnessType =
 /** Runtime validator for {@link HarnessType}. Kept in lockstep with the type by the drift guard below. */
 export const harnessTypeSchema = z.enum([
   "claude-code",
-  "claude",
-  "claudish",
   "nanoclaw",
   "codex",
   "opencode",
   "kimi-code",
-  "kimi",
   "pi",
   "gemini",
   "hermes",
@@ -55,18 +47,6 @@ export const harnessTypeSchema = z.enum([
   "acp",
   "cli-base",
 ]);
-
-/** Input alias → canonical base runner. Aliases accept legacy/shorthand harness names. */
-export const harnessAliases: Partial<Record<HarnessType, HarnessType>> = {
-  claude: "claude-code",
-  claudish: "claude-code",
-  kimi: "kimi-code",
-};
-
-/** Collapse an alias to its base runner (idempotent on canonical values). */
-export function canonicalizeHarness(harness: HarnessType): HarnessType {
-  return harnessAliases[harness] ?? harness;
-}
 
 // Compile-time drift guard: the Zod enum and the TS union must describe the same set, so adding a
 // value to one without the other is a `tsc` error (the same pattern profile-schema.ts uses).

@@ -35,17 +35,7 @@ describe("agentCandidateBundleSchema", () => {
     ).toEqual(knowledge);
   });
 
-  it("accepts canonical harness aliases but rejects a true mismatch", () => {
-    expect(() =>
-      agentCandidateBundleSchema.parse({
-        ...candidateFixture(),
-        profile: { ...candidateFixture().profile, harness: "claude" },
-        execution: {
-          ...candidateFixture().execution,
-          harness: "claude-code",
-        },
-      }),
-    ).not.toThrow();
+  it("rejects a harness mismatch", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({
         ...candidateFixture(),

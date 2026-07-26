@@ -1,5 +1,5 @@
 import type { ReasoningEffort } from "./agent-profile.js";
-import { canonicalizeHarness, type HarnessType } from "./harness.js";
+import type { HarnessType } from "./harness.js";
 
 /**
  * The unified harness capability layer — the single source of truth for:
@@ -33,8 +33,7 @@ export const reasoningLadder: readonly ReasoningEffort[] = [
 
 /**
  * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `anthropic`, `openai`).
- * A harness with no entry is router-backed: it runs any model. Keyed by the BASE runner — aliases
- * (`claude`/`claudish`/`kimi`) resolve through `canonicalizeHarness` first.
+ * A harness with no entry is router-backed: it runs any model.
  *
  * `nanoclaw` is deliberately absent despite the "claw" name: its runner routes every provider through
  * the Tangle router (canonical model id straight to the gateway), so it is router-backed like
@@ -56,7 +55,7 @@ export function modelProvider(modelId: string): string | null {
 export function harnessProviders(
   harness: HarnessType,
 ): readonly string[] | null {
-  return harnessProviderLock[canonicalizeHarness(harness)] ?? null;
+  return harnessProviderLock[harness] ?? null;
 }
 
 /**
@@ -89,7 +88,7 @@ export function preferredHarnessForModel(modelId: string): HarnessType | null {
 /**
  * Per-harness ranking patterns for {@link snapModelToHarness}, best first; within one pattern the
  * highest version wins (numeric-aware). Only vendor-locked harnesses need an entry — a router-backed
- * harness never snaps (it runs the model as-is). Keyed by the BASE runner (aliases canonicalized).
+ * harness never snaps (it runs the model as-is).
  */
 const harnessPreferredModelPatterns: Partial<
   Record<HarnessType, readonly RegExp[]>
@@ -121,8 +120,7 @@ export function snapModelToHarness(
   candidateIds: readonly string[],
 ): string {
   if (harnessSupportsModel(harness, modelId)) return modelId;
-  const patterns =
-    harnessPreferredModelPatterns[canonicalizeHarness(harness)] ?? [];
+  const patterns = harnessPreferredModelPatterns[harness] ?? [];
   for (const pattern of patterns) {
     const matches = candidateIds
       .filter((id) => pattern.test(id))
@@ -195,10 +193,9 @@ const harnessReasoningCeiling: Partial<Record<HarnessType, ReasoningEffort>> = {
 export function harnessReasoningEfforts(
   harness: HarnessType,
 ): readonly ReasoningEffort[] {
-  const canonical = canonicalizeHarness(harness);
-  const override = harnessReasoningEffortsOverride[canonical];
+  const override = harnessReasoningEffortsOverride[harness];
   if (override) return override;
-  const ceiling = harnessReasoningCeiling[canonical] ?? "ultracode";
+  const ceiling = harnessReasoningCeiling[harness] ?? "ultracode";
   return reasoningLadder.slice(0, reasoningLadder.indexOf(ceiling) + 1);
 }
 
@@ -234,7 +231,7 @@ export function reasoningEffortsFor(
 /**
  * Harnesses whose runner DROPS a per-turn selector — grounded in the cli-bridge adapter audit, NOT a
  * guess. Most harnesses honor both selectors, so only the exceptions are listed; a harness absent from
- * a set honors that selector. Keyed by the BASE runner (aliases canonicalized).
+ * a set honors that selector.
  *
  *   - model dropped:  `amp` (own agent picks the model), `openclaw` (dispatcher routes by its own
  *     config), `nanoclaw` (socket-bridge runner is config/env-driven).
@@ -259,12 +256,12 @@ const harnessIgnoresEffort: ReadonlySet<HarnessType> = new Set([
 
 /** Whether the harness's runner honors a per-turn MODEL override (vs. picking the model itself). */
 export function harnessHonorsModel(harness: HarnessType): boolean {
-  return !harnessIgnoresModel.has(canonicalizeHarness(harness));
+  return !harnessIgnoresModel.has(harness);
 }
 
 /** Whether the harness's runner honors a reasoning-EFFORT override (vs. dropping it). */
 export function harnessHonorsEffort(harness: HarnessType): boolean {
-  return !harnessIgnoresEffort.has(canonicalizeHarness(harness));
+  return !harnessIgnoresEffort.has(harness);
 }
 
 /** Whether the harness honors BOTH chat selectors — i.e. the model and effort pickers are live. */

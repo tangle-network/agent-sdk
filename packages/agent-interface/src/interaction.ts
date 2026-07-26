@@ -212,39 +212,6 @@ export function permissionAnswerSpec(opts?: { allowFeedback?: boolean }): Intera
   return { fields };
 }
 
-/** Shape of one legacy question (kept for the back-compat shim). */
-export type LegacyQuestion = {
-  question: string;
-  options?: Array<{ label: string; description?: string }>;
-  multiSelect?: boolean;
-  /** When true the select field accepts write-in answers beyond `options`. */
-  allowCustom?: boolean;
-};
-
-/**
- * Build an answer spec from the legacy `question` event shape. Each question
- * becomes one select field (free text when it declares no options), so the old
- * question/answer path is expressible as a `question` interaction.
- */
-export function questionAnswerSpec(questions: LegacyQuestion[]): InteractionAnswerSpec {
-  const fields: InteractionField[] = questions.map((q, i) => {
-    const name = `q${i}`;
-    if (q.options && q.options.length > 0) {
-      return {
-        type: "select",
-        name,
-        label: q.question,
-        required: true,
-        multi: q.multiSelect === true,
-        ...(q.allowCustom === true ? { allowCustom: true } : {}),
-        options: q.options.map((o) => ({ value: o.label, label: o.label, description: o.description })),
-      };
-    }
-    return { type: "text", name, label: q.question, required: true };
-  });
-  return { fields };
-}
-
 // =============================================================================
 // Generic validation — does `data` satisfy `answerSpec`? Fail-closed.
 // =============================================================================

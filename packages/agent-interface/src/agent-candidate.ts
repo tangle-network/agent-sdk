@@ -10,6 +10,7 @@ import type {
   ReasoningEffort,
 } from "./agent-profile.js";
 import type { HarnessType } from "./harness.js";
+import type { AgentProfileImprovementMeasuredComparison } from "./agent-profile-improvement.js";
 
 /** Full SHA-256 digest with an explicit algorithm prefix. */
 export type Sha256Digest = `sha256:${string}`;
@@ -796,11 +797,15 @@ export interface AgentCandidateExperimentMeasurement {
   candidate: CandidateExecutionEvidence;
 }
 
-/** Portable paired held-out comparison produced by an evaluation package. */
-export interface AgentImprovementMeasuredComparison {
-  kind: "agent-improvement-measured-comparison";
-  experiment: AgentCandidateExperiment;
-  measurements: AgentCandidateExperimentMeasurement[];
+/** Common measured result shared by sealed and normal-profile experiments. */
+export interface AgentImprovementMeasuredComparisonBase<
+  TExperiment,
+  TMeasurement,
+  TKind extends string,
+> {
+  kind: TKind;
+  experiment: TExperiment;
+  measurements: TMeasurement[];
   overall: {
     name: "composite";
     baseline: number;
@@ -909,13 +914,26 @@ export interface AgentImprovementMeasuredComparison {
   metadata?: { [key: string]: AgentCandidateJsonValue };
 }
 
+/** Portable paired held-out comparison produced by a sealed candidate executor. */
+export interface AgentImprovementMeasuredComparison
+  extends AgentImprovementMeasuredComparisonBase<
+    AgentCandidateExperiment,
+    AgentCandidateExperimentMeasurement,
+    "agent-improvement-measured-comparison"
+  > {}
+
+/** A reviewable measured result can come from a sealed executor or a normal profile executor. */
+export type AgentImprovementEvaluation =
+  | AgentImprovementMeasuredComparison
+  | AgentProfileImprovementMeasuredComparison;
+
 export interface AgentImprovementProposal {
   kind: "agent-improvement-proposal";
   runId: string;
   changedSurfaces: [AgentImprovementSurface, ...AgentImprovementSurface[]];
   proposedAt: string;
   findings: { [key: string]: AgentCandidateJsonValue }[];
-  evaluation: AgentImprovementMeasuredComparison;
+  evaluation: AgentImprovementEvaluation;
   digest: Sha256Digest;
 }
 
@@ -954,7 +972,8 @@ export interface AgentImprovementActivation {
   proposalDigest: Sha256Digest;
   reviewDigest: Sha256Digest;
   experimentDigest: Sha256Digest;
-  candidateBundleDigest: Sha256Digest;
+  /** Exact proposed state, whether it is a sealed bundle or a normal profile. */
+  candidateDigest: Sha256Digest;
   intent: AgentImprovementActivationIntent;
   targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];
   fundingOwner: string;

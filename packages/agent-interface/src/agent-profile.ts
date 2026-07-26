@@ -3,8 +3,8 @@
  *
  * These model portable agent intent at the application boundary. Individual
  * backends translate this shape into their own native profile/configuration
- * formats internally. This is the canonical home; `@tangle-network/sandbox`
- * re-exports these symbols for backward compatibility.
+ * formats internally. This package is the canonical public home for these
+ * symbols.
  */
 
 import type { HarnessType } from "./harness.js";
