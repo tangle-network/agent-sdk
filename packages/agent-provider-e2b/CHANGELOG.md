@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-e2b
 
+## 0.2.25
+
+### Patch Changes
+
+- 8521060: Publish Core and provider adapters with registry-valid Agent Interface dependencies.
+
 ## 0.2.24
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.4.23
+
+### Patch Changes
+
+- 8521060: Publish Core and provider adapters with registry-valid Agent Interface dependencies.
+
 ## 0.4.22
 
 ### Patch Changes
