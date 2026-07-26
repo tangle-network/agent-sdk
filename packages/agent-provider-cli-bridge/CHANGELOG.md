@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.2.27
+
+### Patch Changes
+
+- 02c966a: Emit canonical text and tool-call events, report usage once, and fail when the bridge stream errors or ends without a terminal result.
+
 ## 0.2.26
 
 ### Patch Changes
