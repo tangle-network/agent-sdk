@@ -25,8 +25,9 @@ const MAX_LIST_OFFSET = 1_000;
 
 type TangleExactSandboxOptions = Omit<
   CreateSandboxOptions,
-  "agent" | "driver" | "egressPolicy"
+  "agent" | "driver" | "egressPolicy" | "environment"
 > & {
+  environment: string;
   agent: false;
   driver: { type: "host-agent"; runtimeBackend: "docker" };
   egressPolicy:
@@ -153,10 +154,9 @@ function exactSandboxOptions(
   }
   const resources = sandboxResourcesFromRequest(input.resources);
   return {
-    image: input.image,
+    environment: input.image,
     agent: false,
     driver: { type: "host-agent", runtimeBackend: "docker" },
-    publicEdge: false,
     ephemeral: true,
     sshEnabled: false,
     webTerminalEnabled: false,
