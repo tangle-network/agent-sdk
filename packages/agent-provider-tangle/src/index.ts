@@ -173,7 +173,10 @@ export function createTangleProvider(
       const createOptions =
         options.mapCreateInput?.(input) ??
         sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
-      const box = await options.client.create(createOptions);
+      const box = await options.client.create(
+        createOptions,
+        input.signal ? { signal: input.signal } : undefined,
+      );
       return sandboxInstanceAsEnvironment(box, providerName, options.client);
     },
     ...(options.client.get
