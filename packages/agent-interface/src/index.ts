@@ -823,6 +823,19 @@ export interface SdkProviderAdapter {
 export * from "./interaction.js";
 export * from "./agent-candidate.js";
 export * from "./agent-candidate-schema.js";
+// Candidate identity scheme: RFC 8785 canonical JSON plus sha256 digests.
+// Re-exported explicitly — not only through the schema barrels above — because
+// external consumers (e.g. discovery-interface) depend on these names staying
+// on the root export surface regardless of internal barrel layout.
+export type { Sha256Digest } from "./agent-candidate.js";
+export {
+  canonicalCandidateBytes,
+  canonicalCandidateDigest,
+  canonicalCandidateJson,
+  sha256Bytes,
+  sha256DigestSchema,
+  sha256Utf8,
+} from "./agent-candidate-schema-common.js";
 export * from "./agent-candidate-promotion-schema.js";
 export { agentCandidateEvaluationPolicySchema } from "./agent-improvement-measurement-schema.js";
 export * from "./agent-improvement-source.js";
