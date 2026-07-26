@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.3.5
+
+### Patch Changes
+
+- Accept the Sandbox SDK's file-write receipt while preserving the provider contract's `Promise<void>` write method.
+
 ## 0.3.4
 
 ### Patch Changes

@@ -5,6 +5,7 @@ import {
 } from "@tangle-network/agent-provider-testkit";
 import type {
   CreateSandboxOptions,
+  Sandbox,
   SandboxEvent,
 } from "@tangle-network/sandbox";
 import {
@@ -26,6 +27,12 @@ type ExactCreateOptions = CreateSandboxOptions & {
     includeImplicitDomains?: boolean;
   };
 };
+
+function acceptCurrentSandboxClient(client: Sandbox): SandboxClientLike {
+  return client;
+}
+
+void acceptCurrentSandboxClient;
 
 describe("createTangleProvider", () => {
   it("refuses to advertise exact processes without the exact adapter", async () => {
@@ -79,6 +86,7 @@ describe("createTangleProvider", () => {
       read: async (path) => files.get(path) ?? "",
       write: async (path, content) => {
         files.set(path, content);
+        return { path, written: true };
       },
       exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
       delete: async () => {},
