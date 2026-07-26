@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.2.28
+
+### Patch Changes
+
+- 1ca3978: Disable response-header and body-idle timeouts by default, reuse connections across turns, and close provider resources with the environment.
+
 ## 0.2.27
 
 ### Patch Changes
