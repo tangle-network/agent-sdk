@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.2.26
+
+### Patch Changes
+
+- Republish the checked pnpm artifacts after the failed provider release.
+
 ## 0.2.25
 
 ### Patch Changes

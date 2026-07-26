@@ -37,6 +37,5 @@ jobs:
           publish: pnpm changeset:publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Auth comes from OIDC (id-token) once the package's trusted publisher
-          # is registered on npmjs.com. Provenance is attached automatically.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"

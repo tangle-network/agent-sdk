@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.3.4
+
+### Patch Changes
+
+- Republish the checked pnpm artifacts after the failed provider release.
+
 ## 0.3.3
 
 ### Patch Changes
