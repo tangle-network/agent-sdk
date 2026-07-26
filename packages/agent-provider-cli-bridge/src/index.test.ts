@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "./index.js";
 
@@ -140,7 +141,7 @@ describe("createCliBridgeProvider", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
 
-    let environment: Awaited<ReturnType<ReturnType<typeof createCliBridgeProvider>["create"]>> | undefined;
+    let environment: AgentEnvironment | undefined;
     try {
       const provider = createCliBridgeProvider({
         baseUrl: `http://127.0.0.1:${address.port}`,
@@ -171,12 +172,87 @@ describe("createCliBridgeProvider", () => {
     }
   });
 
-  it("rejects invalid transport timeouts before execution", () => {
+  it("enforces a configured response-header timeout", async () => {
+    let delayedResponse: ReturnType<typeof setTimeout> | undefined;
+    const server = createServer((_request, response) => {
+      delayedResponse = setTimeout(() => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          'data: {"choices":[{"delta":{"content":"late"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      }, 5_000);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
+
+    const provider = createCliBridgeProvider({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      headersTimeoutMs: 10,
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    try {
+      await expect(consume(environment)).rejects.toMatchObject({
+        cause: { code: "UND_ERR_HEADERS_TIMEOUT" },
+      });
+    } finally {
+      if (delayedResponse) clearTimeout(delayedResponse);
+      await environment.destroy?.();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("enforces a configured response-body idle timeout", async () => {
+    let delayedBody: ReturnType<typeof setTimeout> | undefined;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n');
+      delayedBody = setTimeout(() => {
+        response.end(
+          'data: {"choices":[{"delta":{"content":"late"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      }, 5_000);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
+
+    const provider = createCliBridgeProvider({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      bodyTimeoutMs: 10,
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    try {
+      await expect(consume(environment)).rejects.toMatchObject({
+        cause: { code: "UND_ERR_BODY_TIMEOUT" },
+      });
+    } finally {
+      if (delayedBody) clearTimeout(delayedBody);
+      await environment.destroy?.();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it.each(
+    (["headersTimeoutMs", "bodyTimeoutMs"] as const).flatMap((name) =>
+      [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY].map((value) => ({ name, value })),
+    ),
+  )("rejects invalid $name=$value before execution", ({ name, value }) => {
     expect(() =>
       createCliBridgeProvider({
         baseUrl: "http://bridge.local",
-        headersTimeoutMs: -1,
+        [name]: value,
       }),
-    ).toThrow("headersTimeoutMs must be a non-negative finite number");
+    ).toThrow(`${name} must be a non-negative integer`);
   });
 });
+
+async function consume(environment: AgentEnvironment): Promise<void> {
+  for await (const _event of environment.stream({ prompt: "go" })) {
+    // Drain the stream to its terminal condition.
+  }
+}

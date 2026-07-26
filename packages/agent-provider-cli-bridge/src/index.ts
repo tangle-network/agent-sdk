@@ -16,7 +16,7 @@ import type {
   TokenUsage,
   ToolPart,
 } from "@tangle-network/agent-interface";
-import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 export interface CliBridgeProviderOptions {
   baseUrl: string;
@@ -183,13 +183,31 @@ async function* streamCliBridgeTurn(
 }
 
 interface CliBridgeTransport {
-  fetch: typeof fetch;
+  fetch(input: string, init: CliBridgeRequest): Promise<CliBridgeResponse>;
   close(): Promise<void>;
+}
+
+interface CliBridgeRequest {
+  method: "POST";
+  headers: Record<string, string>;
+  body: string;
+  signal?: AbortSignal;
+}
+
+interface CliBridgeResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: AsyncIterable<Uint8Array> | null;
+  text(): Promise<string>;
 }
 
 function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport {
   if (options.fetch) {
-    return { fetch: options.fetch, close: async () => {} };
+    const fetch = options.fetch;
+    return {
+      fetch: (input, init) => fetch(input, init),
+      close: async () => {},
+    };
   }
   const dispatcher = new Agent({
     headersTimeout: options.headersTimeoutMs ?? 0,
@@ -197,10 +215,10 @@ function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport 
   });
   return {
     fetch: (input, init) =>
-      undiciFetch(input as string | URL, {
+      undiciFetch(input, {
         ...init,
         dispatcher,
-      } as unknown as UndiciRequestInit) as unknown as Promise<Response>,
+      }),
     close: async () => {
       await dispatcher.close();
     },
@@ -208,8 +226,8 @@ function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport 
 }
 
 function assertTimeout(value: number | undefined, name: string): void {
-  if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
-    throw new Error(`createCliBridgeProvider ${name} must be a non-negative finite number`);
+  if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+    throw new Error(`createCliBridgeProvider ${name} must be a non-negative integer`);
   }
 }
 
@@ -267,35 +285,23 @@ function executionFromInput(
   };
 }
 
-async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  const reader = body.getReader();
+async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncIterable<string> {
   const decoder = new TextDecoder();
   let buffer = "";
-  let fullyRead = false;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        fullyRead = true;
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = findFrameBoundary(buffer);
-      while (boundary) {
-        const frame = buffer.slice(0, boundary.index);
-        buffer = buffer.slice(boundary.index + boundary.length);
-        const data = dataFromFrame(frame);
-        if (data !== undefined) yield data;
-        boundary = findFrameBoundary(buffer);
-      }
-    }
-    if (buffer) {
-      const data = dataFromFrame(buffer);
+  for await (const value of body) {
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = findFrameBoundary(buffer);
+    while (boundary) {
+      const frame = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary.length);
+      const data = dataFromFrame(frame);
       if (data !== undefined) yield data;
+      boundary = findFrameBoundary(buffer);
     }
-  } finally {
-    if (!fullyRead) await reader.cancel().catch(() => {});
-    reader.releaseLock();
+  }
+  if (buffer) {
+    const data = dataFromFrame(buffer);
+    if (data !== undefined) yield data;
   }
 }
 

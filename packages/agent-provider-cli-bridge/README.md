@@ -13,4 +13,4 @@ const provider = createCliBridgeProvider({
 ```
 
 Response headers and streamed bodies have no transport timeout by default.
-Use `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` when a caller needs a finite limit.
+For unattended runs, set `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` so an unresponsive bridge cannot wait forever.
