@@ -51,6 +51,8 @@ describe("createTangleProvider", () => {
 
   it("maps ordinary agent environments", async () => {
     let createOptions: CreateSandboxOptions | undefined;
+    let createRequestOptions: { signal?: AbortSignal; timeoutMs?: number } | undefined;
+    const controller = new AbortController();
     const files = new Map<string, string>();
     const box: SandboxInstanceLike = {
       id: "sbx-1",
@@ -82,8 +84,9 @@ describe("createTangleProvider", () => {
       delete: async () => {},
     };
     const client: SandboxClientLike = {
-      async create(options) {
+      async create(options, requestOptions) {
         createOptions = options;
+        createRequestOptions = requestOptions;
         return box;
       },
       describePlacement: () => ({ kind: "sibling", sandboxId: "sbx-1" }),
@@ -94,13 +97,18 @@ describe("createTangleProvider", () => {
       runAgentEnvironmentProviderConformance({
         name: "sandbox",
         createProvider: () => provider,
-        createInput: { profile: { name: "worker" }, backend: "codex" },
+        createInput: {
+          profile: { name: "worker" },
+          backend: "codex",
+          signal: controller.signal,
+        },
       }),
     ).resolves.toMatchObject({ provider: "tangle-sandbox" });
 
     expect(createOptions).toMatchObject({
       backend: { type: "codex", profile: { name: "worker" } },
     });
+    expect(createRequestOptions?.signal).toBe(controller.signal);
   });
 
   it("runs the exact-process lifecycle through process-only sandboxes", async () => {
