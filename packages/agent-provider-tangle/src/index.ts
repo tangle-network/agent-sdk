@@ -90,7 +90,7 @@ export interface SandboxInstanceLike {
   dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
   session?(id: string): SandboxSessionLike;
   read?(path: string, options?: { sessionId?: string }): Promise<string>;
-  write?(path: string, content: string, options?: { sessionId?: string }): Promise<void>;
+  write?(path: string, content: string, options?: { sessionId?: string }): Promise<unknown>;
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
   fs?: {
     supportsWriteMode?: true;
@@ -243,7 +243,13 @@ function sandboxInstanceAsEnvironment(
         }
       : {}),
     ...(box.read ? { read: box.read.bind(box) } : {}),
-    ...(box.write ? { write: box.write.bind(box) } : {}),
+    ...(box.write
+      ? {
+          async write(path: string, content: string): Promise<void> {
+            await box.write?.(path, content);
+          },
+        }
+      : {}),
     ...(box.exec
       ? {
           async exec(command: string, options?: ExecRequest): Promise<ExecResult> {
