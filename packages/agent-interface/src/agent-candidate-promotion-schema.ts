@@ -17,6 +17,7 @@ import {
   isCanonicalJsonValue,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import { refineAgentExecutionWithinLimits } from "./agent-execution-limits.js";
 import {
   agentCandidateMaterializationReceiptSchema,
   agentCandidateRunReceiptSchema,
@@ -147,6 +148,19 @@ export const candidateExecutionEvidenceSchema = z
     for (const [valid, path, message] of checks) {
       if (!valid) ctx.addIssue({ code: "custom", path, message });
     }
+    refineAgentExecutionWithinLimits(
+      plan.material.limits,
+      {
+        durationMs: evidence.receipt.timing.durationMs,
+        steps: evidence.receipt.steps,
+        usage: evidence.receipt.modelSettlement.material.usage,
+      },
+      ctx,
+      {
+        pathPrefix: ["receipt"],
+        usagePath: ["modelSettlement", "material", "usage"],
+      },
+    );
     if (!isCanonicalJsonValue(evidence)) {
       ctx.addIssue({
         code: "custom",

@@ -194,6 +194,7 @@ function runReceipt(options: {
   score?: number;
   startedAtMs?: number;
   endedAtMs?: number;
+  steps?: number;
   identityDigit?: string;
 } = {}) {
   const executionPlanDigest = candidateSha(options.identityDigit ?? "3");
@@ -328,6 +329,7 @@ function runReceipt(options: {
       endedAtMs: options.endedAtMs ?? 1_100,
       durationMs: (options.endedAtMs ?? 1_100) - (options.startedAtMs ?? 1_000),
     },
+    steps: options.steps ?? 2,
     memory: { mode: "disabled" as const },
     trace: {
       artifact: durableArtifact("traces/run-1.json", "e", 500),
@@ -693,6 +695,37 @@ describe("candidate outcome contracts", () => {
         },
       }).success,
     ).toBe(false);
+    expect(
+      candidateExecutionEvidenceSchema.safeParse({
+        ...firstCandidate,
+        receipt: { ...firstCandidate.receipt, steps: 21 },
+      }).success,
+    ).toBe(false);
+    const overInputLimit = candidateExecutionEvidenceSchema.safeParse({
+      ...firstCandidate,
+      materializationReceipt: {
+        ...firstCandidate.materializationReceipt,
+        executionPlan: {
+          ...firstCandidate.materializationReceipt.executionPlan,
+          material: {
+            ...firstCandidate.materializationReceipt.executionPlan.material,
+            limits: {
+              ...firstCandidate.materializationReceipt.executionPlan.material.limits,
+              maxInputTokens: 29,
+            },
+          },
+        },
+      },
+    });
+    expect(overInputLimit.success).toBe(false);
+    if (overInputLimit.success) throw new Error("expected an execution limit violation");
+    expect(overInputLimit.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["receipt", "modelSettlement", "material", "usage", "inputTokens"],
+        }),
+      ]),
+    );
     expect(
       agentImprovementProposalSchema.safeParse({
         ...proposal,

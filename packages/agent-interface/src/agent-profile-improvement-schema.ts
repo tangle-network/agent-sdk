@@ -18,6 +18,7 @@ import {
   omitTopLevelDigest,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import { refineAgentExecutionWithinLimits } from "./agent-execution-limits.js";
 import {
   agentCandidateBenchmarkGraderIdentitySchema,
   agentCandidateExecutionLimitsSchema,
@@ -362,6 +363,7 @@ export const agentProfileImprovementRunReceiptSchema = z
       .tuple([profileImprovementEvidenceSchema])
       .rest(profileImprovementEvidenceSchema),
     timing: timingSchema,
+    steps: z.number().int().nonnegative().safe(),
     resolvedModel: agentCandidateResolvedModelSchema,
     limits: agentCandidateExecutionLimitsSchema,
     usage: agentCandidateFixedSpendSchema,
@@ -409,6 +411,15 @@ export const agentProfileImprovementRunReceiptSchema = z
         message: "profile trace must retain at least one event for every model call",
       });
     }
+    refineAgentExecutionWithinLimits(
+      receipt.limits,
+      {
+        durationMs: receipt.timing.durationMs,
+        steps: receipt.steps,
+        usage: receipt.usage,
+      },
+      ctx,
+    );
     const billing = receipt.billing.map(evidenceKey);
     if (new Set(billing).size !== billing.length) {
       ctx.addIssue({
