@@ -16,6 +16,7 @@ import type {
   TokenUsage,
   ToolPart,
 } from "@tangle-network/agent-interface";
+import { Agent, fetch as undiciFetch } from "undici";
 
 export interface CliBridgeProviderOptions {
   baseUrl: string;
@@ -29,42 +30,56 @@ export interface CliBridgeProviderOptions {
     capability?: string;
     ttlSeconds?: number;
   };
+  /** Maximum wait for response headers. Defaults to no timeout. */
+  headersTimeoutMs?: number;
+  /** Maximum idle time between response body chunks. Defaults to no timeout. */
+  bodyTimeoutMs?: number;
   fetch?: typeof fetch;
   name?: string;
   capabilities?: AgentEnvironmentCapabilities;
 }
 
 export function createCliBridgeProvider(options: CliBridgeProviderOptions): AgentEnvironmentProvider {
-  const fetchImpl = options.fetch ?? globalThis.fetch;
-  if (!fetchImpl) throw new Error("createCliBridgeProvider requires fetch");
+  assertTimeout(options.headersTimeoutMs, "headersTimeoutMs");
+  assertTimeout(options.bodyTimeoutMs, "bodyTimeoutMs");
   const name = options.name ?? "cli-bridge";
   return {
     name,
     capabilities: () => options.capabilities ?? defaultCliBridgeCapabilities(),
     async create(input) {
+      const transport = createTransport(options);
+      let destroyed = false;
+      let closePromise: Promise<void> | undefined;
       return {
         id: input.idempotencyKey ?? input.name ?? crypto.randomUUID(),
         provider: name,
         ...(input.name ? { name: input.name } : {}),
-        status: async () => "running",
-        stream: (turn) => streamCliBridgeTurn(fetchImpl, options, input, turn),
+        status: async () => (destroyed ? "stopped" : "running"),
+        stream: (turn) => {
+          if (destroyed) throw new Error("cli-bridge environment is destroyed");
+          return streamCliBridgeTurn(options, input, turn, transport);
+        },
         placement: async () => ({
           kind: options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
           providerMetadata: { baseUrl: options.baseUrl },
         }),
-        destroy: async () => {},
+        destroy: () => {
+          destroyed = true;
+          closePromise ??= transport.close();
+          return closePromise;
+        },
       } satisfies AgentEnvironment;
     },
   };
 }
 
 async function* streamCliBridgeTurn(
-  fetchImpl: typeof fetch,
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
+  transport: CliBridgeTransport,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  const response = await fetchImpl(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
+  const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -86,7 +101,7 @@ async function* streamCliBridgeTurn(
   const emittedToolCalls = new Set<string>();
   let completed = false;
   for await (const event of parseSse(response.body)) {
-    if (event === "[DONE]") break;
+    if (event === "[DONE]") continue;
     const parsed = safeJson(event);
     if (!parsed) continue;
     if (parsed.error && typeof parsed.error === "object") {
@@ -167,6 +182,55 @@ async function* streamCliBridgeTurn(
   if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
 }
 
+interface CliBridgeTransport {
+  fetch(input: string, init: CliBridgeRequest): Promise<CliBridgeResponse>;
+  close(): Promise<void>;
+}
+
+interface CliBridgeRequest {
+  method: "POST";
+  headers: Record<string, string>;
+  body: string;
+  signal?: AbortSignal;
+}
+
+interface CliBridgeResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: AsyncIterable<Uint8Array> | null;
+  text(): Promise<string>;
+}
+
+function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport {
+  if (options.fetch) {
+    const fetch = options.fetch;
+    return {
+      fetch: (input, init) => fetch(input, init),
+      close: async () => {},
+    };
+  }
+  const dispatcher = new Agent({
+    headersTimeout: options.headersTimeoutMs ?? 0,
+    bodyTimeout: options.bodyTimeoutMs ?? 0,
+  });
+  return {
+    fetch: (input, init) =>
+      undiciFetch(input, {
+        ...init,
+        dispatcher,
+      }),
+    close: async () => {
+      await dispatcher.close();
+    },
+  };
+}
+
+function assertTimeout(value: number | undefined, name: string): void {
+  if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+    throw new Error(`createCliBridgeProvider ${name} must be a non-negative integer`);
+  }
+}
+
 function toChatCompletionsBody(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
@@ -221,30 +285,23 @@ function executionFromInput(
   };
 }
 
-async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  const reader = body.getReader();
+async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncIterable<string> {
   const decoder = new TextDecoder();
   let buffer = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = findFrameBoundary(buffer);
-      while (boundary) {
-        const frame = buffer.slice(0, boundary.index);
-        buffer = buffer.slice(boundary.index + boundary.length);
-        const data = dataFromFrame(frame);
-        if (data !== undefined) yield data;
-        boundary = findFrameBoundary(buffer);
-      }
-    }
-    if (buffer) {
-      const data = dataFromFrame(buffer);
+  for await (const value of body) {
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = findFrameBoundary(buffer);
+    while (boundary) {
+      const frame = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary.length);
+      const data = dataFromFrame(frame);
       if (data !== undefined) yield data;
+      boundary = findFrameBoundary(buffer);
     }
-  } finally {
-    reader.releaseLock();
+  }
+  if (buffer) {
+    const data = dataFromFrame(buffer);
+    if (data !== undefined) yield data;
   }
 }
 

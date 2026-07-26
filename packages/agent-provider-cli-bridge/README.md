@@ -11,3 +11,6 @@ const provider = createCliBridgeProvider({
   defaultModel: 'codex',
 })
 ```
+
+Response headers and streamed bodies have no transport timeout by default.
+For unattended runs, set `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` so an unresponsive bridge cannot wait forever.
