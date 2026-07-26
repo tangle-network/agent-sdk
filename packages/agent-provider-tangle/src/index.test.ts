@@ -108,15 +108,74 @@ describe("createTangleProvider", () => {
         createInput: {
           profile: { name: "worker" },
           backend: "codex",
+          workspace: { image: EXACT_IMAGE },
           signal: controller.signal,
         },
       }),
     ).resolves.toMatchObject({ provider: "tangle-sandbox" });
 
     expect(createOptions).toMatchObject({
+      environment: EXACT_IMAGE,
       backend: { type: "codex", profile: { name: "worker" } },
     });
     expect(createRequestOptions?.signal).toBe(controller.signal);
+  });
+
+  it("maps Sandbox session interruption to agent session cancellation", async () => {
+    const interrupt = vi.fn(async () => ({ cancelled: true }));
+    const box: SandboxInstanceLike = {
+      id: "sbx-session",
+      async *streamPrompt(): AsyncIterable<SandboxEvent> {},
+      session: (id) => ({
+        id,
+        status: async () => ({ status: "running" }),
+        async *events(): AsyncIterable<SandboxEvent> {},
+        result: async () => {
+          throw new Error("not called");
+        },
+        prompt: async () => {
+          throw new Error("not called");
+        },
+        interrupt,
+      }),
+    };
+    const provider = createTangleProvider({
+      client: { create: async () => box },
+    });
+
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const session = environment.session?.("session-1");
+    expect(session).toBeDefined();
+    await session?.cancel();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+  });
+
+  it("rejects unresolved profile references before creating a sandbox", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const provider = createTangleProvider({ client: { create } });
+
+    await expect(provider.create({ profile: "profile-1" })).rejects.toThrow(
+      "requires an inline AgentProfile",
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting workspace environment inputs", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const provider = createTangleProvider({ client: { create } });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { environment: "env-a", image: "env-b" },
+      }),
+    ).rejects.toThrow("cannot specify both environment and image");
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("runs the exact-process lifecycle through process-only sandboxes", async () => {
@@ -290,10 +349,9 @@ describe("createTangleProvider", () => {
     });
 
     expect(firstCreateOptions).toEqual({
-      image: EXACT_IMAGE,
+      environment: EXACT_IMAGE,
       agent: false,
       driver: { type: "host-agent", runtimeBackend: "docker" },
-      publicEdge: false,
       ephemeral: true,
       sshEnabled: false,
       webTerminalEnabled: false,

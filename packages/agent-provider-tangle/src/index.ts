@@ -126,7 +126,7 @@ export interface SandboxSessionLike {
   events(options?: { since?: string; signal?: AbortSignal }): AsyncIterable<SandboxEvent>;
   result(): Promise<PromptResult>;
   prompt(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
-  cancel(): Promise<void>;
+  interrupt(): Promise<{ cancelled: boolean }>;
 }
 
 export interface TangleProviderOptions {
@@ -308,7 +308,9 @@ function sandboxSessionAsAgentSession(session: SandboxSessionLike): AgentSession
         await session.prompt(promptFromTurnInput(input), promptOptionsFromTurnInput(input)),
       );
     },
-    cancel: session.cancel.bind(session),
+    async cancel(): Promise<void> {
+      await session.interrupt();
+    },
   };
 }
 
@@ -317,6 +319,10 @@ function sandboxOptionsFromCreateInput(
   defaultBackend: BackendType,
 ): CreateSandboxOptions {
   const workspace = input.workspace ?? {};
+  if (workspace.environment !== undefined && workspace.image !== undefined) {
+    throw new Error("Tangle workspace cannot specify both environment and image");
+  }
+  const environment = workspace.image ?? workspace.environment;
   const providerOptions = input.providerOptions?.sandboxCreateOptions;
   const base =
     providerOptions && typeof providerOptions === "object"
@@ -324,8 +330,7 @@ function sandboxOptionsFromCreateInput(
       : ({} satisfies CreateSandboxOptions);
   return {
     ...base,
-    ...(workspace.environment ? { environment: workspace.environment } : {}),
-    ...(workspace.image ? { image: workspace.image } : {}),
+    ...(environment !== undefined ? { environment } : {}),
     ...(workspace.repoUrl ? { git: { url: workspace.repoUrl, ref: workspace.gitRef } } : {}),
     ...(input.resources ? { resources: input.resources as unknown as CreateSandboxOptions["resources"] } : {}),
     ...(input.env ? { env: input.env } : {}),
@@ -336,9 +341,16 @@ function sandboxOptionsFromCreateInput(
     backend: {
       ...(base.backend ?? {}),
       type: (input.backend ?? defaultBackend) as BackendType,
-      profile: input.profile,
+      profile: inlineAgentProfile(input.profile),
     },
   };
+}
+
+function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, string> {
+  if (typeof profile === "string") {
+    throw new Error("Tangle provider requires an inline AgentProfile, not a profile reference");
+  }
+  return profile;
 }
 
 function environmentEventFromSandboxEvent(event: SandboxEvent): AgentEnvironmentEvent {
