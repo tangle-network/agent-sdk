@@ -47,17 +47,27 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
     name,
     capabilities: () => options.capabilities ?? defaultCliBridgeCapabilities(),
     async create(input) {
+      const transport = createTransport(options);
+      let destroyed = false;
+      let closePromise: Promise<void> | undefined;
       return {
         id: input.idempotencyKey ?? input.name ?? crypto.randomUUID(),
         provider: name,
         ...(input.name ? { name: input.name } : {}),
-        status: async () => "running",
-        stream: (turn) => streamCliBridgeTurn(options, input, turn),
+        status: async () => (destroyed ? "stopped" : "running"),
+        stream: (turn) => {
+          if (destroyed) throw new Error("cli-bridge environment is destroyed");
+          return streamCliBridgeTurn(options, input, turn, transport);
+        },
         placement: async () => ({
           kind: options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
           providerMetadata: { baseUrl: options.baseUrl },
         }),
-        destroy: async () => {},
+        destroy: () => {
+          destroyed = true;
+          closePromise ??= transport.close();
+          return closePromise;
+        },
       } satisfies AgentEnvironment;
     },
   };
@@ -67,113 +77,109 @@ async function* streamCliBridgeTurn(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
+  transport: CliBridgeTransport,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  const transport = createTransport(options);
-  try {
-    const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "text/event-stream",
-        ...(options.bearerToken ? { authorization: `Bearer ${options.bearerToken}` } : {}),
-        ...(turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
-      },
-      body: JSON.stringify(toChatCompletionsBody(options, environmentInput, turn)),
-      signal: turn.signal ?? environmentInput.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`cli-bridge ${response.status}: ${await response.text()}`);
-    }
-    if (!response.body) throw new Error("cli-bridge response body is empty");
-
-    let text = "";
-    const sessionId = turn.sessionId ?? environmentInput.idempotencyKey ?? environmentInput.name ?? "cli-bridge";
-    const messageId = turn.turnId ?? `${sessionId}:assistant`;
-    const emittedToolCalls = new Set<string>();
-    let completed = false;
-    for await (const event of parseSse(response.body)) {
-      if (event === "[DONE]") break;
-      const parsed = safeJson(event);
-      if (!parsed) continue;
-      if (parsed.error && typeof parsed.error === "object") {
-        const error = parsed.error as Record<string, unknown>;
-        const message = typeof error.message === "string" ? error.message : "cli-bridge error";
-        yield { type: "status", data: { status: "failed", error: message } };
-        throw new Error(`cli-bridge: ${message}`);
-      }
-      const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
-      const delta = choice?.delta;
-      const chunk = delta && typeof delta.content === "string" ? delta.content : "";
-      const nextUsage = usageFromOpenAi(parsed.usage);
-      if (nextUsage) {
-        yield { type: "usage", data: {}, usage: nextUsage };
-      }
-      if (chunk) {
-        text += chunk;
-        const part: TextPart = {
-          id: `${messageId}:text`,
-          sessionID: sessionId,
-          messageID: messageId,
-          type: "text",
-          text,
-        };
-        const normalized: MessagePartUpdatedEvent = {
-          type: "message.part.updated",
-          part,
-          delta: chunk,
-        };
-        yield {
-          type: "message.part.updated",
-          data: { part, delta: chunk },
-          normalized,
-        };
-      }
-      for (const toolCall of toolCallsFromDelta(delta)) {
-        const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
-        if (!toolCall.name || emittedToolCalls.has(callId)) continue;
-        emittedToolCalls.add(callId);
-        const part: ToolPart = {
-          id: callId,
-          sessionID: sessionId,
-          messageID: messageId,
-          type: "tool",
-          callID: callId,
-          tool: toolCall.name,
-          state: { status: "pending", input: {} },
-        };
-        const normalized: MessagePartUpdatedEvent = {
-          type: "message.part.updated",
-          part,
-        };
-        yield {
-          type: "message.part.updated",
-          data: { part },
-          normalized,
-        };
-      }
-      if (choice?.finish_reason) {
-        if (choice.finish_reason === "error") {
-          yield {
-            type: "status",
-            data: { status: "failed", error: "cli-bridge returned finish_reason=error" },
-          };
-          throw new Error("cli-bridge returned finish_reason=error");
-        }
-        completed = true;
-        yield {
-          type: "result",
-          data: {
-            finalText: text,
-            finishReason: choice.finish_reason,
-            status: "completed",
-          },
-        };
-      }
-    }
-    if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
-  } finally {
-    await transport.close();
+  const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      ...(options.bearerToken ? { authorization: `Bearer ${options.bearerToken}` } : {}),
+      ...(turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
+    },
+    body: JSON.stringify(toChatCompletionsBody(options, environmentInput, turn)),
+    signal: turn.signal ?? environmentInput.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`cli-bridge ${response.status}: ${await response.text()}`);
   }
+  if (!response.body) throw new Error("cli-bridge response body is empty");
+
+  let text = "";
+  const sessionId = turn.sessionId ?? environmentInput.idempotencyKey ?? environmentInput.name ?? "cli-bridge";
+  const messageId = turn.turnId ?? `${sessionId}:assistant`;
+  const emittedToolCalls = new Set<string>();
+  let completed = false;
+  for await (const event of parseSse(response.body)) {
+    if (event === "[DONE]") continue;
+    const parsed = safeJson(event);
+    if (!parsed) continue;
+    if (parsed.error && typeof parsed.error === "object") {
+      const error = parsed.error as Record<string, unknown>;
+      const message = typeof error.message === "string" ? error.message : "cli-bridge error";
+      yield { type: "status", data: { status: "failed", error: message } };
+      throw new Error(`cli-bridge: ${message}`);
+    }
+    const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+    const delta = choice?.delta;
+    const chunk = delta && typeof delta.content === "string" ? delta.content : "";
+    const nextUsage = usageFromOpenAi(parsed.usage);
+    if (nextUsage) {
+      yield { type: "usage", data: {}, usage: nextUsage };
+    }
+    if (chunk) {
+      text += chunk;
+      const part: TextPart = {
+        id: `${messageId}:text`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "text",
+        text,
+      };
+      const normalized: MessagePartUpdatedEvent = {
+        type: "message.part.updated",
+        part,
+        delta: chunk,
+      };
+      yield {
+        type: "message.part.updated",
+        data: { part, delta: chunk },
+        normalized,
+      };
+    }
+    for (const toolCall of toolCallsFromDelta(delta)) {
+      const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
+      if (!toolCall.name || emittedToolCalls.has(callId)) continue;
+      emittedToolCalls.add(callId);
+      const part: ToolPart = {
+        id: callId,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "tool",
+        callID: callId,
+        tool: toolCall.name,
+        state: { status: "pending", input: {} },
+      };
+      const normalized: MessagePartUpdatedEvent = {
+        type: "message.part.updated",
+        part,
+      };
+      yield {
+        type: "message.part.updated",
+        data: { part },
+        normalized,
+      };
+    }
+    if (choice?.finish_reason) {
+      if (choice.finish_reason === "error") {
+        yield {
+          type: "status",
+          data: { status: "failed", error: "cli-bridge returned finish_reason=error" },
+        };
+        throw new Error("cli-bridge returned finish_reason=error");
+      }
+      completed = true;
+      yield {
+        type: "result",
+        data: {
+          finalText: text,
+          finishReason: choice.finish_reason,
+          status: "completed",
+        },
+      };
+    }
+  }
+  if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
 }
 
 interface CliBridgeTransport {
@@ -195,7 +201,9 @@ function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport 
         ...init,
         dispatcher,
       } as unknown as UndiciRequestInit) as unknown as Promise<Response>,
-    close: () => dispatcher.close(),
+    close: async () => {
+      await dispatcher.close();
+    },
   };
 }
 
@@ -263,10 +271,14 @@ async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let fullyRead = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        fullyRead = true;
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       let boundary = findFrameBoundary(buffer);
       while (boundary) {
@@ -282,6 +294,7 @@ async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string
       if (data !== undefined) yield data;
     }
   } finally {
+    if (!fullyRead) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

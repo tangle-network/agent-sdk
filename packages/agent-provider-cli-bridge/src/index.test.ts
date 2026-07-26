@@ -121,6 +121,8 @@ describe("createCliBridgeProvider", () => {
   });
 
   it("uses the timeout-free default transport for delayed bridge responses", async () => {
+    let connectionCount = 0;
+    const sockets = new Set<import("node:net").Socket>();
     const server = createServer((_request, response) => {
       setTimeout(() => {
         response.writeHead(200, { "content-type": "text/event-stream" });
@@ -129,22 +131,40 @@ describe("createCliBridgeProvider", () => {
         );
       }, 25);
     });
+    server.on("connection", (socket) => {
+      connectionCount += 1;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
 
+    let environment: Awaited<ReturnType<ReturnType<typeof createCliBridgeProvider>["create"]>> | undefined;
     try {
       const provider = createCliBridgeProvider({
         baseUrl: `http://127.0.0.1:${address.port}`,
       });
-      const environment = await provider.create({ profile: { name: "worker" } });
-      const events = [];
-      for await (const event of environment.stream({ prompt: "go" })) events.push(event);
-      expect(events.at(-1)).toMatchObject({
-        type: "result",
-        data: { finalText: "done", status: "completed" },
-      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      for (let turn = 0; turn < 2; turn += 1) {
+        const events = [];
+        for await (const event of environment.stream({ prompt: "go" })) events.push(event);
+        expect(events.at(-1)).toMatchObject({
+          type: "result",
+          data: { finalText: "done", status: "completed" },
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(connectionCount).toBe(1);
+
+      await environment.destroy?.();
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      expect(sockets.size).toBe(0);
+      await expect(environment.status()).resolves.toBe("stopped");
+      expect(() => environment?.stream({ prompt: "too late" })).toThrow("cli-bridge environment is destroyed");
+      await expect(environment.destroy?.()).resolves.toBeUndefined();
     } finally {
+      await environment?.destroy?.();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
