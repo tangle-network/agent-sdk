@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.3.4
+
+### Patch Changes
+
+- 365efe8: Forward environment creation abort signals to the Tangle Sandbox client.
+
 ## 0.3.3
 
 ### Patch Changes
