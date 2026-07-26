@@ -46,7 +46,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "workspace:*"
+    "@tangle-network/agent-interface": "0.34.0"
   },
   "peerDependencies": {
     "@tangle-network/sandbox": ">=0.11.1 <1.0.0"

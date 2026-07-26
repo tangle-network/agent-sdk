@@ -246,6 +246,27 @@ const packagesByName = new Map(
 for (const entry of packages) {
   const { name, scripts } = entry.manifest;
   if (!name) throw new Error(`${entry.manifestPath} has no package name`);
+  for (const field of runtimeDependencyFields) {
+    for (const [dependency, specifier] of Object.entries(
+      entry.manifest[field] ?? {},
+    )) {
+      if (specifier.startsWith("workspace:")) {
+        throw new Error(
+          `${name} ${field}.${dependency} must use a publishable version, received ${specifier}`,
+        );
+      }
+      const internalDependency = packagesByName.get(dependency);
+      if (
+        internalDependency !== undefined &&
+        field !== "peerDependencies" &&
+        specifier !== internalDependency.manifest.version
+      ) {
+        throw new Error(
+          `${name} ${field}.${dependency} must match workspace version ${internalDependency.manifest.version}, received ${specifier}`,
+        );
+      }
+    }
+  }
   if (scripts?.prepare !== undefined) {
     throw new Error(`${name} must not define the install/repack prepare lifecycle`);
   }
