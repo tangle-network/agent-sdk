@@ -828,6 +828,7 @@ export * from "./agent-improvement-source.js";
 export * from "./agent-profile-improvement.js";
 export * from "./agent-profile-improvement-schema.js";
 export * from "./agent-profile.js";
+export * from "./certified-context.js";
 export * from "./profile-diff.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
