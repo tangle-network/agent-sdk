@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "./index.js";
 
@@ -117,5 +118,45 @@ describe("createCliBridgeProvider", () => {
       }
     };
     await expect(consume()).rejects.toThrow("cli-bridge stream ended without a terminal result");
+  });
+
+  it("uses the timeout-free default transport for delayed bridge responses", async () => {
+    const server = createServer((_request, response) => {
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      }, 25);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
+
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+      });
+      const environment = await provider.create({ profile: { name: "worker" } });
+      const events = [];
+      for await (const event of environment.stream({ prompt: "go" })) events.push(event);
+      expect(events.at(-1)).toMatchObject({
+        type: "result",
+        data: { finalText: "done", status: "completed" },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("rejects invalid transport timeouts before execution", () => {
+    expect(() =>
+      createCliBridgeProvider({
+        baseUrl: "http://bridge.local",
+        headersTimeoutMs: -1,
+      }),
+    ).toThrow("headersTimeoutMs must be a non-negative finite number");
   });
 });

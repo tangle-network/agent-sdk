@@ -16,6 +16,7 @@ import type {
   TokenUsage,
   ToolPart,
 } from "@tangle-network/agent-interface";
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 
 export interface CliBridgeProviderOptions {
   baseUrl: string;
@@ -29,14 +30,18 @@ export interface CliBridgeProviderOptions {
     capability?: string;
     ttlSeconds?: number;
   };
+  /** Maximum wait for response headers. Defaults to no timeout. */
+  headersTimeoutMs?: number;
+  /** Maximum idle time between response body chunks. Defaults to no timeout. */
+  bodyTimeoutMs?: number;
   fetch?: typeof fetch;
   name?: string;
   capabilities?: AgentEnvironmentCapabilities;
 }
 
 export function createCliBridgeProvider(options: CliBridgeProviderOptions): AgentEnvironmentProvider {
-  const fetchImpl = options.fetch ?? globalThis.fetch;
-  if (!fetchImpl) throw new Error("createCliBridgeProvider requires fetch");
+  assertTimeout(options.headersTimeoutMs, "headersTimeoutMs");
+  assertTimeout(options.bodyTimeoutMs, "bodyTimeoutMs");
   const name = options.name ?? "cli-bridge";
   return {
     name,
@@ -47,7 +52,7 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
         provider: name,
         ...(input.name ? { name: input.name } : {}),
         status: async () => "running",
-        stream: (turn) => streamCliBridgeTurn(fetchImpl, options, input, turn),
+        stream: (turn) => streamCliBridgeTurn(options, input, turn),
         placement: async () => ({
           kind: options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
           providerMetadata: { baseUrl: options.baseUrl },
@@ -59,112 +64,145 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
 }
 
 async function* streamCliBridgeTurn(
-  fetchImpl: typeof fetch,
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  const response = await fetchImpl(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "text/event-stream",
-      ...(options.bearerToken ? { authorization: `Bearer ${options.bearerToken}` } : {}),
-      ...(turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
-    },
-    body: JSON.stringify(toChatCompletionsBody(options, environmentInput, turn)),
-    signal: turn.signal ?? environmentInput.signal,
-  });
-  if (!response.ok) {
-    throw new Error(`cli-bridge ${response.status}: ${await response.text()}`);
-  }
-  if (!response.body) throw new Error("cli-bridge response body is empty");
+  const transport = createTransport(options);
+  try {
+    const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+        ...(options.bearerToken ? { authorization: `Bearer ${options.bearerToken}` } : {}),
+        ...(turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
+      },
+      body: JSON.stringify(toChatCompletionsBody(options, environmentInput, turn)),
+      signal: turn.signal ?? environmentInput.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`cli-bridge ${response.status}: ${await response.text()}`);
+    }
+    if (!response.body) throw new Error("cli-bridge response body is empty");
 
-  let text = "";
-  const sessionId = turn.sessionId ?? environmentInput.idempotencyKey ?? environmentInput.name ?? "cli-bridge";
-  const messageId = turn.turnId ?? `${sessionId}:assistant`;
-  const emittedToolCalls = new Set<string>();
-  let completed = false;
-  for await (const event of parseSse(response.body)) {
-    if (event === "[DONE]") break;
-    const parsed = safeJson(event);
-    if (!parsed) continue;
-    if (parsed.error && typeof parsed.error === "object") {
-      const error = parsed.error as Record<string, unknown>;
-      const message = typeof error.message === "string" ? error.message : "cli-bridge error";
-      yield { type: "status", data: { status: "failed", error: message } };
-      throw new Error(`cli-bridge: ${message}`);
-    }
-    const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
-    const delta = choice?.delta;
-    const chunk = delta && typeof delta.content === "string" ? delta.content : "";
-    const nextUsage = usageFromOpenAi(parsed.usage);
-    if (nextUsage) {
-      yield { type: "usage", data: {}, usage: nextUsage };
-    }
-    if (chunk) {
-      text += chunk;
-      const part: TextPart = {
-        id: `${messageId}:text`,
-        sessionID: sessionId,
-        messageID: messageId,
-        type: "text",
-        text,
-      };
-      const normalized: MessagePartUpdatedEvent = {
-        type: "message.part.updated",
-        part,
-        delta: chunk,
-      };
-      yield {
-        type: "message.part.updated",
-        data: { part, delta: chunk },
-        normalized,
-      };
-    }
-    for (const toolCall of toolCallsFromDelta(delta)) {
-      const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
-      if (!toolCall.name || emittedToolCalls.has(callId)) continue;
-      emittedToolCalls.add(callId);
-      const part: ToolPart = {
-        id: callId,
-        sessionID: sessionId,
-        messageID: messageId,
-        type: "tool",
-        callID: callId,
-        tool: toolCall.name,
-        state: { status: "pending", input: {} },
-      };
-      const normalized: MessagePartUpdatedEvent = {
-        type: "message.part.updated",
-        part,
-      };
-      yield {
-        type: "message.part.updated",
-        data: { part },
-        normalized,
-      };
-    }
-    if (choice?.finish_reason) {
-      if (choice.finish_reason === "error") {
-        yield {
-          type: "status",
-          data: { status: "failed", error: "cli-bridge returned finish_reason=error" },
-        };
-        throw new Error("cli-bridge returned finish_reason=error");
+    let text = "";
+    const sessionId = turn.sessionId ?? environmentInput.idempotencyKey ?? environmentInput.name ?? "cli-bridge";
+    const messageId = turn.turnId ?? `${sessionId}:assistant`;
+    const emittedToolCalls = new Set<string>();
+    let completed = false;
+    for await (const event of parseSse(response.body)) {
+      if (event === "[DONE]") break;
+      const parsed = safeJson(event);
+      if (!parsed) continue;
+      if (parsed.error && typeof parsed.error === "object") {
+        const error = parsed.error as Record<string, unknown>;
+        const message = typeof error.message === "string" ? error.message : "cli-bridge error";
+        yield { type: "status", data: { status: "failed", error: message } };
+        throw new Error(`cli-bridge: ${message}`);
       }
-      completed = true;
-      yield {
-        type: "result",
-        data: {
-          finalText: text,
-          finishReason: choice.finish_reason,
-          status: "completed",
-        },
-      };
+      const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+      const delta = choice?.delta;
+      const chunk = delta && typeof delta.content === "string" ? delta.content : "";
+      const nextUsage = usageFromOpenAi(parsed.usage);
+      if (nextUsage) {
+        yield { type: "usage", data: {}, usage: nextUsage };
+      }
+      if (chunk) {
+        text += chunk;
+        const part: TextPart = {
+          id: `${messageId}:text`,
+          sessionID: sessionId,
+          messageID: messageId,
+          type: "text",
+          text,
+        };
+        const normalized: MessagePartUpdatedEvent = {
+          type: "message.part.updated",
+          part,
+          delta: chunk,
+        };
+        yield {
+          type: "message.part.updated",
+          data: { part, delta: chunk },
+          normalized,
+        };
+      }
+      for (const toolCall of toolCallsFromDelta(delta)) {
+        const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
+        if (!toolCall.name || emittedToolCalls.has(callId)) continue;
+        emittedToolCalls.add(callId);
+        const part: ToolPart = {
+          id: callId,
+          sessionID: sessionId,
+          messageID: messageId,
+          type: "tool",
+          callID: callId,
+          tool: toolCall.name,
+          state: { status: "pending", input: {} },
+        };
+        const normalized: MessagePartUpdatedEvent = {
+          type: "message.part.updated",
+          part,
+        };
+        yield {
+          type: "message.part.updated",
+          data: { part },
+          normalized,
+        };
+      }
+      if (choice?.finish_reason) {
+        if (choice.finish_reason === "error") {
+          yield {
+            type: "status",
+            data: { status: "failed", error: "cli-bridge returned finish_reason=error" },
+          };
+          throw new Error("cli-bridge returned finish_reason=error");
+        }
+        completed = true;
+        yield {
+          type: "result",
+          data: {
+            finalText: text,
+            finishReason: choice.finish_reason,
+            status: "completed",
+          },
+        };
+      }
     }
+    if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
+  } finally {
+    await transport.close();
   }
-  if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
+}
+
+interface CliBridgeTransport {
+  fetch: typeof fetch;
+  close(): Promise<void>;
+}
+
+function createTransport(options: CliBridgeProviderOptions): CliBridgeTransport {
+  if (options.fetch) {
+    return { fetch: options.fetch, close: async () => {} };
+  }
+  const dispatcher = new Agent({
+    headersTimeout: options.headersTimeoutMs ?? 0,
+    bodyTimeout: options.bodyTimeoutMs ?? 0,
+  });
+  return {
+    fetch: (input, init) =>
+      undiciFetch(input as string | URL, {
+        ...init,
+        dispatcher,
+      } as unknown as UndiciRequestInit) as unknown as Promise<Response>,
+    close: () => dispatcher.close(),
+  };
+}
+
+function assertTimeout(value: number | undefined, name: string): void {
+  if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+    throw new Error(`createCliBridgeProvider ${name} must be a non-negative finite number`);
+  }
 }
 
 function toChatCompletionsBody(

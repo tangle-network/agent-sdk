@@ -11,3 +11,6 @@ const provider = createCliBridgeProvider({
   defaultModel: 'codex',
 })
 ```
+
+Response headers and streamed bodies have no transport timeout by default.
+Use `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` when a caller needs a finite limit.

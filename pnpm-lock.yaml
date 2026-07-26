@@ -73,6 +73,9 @@ importers:
       '@tangle-network/agent-interface':
         specifier: 0.34.0
         version: link:../agent-interface
+      undici:
+        specifier: ^7.28.0
+        version: 7.28.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
