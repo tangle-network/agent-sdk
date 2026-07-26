@@ -8,7 +8,14 @@ import type {
   AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import type { AgentProfile, InputPart, TokenUsage } from "@tangle-network/agent-interface";
+import type {
+  AgentProfile,
+  InputPart,
+  MessagePartUpdatedEvent,
+  TextPart,
+  TokenUsage,
+  ToolPart,
+} from "@tangle-network/agent-interface";
 
 export interface CliBridgeProviderOptions {
   baseUrl: string;
@@ -74,7 +81,10 @@ async function* streamCliBridgeTurn(
   if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
-  let usage: TokenUsage | undefined;
+  const sessionId = turn.sessionId ?? environmentInput.idempotencyKey ?? environmentInput.name ?? "cli-bridge";
+  const messageId = turn.turnId ?? `${sessionId}:assistant`;
+  const emittedToolCalls = new Set<string>();
+  let completed = false;
   for await (const event of parseSse(response.body)) {
     if (event === "[DONE]") break;
     const parsed = safeJson(event);
@@ -83,35 +93,78 @@ async function* streamCliBridgeTurn(
       const error = parsed.error as Record<string, unknown>;
       const message = typeof error.message === "string" ? error.message : "cli-bridge error";
       yield { type: "status", data: { status: "failed", error: message } };
-      return;
+      throw new Error(`cli-bridge: ${message}`);
     }
     const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
     const delta = choice?.delta;
     const chunk = delta && typeof delta.content === "string" ? delta.content : "";
     const nextUsage = usageFromOpenAi(parsed.usage);
     if (nextUsage) {
-      usage = mergeUsage(usage, nextUsage);
-      yield { type: "usage", data: { usage: nextUsage }, usage: nextUsage };
+      yield { type: "usage", data: {}, usage: nextUsage };
     }
     if (chunk) {
       text += chunk;
+      const part: TextPart = {
+        id: `${messageId}:text`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "text",
+        text,
+      };
+      const normalized: MessagePartUpdatedEvent = {
+        type: "message.part.updated",
+        part,
+        delta: chunk,
+      };
       yield {
         type: "message.part.updated",
-        data: { delta: chunk },
+        data: { part, delta: chunk },
+        normalized,
+      };
+    }
+    for (const toolCall of toolCallsFromDelta(delta)) {
+      const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
+      if (!toolCall.name || emittedToolCalls.has(callId)) continue;
+      emittedToolCalls.add(callId);
+      const part: ToolPart = {
+        id: callId,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "tool",
+        callID: callId,
+        tool: toolCall.name,
+        state: { status: "pending", input: {} },
+      };
+      const normalized: MessagePartUpdatedEvent = {
+        type: "message.part.updated",
+        part,
+      };
+      yield {
+        type: "message.part.updated",
+        data: { part },
+        normalized,
       };
     }
     if (choice?.finish_reason) {
+      if (choice.finish_reason === "error") {
+        yield {
+          type: "status",
+          data: { status: "failed", error: "cli-bridge returned finish_reason=error" },
+        };
+        throw new Error("cli-bridge returned finish_reason=error");
+      }
+      completed = true;
       yield {
         type: "result",
         data: {
           finalText: text,
           finishReason: choice.finish_reason,
-          status: choice.finish_reason === "error" ? "failed" : "completed",
+          status: "completed",
         },
-        ...(usage ? { usage } : {}),
       };
     }
   }
+  if (!completed) throw new Error("cli-bridge stream ended without a terminal result");
 }
 
 function toChatCompletionsBody(
@@ -177,13 +230,13 @@ async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
+      let boundary = findFrameBoundary(buffer);
+      while (boundary) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary.length);
         const data = dataFromFrame(frame);
         if (data !== undefined) yield data;
-        boundary = buffer.indexOf("\n\n");
+        boundary = findFrameBoundary(buffer);
       }
     }
     if (buffer) {
@@ -195,6 +248,14 @@ async function* parseSse(body: ReadableStream<Uint8Array>): AsyncIterable<string
   }
 }
 
+function findFrameBoundary(value: string): { index: number; length: number } | undefined {
+  const lf = value.indexOf("\n\n");
+  const crlf = value.indexOf("\r\n\r\n");
+  if (lf === -1 && crlf === -1) return undefined;
+  if (crlf !== -1 && (lf === -1 || crlf < lf)) return { index: crlf, length: 4 };
+  return { index: lf, length: 2 };
+}
+
 function dataFromFrame(frame: string): string | undefined {
   const lines = frame.split(/\r?\n/);
   const data = lines
@@ -202,6 +263,24 @@ function dataFromFrame(frame: string): string | undefined {
     .map((line) => line.slice("data:".length).trimStart())
     .join("\n");
   return data || undefined;
+}
+
+function toolCallsFromDelta(value: unknown): Array<{ id?: string; index: number; name?: string }> {
+  if (!value || typeof value !== "object") return [];
+  const calls = (value as Record<string, unknown>).tool_calls;
+  if (!Array.isArray(calls)) return [];
+  return calls.flatMap((call, position) => {
+    if (!call || typeof call !== "object") return [];
+    const record = call as Record<string, unknown>;
+    const fn = record.function;
+    const name =
+      fn && typeof fn === "object" && typeof (fn as Record<string, unknown>).name === "string"
+        ? ((fn as Record<string, unknown>).name as string)
+        : undefined;
+    const index = number(record.index) ?? position;
+    const id = typeof record.id === "string" ? record.id : undefined;
+    return [{ ...(id ? { id } : {}), index, ...(name ? { name } : {}) }];
+  });
 }
 
 function safeJson(value: string): Record<string, unknown> | null {
@@ -219,15 +298,19 @@ function usageFromOpenAi(value: unknown): TokenUsage | undefined {
   const inputTokens = number(record.prompt_tokens) ?? number(record.input_tokens);
   const outputTokens = number(record.completion_tokens) ?? number(record.output_tokens);
   if (inputTokens === undefined && outputTokens === undefined) return undefined;
-  return { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 };
-}
-
-function mergeUsage(left: TokenUsage | undefined, right: TokenUsage): TokenUsage {
-  if (!left) return right;
+  const totalTokens = number(record.total_tokens);
+  const cacheReadInputTokens = number(record.cache_read_input_tokens);
+  const cacheCreationInputTokens = number(record.cache_creation_input_tokens);
+  const reasoningTokens = number(record.reasoning_tokens);
+  const cost = number(record.cost);
   return {
-    inputTokens: left.inputTokens + right.inputTokens,
-    outputTokens: left.outputTokens + right.outputTokens,
-    ...(left.cost !== undefined || right.cost !== undefined ? { cost: (left.cost ?? 0) + (right.cost ?? 0) } : {}),
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cost !== undefined ? { cost } : {}),
   };
 }
 
