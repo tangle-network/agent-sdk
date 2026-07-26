@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.4.0
+
+### Minor Changes
+
+- dda1a39: Require Sandbox 0.13 and map its session interruption API to agent session cancellation.
+
 ## 0.3.5
 
 ### Patch Changes
