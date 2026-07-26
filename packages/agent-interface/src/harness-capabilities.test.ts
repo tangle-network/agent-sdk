@@ -41,11 +41,6 @@ describe("harness ↔ model compatibility", () => {
     expect(harnessSupportsModel("opencode", "openai/gpt-5")).toBe(true);
   });
 
-  it("aliases resolve to their base runner's lock", () => {
-    expect(harnessSupportsModel("claude", "openai/gpt-5")).toBe(false);
-    expect(harnessSupportsModel("kimi", "moonshot/kimi-k2")).toBe(true);
-  });
-
   it("nanoclaw is router-backed — it runs any provider", () => {
     expect(harnessProviders("nanoclaw")).toBeNull();
     expect(harnessSupportsModel("nanoclaw", "openai/gpt-5")).toBe(true);
@@ -207,8 +202,4 @@ describe("per-turn selector support", () => {
     expect(harnessHonorsSelectors("openclaw")).toBe(false); // effort yes, model no
   });
 
-  it("resolves aliases before keying", () => {
-    // `claude` canonicalizes to `claude-code`, which honors both.
-    expect(harnessHonorsSelectors("claude")).toBe(true);
-  });
 });

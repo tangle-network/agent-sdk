@@ -10,7 +10,6 @@ import {
   isCanonicalJsonValue,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
-import { canonicalizeHarness } from "./harness.js";
 
 /**
  * Structural parser for a frozen candidate.
@@ -41,8 +40,7 @@ export const agentCandidateBundleSchema = z
     }
     if (
       bundle.profile.harness !== undefined &&
-      canonicalizeHarness(bundle.profile.harness) !==
-        canonicalizeHarness(bundle.execution.harness)
+      bundle.profile.harness !== bundle.execution.harness
     ) {
       ctx.addIssue({
         code: "custom",

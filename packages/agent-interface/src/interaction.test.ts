@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   InteractionFieldSchema,
-  questionAnswerSpec,
   validateInteractionAnswer,
   type InteractionAnswerSpec,
 } from "./interaction.js";
+
+// @ts-expect-error Removed question adapters must stay outside the shared contract.
+type RemovedQuestionAdapter = (typeof import("./interaction.js"))["questionAnswerSpec"];
+// @ts-expect-error Removed question shapes must stay outside the shared contract.
+type RemovedQuestionShape = (typeof import("./interaction.js"))["LegacyQuestion"];
 
 const selectSpec = (overrides?: {
   allowCustom?: boolean;
@@ -90,25 +94,5 @@ describe("validateInteractionAnswer select", () => {
     expect(
       validateInteractionAnswer(selectSpec({ allowCustom: true }), { choice: [] }),
     ).toEqual({ ok: false, errors: ['field "choice" requires a selection'] });
-  });
-});
-
-describe("questionAnswerSpec", () => {
-  it("propagates allowCustom onto the select field", () => {
-    const spec = questionAnswerSpec([
-      {
-        question: "Which color?",
-        options: [{ label: "red" }, { label: "blue" }],
-        allowCustom: true,
-      },
-    ]);
-    expect(spec.fields[0]).toMatchObject({ type: "select", allowCustom: true });
-  });
-
-  it("omits allowCustom when the question does not opt in", () => {
-    const spec = questionAnswerSpec([
-      { question: "Which color?", options: [{ label: "red" }] },
-    ]);
-    expect(spec.fields[0]).not.toHaveProperty("allowCustom");
   });
 });

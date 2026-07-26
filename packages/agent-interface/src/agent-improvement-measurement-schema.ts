@@ -5,6 +5,7 @@ import type {
   AgentImprovementMeasuredComparisonBase,
 } from "./agent-candidate.js";
 import { isCanonicalJsonValue, sha256DigestSchema } from "./agent-candidate-schema-common.js";
+import { numbersApproximatelyEqual } from "./number-validation.js";
 
 export const canonicalJsonSchema = z.custom<AgentCandidateJsonValue>(
   isCanonicalJsonValue,
@@ -242,11 +243,11 @@ export function refineMeasuredComparisonSummary<TReceipt>(
 ): void {
   refineEstimate(comparison.overall, ["overall"], ctx);
   if (
-    !approximatelyEqual(
+    !numbersApproximatelyEqual(
       comparison.evaluation.durationMs,
       comparison.evaluation.searchDurationMs + comparison.evaluation.executionDurationMs,
     ) ||
-    !approximatelyEqual(
+    !numbersApproximatelyEqual(
       comparison.evaluation.totalCostUsd,
       comparison.evaluation.searchCostUsd + comparison.evaluation.executionCostUsd,
     )
@@ -457,9 +458,4 @@ function refineMeasuredMean(
       message: "reported mean must equal the signed per-cell results",
     });
   }
-}
-
-function approximatelyEqual(left: number, right: number): boolean {
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
-  return Math.abs(left - right) <= tolerance;
 }

@@ -34,6 +34,7 @@ import {
   refineMeasuredComparisonSummary,
 } from "./agent-improvement-measurement-schema.js";
 import { agentImprovementSourceSchema } from "./agent-improvement-source.js";
+import { numbersApproximatelyEqual } from "./number-validation.js";
 import { agentProfileDiffSchema } from "./profile-schema.js";
 
 const profileImprovementScenarioSchema = z
@@ -638,9 +639,4 @@ function profileImprovementExecutionCostUsd(receipt: AgentProfileImprovementRunR
 
 function profileImprovementExecutionLatencyMs(receipt: AgentProfileImprovementRunReceipt): number {
   return receipt.timing.durationMs + receipt.grading.timing.durationMs;
-}
-
-function numbersApproximatelyEqual(left: number, right: number): boolean {
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
-  return Math.abs(left - right) <= tolerance;
 }

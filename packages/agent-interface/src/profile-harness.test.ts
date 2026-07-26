@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "./agent-profile.js";
 import { agentProfileSchema } from "./profile-schema.js";
+import type { HarnessType } from "./harness.js";
+
+// @ts-expect-error Shorthand harness names are not part of the public contract.
+const removedHarnessAlias: HarnessType = "claude";
+void removedHarnessAlias;
 
 describe("AgentProfile.harness (optional overridable preference)", () => {
   it("accepts a valid HarnessType and round-trips it", () => {
@@ -16,6 +21,9 @@ describe("AgentProfile.harness (optional overridable preference)", () => {
 
   it("rejects a harness that is not a known runner", () => {
     expect(() => agentProfileSchema.parse({ harness: "not-a-real-harness" })).toThrow();
+    expect(() => agentProfileSchema.parse({ harness: "claude" })).toThrow();
+    expect(() => agentProfileSchema.parse({ harness: "claudish" })).toThrow();
+    expect(() => agentProfileSchema.parse({ harness: "kimi" })).toThrow();
   });
 
   it("does not constrain identity — the same profile is valid with any harness swapped in", () => {

@@ -46,8 +46,6 @@ const improvementSurfaceSchema = z.enum([
   "knowledge",
 ]);
 
-export { agentCandidateEvaluationPolicySchema } from "./agent-improvement-measurement-schema.js";
-
 export const agentCandidateExperimentSchema = z
   .object({
     kind: z.literal("agent-candidate-experiment"),

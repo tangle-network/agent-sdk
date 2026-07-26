@@ -3,4 +3,6 @@
 ---
 
 Define source-bound measured prompt and skill improvements as ordered `AgentProfileDiff` patches without persisting full profiles.
-Rename the activation record's `candidateBundleDigest` field to `candidateDigest`; consumers of the 0.32.x wire format must update that field when adopting this 0.33.0 minor release.
+Use `candidateDigest` as the activation record's single candidate identity field.
+Remove the old question adapter types and helper; providers now emit `InteractionRequest` directly.
+Require canonical runner names and remove shorthand runner aliases and normalization.

@@ -252,7 +252,7 @@ export function renderInputPartsAsText(parts: InputPart[]): string {
 
 /**
  * The primary event for all part updates from OpenCode.
- * This is the canonical event - use this instead of legacy events.
+ * This is the canonical event for all part updates.
  */
 export type MessagePartUpdatedEvent = {
   type: "message.part.updated";
@@ -824,6 +824,7 @@ export * from "./interaction.js";
 export * from "./agent-candidate.js";
 export * from "./agent-candidate-schema.js";
 export * from "./agent-candidate-promotion-schema.js";
+export { agentCandidateEvaluationPolicySchema } from "./agent-improvement-measurement-schema.js";
 export * from "./agent-improvement-source.js";
 export * from "./agent-profile-improvement.js";
 export * from "./agent-profile-improvement-schema.js";
