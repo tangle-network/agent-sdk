@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "workspace:*"
+    "@tangle-network/agent-interface": "0.34.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
