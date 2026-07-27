@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.2.29
+
+### Patch Changes
+
+- Updated dependencies [0660698]
+- Updated dependencies [87bae75]
+  - @tangle-network/agent-interface@0.35.0
+
 ## 0.2.28
 
 ### Patch Changes

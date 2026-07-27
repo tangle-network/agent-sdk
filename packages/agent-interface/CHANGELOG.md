@@ -1,5 +1,16 @@
 # @tangle-network/agent-interface
 
+## 0.35.0
+
+### Minor Changes
+
+- 87bae75: Require candidate and profile-improvement run receipts to record executed steps.
+  Validate duration, steps, model calls, input tokens, output tokens, and execution spend against the exact frozen limits before evidence can support an improvement decision.
+
+### Patch Changes
+
+- 0660698: Export the candidate identity primitives (`Sha256Digest`, `sha256DigestSchema`, `sha256Utf8`, `sha256Bytes`, `canonicalCandidateJson`, `canonicalCandidateBytes`, `canonicalCandidateDigest`) as explicit named exports on the package root so external consumers can rely on them independent of internal barrel layout.
+
 ## 0.34.0
 
 ### Minor Changes
