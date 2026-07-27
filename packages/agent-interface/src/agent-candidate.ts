@@ -1002,7 +1002,7 @@ export interface AgentImprovementActivation {
   experimentDigest: Sha256Digest;
   /** Exact proposed state, whether it is a sealed bundle or a normal profile. */
   candidateDigest: Sha256Digest;
-  /** Required for opaque profile changes; records the runner verified at authorization time. */
+  /** Required when a target uses `agent-profile`; the schema enforces this condition. */
   executionRef?: AgentProfileImprovementExecutionRef;
   intent: AgentImprovementActivationIntent;
   targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];

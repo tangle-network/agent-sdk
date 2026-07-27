@@ -2,5 +2,5 @@
 "@tangle-network/agent-interface": minor
 ---
 
-Require every measured profile-improvement experiment and run receipt to bind the exact non-secret execution contract.
-Profile improvement records created before this release lack that evidence and must not be backfilled or activated as verified measurements.
+Require an `executionRef` on every measured profile-improvement experiment and run receipt.
+Activation records targeting `agent-profile` must carry that reference, and validators reject receipts produced by a different runner.

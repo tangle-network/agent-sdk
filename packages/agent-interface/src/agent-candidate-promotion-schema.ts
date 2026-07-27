@@ -570,6 +570,23 @@ export const agentImprovementActivationSchema = z
   })
   .strict()
   .superRefine((activation, ctx) => {
+    const targetsAgentProfile = activation.targets.some(
+      (target) => target.surface === "agent-profile",
+    );
+    if (targetsAgentProfile && !activation.executionRef) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executionRef"],
+        message: "agent-profile activation requires the measured runner reference",
+      });
+    }
+    if (!targetsAgentProfile && activation.executionRef) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executionRef"],
+        message: "executionRef is valid only for agent-profile activation",
+      });
+    }
     const identities = activation.targets.map(
       (target) => `${target.surface}\u0000${target.identity}`,
     );

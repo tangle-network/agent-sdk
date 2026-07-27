@@ -71,6 +71,12 @@ describe("agentImprovementActivationSchema", () => {
     const { digest: _digest, ...authority } = activation();
     const material = {
       ...authority,
+      targets: [
+        {
+          ...authority.targets[0],
+          surface: "agent-profile" as const,
+        },
+      ] as const,
       executionRef: {
         kind: "agent-profile-improvement-execution-ref" as const,
         identity: "platform-agent-profile-runner:fixture",
@@ -80,6 +86,45 @@ describe("agentImprovementActivationSchema", () => {
     const withExecutionRef = { ...material, digest: canonicalCandidateDigest(material) };
 
     expect(agentImprovementActivationSchema.parse(withExecutionRef)).toEqual(withExecutionRef);
+  });
+
+  it("rejects profile activation without the measured runner reference", () => {
+    const { digest: _digest, ...authority } = activation();
+    const material = {
+      ...authority,
+      targets: [
+        {
+          ...authority.targets[0],
+          surface: "agent-profile" as const,
+        },
+      ] as const,
+    };
+
+    expect(() =>
+      agentImprovementActivationSchema.parse({
+        ...material,
+        digest: canonicalCandidateDigest(material),
+      }),
+    ).toThrow(/requires the measured runner reference/);
+  });
+
+  it("rejects a profile runner reference on another activation surface", () => {
+    const { digest: _digest, ...authority } = activation();
+    const material = {
+      ...authority,
+      executionRef: {
+        kind: "agent-profile-improvement-execution-ref" as const,
+        identity: "platform-agent-profile-runner:fixture",
+        digest: sha("a"),
+      },
+    };
+
+    expect(() =>
+      agentImprovementActivationSchema.parse({
+        ...material,
+        digest: canonicalCandidateDigest(material),
+      }),
+    ).toThrow(/valid only for agent-profile activation/);
   });
 
   it("rejects duplicate surface identities", () => {
