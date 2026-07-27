@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type {
+  AgentCandidateCostProvenance,
   AgentCandidateEvaluationPolicy,
   AgentCandidateJsonValue,
+  AgentImprovementEvaluationAccounting,
   AgentImprovementMeasuredComparisonBase,
 } from "./agent-candidate.js";
 import { isCanonicalJsonValue, sha256DigestSchema } from "./agent-candidate-schema-common.js";
@@ -120,6 +122,38 @@ export const agentCandidateEvaluationPolicySchema = z
     }
   });
 
+export const agentImprovementCostSchema = z
+  .object({
+    usd: z.number().finite().nonnegative(),
+    provenance: z.enum(["observed", "estimated"]),
+  })
+  .strict();
+
+const agentImprovementEvaluationSchema = z
+  .object({
+    generationsExplored: z.number().int().nonnegative(),
+    preparation: z
+      .object({
+        wallDurationMs: z.number().finite().nonnegative(),
+        cost: agentImprovementCostSchema,
+      })
+      .strict(),
+    measurement: z
+      .object({
+        wallDurationMs: z.number().finite().nonnegative(),
+        workDurationMs: z.number().finite().nonnegative(),
+        cost: agentImprovementCostSchema,
+      })
+      .strict(),
+    total: z
+      .object({
+        wallDurationMs: z.number().finite().nonnegative(),
+        cost: agentImprovementCostSchema,
+      })
+      .strict(),
+  })
+  .strict() satisfies z.ZodType<AgentImprovementEvaluationAccounting>;
+
 export const measuredComparisonCommonShape = {
   overall: z
     .object({
@@ -178,17 +212,7 @@ export const measuredComparisonCommonShape = {
     })
     .strict(),
   diff: z.string(),
-  evaluation: z
-    .object({
-      generationsExplored: z.number().int().nonnegative(),
-      searchDurationMs: z.number().finite().nonnegative(),
-      executionDurationMs: z.number().finite().nonnegative(),
-      durationMs: z.number().finite().nonnegative(),
-      searchCostUsd: z.number().finite().nonnegative(),
-      executionCostUsd: z.number().finite().nonnegative(),
-      totalCostUsd: z.number().finite().nonnegative(),
-    })
-    .strict(),
+  evaluation: agentImprovementEvaluationSchema,
   metadata: canonicalJsonObjectSchema.optional(),
 };
 
@@ -237,25 +261,33 @@ export function refineMeasuredComparisonSummary<TReceipt>(
     score(receipt: TReceipt): number;
     dimension(receipt: TReceipt, name: string): number | undefined;
     cost(receipt: TReceipt): number;
+    costProvenance(receipt: TReceipt): AgentCandidateCostProvenance;
     latency(receipt: TReceipt): number;
   },
   ctx: z.RefinementCtx,
 ): void {
   refineEstimate(comparison.overall, ["overall"], ctx);
+  const totalCostProvenance: AgentCandidateCostProvenance =
+    comparison.evaluation.preparation.cost.provenance === "observed" &&
+    comparison.evaluation.measurement.cost.provenance === "observed"
+      ? "observed"
+      : "estimated";
   if (
     !numbersApproximatelyEqual(
-      comparison.evaluation.durationMs,
-      comparison.evaluation.searchDurationMs + comparison.evaluation.executionDurationMs,
+      comparison.evaluation.total.wallDurationMs,
+      comparison.evaluation.preparation.wallDurationMs +
+        comparison.evaluation.measurement.wallDurationMs,
     ) ||
     !numbersApproximatelyEqual(
-      comparison.evaluation.totalCostUsd,
-      comparison.evaluation.searchCostUsd + comparison.evaluation.executionCostUsd,
-    )
+      comparison.evaluation.total.cost.usd,
+      comparison.evaluation.preparation.cost.usd + comparison.evaluation.measurement.cost.usd,
+    ) ||
+    comparison.evaluation.total.cost.provenance !== totalCostProvenance
   ) {
     ctx.addIssue({
       code: "custom",
       path: ["evaluation"],
-      message: "evaluation totals must equal their search and execution components",
+      message: "evaluation totals must equal preparation and measurement accounting",
     });
   }
   if (comparison.overall.n !== expectedN) {
@@ -354,6 +386,36 @@ export function refineMeasuredComparisonSummary<TReceipt>(
     } else if (objective.kind === "latency") {
       latencyCount += 1;
     }
+  }
+  const measurementCostUsd = measurements.reduce(
+    (sum, measurement) => sum + values.cost(measurement.baseline) + values.cost(measurement.candidate),
+    0,
+  );
+  const measurementWorkDurationMs = measurements.reduce(
+    (sum, measurement) =>
+      sum + values.latency(measurement.baseline) + values.latency(measurement.candidate),
+    0,
+  );
+  const measurementCostProvenance: AgentCandidateCostProvenance = measurements.every(
+    (measurement) =>
+      values.costProvenance(measurement.baseline) === "observed" &&
+      values.costProvenance(measurement.candidate) === "observed",
+  )
+    ? "observed"
+    : "estimated";
+  if (
+    !numbersApproximatelyEqual(comparison.evaluation.measurement.cost.usd, measurementCostUsd) ||
+    comparison.evaluation.measurement.cost.provenance !== measurementCostProvenance ||
+    !numbersApproximatelyEqual(
+      comparison.evaluation.measurement.workDurationMs,
+      measurementWorkDurationMs,
+    )
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["evaluation", "measurement"],
+      message: "measurement accounting must equal the complete signed receipts",
+    });
   }
   if (costCount !== 1 || latencyCount !== 1) {
     ctx.addIssue({

@@ -30,6 +30,7 @@ import {
   refineMeasuredComparisonSummary,
 } from "./agent-improvement-measurement-schema.js";
 import {
+  agentProfileImprovementExecutionRefSchema,
   agentProfileImprovementMeasuredComparisonSchema,
   changedProfileImprovementSurfaces,
 } from "./agent-profile-improvement-schema.js";
@@ -416,9 +417,10 @@ export const agentImprovementMeasuredComparisonSchema = z
         dimension: (evidence, name) =>
           evidence.receipt.benchmarkResult.material.dimensions.find(
             (dimension) => dimension.name === name,
-          )?.score,
-        cost: executionCostUsd,
-        latency: executionLatencyMs,
+        )?.score,
+      cost: executionCostUsd,
+      costProvenance: executionCostProvenance,
+      latency: executionLatencyMs,
       },
       ctx,
     );
@@ -510,6 +512,15 @@ function executionCostUsd(evidence: CandidateExecutionEvidence): number {
   ) / 1_000_000_000;
 }
 
+function executionCostProvenance(
+  evidence: CandidateExecutionEvidence,
+): "observed" | "estimated" {
+  return evidence.receipt.modelSettlement.material.usage.costProvenance === "observed" &&
+    evidence.receipt.benchmarkResult.material.grading.usage.costProvenance === "observed"
+    ? "observed"
+    : "estimated";
+}
+
 function executionLatencyMs(evidence: CandidateExecutionEvidence): number {
   return (
     evidence.receipt.timing.durationMs +
@@ -546,6 +557,7 @@ export const agentImprovementActivationSchema = z
     reviewDigest: sha256DigestSchema,
     experimentDigest: sha256DigestSchema,
     candidateDigest: sha256DigestSchema,
+    executionRef: agentProfileImprovementExecutionRefSchema.optional(),
     intent: z.enum(["activate-candidate", "restore-baseline"]),
     targets: z
       .tuple([improvementActivationTargetSchema])
@@ -558,6 +570,23 @@ export const agentImprovementActivationSchema = z
   })
   .strict()
   .superRefine((activation, ctx) => {
+    const targetsAgentProfile = activation.targets.some(
+      (target) => target.surface === "agent-profile",
+    );
+    if (targetsAgentProfile && !activation.executionRef) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executionRef"],
+        message: "agent-profile activation requires the measured runner reference",
+      });
+    }
+    if (!targetsAgentProfile && activation.executionRef) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executionRef"],
+        message: "executionRef is valid only for agent-profile activation",
+      });
+    }
     const identities = activation.targets.map(
       (target) => `${target.surface}\u0000${target.identity}`,
     );

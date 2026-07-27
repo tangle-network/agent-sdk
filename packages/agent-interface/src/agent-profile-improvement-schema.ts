@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AgentProfileImprovementEvidence,
+  AgentProfileImprovementExecutionRef,
   AgentProfileImprovementExperiment,
   AgentProfileImprovementMeasuredComparison,
   AgentProfileImprovementMeasurement,
@@ -10,6 +11,7 @@ import type {
   AgentProfileImprovementSuiteInputs,
   AgentProfileImprovementTask,
 } from "./agent-profile-improvement.js";
+import type { AgentCandidateFixedSpend } from "./agent-candidate.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import { agentCandidateLineageSchema } from "./agent-candidate-lineage-schema.js";
 import {
@@ -134,6 +136,12 @@ export const agentProfileImprovementArmSchema = z
   })
   .strict();
 
+export const agentProfileImprovementExecutionRefSchema = profileImprovementEvidenceSchema
+  .extend({
+    kind: z.literal("agent-profile-improvement-execution-ref"),
+  })
+  .strict() satisfies z.ZodType<AgentProfileImprovementExecutionRef>;
+
 /**
  * The first product path changes only prompt and skills, but it uses the
  * shared profile-diff language so execution and activation apply identical
@@ -220,6 +228,7 @@ export const agentProfileImprovementExperimentSchema = z
     kind: z.literal("agent-profile-improvement-experiment"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     source: agentImprovementSourceSchema,
+    executionRef: agentProfileImprovementExecutionRefSchema,
     baseline: agentProfileImprovementArmSchema,
     candidate: agentProfileImprovementArmSchema,
     change: agentProfileImprovementChangeSchema,
@@ -357,6 +366,7 @@ export const agentProfileImprovementRunReceiptSchema = z
     kind: z.literal("agent-profile-improvement-run"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     executionId: z.string().min(1).max(500),
+    executionRef: agentProfileImprovementExecutionRefSchema,
     runCell: agentProfileImprovementRunCellSchema,
     runRecord: profileImprovementEvidenceSchema,
     billing: z
@@ -416,7 +426,7 @@ export const agentProfileImprovementRunReceiptSchema = z
       {
         durationMs: receipt.timing.durationMs,
         steps: receipt.steps,
-        usage: receipt.usage,
+        usage: combinedProfileUsage(receipt.usage, receipt.grading.usage),
       },
       ctx,
     );
@@ -436,6 +446,24 @@ export const agentProfileImprovementRunReceiptSchema = z
       });
     }
   }) satisfies z.ZodType<AgentProfileImprovementRunReceipt>;
+
+function combinedProfileUsage(
+  execution: AgentCandidateFixedSpend,
+  grading: AgentCandidateFixedSpend,
+): AgentCandidateFixedSpend {
+  return {
+    inputTokens: execution.inputTokens + grading.inputTokens,
+    outputTokens: execution.outputTokens + grading.outputTokens,
+    cachedInputTokens: execution.cachedInputTokens + grading.cachedInputTokens,
+    reasoningTokens: execution.reasoningTokens + grading.reasoningTokens,
+    modelCalls: execution.modelCalls + grading.modelCalls,
+    costUsdNanos: execution.costUsdNanos + grading.costUsdNanos,
+    costProvenance:
+      execution.costProvenance === "observed" && grading.costProvenance === "observed"
+        ? "observed"
+        : "estimated",
+  };
+}
 
 const agentProfileImprovementMeasurementSchema = z
   .object({
@@ -522,6 +550,11 @@ function refineProfileImprovementComparison(
             cell.experimentDigest === comparison.experiment.digest,
             [...armPath, "runCell", "experimentDigest"],
             "profile run receipt must bind the measured experiment",
+          ],
+          [
+            JSON.stringify(receipt.executionRef) === JSON.stringify(comparison.experiment.executionRef),
+            [...armPath, "executionRef"],
+            "profile run receipt must bind the measured executor",
           ],
           [
             cell.arm === arm,
@@ -622,6 +655,7 @@ function refineProfileImprovementComparison(
       dimension: (receipt, name) =>
         receipt.grading.dimensions.find((dimension) => dimension.name === name)?.score,
       cost: profileImprovementExecutionCostUsd,
+      costProvenance: profileImprovementExecutionCostProvenance,
       latency: profileImprovementExecutionLatencyMs,
     },
     ctx,
@@ -646,6 +680,15 @@ function evidenceKey(evidence: AgentProfileImprovementEvidence): string {
 
 function profileImprovementExecutionCostUsd(receipt: AgentProfileImprovementRunReceipt): number {
   return (receipt.usage.costUsdNanos + receipt.grading.usage.costUsdNanos) / 1_000_000_000;
+}
+
+function profileImprovementExecutionCostProvenance(
+  receipt: AgentProfileImprovementRunReceipt,
+): "observed" | "estimated" {
+  return receipt.usage.costProvenance === "observed" &&
+    receipt.grading.usage.costProvenance === "observed"
+    ? "observed"
+    : "estimated";
 }
 
 function profileImprovementExecutionLatencyMs(receipt: AgentProfileImprovementRunReceipt): number {

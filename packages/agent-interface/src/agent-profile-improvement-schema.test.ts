@@ -3,6 +3,7 @@ import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 import {
   agentProfileImprovementChangeSchema,
   agentProfileImprovementMeasuredComparisonSchema,
+  agentProfileImprovementRunReceiptSchema,
   changedProfileImprovementSurfaces,
 } from "./agent-profile-improvement-schema.js";
 import { agentImprovementProposalSchema } from "./agent-candidate-promotion-schema.js";
@@ -53,7 +54,7 @@ const model = {
 const limits = {
   timeoutMs: 30_000,
   maxSteps: 10,
-  maxModelCalls: 1,
+  maxModelCalls: 2,
   maxInputTokens: 1_000,
   maxOutputTokens: 1_000,
   maxCostUsd: 1,
@@ -82,6 +83,11 @@ function fixture() {
   });
   const baseline = { stateDigest: sha("5") };
   const candidate = { stateDigest: sha("8") };
+  const executionRef = {
+    kind: "agent-profile-improvement-execution-ref" as const,
+    identity: "platform-agent-profile-runner:fixture",
+    digest: sha("4"),
+  };
   const change = [
     {
       kind: "agent-profile-diff" as const,
@@ -103,6 +109,7 @@ function fixture() {
       sourceDigest: sha("5"),
       sourceRevision: 7,
     },
+    executionRef,
     baseline,
     candidate,
     change,
@@ -146,6 +153,7 @@ function fixture() {
       kind: "agent-profile-improvement-run" as const,
       digestAlgorithm: "rfc8785-sha256" as const,
       executionId,
+      executionRef,
       runCell,
       runRecord: evidence("agent-eval-run-record", executionId),
       billing: [evidence("platform-billing", `bill-${executionId}`)] as [ReturnType<typeof evidence>],
@@ -160,6 +168,7 @@ function fixture() {
         reasoningTokens: 0,
         modelCalls: 1,
         costUsdNanos: 100,
+        costProvenance: "observed" as const,
       },
       trace: {
         evidence: evidence("platform-trace", `trace-${executionId}`),
@@ -183,6 +192,7 @@ function fixture() {
           reasoningTokens: 0,
           modelCalls: 1,
           costUsdNanos: 10,
+          costProvenance: "observed" as const,
         },
         score,
         passed: true,
@@ -279,12 +289,19 @@ function fixture() {
     diff: "prompt: add source and uncertainty instructions",
     evaluation: {
       generationsExplored: 1,
-      searchDurationMs: 0,
-      executionDurationMs: 0,
-      durationMs: 0,
-      searchCostUsd: 0,
-      executionCostUsd: 0,
-      totalCostUsd: 0,
+      preparation: {
+        wallDurationMs: 0,
+        cost: { usd: 0, provenance: "observed" as const },
+      },
+      measurement: {
+        wallDurationMs: 660,
+        workDurationMs: 660,
+        cost: { usd: 0.00000066, provenance: "observed" as const },
+      },
+      total: {
+        wallDurationMs: 660,
+        cost: { usd: 0.00000066, provenance: "observed" as const },
+      },
     },
   };
   const proposalMaterial = {
@@ -309,6 +326,24 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     expect(agentImprovementProposalSchema.parse(proposal)).toEqual(proposal);
   });
 
+  it("rejects measurement accounting that differs from its signed receipts", () => {
+    const { comparison } = fixture();
+    const measurement = comparison.evaluation.measurement;
+
+    for (const alteredMeasurement of [
+      { ...measurement, workDurationMs: measurement.workDurationMs + 1 },
+      { ...measurement, cost: { ...measurement.cost, usd: measurement.cost.usd + 0.01 } },
+      { ...measurement, cost: { ...measurement.cost, provenance: "estimated" as const } },
+    ]) {
+      expect(
+        agentProfileImprovementMeasuredComparisonSchema.safeParse({
+          ...comparison,
+          evaluation: { ...comparison.evaluation, measurement: alteredMeasurement },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it("rejects a raw profile even when its digest is present", () => {
     const { comparison } = fixture();
     const input = {
@@ -320,6 +355,83 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
           profile: { mcp: { private: { headers: { Authorization: "secret" } } } },
         },
       },
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("requires the sealed executor reference", () => {
+    const { comparison } = fixture();
+    const { executionRef: _executionRef, ...experiment } = comparison.experiment;
+    const input = { ...comparison, experiment };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects a signed experiment with receipts from a different executor", () => {
+    const { comparison } = fixture();
+    const experiment = resign({
+      ...comparison.experiment,
+      executionRef: {
+        ...comparison.experiment.executionRef,
+        identity: "platform-agent-profile-runner:changed",
+      },
+    });
+    const measurements = comparison.measurements.map((measurement) => {
+      const rebind = (receipt: typeof measurement.baseline) => {
+        const runCell = resign({ ...receipt.runCell, experimentDigest: experiment.digest });
+        return resign({ ...receipt, runCell });
+      };
+      return { baseline: rebind(measurement.baseline), candidate: rebind(measurement.candidate) };
+    });
+    const input = {
+      ...comparison,
+      experiment,
+      measurements,
+    };
+
+    const parsed = agentProfileImprovementMeasuredComparisonSchema.safeParse(input);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error("expected executor mismatch to fail");
+    expect(parsed.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["measurements", 0, "baseline", "executionRef"],
+          message: "profile run receipt must bind the measured executor",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects a measured receipt from another executor", () => {
+    const { comparison } = fixture();
+    const candidate = resign({
+      ...comparison.measurements[0]!.candidate,
+      executionRef: {
+        ...comparison.measurements[0]!.candidate.executionRef,
+        digest: sha("9"),
+      },
+    });
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("requires the executor reference on every measured receipt", () => {
+    const { comparison } = fixture();
+    const { executionRef: _executionRef, ...candidate } = comparison.measurements[0]!.candidate;
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
     };
 
     expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
@@ -499,6 +611,19 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     };
 
     expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("counts grader spend against the signed complete-arm cost limit", () => {
+    const { comparison } = fixture();
+    const receipt = resign({
+      ...comparison.measurements[0]!.candidate,
+      limits: {
+        ...comparison.measurements[0]!.candidate.limits,
+        maxCostUsd: 0.000000105,
+      },
+    });
+
+    expect(agentProfileImprovementRunReceiptSchema.safeParse(receipt).success).toBe(false);
   });
 
   it("rejects a retry as publishable held-out evidence", () => {

@@ -50,6 +50,7 @@ export const agentCandidateFixedSpendSchema = z
     reasoningTokens: safeCountSchema,
     modelCalls: safeCountSchema,
     costUsdNanos: safeCountSchema,
+    costProvenance: z.enum(["observed", "estimated"]),
   })
   .strict() satisfies z.ZodType<AgentCandidateFixedSpend>;
 
@@ -67,6 +68,7 @@ export const agentCandidateModelSettlementCallSchema = z
     cachedInputTokens: safeCountSchema,
     reasoningTokens: safeCountSchema,
     costUsdNanos: safeCountSchema,
+    costProvenance: z.enum(["observed", "estimated"]),
   })
   .strict()
   .superRefine((call, ctx) => {
@@ -120,6 +122,7 @@ function refineModelSettlementMaterial(
     reasoningTokens: 0,
     modelCalls: material.calls.length,
     costUsdNanos: 0,
+    costProvenance: "observed",
   };
 
   for (const [index, call] of material.calls.entries()) {
@@ -173,6 +176,10 @@ function refineModelSettlementMaterial(
         totals[field] = sum;
       }
     }
+  }
+
+  if (material.calls.some((call) => call.costProvenance === "estimated")) {
+    totals.costProvenance = "estimated";
   }
 
   if (!sameFixedSpend(totals, material.usage)) {
@@ -410,7 +417,8 @@ function sameFixedSpend(
     left.cachedInputTokens === right.cachedInputTokens &&
     left.reasoningTokens === right.reasoningTokens &&
     left.modelCalls === right.modelCalls &&
-    left.costUsdNanos === right.costUsdNanos
+    left.costUsdNanos === right.costUsdNanos &&
+    left.costProvenance === right.costProvenance
   );
 }
 
