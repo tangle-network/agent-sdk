@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 0.36.0
+
+### Minor Changes
+
+- c8da041: Require an `executionRef` on every measured profile-improvement experiment and run receipt.
+  Activation records targeting `agent-profile` must carry that reference, and validators reject receipts produced by a different runner.
+
 ## 0.35.0
 
 ### Minor Changes
