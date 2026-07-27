@@ -123,6 +123,7 @@ export interface AgentProfileImprovementRunReceipt {
     endedAtMs: number;
     durationMs: number;
   };
+  steps: number;
   resolvedModel: AgentCandidateResolvedModel;
   limits: AgentCandidateExecutionLimits;
   usage: AgentCandidateFixedSpend;

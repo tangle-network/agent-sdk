@@ -303,6 +303,7 @@ export const agentCandidateRunReceiptSchema = z
         durationMs: z.number().int().nonnegative().safe(),
       })
       .strict(),
+    steps: z.number().int().nonnegative().safe(),
     memory: agentCandidateMemoryReceiptSchema,
     trace: agentCandidateTraceEvidenceSchema,
     termination: agentCandidateTerminationSchema,

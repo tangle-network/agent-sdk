@@ -150,6 +150,7 @@ function fixture() {
       runRecord: evidence("agent-eval-run-record", executionId),
       billing: [evidence("platform-billing", `bill-${executionId}`)] as [ReturnType<typeof evidence>],
       timing: { startedAtMs: repetition * 1_000, endedAtMs: repetition * 1_000 + 100, durationMs: 100 },
+      steps: 1,
       resolvedModel: task.model,
       limits: task.limits,
       usage: {
@@ -471,6 +472,23 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     const candidate = resign({
       ...comparison.measurements[0]!.candidate,
       limits: { ...comparison.measurements[0]!.candidate.limits, maxSteps: 11 },
+    });
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects a profile receipt that exceeds its signed execution limits", () => {
+    const { comparison } = fixture();
+    const candidate = resign({
+      ...comparison.measurements[0]!.candidate,
+      steps: 11,
     });
     const input = {
       ...comparison,

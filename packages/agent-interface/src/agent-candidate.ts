@@ -769,6 +769,7 @@ export interface AgentCandidateRunReceipt {
     endedAtMs: number;
     durationMs: number;
   };
+  steps: number;
   memory: AgentCandidateMemoryReceipt;
   trace: AgentCandidateTraceEvidence;
   termination: AgentCandidateTermination;
