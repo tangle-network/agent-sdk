@@ -10,7 +10,7 @@
     "check-types": "pnpm -r check-types",
     "test": "pnpm -r test",
     "changeset": "changeset",
-    "changeset:version": "changeset version",
+    "changeset:version": "changeset version && pnpm install --lockfile-only",
     "changeset:publish": "changeset publish"
   },
   "devDependencies": {
