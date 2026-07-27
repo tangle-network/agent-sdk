@@ -331,6 +331,36 @@ export type AgentCandidateMemoryPolicy =
       seed?: AgentCandidateArtifactRef;
     };
 
+/** Whether a settled cost came from provider billing or a reproducible estimate. */
+export type AgentCandidateCostProvenance = "observed" | "estimated";
+
+/** One known dollar amount carried with its source. */
+export interface AgentImprovementCost {
+  usd: number;
+  provenance: AgentCandidateCostProvenance;
+}
+
+/** Complete accounting for a measured improvement proposal. */
+export interface AgentImprovementEvaluationAccounting {
+  generationsExplored: number;
+  /** Trace analysis and candidate search before held-out execution. */
+  preparation: {
+    wallDurationMs: number;
+    cost: AgentImprovementCost;
+  };
+  /** Held-out baseline/candidate execution. Work time sums parallel calls. */
+  measurement: {
+    wallDurationMs: number;
+    workDurationMs: number;
+    cost: AgentImprovementCost;
+  };
+  /** Wall time is preparation plus held-out measurement. */
+  total: {
+    wallDurationMs: number;
+    cost: AgentImprovementCost;
+  };
+}
+
 /** Lossless evaluator-owned usage totals for one candidate execution. */
 export interface AgentCandidateFixedSpend {
   inputTokens: number;
@@ -340,6 +370,7 @@ export interface AgentCandidateFixedSpend {
   modelCalls: number;
   /** Integer billionths of one US dollar. */
   costUsdNanos: number;
+  costProvenance: AgentCandidateCostProvenance;
 }
 
 /** Evidence and ancestry that produced the immutable candidate. */
@@ -455,13 +486,14 @@ export type AgentCandidateEffectiveMemory =
       seedDigest?: Sha256Digest;
     };
 
-/** The exact evaluator-owned limits applied to every candidate arm. */
+/** The exact evaluator-owned limits applied to every complete candidate arm. */
 export interface AgentCandidateExecutionLimits {
   timeoutMs: number;
   maxSteps: number;
   maxModelCalls: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  /** Total agent plus grading spend for one complete arm. */
   maxCostUsd: number;
 }
 
@@ -906,15 +938,7 @@ export interface AgentImprovementMeasuredComparisonBase<
     candidateContentHash: string;
   };
   diff: string;
-  evaluation: {
-    generationsExplored: number;
-    searchDurationMs: number;
-    executionDurationMs: number;
-    durationMs: number;
-    searchCostUsd: number;
-    executionCostUsd: number;
-    totalCostUsd: number;
-  };
+  evaluation: AgentImprovementEvaluationAccounting;
   metadata?: { [key: string]: AgentCandidateJsonValue };
 }
 
@@ -1061,6 +1085,7 @@ export interface AgentCandidateModelSettlementCall {
   cachedInputTokens: number;
   reasoningTokens: number;
   costUsdNanos: number;
+  costProvenance: AgentCandidateCostProvenance;
 }
 
 /** Canonical model-access ledger after the evaluator has revoked access. */

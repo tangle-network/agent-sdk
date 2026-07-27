@@ -417,9 +417,10 @@ export const agentImprovementMeasuredComparisonSchema = z
         dimension: (evidence, name) =>
           evidence.receipt.benchmarkResult.material.dimensions.find(
             (dimension) => dimension.name === name,
-          )?.score,
-        cost: executionCostUsd,
-        latency: executionLatencyMs,
+        )?.score,
+      cost: executionCostUsd,
+      costProvenance: executionCostProvenance,
+      latency: executionLatencyMs,
       },
       ctx,
     );
@@ -509,6 +510,15 @@ function executionCostUsd(evidence: CandidateExecutionEvidence): number {
     evidence.receipt.modelSettlement.material.usage.costUsdNanos +
     evidence.receipt.benchmarkResult.material.grading.usage.costUsdNanos
   ) / 1_000_000_000;
+}
+
+function executionCostProvenance(
+  evidence: CandidateExecutionEvidence,
+): "observed" | "estimated" {
+  return evidence.receipt.modelSettlement.material.usage.costProvenance === "observed" &&
+    evidence.receipt.benchmarkResult.material.grading.usage.costProvenance === "observed"
+    ? "observed"
+    : "estimated";
 }
 
 function executionLatencyMs(evidence: CandidateExecutionEvidence): number {

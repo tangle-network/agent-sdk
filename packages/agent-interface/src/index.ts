@@ -836,6 +836,7 @@ export {
   sha256DigestSchema,
   sha256Utf8,
 } from "./agent-candidate-schema-common.js";
+export { numbersApproximatelyEqual } from "./number-validation.js";
 export * from "./agent-candidate-promotion-schema.js";
 export { agentCandidateEvaluationPolicySchema } from "./agent-improvement-measurement-schema.js";
 export * from "./agent-improvement-source.js";

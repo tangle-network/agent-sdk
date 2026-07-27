@@ -24,6 +24,7 @@ function observation() {
       reasoningTokens: 0,
       modelCalls: 2,
       costUsdNanos: 5,
+      costProvenance: "observed" as const,
     },
   };
 }

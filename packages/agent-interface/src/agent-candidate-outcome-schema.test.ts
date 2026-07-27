@@ -205,6 +205,7 @@ function runReceipt(options: {
     reasoningTokens: 5,
     modelCalls: 2,
     costUsdNanos: 1_250_000_000,
+    costProvenance: "observed" as const,
   };
   const modelSettlementMaterial = {
     kind: "agent-candidate-model-settlement-material" as const,
@@ -227,6 +228,7 @@ function runReceipt(options: {
         cachedInputTokens: 3,
         reasoningTokens: 2,
         costUsdNanos: 500_000_000,
+        costProvenance: "observed" as const,
       },
       {
         callId: "call-2",
@@ -241,6 +243,7 @@ function runReceipt(options: {
         cachedInputTokens: 4,
         reasoningTokens: 3,
         costUsdNanos: 750_000_000,
+        costProvenance: "observed" as const,
       },
     ],
     usage: fixedUsage,
@@ -300,6 +303,7 @@ function runReceipt(options: {
         reasoningTokens: 0,
         modelCalls: 1,
         costUsdNanos: 25_000_000,
+        costProvenance: "observed" as const,
       },
       timing: { startedAtMs: 1_101, endedAtMs: 1_121, durationMs: 20 },
     },
@@ -661,12 +665,19 @@ describe("candidate outcome contracts", () => {
       diff: "-old\n+new",
       evaluation: {
         generationsExplored: 1,
-        searchDurationMs: 40,
-        executionDurationMs: 60,
-        durationMs: 100,
-        searchCostUsd: 0.2,
-        executionCostUsd: 0.3,
-        totalCostUsd: 0.5,
+        preparation: {
+          wallDurationMs: 40,
+          cost: { usd: 0.2, provenance: "observed" as const },
+        },
+        measurement: {
+          wallDurationMs: 60,
+          workDurationMs: 720,
+          cost: { usd: 7.65, provenance: "observed" as const },
+        },
+        total: {
+          wallDurationMs: 100,
+          cost: { usd: 7.85, provenance: "observed" as const },
+        },
       },
     };
     const proposal = {

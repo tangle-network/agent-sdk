@@ -3,6 +3,7 @@ import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 import {
   agentProfileImprovementChangeSchema,
   agentProfileImprovementMeasuredComparisonSchema,
+  agentProfileImprovementRunReceiptSchema,
   changedProfileImprovementSurfaces,
 } from "./agent-profile-improvement-schema.js";
 import { agentImprovementProposalSchema } from "./agent-candidate-promotion-schema.js";
@@ -53,7 +54,7 @@ const model = {
 const limits = {
   timeoutMs: 30_000,
   maxSteps: 10,
-  maxModelCalls: 1,
+  maxModelCalls: 2,
   maxInputTokens: 1_000,
   maxOutputTokens: 1_000,
   maxCostUsd: 1,
@@ -167,6 +168,7 @@ function fixture() {
         reasoningTokens: 0,
         modelCalls: 1,
         costUsdNanos: 100,
+        costProvenance: "observed" as const,
       },
       trace: {
         evidence: evidence("platform-trace", `trace-${executionId}`),
@@ -190,6 +192,7 @@ function fixture() {
           reasoningTokens: 0,
           modelCalls: 1,
           costUsdNanos: 10,
+          costProvenance: "observed" as const,
         },
         score,
         passed: true,
@@ -286,12 +289,19 @@ function fixture() {
     diff: "prompt: add source and uncertainty instructions",
     evaluation: {
       generationsExplored: 1,
-      searchDurationMs: 0,
-      executionDurationMs: 0,
-      durationMs: 0,
-      searchCostUsd: 0,
-      executionCostUsd: 0,
-      totalCostUsd: 0,
+      preparation: {
+        wallDurationMs: 0,
+        cost: { usd: 0, provenance: "observed" as const },
+      },
+      measurement: {
+        wallDurationMs: 660,
+        workDurationMs: 660,
+        cost: { usd: 0.00000066, provenance: "observed" as const },
+      },
+      total: {
+        wallDurationMs: 660,
+        cost: { usd: 0.00000066, provenance: "observed" as const },
+      },
     },
   };
   const proposalMaterial = {
@@ -314,6 +324,24 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
 
     expect(agentProfileImprovementMeasuredComparisonSchema.parse(comparison)).toEqual(comparison);
     expect(agentImprovementProposalSchema.parse(proposal)).toEqual(proposal);
+  });
+
+  it("rejects measurement accounting that differs from its signed receipts", () => {
+    const { comparison } = fixture();
+    const measurement = comparison.evaluation.measurement;
+
+    for (const alteredMeasurement of [
+      { ...measurement, workDurationMs: measurement.workDurationMs + 1 },
+      { ...measurement, cost: { ...measurement.cost, usd: measurement.cost.usd + 0.01 } },
+      { ...measurement, cost: { ...measurement.cost, provenance: "estimated" as const } },
+    ]) {
+      expect(
+        agentProfileImprovementMeasuredComparisonSchema.safeParse({
+          ...comparison,
+          evaluation: { ...comparison.evaluation, measurement: alteredMeasurement },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("rejects a raw profile even when its digest is present", () => {
@@ -583,6 +611,19 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     };
 
     expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("counts grader spend against the signed complete-arm cost limit", () => {
+    const { comparison } = fixture();
+    const receipt = resign({
+      ...comparison.measurements[0]!.candidate,
+      limits: {
+        ...comparison.measurements[0]!.candidate.limits,
+        maxCostUsd: 0.000000105,
+      },
+    });
+
+    expect(agentProfileImprovementRunReceiptSchema.safeParse(receipt).success).toBe(false);
   });
 
   it("rejects a retry as publishable held-out evidence", () => {
