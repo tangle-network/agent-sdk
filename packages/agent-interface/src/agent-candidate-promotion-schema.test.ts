@@ -67,6 +67,21 @@ describe("agentImprovementActivationSchema", () => {
     expect(agentImprovementActivationSchema.parse(restore)).toEqual(restore);
   });
 
+  it("accepts a signed executor reference when a profile path requires it", () => {
+    const { digest: _digest, ...authority } = activation();
+    const material = {
+      ...authority,
+      executionRef: {
+        kind: "agent-profile-improvement-execution-ref" as const,
+        identity: "platform-agent-profile-runner:fixture",
+        digest: sha("a"),
+      },
+    };
+    const withExecutionRef = { ...material, digest: canonicalCandidateDigest(material) };
+
+    expect(agentImprovementActivationSchema.parse(withExecutionRef)).toEqual(withExecutionRef);
+  });
+
   it("rejects duplicate surface identities", () => {
     const input = activation();
     expect(() =>

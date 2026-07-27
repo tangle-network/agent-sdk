@@ -30,6 +30,7 @@ import {
   refineMeasuredComparisonSummary,
 } from "./agent-improvement-measurement-schema.js";
 import {
+  agentProfileImprovementExecutionRefSchema,
   agentProfileImprovementMeasuredComparisonSchema,
   changedProfileImprovementSurfaces,
 } from "./agent-profile-improvement-schema.js";
@@ -546,6 +547,7 @@ export const agentImprovementActivationSchema = z
     reviewDigest: sha256DigestSchema,
     experimentDigest: sha256DigestSchema,
     candidateDigest: sha256DigestSchema,
+    executionRef: agentProfileImprovementExecutionRefSchema.optional(),
     intent: z.enum(["activate-candidate", "restore-baseline"]),
     targets: z
       .tuple([improvementActivationTargetSchema])

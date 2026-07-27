@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AgentProfileImprovementEvidence,
+  AgentProfileImprovementExecutionRef,
   AgentProfileImprovementExperiment,
   AgentProfileImprovementMeasuredComparison,
   AgentProfileImprovementMeasurement,
@@ -134,6 +135,12 @@ export const agentProfileImprovementArmSchema = z
   })
   .strict();
 
+export const agentProfileImprovementExecutionRefSchema = profileImprovementEvidenceSchema
+  .extend({
+    kind: z.literal("agent-profile-improvement-execution-ref"),
+  })
+  .strict() satisfies z.ZodType<AgentProfileImprovementExecutionRef>;
+
 /**
  * The first product path changes only prompt and skills, but it uses the
  * shared profile-diff language so execution and activation apply identical
@@ -220,6 +227,7 @@ export const agentProfileImprovementExperimentSchema = z
     kind: z.literal("agent-profile-improvement-experiment"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     source: agentImprovementSourceSchema,
+    executionRef: agentProfileImprovementExecutionRefSchema,
     baseline: agentProfileImprovementArmSchema,
     candidate: agentProfileImprovementArmSchema,
     change: agentProfileImprovementChangeSchema,
@@ -357,6 +365,7 @@ export const agentProfileImprovementRunReceiptSchema = z
     kind: z.literal("agent-profile-improvement-run"),
     digestAlgorithm: z.literal("rfc8785-sha256"),
     executionId: z.string().min(1).max(500),
+    executionRef: agentProfileImprovementExecutionRefSchema,
     runCell: agentProfileImprovementRunCellSchema,
     runRecord: profileImprovementEvidenceSchema,
     billing: z
@@ -522,6 +531,11 @@ function refineProfileImprovementComparison(
             cell.experimentDigest === comparison.experiment.digest,
             [...armPath, "runCell", "experimentDigest"],
             "profile run receipt must bind the measured experiment",
+          ],
+          [
+            JSON.stringify(receipt.executionRef) === JSON.stringify(comparison.experiment.executionRef),
+            [...armPath, "executionRef"],
+            "profile run receipt must bind the measured executor",
           ],
           [
             cell.arm === arm,

@@ -82,6 +82,11 @@ function fixture() {
   });
   const baseline = { stateDigest: sha("5") };
   const candidate = { stateDigest: sha("8") };
+  const executionRef = {
+    kind: "agent-profile-improvement-execution-ref" as const,
+    identity: "platform-agent-profile-runner:fixture",
+    digest: sha("4"),
+  };
   const change = [
     {
       kind: "agent-profile-diff" as const,
@@ -103,6 +108,7 @@ function fixture() {
       sourceDigest: sha("5"),
       sourceRevision: 7,
     },
+    executionRef,
     baseline,
     candidate,
     change,
@@ -146,6 +152,7 @@ function fixture() {
       kind: "agent-profile-improvement-run" as const,
       digestAlgorithm: "rfc8785-sha256" as const,
       executionId,
+      executionRef,
       runCell,
       runRecord: evidence("agent-eval-run-record", executionId),
       billing: [evidence("platform-billing", `bill-${executionId}`)] as [ReturnType<typeof evidence>],
@@ -320,6 +327,83 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
           profile: { mcp: { private: { headers: { Authorization: "secret" } } } },
         },
       },
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("requires the sealed executor reference", () => {
+    const { comparison } = fixture();
+    const { executionRef: _executionRef, ...experiment } = comparison.experiment;
+    const input = { ...comparison, experiment };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects a signed experiment with receipts from a different executor", () => {
+    const { comparison } = fixture();
+    const experiment = resign({
+      ...comparison.experiment,
+      executionRef: {
+        ...comparison.experiment.executionRef,
+        identity: "platform-agent-profile-runner:changed",
+      },
+    });
+    const measurements = comparison.measurements.map((measurement) => {
+      const rebind = (receipt: typeof measurement.baseline) => {
+        const runCell = resign({ ...receipt.runCell, experimentDigest: experiment.digest });
+        return resign({ ...receipt, runCell });
+      };
+      return { baseline: rebind(measurement.baseline), candidate: rebind(measurement.candidate) };
+    });
+    const input = {
+      ...comparison,
+      experiment,
+      measurements,
+    };
+
+    const parsed = agentProfileImprovementMeasuredComparisonSchema.safeParse(input);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error("expected executor mismatch to fail");
+    expect(parsed.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["measurements", 0, "baseline", "executionRef"],
+          message: "profile run receipt must bind the measured executor",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects a measured receipt from another executor", () => {
+    const { comparison } = fixture();
+    const candidate = resign({
+      ...comparison.measurements[0]!.candidate,
+      executionRef: {
+        ...comparison.measurements[0]!.candidate.executionRef,
+        digest: sha("9"),
+      },
+    });
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
+    };
+
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("requires the executor reference on every measured receipt", () => {
+    const { comparison } = fixture();
+    const { executionRef: _executionRef, ...candidate } = comparison.measurements[0]!.candidate;
+    const input = {
+      ...comparison,
+      measurements: [
+        { ...comparison.measurements[0]!, candidate },
+        ...comparison.measurements.slice(1),
+      ],
     };
 
     expect(agentProfileImprovementMeasuredComparisonSchema.safeParse(input).success).toBe(false);

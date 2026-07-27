@@ -63,6 +63,11 @@ export interface AgentProfileImprovementArm {
   stateDigest: Sha256Digest;
 }
 
+/** Exact non-secret identity of the runner that measured and can activate a profile change. */
+export interface AgentProfileImprovementExecutionRef extends AgentProfileImprovementEvidence {
+  kind: "agent-profile-improvement-execution-ref";
+}
+
 /**
  * Ordered portable profile patches retained for review and activation.
  *
@@ -78,6 +83,7 @@ export interface AgentProfileImprovementExperimentMaterial {
   kind: "agent-profile-improvement-experiment";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   source: AgentImprovementSource;
+  executionRef: AgentProfileImprovementExecutionRef;
   baseline: AgentProfileImprovementArm;
   candidate: AgentProfileImprovementArm;
   change: AgentProfileImprovementChange;
@@ -115,6 +121,7 @@ export interface AgentProfileImprovementRunReceipt {
   kind: "agent-profile-improvement-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   executionId: string;
+  executionRef: AgentProfileImprovementExecutionRef;
   runCell: AgentProfileImprovementRunCell;
   runRecord: AgentProfileImprovementEvidence;
   billing: [AgentProfileImprovementEvidence, ...AgentProfileImprovementEvidence[]];

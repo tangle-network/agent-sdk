@@ -10,7 +10,10 @@ import type {
   ReasoningEffort,
 } from "./agent-profile.js";
 import type { HarnessType } from "./harness.js";
-import type { AgentProfileImprovementMeasuredComparison } from "./agent-profile-improvement.js";
+import type {
+  AgentProfileImprovementExecutionRef,
+  AgentProfileImprovementMeasuredComparison,
+} from "./agent-profile-improvement.js";
 
 /** Full SHA-256 digest with an explicit algorithm prefix. */
 export type Sha256Digest = `sha256:${string}`;
@@ -975,6 +978,8 @@ export interface AgentImprovementActivation {
   experimentDigest: Sha256Digest;
   /** Exact proposed state, whether it is a sealed bundle or a normal profile. */
   candidateDigest: Sha256Digest;
+  /** Required for opaque profile changes; records the runner verified at authorization time. */
+  executionRef?: AgentProfileImprovementExecutionRef;
   intent: AgentImprovementActivationIntent;
   targets: [AgentImprovementActivationTarget, ...AgentImprovementActivationTarget[]];
   fundingOwner: string;
