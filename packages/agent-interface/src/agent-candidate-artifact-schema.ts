@@ -211,6 +211,22 @@ export function validateEmbeddedArtifact(
   }
 }
 
+function validateResourceSourceDigest(
+  resource: { source?: { sourceDigest: string }; sha256: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (
+    resource.source !== undefined &&
+    resource.source.sourceDigest !== resource.sha256
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["source", "sourceDigest"],
+      message: "resource source digest must equal the frozen resource digest",
+    });
+  }
+}
+
 export const agentCandidateInlineResourceSchema = z
   .object({
     kind: z.literal("inline"),
@@ -229,16 +245,7 @@ export const agentCandidateInlineResourceSchema = z
         message: "byteLength must match UTF-8 content",
       });
     }
-    if (
-      resource.source !== undefined &&
-      resource.source.sourceDigest !== resource.sha256
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["source", "sourceDigest"],
-        message: "resource source digest must equal the frozen resource digest",
-      });
-    }
+    validateResourceSourceDigest(resource, ctx);
   }) satisfies z.ZodType<AgentCandidateInlineResource>;
 
 export const agentCandidateGitHubResourceSchema = z
@@ -258,18 +265,7 @@ export const agentCandidateGitHubResourceSchema = z
     source: agentImprovementSourceSchema.optional(),
   })
   .strict()
-  .superRefine((resource, ctx) => {
-    if (
-      resource.source !== undefined &&
-      resource.source.sourceDigest !== resource.sha256
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["source", "sourceDigest"],
-        message: "resource source digest must equal the frozen resource digest",
-      });
-    }
-  }) satisfies z.ZodType<AgentCandidateGitHubResource>;
+  .superRefine(validateResourceSourceDigest) satisfies z.ZodType<AgentCandidateGitHubResource>;
 
 export const agentCandidateResourceRefSchema = z.discriminatedUnion("kind", [
   agentCandidateInlineResourceSchema,
