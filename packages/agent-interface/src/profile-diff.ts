@@ -276,20 +276,38 @@ export function applyAgentProfileDiff(
   return applyRemoval(merged, diff.remove);
 }
 
+function hasRemovalOperation(value: unknown): boolean {
+  if (value === true) return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") {
+    return Object.values(value).some(hasRemovalOperation);
+  }
+  return false;
+}
+
 export function changedAgentProfileAxes(diff: AgentProfileDiff): AgentProfileDiffAxis[] {
   const axes = new Set<AgentProfileDiffAxis>();
   const set = diff.set;
   if (set) {
-    if (set.name || set.description || set.version || set.tags) axes.add("identity");
+    if (
+      set.name !== undefined ||
+      set.description !== undefined ||
+      set.version !== undefined ||
+      set.tags !== undefined
+    ) {
+      axes.add("identity");
+    }
     for (const axis of agentProfileDiffPropertyAxes) {
       if (set[axis] !== undefined) axes.add(axis);
     }
   }
   const remove = diff.remove;
   if (remove) {
-    if (remove.identity || remove.tags) axes.add("identity");
+    if (hasRemovalOperation(remove.identity) || hasRemovalOperation(remove.tags)) {
+      axes.add("identity");
+    }
     for (const axis of agentProfileDiffPropertyAxes) {
-      if (remove[axis] !== undefined) axes.add(axis);
+      if (hasRemovalOperation(remove[axis])) axes.add(axis);
     }
   }
   return [...axes].sort();

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { AgentProfile } from "./agent-profile.js";
+import type { AgentImprovementSurface } from "./agent-candidate.js";
 import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 import {
   agentProfileImprovementChangeSchema,
+  agentProfileImprovementChangeStepSchema,
   agentProfileImprovementMeasuredComparisonSchema,
   agentProfileImprovementRunReceiptSchema,
   changedProfileImprovementSurfaces,
@@ -25,6 +28,12 @@ function evidence(kind: string, identity: string) {
     identity,
     digest: canonicalCandidateDigest({ kind, identity }),
   };
+}
+
+function profileChange(set: AgentProfile) {
+  return agentProfileImprovementChangeSchema.parse([
+    { kind: "agent-profile-diff", set },
+  ]);
 }
 
 const grader = {
@@ -464,6 +473,268 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     expect(changedProfileImprovementSurfaces(change)).toEqual(["skills"]);
   });
 
+  it("preserves granular labels and adds complete-profile authority for residual axes", () => {
+    const promptOnly = profileChange({
+      prompt: { systemPrompt: "Reflect, then answer." },
+    });
+    const skillsOnly = profileChange({
+      resources: {
+        skills: [{ kind: "inline", name: "reflect", content: "Reflect." }],
+      },
+    });
+    const promptAndSkills = profileChange({
+      prompt: { instructions: ["Reflect."] },
+      resources: {
+        skills: [{ kind: "inline", name: "reflect", content: "Reflect." }],
+      },
+    });
+    const promptAndModel = profileChange({
+      prompt: { instructions: ["Reflect."] },
+      model: { reasoningEffort: "high" },
+    });
+    const granularResources = profileChange({
+      resources: {
+        tools: [{ kind: "inline", name: "search", content: "Search." }],
+        agents: [{ kind: "inline", name: "critic", content: "Critique." }],
+      },
+    });
+    const modelAndTools = profileChange({
+      model: { reasoningEffort: "high" },
+      tools: { shell: true },
+    });
+
+    expect(changedProfileImprovementSurfaces(promptOnly)).toEqual(["prompt"]);
+    expect(changedProfileImprovementSurfaces(skillsOnly)).toEqual(["skills"]);
+    expect(changedProfileImprovementSurfaces(promptAndSkills)).toEqual([
+      "prompt",
+      "skills",
+    ]);
+    expect(changedProfileImprovementSurfaces(promptAndModel)).toEqual([
+      "prompt",
+      "agent-profile",
+    ]);
+    expect(changedProfileImprovementSurfaces(granularResources)).toEqual([
+      "tools",
+      "subagents",
+    ]);
+    expect(changedProfileImprovementSurfaces(modelAndTools)).toEqual([
+      "tools",
+      "agent-profile",
+    ]);
+  });
+
+  it("reports every surface that a complete resource removal can change", () => {
+    const change = agentProfileImprovementChangeSchema.parse([
+      { kind: "agent-profile-diff", remove: { resources: true } },
+    ]);
+
+    expect(changedProfileImprovementSurfaces(change)).toEqual([
+      "skills",
+      "tools",
+      "subagents",
+      "agent-profile",
+    ]);
+  });
+
+  it("rejects removal steps that cannot change any profile", () => {
+    for (const remove of [
+      { tags: [] },
+      { prompt: {} },
+      { model: [] },
+      { connections: [] },
+      { resources: {} },
+      { resources: { tools: [] } },
+    ]) {
+      expect(
+        agentProfileImprovementChangeStepSchema.safeParse({
+          kind: "agent-profile-diff",
+          remove,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("does not label empty resource removals beside an effective removal", () => {
+    const change = agentProfileImprovementChangeSchema.parse([
+      {
+        kind: "agent-profile-diff",
+        remove: { resources: { tools: [], instructions: true } },
+      },
+    ]);
+
+    expect(changedProfileImprovementSurfaces(change)).toEqual(["agent-profile"]);
+  });
+
+  it("maps every AgentProfile axis to its existing surface or the complete-profile catchall", () => {
+    const cases: Array<{
+      name: string;
+      set: AgentProfile;
+      surfaces: AgentImprovementSurface[];
+    }> = [
+      { name: "identity", set: { name: "changed" }, surfaces: ["agent-profile"] },
+      {
+        name: "model",
+        set: { model: { reasoningEffort: "high" } },
+        surfaces: ["agent-profile"],
+      },
+      { name: "harness", set: { harness: "codex" }, surfaces: ["agent-profile"] },
+      {
+        name: "permissions",
+        set: { permissions: { shell: "allow" } },
+        surfaces: ["agent-profile"],
+      },
+      { name: "tools", set: { tools: { shell: true } }, surfaces: ["tools"] },
+      {
+        name: "mcp",
+        set: { mcp: { papers: { url: "https://mcp.example.test" } } },
+        surfaces: ["mcp"],
+      },
+      {
+        name: "connections",
+        set: {
+          connections: [
+            { connectionId: "papers", capabilities: ["search"] },
+          ],
+        },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "subagents",
+        set: { subagents: { critic: { prompt: "Find confounds." } } },
+        surfaces: ["subagents"],
+      },
+      {
+        name: "resource files",
+        set: {
+          resources: {
+            files: [
+              {
+                path: "protocol.txt",
+                resource: { kind: "inline", name: "protocol", content: "x" },
+              },
+            ],
+          },
+        },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "resource tools",
+        set: {
+          resources: {
+            tools: [{ kind: "inline", name: "tool", content: "x" }],
+          },
+        },
+        surfaces: ["tools"],
+      },
+      {
+        name: "resource agents",
+        set: {
+          resources: {
+            agents: [{ kind: "inline", name: "agent", content: "x" }],
+          },
+        },
+        surfaces: ["subagents"],
+      },
+      {
+        name: "resource commands",
+        set: {
+          resources: {
+            commands: [{ kind: "inline", name: "command", content: "x" }],
+          },
+        },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "resource instructions",
+        set: { resources: { instructions: "Observe before deciding." } },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "resource failure policy",
+        set: { resources: { failOnError: false } },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "hooks",
+        set: { hooks: { afterRun: [{ command: "capture-result" }] } },
+        surfaces: ["hooks"],
+      },
+      {
+        name: "modes",
+        set: { modes: { adversarial: { prompt: "Try to refute it." } } },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "confidential",
+        set: { confidential: { sealed: true } },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "metadata",
+        set: { metadata: { role: "driver" } },
+        surfaces: ["agent-profile"],
+      },
+      {
+        name: "extensions",
+        set: { extensions: { codex: { sandbox: "danger-full-access" } } },
+        surfaces: ["agent-profile"],
+      },
+    ];
+
+    for (const { name, set, surfaces } of cases) {
+      expect(changedProfileImprovementSurfaces(profileChange(set)), name).toEqual(
+        surfaces,
+      );
+    }
+  });
+
+  it("keeps unknown fields and malformed secret material out of complete diffs", () => {
+    const invalidChanges = [
+      [
+        {
+          kind: "agent-profile-diff",
+          set: { prompt: { systemPrompt: "valid" }, unknownAxis: true },
+        },
+      ],
+      [
+        {
+          kind: "agent-profile-diff",
+          set: {
+            mcp: {
+              local: {
+                command: "mcp-server",
+                env: {
+                  MCP_TOKEN: { kind: "public", value: "safe-mode" },
+                },
+              },
+            },
+          },
+        },
+      ],
+      [
+        {
+          kind: "agent-profile-diff",
+          set: {
+            hooks: {
+              beforeRun: [
+                {
+                  command: "prepare",
+                  env: { HOOK_TOKEN: "plaintext-secret" },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    ];
+
+    for (const change of invalidChanges) {
+      expect(agentProfileImprovementChangeSchema.safeParse(change).success).toBe(
+        false,
+      );
+    }
+  });
+
   it("rejects a mutable external skill reference", () => {
     expect(
       agentProfileImprovementChangeSchema.safeParse([
@@ -486,7 +757,55 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects a profile patch that changes an unsupported surface", () => {
+  it("does not let another profile axis bypass exact skill bytes", () => {
+    expect(
+      agentProfileImprovementChangeSchema.safeParse([
+        {
+          kind: "agent-profile-diff",
+          set: {
+            model: { reasoningEffort: "high" },
+            resources: {
+              skills: [
+                {
+                  kind: "github",
+                  repository: "tangle-network/agent-dev-container",
+                  path: ".agents/skills/support/SKILL.md",
+                  ref: "develop",
+                },
+              ],
+            },
+          },
+        },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("requires exact inline bytes for non-skill resources too", () => {
+    expect(
+      agentProfileImprovementChangeSchema.safeParse([
+        {
+          kind: "agent-profile-diff",
+          set: {
+            resources: {
+              files: [
+                {
+                  path: "protocol.md",
+                  resource: {
+                    kind: "github",
+                    repository: "example/research",
+                    path: "protocol.md",
+                    ref: "main",
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("rejects a changed diff whose bytes no longer match the signed experiment", () => {
     const { comparison } = fixture();
     const input = {
       ...comparison,
@@ -495,7 +814,7 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
         change: [
           {
             kind: "agent-profile-diff",
-            set: { mcp: { private: { transport: "http", url: "https://mcp.example.test" } } },
+            set: { model: { reasoningEffort: "high" } },
           },
         ],
       },

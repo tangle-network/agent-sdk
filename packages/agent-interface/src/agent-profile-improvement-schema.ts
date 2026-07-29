@@ -11,8 +11,12 @@ import type {
   AgentProfileImprovementSuiteInputs,
   AgentProfileImprovementTask,
 } from "./agent-profile-improvement.js";
-import type { AgentCandidateFixedSpend } from "./agent-candidate.js";
+import type {
+  AgentCandidateFixedSpend,
+  AgentImprovementSurface,
+} from "./agent-candidate.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
+import { changedAgentProfileAxes } from "./profile-diff.js";
 import { agentCandidateLineageSchema } from "./agent-candidate-lineage-schema.js";
 import {
   canonicalCandidateDigest,
@@ -142,73 +146,56 @@ export const agentProfileImprovementExecutionRefSchema = profileImprovementEvide
   })
   .strict() satisfies z.ZodType<AgentProfileImprovementExecutionRef>;
 
-/**
- * The first product path changes only prompt and skills, but it uses the
- * shared profile-diff language so execution and activation apply identical
- * ordered patches.
- */
+/** One strict canonical profile patch in an ordered measured change. */
 export const agentProfileImprovementChangeStepSchema = agentProfileDiffSchema.superRefine(
   (change, ctx) => {
     const changed = changedProfileImprovementSurfaces([change]);
     if (changed.length === 0) {
       ctx.addIssue({
         code: "custom",
-        message: "profile improvement patch must change prompt or skills",
+        message: "profile improvement patch must change the agent profile",
       });
     }
-
-    const setKeys = Object.keys(change.set ?? {});
-    if (setKeys.some((key) => key !== "prompt" && key !== "resources")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["set"],
-        message: "profile improvement patches may set only prompt or skill resources",
-      });
-    }
-    const setResourceKeys = Object.keys(change.set?.resources ?? {});
-    if (setResourceKeys.some((key) => key !== "skills")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["set", "resources"],
-        message: "profile improvement patches may set only skill resources",
-      });
-    }
-    if (change.set?.resources?.skills?.some((skill) => skill.kind !== "inline")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["set", "resources", "skills"],
-        message: "measured profile skill patches require inline content with exact bytes",
-      });
-    }
-
-    const removeKeys = Object.keys(change.remove ?? {});
-    if (removeKeys.some((key) => key !== "prompt" && key !== "resources")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["remove"],
-        message: "profile improvement patches may remove only prompt or skill resources",
-      });
-    }
-    if (change.remove?.resources === true) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["remove", "resources"],
-        message: "profile improvement patches may not remove unrelated resources",
-      });
-    }
-    const removeResources = change.remove?.resources;
-    const removeResourceKeys = Object.keys(
-      typeof removeResources === "object" ? removeResources : {},
-    );
-    if (removeResourceKeys.some((key) => key !== "skills")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["remove", "resources"],
-        message: "profile improvement patches may remove only skill resources",
-      });
-    }
+    refineInlineProfileImprovementResources(change, ctx);
   },
 );
+
+function refineInlineProfileImprovementResources(
+  change: AgentProfileDiff,
+  ctx: z.RefinementCtx,
+): void {
+  const resources = change.set?.resources;
+  if (resources === undefined) return;
+
+  const groups = [
+    ["files", resources.files?.map((file) => file.resource)],
+    ["tools", resources.tools],
+    ["skills", resources.skills],
+    ["agents", resources.agents],
+    ["commands", resources.commands],
+  ] as const;
+  for (const [name, refs] of groups) {
+    for (const [index, ref] of (refs ?? []).entries()) {
+      if (ref.kind !== "inline") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["set", "resources", name, index],
+          message: "measured profile resource patches require inline content with exact bytes",
+        });
+      }
+    }
+  }
+  if (
+    typeof resources.instructions === "object" &&
+    resources.instructions.kind !== "inline"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["set", "resources", "instructions"],
+      message: "measured profile resource patches require inline content with exact bytes",
+    });
+  }
+}
 
 export const agentProfileImprovementChangeSchema = z
   .tuple([agentProfileImprovementChangeStepSchema])
@@ -486,21 +473,75 @@ export const agentProfileImprovementMeasuredComparisonSchema = z
 
 export function changedProfileImprovementSurfaces(
   change: readonly AgentProfileDiff[],
-): string[] {
-  const surfaces = new Set<string>();
+): AgentImprovementSurface[] {
+  const surfaces = new Set<AgentImprovementSurface>();
+
   for (const step of change) {
-    if (step.set?.prompt !== undefined || step.remove?.prompt !== undefined) {
-      surfaces.add("prompt");
-    }
-    if (
-      step.set?.resources?.skills !== undefined ||
-      (typeof step.remove?.resources === "object" &&
-        step.remove.resources.skills !== undefined)
-    ) {
-      surfaces.add("skills");
+    for (const axis of changedAgentProfileAxes(step)) {
+      if (
+        axis === "prompt" ||
+        axis === "tools" ||
+        axis === "mcp" ||
+        axis === "hooks" ||
+        axis === "subagents"
+      ) {
+        surfaces.add(axis);
+      } else if (axis === "resources") {
+        const resources = changedResourceSurfaces(step);
+        for (const surface of resources.granular) surfaces.add(surface);
+        if (resources.other) surfaces.add("agent-profile");
+      } else {
+        surfaces.add("agent-profile");
+      }
     }
   }
-  return [...surfaces].sort();
+
+  const canonicalOrder = [
+    "prompt",
+    "skills",
+    "tools",
+    "mcp",
+    "hooks",
+    "subagents",
+    "agent-profile",
+  ] as const satisfies readonly AgentImprovementSurface[];
+  return canonicalOrder.filter((surface) => surfaces.has(surface));
+}
+
+function changedResourceSurfaces(change: AgentProfileDiff): {
+  granular: Set<AgentImprovementSurface>;
+  other: boolean;
+} {
+  const granular = new Set<AgentImprovementSurface>();
+  let other = false;
+  const setResources = change.set?.resources;
+  if (setResources !== undefined) {
+    const keys = Object.keys(setResources);
+    for (const key of keys) {
+      if (key === "skills" || key === "tools") granular.add(key);
+      else if (key === "agents") granular.add("subagents");
+      else other = true;
+    }
+    other ||= keys.length === 0;
+  }
+
+  const removeResources = change.remove?.resources;
+  if (removeResources === true) {
+    granular.add("skills");
+    granular.add("tools");
+    granular.add("subagents");
+    other = true;
+  } else if (removeResources !== undefined) {
+    const entries = Object.entries(removeResources).filter(([, value]) =>
+      Array.isArray(value) ? value.length > 0 : value === true,
+    );
+    for (const [key] of entries) {
+      if (key === "skills" || key === "tools") granular.add(key);
+      else if (key === "agents") granular.add("subagents");
+      else other = true;
+    }
+  }
+  return { granular, other };
 }
 
 function refineProfileImprovementComparison(
