@@ -4,6 +4,10 @@ import type { Sha256Digest } from "./agent-candidate.js";
 import { agentCandidateBundleSchema } from "./agent-candidate-schema.js";
 import { agentCandidateMaterializationReceiptSchema } from "./agent-candidate-receipt-schema.js";
 import {
+  canonicalCandidateDigest,
+  omitTopLevelDigest,
+} from "./agent-candidate-schema-common.js";
+import {
   candidateFixture,
   candidateGit,
   candidateSha,
@@ -186,6 +190,38 @@ describe("agentCandidateBundleSchema", () => {
         ignoredByOldConsumer: true,
       }),
     ).toThrow(/Unrecognized key/);
+  });
+
+  it("includes imported-resource provenance in the whole candidate identity", () => {
+    const candidate = candidateFixture();
+    const file = candidate.profile.resources?.files?.[0];
+    if (file === undefined) {
+      throw new Error("fixture must include a resource file");
+    }
+    const source = {
+      kind: "public-agent-resource",
+      sourceIdentity: "github:example/research-agents/reviewer.md",
+      sourceDigest: file.resource.sha256,
+      sourceRevision: candidateGit("9"),
+      license: { kind: "spdx" as const, expression: "Apache-2.0" },
+      attribution: ["Copyright Example Research contributors"],
+    };
+    const withSource = agentCandidateBundleSchema.parse({
+      ...candidate,
+      profile: {
+        ...candidate.profile,
+        resources: {
+          ...candidate.profile.resources,
+          files: [{ ...file, resource: { ...file.resource, source } }],
+        },
+      },
+    });
+
+    expect(
+      canonicalCandidateDigest(omitTopLevelDigest(withSource)),
+    ).not.toBe(
+      canonicalCandidateDigest(omitTopLevelDigest(candidate)),
+    );
   });
 });
 

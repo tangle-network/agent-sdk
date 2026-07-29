@@ -14,6 +14,7 @@ import type {
   AgentProfileImprovementExecutionRef,
   AgentProfileImprovementMeasuredComparison,
 } from "./agent-profile-improvement.js";
+import type { AgentImprovementSource } from "./agent-improvement-source.js";
 
 /** Full SHA-256 digest with an explicit algorithm prefix. */
 export type Sha256Digest = `sha256:${string}`;
@@ -89,6 +90,8 @@ export interface AgentCandidateInlineResource {
   content: string;
   sha256: Sha256Digest;
   byteLength: number;
+  /** Optional immutable origin, license obligations, and import history. */
+  source?: AgentImprovementSource;
 }
 
 /** GitHub content pinned to a full Git object id and expected content digest. */
@@ -100,6 +103,8 @@ export interface AgentCandidateGitHubResource {
   name?: string;
   sha256: Sha256Digest;
   byteLength: number;
+  /** Optional immutable origin, license obligations, and import history. */
+  source?: AgentImprovementSource;
 }
 
 export type AgentCandidateResourceRef =

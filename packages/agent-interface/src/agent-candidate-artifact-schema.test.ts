@@ -10,6 +10,7 @@ import {
   agentCandidateWorkspaceManifestMaterialSchema,
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
+import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 import { candidateGit, candidateSha } from "./agent-candidate.test-fixture.js";
 
 const failClosedResources: AgentCandidateResources = { failOnError: true };
@@ -197,6 +198,63 @@ describe("candidate artifact schemas", () => {
         ref: "main",
       }),
     ).toThrow();
+  });
+
+  it("binds imported-source obligations to the frozen resource and its digest", () => {
+    const source = {
+      kind: "public-agent-resource",
+      sourceIdentity:
+        "github:tangle-network/agent-runtime/skills/review/SKILL.md",
+      sourceDigest: candidateSha("2"),
+      sourceRevision: candidateGit("1"),
+      license: { kind: "spdx" as const, expression: "MIT" },
+      attribution: ["Copyright Tangle Network contributors"],
+      notices: ["Distributed under the MIT License."],
+    };
+    const resource = {
+      kind: "github" as const,
+      repository: {
+        kind: "github" as const,
+        owner: "tangle-network",
+        repo: "agent-runtime",
+      },
+      path: "skills/review/SKILL.md",
+      commit: candidateGit("1"),
+      sha256: candidateSha("2"),
+      byteLength: 42,
+      source,
+    };
+
+    expect(agentCandidateGitHubResourceSchema.parse(resource)).toEqual(resource);
+    expect(() =>
+      agentCandidateGitHubResourceSchema.parse({
+        ...resource,
+        source: { ...source, sourceDigest: candidateSha("3") },
+      }),
+    ).toThrow(/frozen resource digest/);
+
+    const inline = {
+      kind: "inline" as const,
+      name: "review-skill",
+      content: "review carefully",
+      sha256: candidateSha("2"),
+      byteLength: 16,
+      source,
+    };
+    expect(agentCandidateInlineResourceSchema.parse(inline)).toEqual(inline);
+    expect(() =>
+      agentCandidateInlineResourceSchema.parse({
+        ...inline,
+        source: { ...source, sourceDigest: candidateSha("3") },
+      }),
+    ).toThrow(/frozen resource digest/);
+
+    const originalDigest = canonicalCandidateDigest(resource);
+    const changedNoticeDigest = canonicalCandidateDigest({
+      ...resource,
+      source: { ...source, notices: ["A different required notice."] },
+    });
+    expect(changedNoticeDigest).not.toBe(originalDigest);
   });
 
   it("rejects reserved mount targets before the materializer sees them", () => {

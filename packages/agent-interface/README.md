@@ -5,8 +5,6 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
-The only runtime dependency is `zod` (used for the schema exports).
-
 ## Install
 
 ```bash
@@ -77,6 +75,8 @@ For evaluator-owned task images, the protected runtime creates a separate plan f
 Instruction delivery is closed to one final argv element, exact stdin bytes followed by EOF, or a fixed file path exposed through `TANGLE_CANDIDATE_TASK_PATH`.
 That plan also binds the profile target workspace and every mounted path; benchmark adapters must restore or exclude task-targeted profile paths before capturing the submitted solution patch.
 Resources are embedded, addressed through closed S3/IPFS locators, or pinned to a full GitHub commit plus content digest.
+An imported resource may also retain its immutable source identity and revision, exact source digest, validated SPDX expression or content-pinned custom license, attribution and notices, and an ordered normalization/transformation digest chain.
+These provenance fields are part of the candidate digest; changing or omitting an obligation produces a different candidate identity.
 Candidate-authored process configuration is explicitly public; model authorization is evaluator-mediated and secret values never belong in the bundle.
 Because prompts and inline files are arbitrary text, producers must also run their normal secret scanner before persistence.
 Candidate bundles reject unregistered backend extensions instead of accepting an untyped behavior or credential channel.
