@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-e2b",
-  "version": "0.2.29",
+  "version": "0.2.30",
   "description": "AgentEnvironmentProvider adapter for E2B sandboxes",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.37.0"
+    "@tangle-network/agent-interface": "0.38.0"
   },
   "peerDependencies": {
     "e2b": "^2.31.0"
