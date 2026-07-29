@@ -8,3 +8,9 @@ catalog:
   undici: 7.28.0
   zod: 4.4.3
   vitest: ^4.1.5
+
+# Packages whose public API contains AgentProfile must compile and test against
+# this workspace's one canonical schema, even when an external dev dependency
+# was published against an older exact agent-interface version.
+overrides:
+  "@tangle-network/agent-interface": workspace:*

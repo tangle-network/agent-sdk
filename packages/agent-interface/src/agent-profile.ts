@@ -3,8 +3,13 @@
  *
  * These model portable agent intent at the application boundary. Individual
  * backends translate this shape into their own native profile/configuration
- * formats internally. This package is the canonical public home for these
- * symbols.
+ * formats internally. Profile content participates in unsalted public identity.
+ * Prompts, resources, metadata, commands, paths, and secret-reference keys are
+ * caller-declared public data; recognizable credential patterns are refused as
+ * defense in depth, not as proof that arbitrary text is non-secret. MCP and hook
+ * secret-capable fields structurally require tagged public values or opaque
+ * secret references, which a private executor resolves only after identity is
+ * fixed. This package is the canonical public home for these symbols.
  */
 
 import type { HarnessType } from "./harness.js";
@@ -121,14 +126,17 @@ export interface AgentProfileResources {
  * A backend without a matching native tier may clamp down to its strongest supported level, but it
  * must never turn reasoning on for `none` or silently increase a requested effort.
  */
-export type ReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "ultracode";
+export const REASONING_EFFORTS = Object.freeze([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "ultracode",
+] as const);
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 /**
  * Model selection hints for backends.
@@ -171,6 +179,58 @@ export interface AgentProfilePrompt {
   instructions?: string[];
 }
 
+/** Deliberately public configuration included in profile identity. */
+export interface AgentProfilePublicConfigValue {
+  kind: "public";
+  value: string;
+}
+
+/**
+ * Opaque reference resolved only inside the private prepared executor.
+ * `key` is caller-declared public identity naming provider/operator-owned
+ * secret material; callers must not put the secret value in it.
+ */
+export interface AgentProfileSecretRef {
+  kind: "secret-ref";
+  key: string;
+  /** Apply no decoration or a `Bearer ` prefix after private resolution. */
+  format?: "raw" | "bearer";
+}
+
+/** A configuration value is public bytes or an opaque secret identity. */
+export type AgentProfileConfigValue =
+  | AgentProfilePublicConfigValue
+  | AgentProfileSecretRef;
+
+/**
+ * Private executor port for resolving one public secret-reference identity.
+ * Implementations return the raw undecorated value. Consumers must fail
+ * preparation on missing or blank values and must keep resolved values out of
+ * profiles, public plans, digests, receipts, diagnostics, and logs.
+ */
+export interface AgentProfileSecretProvider {
+  get(key: string): Promise<string | undefined>;
+}
+
+/** Mark an exact configuration value as public profile material. */
+export function defineAgentProfilePublicConfig(
+  value: string,
+): AgentProfilePublicConfigValue {
+  return { kind: "public", value };
+}
+
+/** Create a secret reference whose key is caller-declared public identity. */
+export function defineAgentProfileSecretRef(
+  key: string,
+  format?: AgentProfileSecretRef["format"],
+): AgentProfileSecretRef {
+  return {
+    kind: "secret-ref",
+    key,
+    ...(format === undefined ? {} : { format }),
+  };
+}
+
 /**
  * Generic subagent definition.
  */
@@ -189,7 +249,7 @@ export interface AgentProfileHookCommand {
   timeoutMs?: number;
   blocking?: boolean;
   matcher?: string;
-  env?: Record<string, string>;
+  env?: Record<string, AgentProfileConfigValue>;
 }
 
 export interface AgentProfileMode {
@@ -238,8 +298,8 @@ interface AgentProfileLocalMcpServer extends AgentProfileMcpServerBase {
   enabled?: true;
   transport?: "stdio";
   command: string;
-  args?: string[];
-  env?: Record<string, string>;
+  args?: AgentProfileConfigValue[];
+  env?: Record<string, AgentProfileConfigValue>;
   cwd?: string;
   url?: never;
   headers?: never;
@@ -253,7 +313,7 @@ interface AgentProfileRemoteMcpServer extends AgentProfileMcpServerBase {
   env?: never;
   cwd?: never;
   url: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, AgentProfileConfigValue>;
 }
 
 interface AgentProfileDisabledMcpServer extends AgentProfileMcpServerBase {

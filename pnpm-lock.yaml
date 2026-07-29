@@ -22,6 +22,9 @@ catalogs:
       specifier: 4.4.3
       version: 4.4.3
 
+overrides:
+  '@tangle-network/agent-interface': workspace:*
+
 importers:
 
   .:
@@ -33,7 +36,7 @@ importers:
   packages/agent-core:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
       zod:
         specifier: 'catalog:'
@@ -80,7 +83,7 @@ importers:
   packages/agent-provider-cli-bridge:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
       undici:
         specifier: 'catalog:'
@@ -99,7 +102,7 @@ importers:
   packages/agent-provider-computesdk:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
       computesdk:
         specifier: ^4.1.3
@@ -124,7 +127,7 @@ importers:
         specifier: ^0.192.0
         version: 0.192.0(ws@8.21.0)
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -143,7 +146,7 @@ importers:
   packages/agent-provider-e2b:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
       e2b:
         specifier: ^2.31.0
@@ -165,7 +168,7 @@ importers:
   packages/agent-provider-tangle:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -187,7 +190,7 @@ importers:
   packages/agent-provider-testkit:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.37.0
+        specifier: workspace:*
         version: link:../agent-interface
     devDependencies:
       '@types/node':
@@ -978,9 +981,6 @@ packages:
 
   '@tangle-network/agent-core@0.4.23':
     resolution: {integrity: sha512-H65d7pd7B7py8yr2786uq40WdnVPylWiRn/E7SEt8ujTjypiz+k/10+moJ2d4AGbaduNrovLtSgG/iEyT9Q8aA==}
-
-  '@tangle-network/agent-interface@0.34.0':
-    resolution: {integrity: sha512-sZsS+K/mT+/bRxy6EidU2Ip7Prv6KnbtvSukdSIBXtVkEmCDVKh5bRLsjA5ach7QP0RgclZmCDV2M/LIBBQ31g==}
 
   '@tangle-network/sandbox@0.13.0-develop.20260726215211.b0dddb3':
     resolution: {integrity: sha512-LZEzGHfqohMhF3nKKdgZUITn73Sycr4qpIk0G3ChAjCYBjihAsNOhjLF40Ea8WE9RXTqyjDCrrUxv/TTtxuu4Q==}
@@ -3172,18 +3172,13 @@ snapshots:
 
   '@tangle-network/agent-core@0.4.23':
     dependencies:
-      '@tangle-network/agent-interface': 0.34.0
-      zod: 4.4.3
-
-  '@tangle-network/agent-interface@0.34.0':
-    dependencies:
-      '@noble/hashes': 1.8.0
+      '@tangle-network/agent-interface': link:packages/agent-interface
       zod: 4.4.3
 
   '@tangle-network/sandbox@0.13.0-develop.20260726215211.b0dddb3':
     dependencies:
       '@tangle-network/agent-core': 0.4.23
-      '@tangle-network/agent-interface': 0.34.0
+      '@tangle-network/agent-interface': link:packages/agent-interface
       zod: 4.4.3
 
   '@tybys/wasm-util@0.10.3':

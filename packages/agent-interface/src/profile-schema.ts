@@ -1,14 +1,88 @@
 import { z } from "zod";
-import type {
-  AgentProfile,
-  AgentProfileMcpServer,
+import {
+  REASONING_EFFORTS,
+  type AgentProfile,
+  type AgentProfileConfigValue,
+  type AgentProfileMcpServer,
 } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
+import {
+  environmentNameSchema,
+  headerNameSchema,
+  isSafeExecutable,
+  isSafeRelativePath,
+  isWellFormedUnicode,
+  looksLikeCredential,
+} from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
 } from "./sandbox-size.js";
+
+/**
+ * Zod records currently assign parsed values onto an ordinary object. The
+ * special own key `__proto__` therefore invokes the legacy prototype setter
+ * and disappears instead of being validated. Encode every own key before Zod
+ * sees it, then restore the exact UTF-16 key with defineProperty so all string
+ * keys allowed by `Record<string, ...>` remain data rather than object syntax.
+ */
+function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
+  valueSchema: ValueSchema,
+): z.ZodType<Record<string, z.output<ValueSchema>>> {
+  return z.preprocess(
+    encodeOwnRecordKeys,
+    z.record(
+      z
+        .string()
+        .regex(
+          /^u(?:[0-9a-f]{4})*$/,
+          "record keys must contain valid Unicode",
+        ),
+      valueSchema,
+    ).transform((record) => {
+      const restored: Record<string, z.output<ValueSchema>> = {};
+      for (const [encodedKey, value] of Object.entries(record)) {
+        Object.defineProperty(restored, decodeRecordKey(encodedKey), {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+      return restored;
+    }),
+  ) as z.ZodType<Record<string, z.output<ValueSchema>>>;
+}
+
+function encodeOwnRecordKeys(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const encoded: Record<string, unknown> = Object.create(null);
+  for (const [key, entry] of Object.entries(value)) {
+    encoded[encodeRecordKey(key)] = entry;
+  }
+  return encoded;
+}
+
+function encodeRecordKey(value: string): string {
+  let encoded = isWellFormedUnicode(value) ? "u" : "i";
+  for (let index = 0; index < value.length; index += 1) {
+    encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
+  }
+  return encoded;
+}
+
+function decodeRecordKey(value: string): string {
+  let decoded = "";
+  for (let index = 1; index < value.length; index += 4) {
+    decoded += String.fromCharCode(
+      Number.parseInt(value.slice(index, index + 4), 16),
+    );
+  }
+  return decoded;
+}
 
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
@@ -18,7 +92,7 @@ export const agentProfilePermissionValueSchema = z.enum([
 
 export const agentProfilePermissionSchema = z.union([
   agentProfilePermissionValueSchema,
-  z.record(z.string(), agentProfilePermissionValueSchema),
+  ownPropertyRecordSchema(agentProfilePermissionValueSchema),
 ]);
 
 // Mirrors the canonical AgentProfileResourceRef (inline | github), kind-discriminated.
@@ -55,22 +129,14 @@ export const agentProfileResourcesSchema = z.strictObject({
   failOnError: z.boolean().optional(),
 });
 
-export const reasoningEffortSchema = z.enum([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "ultracode",
-]);
+export const reasoningEffortSchema = z.enum(REASONING_EFFORTS);
 
 export const agentProfileModelHintsSchema = z.strictObject({
   default: z.string().optional(),
   small: z.string().optional(),
   provider: z.string().optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 export const agentProfilePromptSchema = z.strictObject({
@@ -78,14 +144,92 @@ export const agentProfilePromptSchema = z.strictObject({
   instructions: z.array(z.string()).optional(),
 });
 
+const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
+const secretCapableNamePattern =
+  /(?:^|[_-])(?:api[_-]?key|access[_-]?key|private[_-]?key|token|secret|password|credentials?|authorization|cookie|database[_-]?url|dsn|pat)(?:[_-]|$)/i;
+
+const publicProfileConfigStringSchema = z
+  .string()
+  .refine(
+    (value) =>
+      isWellFormedUnicode(value) &&
+      !controlCharacterPattern.test(value) &&
+      !looksLikeCredential(value),
+    "public profile config cannot carry credential-like material",
+  );
+
+const secretReferenceKeySchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) =>
+      value.trim().length > 0 &&
+      isWellFormedUnicode(value) &&
+      !controlCharacterPattern.test(value) &&
+      !looksLikeCredential(value),
+    "secret reference key must be a public non-credential identity",
+  );
+
+export const agentProfilePublicConfigValueSchema = z.strictObject({
+  kind: z.literal("public"),
+  value: publicProfileConfigStringSchema,
+});
+
+export const agentProfileSecretRefSchema = z.strictObject({
+  kind: z.literal("secret-ref"),
+  key: secretReferenceKeySchema,
+  format: z.enum(["raw", "bearer"]).optional(),
+});
+
+export const agentProfileConfigValueSchema = z.discriminatedUnion("kind", [
+  agentProfilePublicConfigValueSchema,
+  agentProfileSecretRefSchema,
+]) satisfies z.ZodType<AgentProfileConfigValue>;
+
+function profileConfigRecordSchema(keySchema: z.ZodString) {
+  return ownPropertyRecordSchema(agentProfileConfigValueSchema).superRefine(
+    (record, context) => {
+      for (const [name, value] of Object.entries(record)) {
+        const keyResult = keySchema.safeParse(name);
+        if (!keyResult.success) {
+          context.addIssue({
+            code: "custom",
+            path: [name],
+            message: "profile config key is invalid for this field",
+          });
+        }
+        if (
+          value.kind === "public" &&
+          secretCapableNamePattern.test(name)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [name],
+            message: "credential-bearing config names require a secret-ref",
+          });
+        }
+      }
+    },
+  );
+}
+
+export const agentProfileEnvironmentSchema = profileConfigRecordSchema(
+  environmentNameSchema,
+);
+
+export const agentProfileHeaderSchema = profileConfigRecordSchema(
+  headerNameSchema,
+);
+
 export const agentSubagentProfileSchema = z.strictObject({
   description: z.string().optional(),
   prompt: z.string().optional(),
   model: z.string().optional(),
-  tools: z.record(z.string(), z.boolean()).optional(),
-  permissions: z.record(z.string(), agentProfilePermissionSchema).optional(),
+  tools: ownPropertyRecordSchema(z.boolean()).optional(),
+  permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
   maxSteps: z.number().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 export const agentProfileHookCommandSchema = z.strictObject({
@@ -93,16 +237,16 @@ export const agentProfileHookCommandSchema = z.strictObject({
   timeoutMs: z.number().positive().optional(),
   blocking: z.boolean().optional(),
   matcher: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  env: agentProfileEnvironmentSchema.optional(),
 });
 
 export const agentProfileModeSchema = z.strictObject({
   description: z.string().optional(),
   model: z.string().optional(),
   prompt: z.string().optional(),
-  tools: z.record(z.string(), z.boolean()).optional(),
-  permissions: z.record(z.string(), agentProfilePermissionSchema).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  tools: ownPropertyRecordSchema(z.boolean()).optional(),
+  permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 export const agentProfileConfidentialSchema = z.strictObject({
@@ -123,18 +267,30 @@ const remoteMcpUrlSchema = nonBlankMcpValueSchema.refine((value) => {
   } catch {
     return false;
   }
-}, "remote MCP url must be an absolute HTTP(S) URL");
+}, "remote MCP url must be an absolute HTTP(S) URL").refine(
+  (value) => !looksLikeCredential(value),
+  "remote MCP url cannot contain credentials or credential-named query parameters",
+);
 
 const agentProfileLocalMcpServerSchema = z.strictObject({
   transport: z.literal("stdio").optional(),
-  command: nonBlankMcpValueSchema,
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  cwd: z.string().optional(),
+  command: nonBlankMcpValueSchema.refine(
+    isSafeExecutable,
+    "local MCP command must be a canonical public executable",
+  ),
+  args: z.array(agentProfileConfigValueSchema).optional(),
+  env: agentProfileEnvironmentSchema.optional(),
+  cwd: z
+    .string()
+    .refine(
+      (value) => isSafeRelativePath(value, true),
+      "local MCP cwd must be a canonical workspace-relative path",
+    )
+    .optional(),
   url: z.undefined().optional(),
   headers: z.undefined().optional(),
   enabled: z.literal(true).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 const agentProfileRemoteMcpServerSchema = z.strictObject({
@@ -144,9 +300,9 @@ const agentProfileRemoteMcpServerSchema = z.strictObject({
   env: z.undefined().optional(),
   cwd: z.undefined().optional(),
   url: remoteMcpUrlSchema,
-  headers: z.record(z.string(), z.string()).optional(),
+  headers: agentProfileHeaderSchema.optional(),
   enabled: z.literal(true).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 const agentProfileDisabledMcpServerSchema = z.strictObject({
@@ -158,7 +314,7 @@ const agentProfileDisabledMcpServerSchema = z.strictObject({
   cwd: z.undefined().optional(),
   url: z.undefined().optional(),
   headers: z.undefined().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
 export const agentProfileMcpServerSchema: z.ZodType<AgentProfileMcpServer> =
@@ -219,33 +375,54 @@ export const agentProfileDiffRemovalSchema = z.strictObject({
  * the canonical {@link AgentProfile} TS contract. Kept structurally in lock-step
  * with that interface by the compile-time guard at the bottom of this file.
  */
-export const agentProfileSchema = z.strictObject({
-  name: z.string().optional(),
-  description: z.string().optional(),
-  version: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  prompt: agentProfilePromptSchema.optional(),
-  model: agentProfileModelHintsSchema.optional(),
-  harness: harnessTypeSchema.optional(),
-  permissions: z.record(z.string(), agentProfilePermissionSchema).optional(),
-  tools: z.record(z.string(), z.boolean()).optional(),
-  mcp: z.record(z.string(), agentProfileMcpServerSchema).optional(),
-  connections: z.array(agentProfileConnectionSchema).optional(),
-  subagents: z.record(z.string(), agentSubagentProfileSchema).optional(),
-  resources: agentProfileResourcesSchema.optional(),
-  hooks: z
-    .record(z.string(), z.array(agentProfileHookCommandSchema))
-    .optional(),
-  modes: z.record(z.string(), agentProfileModeSchema).optional(),
-  confidential: agentProfileConfidentialSchema.optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  extensions: z
-    .record(
-      z.string(),
-      z.union([z.record(z.string(), z.unknown()), z.undefined()]),
-    )
-    .optional(),
-});
+export const agentProfileSchema = z
+  .strictObject({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    version: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    prompt: agentProfilePromptSchema.optional(),
+    model: agentProfileModelHintsSchema.optional(),
+    harness: harnessTypeSchema.optional(),
+    permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
+    tools: ownPropertyRecordSchema(z.boolean()).optional(),
+    mcp: ownPropertyRecordSchema(agentProfileMcpServerSchema).optional(),
+    connections: z.array(agentProfileConnectionSchema).optional(),
+    subagents: ownPropertyRecordSchema(agentSubagentProfileSchema).optional(),
+    resources: agentProfileResourcesSchema.optional(),
+    hooks: ownPropertyRecordSchema(
+      z.array(agentProfileHookCommandSchema),
+    ).optional(),
+    modes: ownPropertyRecordSchema(agentProfileModeSchema).optional(),
+    confidential: agentProfileConfidentialSchema.optional(),
+    metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+    extensions: ownPropertyRecordSchema(
+      z.union([ownPropertyRecordSchema(z.unknown()), z.undefined()]),
+    ).optional(),
+  })
+  .superRefine((profile, context) => {
+    validateNestedRecordKeys(profile, context, [], new Set<object>());
+  });
+
+function validateNestedRecordKeys(
+  value: unknown,
+  context: z.RefinementCtx,
+  path: PropertyKey[],
+  seen: Set<object>,
+): void {
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isWellFormedUnicode(key)) {
+      context.addIssue({
+        code: "custom",
+        path: [...path, key],
+        message: "record keys must contain valid Unicode",
+      });
+    }
+    validateNestedRecordKeys(entry, context, [...path, key], seen);
+  }
+}
 
 export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObject(
   {
@@ -269,7 +446,7 @@ export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObjec
       .optional(),
     set: agentProfileSchema.optional(),
     remove: agentProfileDiffRemovalSchema.optional(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
+    metadata: ownPropertyRecordSchema(z.unknown()).optional(),
   },
 );
 

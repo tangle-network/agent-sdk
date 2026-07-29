@@ -39,12 +39,12 @@ import {
   isObviouslyPrivateHostname,
   isSafeExecutable,
   isSafeRelativePath,
-  isWellFormedUnicode,
   sameGitObjectFormat,
   sha256Utf8,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
+import { createAgentProfileActivationEvidenceSchema } from "./agent-profile-activation.js";
 
 function isCanonicalAbsolutePath(value: string): boolean {
   return (
@@ -603,27 +603,12 @@ export const agentCandidateProfilePlanEvidenceSchema = planEvidenceSchema(
   agentCandidateProfilePlanMaterialSchema,
 ) satisfies z.ZodType<AgentCandidateProfilePlanEvidence>;
 
-export const agentCandidateProfileActivationSchema = z
-  .object({
+export const agentCandidateProfileActivationSchema =
+  createAgentProfileActivationEvidenceSchema(
+    agentCandidateProfilePlanEvidenceSchema,
+  )
+  .extend({
     kind: z.literal("agent-candidate-profile-activation"),
-    profilePlan: agentCandidateProfilePlanEvidenceSchema,
-    files: z.array(
-      z
-        .object({
-          path: z
-            .string()
-            .refine(
-              (value) => isSafeRelativePath(value, false),
-              "profile activation file must use a canonical relative path",
-            ),
-          mode: z.number().int().min(0).max(0o777),
-          content: z
-            .string()
-            .refine(isWellFormedUnicode, "profile activation content must be valid Unicode"),
-        })
-        .strict(),
-    ),
-    digest: sha256DigestSchema,
   })
   .strict()
   .superRefine((activation, ctx) => {
