@@ -474,7 +474,7 @@ describe("profile materialization leaves", () => {
         local: {
           command: "mcp-server",
           env: {
-            MCP_TOKEN: defineAgentProfileSecretRef("Bearer raw-credential"),
+            MCP_TOKEN: defineAgentProfileSecretRef("MCP_TOKEN_REFERENCE"),
           },
         },
       },
@@ -482,6 +482,18 @@ describe("profile materialization leaves", () => {
     expect(canonicalAgentProfileDigest(referenceInSecretSlot)).not.toBe(
       canonicalAgentProfileDigest(profile),
     );
+    expect(() =>
+      canonicalAgentProfileDigest({
+        mcp: {
+          local: {
+            command: "mcp-server",
+            env: {
+              MCP_TOKEN: defineAgentProfileSecretRef("Bearer raw-credential"),
+            },
+          },
+        },
+      }),
+    ).toThrow("secret reference key must be a public non-credential identity");
   });
 });
 

@@ -1,4 +1,7 @@
-import type { ReasoningEffort } from "./agent-profile.js";
+import {
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from "./agent-profile.js";
 import type { HarnessType } from "./harness.js";
 
 /**
@@ -19,15 +22,7 @@ import type { HarnessType } from "./harness.js";
  */
 
 /** low → high. `none` = thinking off; `ultracode` = max (claude-code mode). */
-export const reasoningLadder: readonly ReasoningEffort[] = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "ultracode",
-];
+export const reasoningLadder: readonly ReasoningEffort[] = REASONING_EFFORTS;
 
 // ── Harness ↔ model compatibility ────────────────────────────────────────────
 

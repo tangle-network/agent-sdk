@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { AgentProfileMcpServer } from "./agent-profile.js";
+import {
+  REASONING_EFFORTS,
+  type AgentProfileMcpServer,
+} from "./agent-profile.js";
 import { validateAgentProfileSecurity } from "./profile-security.js";
 import {
   agentProfileDiffSchema,
   agentProfileSchema,
   capabilitySchema,
+  reasoningEffortSchema,
 } from "./profile-schema.js";
 
 // @ts-expect-error A server cannot select local and remote execution together.
@@ -15,6 +19,11 @@ const ambiguousMcpServer: AgentProfileMcpServer = {
 void ambiguousMcpServer;
 
 describe("agentProfileSchema", () => {
+  it("derives reasoning validation from the canonical ordered values", () => {
+    expect(Object.isFrozen(REASONING_EFFORTS)).toBe(true);
+    expect(reasoningEffortSchema.options).toEqual(REASONING_EFFORTS);
+  });
+
   it("rejects unknown behavior at every defined object boundary", () => {
     const invalidProfiles: Array<[string, unknown]> = [
       ["root", { unknown: true }],
@@ -308,6 +317,21 @@ describe("agentProfileSchema", () => {
             {
               command: "prepare",
               env: { PREPARE_TOKEN: { kind: "public", value: "benign" } },
+            },
+          ],
+        },
+      },
+      {
+        hooks: {
+          beforeRun: [
+            {
+              command: "prepare",
+              env: {
+                TOKEN: {
+                  kind: "secret-ref",
+                  key: "Bearer actual-credential",
+                },
+              },
             },
           ],
         },

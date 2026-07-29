@@ -1,8 +1,9 @@
 import { z } from "zod";
-import type {
-  AgentProfileConfigValue,
-  AgentProfile,
-  AgentProfileMcpServer,
+import {
+  REASONING_EFFORTS,
+  type AgentProfile,
+  type AgentProfileConfigValue,
+  type AgentProfileMcpServer,
 } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import {
@@ -128,15 +129,7 @@ export const agentProfileResourcesSchema = z.strictObject({
   failOnError: z.boolean().optional(),
 });
 
-export const reasoningEffortSchema = z.enum([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "ultracode",
-]);
+export const reasoningEffortSchema = z.enum(REASONING_EFFORTS);
 
 export const agentProfileModelHintsSchema = z.strictObject({
   default: z.string().optional(),
@@ -173,8 +166,9 @@ const secretReferenceKeySchema = z
     (value) =>
       value.trim().length > 0 &&
       isWellFormedUnicode(value) &&
-      !controlCharacterPattern.test(value),
-    "secret reference key must be a public identity",
+      !controlCharacterPattern.test(value) &&
+      !looksLikeCredential(value),
+    "secret reference key must be a public non-credential identity",
   );
 
 export const agentProfilePublicConfigValueSchema = z.strictObject({

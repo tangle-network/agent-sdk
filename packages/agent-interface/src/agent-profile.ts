@@ -126,14 +126,17 @@ export interface AgentProfileResources {
  * A backend without a matching native tier may clamp down to its strongest supported level, but it
  * must never turn reasoning on for `none` or silently increase a requested effort.
  */
-export type ReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "ultracode";
+export const REASONING_EFFORTS = Object.freeze([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "ultracode",
+] as const);
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 /**
  * Model selection hints for backends.

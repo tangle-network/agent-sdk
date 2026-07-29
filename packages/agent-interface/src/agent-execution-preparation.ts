@@ -12,9 +12,10 @@ import {
   omitTopLevelDigest,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
-import type {
-  AgentProfile,
-  ReasoningEffort,
+import {
+  REASONING_EFFORTS,
+  type AgentProfile,
+  type ReasoningEffort,
 } from "./agent-profile.js";
 import type { AgentProfileActivationEvidence } from "./agent-profile-activation.js";
 import {
@@ -1252,19 +1253,11 @@ function axisResultKey(
   return `${axis}\u0000${path ?? ""}`;
 }
 
-const REASONING_ORDER: readonly ReasoningEffort[] = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "ultracode",
-];
-
 function isDownwardReasoningClamp(
   requested: ReasoningEffort,
   resolved: ReasoningEffort,
 ): boolean {
-  return REASONING_ORDER.indexOf(resolved) < REASONING_ORDER.indexOf(requested);
+  return (
+    REASONING_EFFORTS.indexOf(resolved) < REASONING_EFFORTS.indexOf(requested)
+  );
 }
