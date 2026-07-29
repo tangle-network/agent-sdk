@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.37.0
+
+### Minor Changes
+
+- 6ebe9d2: Add content-bound source, license, attribution, notice, and transformation provenance to frozen candidate resources.
+
 ## 0.36.0
 
 ### Minor Changes

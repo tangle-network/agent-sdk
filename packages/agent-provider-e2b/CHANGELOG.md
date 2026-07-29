@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-e2b
 
+## 0.2.29
+
+### Patch Changes
+
+- Updated dependencies [6ebe9d2]
+  - @tangle-network/agent-interface@0.37.0
+
 ## 0.2.28
 
 ### Patch Changes
