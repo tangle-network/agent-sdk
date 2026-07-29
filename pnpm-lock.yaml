@@ -33,7 +33,7 @@ importers:
   packages/agent-core:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
       zod:
         specifier: 'catalog:'
@@ -80,7 +80,7 @@ importers:
   packages/agent-provider-cli-bridge:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
       undici:
         specifier: 'catalog:'
@@ -99,7 +99,7 @@ importers:
   packages/agent-provider-computesdk:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
       computesdk:
         specifier: ^4.1.3
@@ -124,7 +124,7 @@ importers:
         specifier: ^0.192.0
         version: 0.192.0(ws@8.21.0)
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -143,7 +143,7 @@ importers:
   packages/agent-provider-e2b:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
       e2b:
         specifier: ^2.31.0
@@ -165,7 +165,7 @@ importers:
   packages/agent-provider-tangle:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -187,7 +187,7 @@ importers:
   packages/agent-provider-testkit:
     dependencies:
       '@tangle-network/agent-interface':
-        specifier: 0.36.0
+        specifier: 0.37.0
         version: link:../agent-interface
     devDependencies:
       '@types/node':
