@@ -4,6 +4,7 @@ import type {
   AgentProfileResourceRef,
 } from "./agent-profile.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
+import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 
 type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
 type AgentProfileDiffPropertyAxis = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
@@ -105,6 +106,142 @@ export interface AgentProfileDiff {
 
 export function defineAgentProfileDiff<T extends AgentProfileDiff>(diff: T): T {
   return diff;
+}
+
+const agentProfileResourceDiffPropertyAxes = [
+  "files",
+  "tools",
+  "skills",
+  "agents",
+  "commands",
+  "instructions",
+  "failOnError",
+] as const satisfies readonly (keyof AgentProfileResources)[];
+
+type MissingAgentProfileResourceDiffPropertyAxis = Exclude<
+  keyof AgentProfileResources,
+  (typeof agentProfileResourceDiffPropertyAxes)[number]
+>;
+const _agentProfileResourceDiffPropertyAxesAreExhaustive:
+  MissingAgentProfileResourceDiffPropertyAxis extends never ? true : never = true;
+void _agentProfileResourceDiffPropertyAxesAreExhaustive;
+
+/**
+ * Construct deterministic ordered profile patches that reproduce `candidate`'s
+ * canonical profile value exactly when applied to `baseline`.
+ *
+ * Profile overlays append arrays and merge records, so changed fields are reset
+ * first and then replaced. Comparison and copied values follow the same
+ * undefined-entry normalization as profile identity. The returned values use
+ * the existing {@link AgentProfileDiff} contract; an unchanged profile returns
+ * no steps.
+ */
+export function diffAgentProfiles(
+  baseline: AgentProfile,
+  candidate: AgentProfile,
+): AgentProfileDiff[] {
+  const remove: AgentProfileDiffRemoval = {};
+  const set: AgentProfile = {};
+
+  if (
+    profileValuesDiffer(baseline.name, candidate.name) ||
+    profileValuesDiffer(baseline.description, candidate.description) ||
+    profileValuesDiffer(baseline.version, candidate.version)
+  ) {
+    remove.identity = true;
+    if (candidate.name !== undefined) set.name = candidate.name;
+    if (candidate.description !== undefined) {
+      set.description = candidate.description;
+    }
+    if (candidate.version !== undefined) set.version = candidate.version;
+  }
+
+  if (profileValuesDiffer(baseline.tags, candidate.tags)) {
+    remove.tags = true;
+    if (candidate.tags !== undefined) {
+      set.tags = canonicalProfileValue(candidate.tags);
+    }
+  }
+
+  for (const axis of agentProfileDiffPropertyAxes) {
+    if (axis === "resources") {
+      replaceChangedProfileResources(
+        baseline.resources,
+        candidate.resources,
+        remove,
+        set,
+      );
+      continue;
+    }
+    if (!profileValuesDiffer(baseline[axis], candidate[axis])) continue;
+    Object.assign(remove, { [axis]: true });
+    const value = candidate[axis];
+    if (value !== undefined) {
+      Object.assign(set, { [axis]: canonicalProfileValue(value) });
+    }
+  }
+
+  if (Object.keys(remove).length === 0) return [];
+
+  const reset: AgentProfileDiff = {
+    kind: "agent-profile-diff",
+    remove,
+  };
+  if (Object.keys(set).length === 0) return [reset];
+  return [reset, { kind: "agent-profile-diff", set }];
+}
+
+function replaceChangedProfileResources(
+  baseline: AgentProfileResources | undefined,
+  candidate: AgentProfileResources | undefined,
+  remove: AgentProfileDiffRemoval,
+  set: AgentProfile,
+): void {
+  if (!profileValuesDiffer(baseline, candidate)) return;
+
+  const resourceRemove: AgentProfileResourceRemoval = {};
+  const resourceSet: AgentProfileResources = {};
+  let changedSubfields = 0;
+
+  for (const axis of agentProfileResourceDiffPropertyAxes) {
+    if (!profileValuesDiffer(baseline?.[axis], candidate?.[axis])) continue;
+    changedSubfields += 1;
+    Object.assign(resourceRemove, { [axis]: true });
+    const value = candidate?.[axis];
+    if (value !== undefined) {
+      Object.assign(resourceSet, { [axis]: canonicalProfileValue(value) });
+    }
+  }
+
+  // Distinguish an absent resources object from an explicitly empty one.
+  if (changedSubfields === 0) {
+    remove.resources = true;
+    if (candidate !== undefined) {
+      set.resources = canonicalProfileValue(candidate);
+    }
+    return;
+  }
+
+  remove.resources = resourceRemove;
+  const canonicalCandidate = canonicalProfileValue(candidate);
+  if (
+    Object.keys(resourceSet).length > 0 ||
+    (canonicalCandidate !== undefined &&
+      Object.keys(canonicalCandidate).length === 0)
+  ) {
+    set.resources = resourceSet;
+  }
+}
+
+function profileValuesDiffer(baseline: unknown, candidate: unknown): boolean {
+  return (
+    canonicalAgentProfileJson(baseline) !== canonicalAgentProfileJson(candidate)
+  );
+}
+
+function canonicalProfileValue<T>(value: T): T {
+  const json = canonicalAgentProfileJson(value);
+  return (json === undefined ? undefined : JSON.parse(json)) as T;
 }
 
 function asMutable<T>(value: readonly T[] | undefined): T[] | undefined {
