@@ -1,20 +1,39 @@
 import parseSpdxExpression from "spdx-expression-parse";
 import { z } from "zod";
 import type { AgentCandidateJsonValue } from "./agent-candidate.js";
-import { sha256DigestSchema } from "./agent-candidate-schema-common.js";
+import {
+  isWellFormedUnicode,
+  looksLikeCredential,
+  sha256DigestSchema,
+} from "./agent-candidate-schema-common.js";
 
 /** Metadata key that binds a measured improvement to its exact external source. */
 export const AGENT_IMPROVEMENT_SOURCE_METADATA_KEY = "agentImprovementSource";
 
-const sourceIdentitySchema = z.string().trim().min(1).max(256);
+function publicSourceTextSchema(maxLength: number, label: string) {
+  return z
+    .string()
+    .max(maxLength)
+    .refine(isWellFormedUnicode, `${label} must be well-formed Unicode`)
+    .refine(
+      (value) => !looksLikeCredential(value),
+      `${label} cannot carry credentials`,
+    );
+}
+
+const sourceIdentitySchema = publicSourceTextSchema(256, "source identity")
+  .transform((value) => value.trim())
+  .pipe(z.string().min(1, "source identity cannot be blank"));
 const sourceRevisionSchema = z.union([
-  z.string().trim().min(1).max(256),
+  publicSourceTextSchema(256, "source revision")
+    .transform((value) => value.trim())
+    .pipe(z.string().min(1, "source revision cannot be blank")),
   z.number().int().nonnegative(),
 ]);
-const sourceStatementSchema = z
-  .string()
-  .refine((value) => value.trim().length > 0, "statement cannot be blank")
-  .max(16_384);
+const sourceStatementSchema = publicSourceTextSchema(
+  16_384,
+  "source statement",
+).refine((value) => value.trim().length > 0, "statement cannot be blank");
 const sourceStatementListSchema = z
   .array(sourceStatementSchema)
   .min(1)
@@ -67,7 +86,9 @@ export const agentSourceLicenseSchema = z.discriminatedUnion("kind", [
       kind: z.literal("custom"),
       name: sourceIdentitySchema,
       /** URL or repository-relative path from which the exact terms can be recovered. */
-      reference: z.string().trim().min(1).max(2_048),
+      reference: publicSourceTextSchema(2_048, "license reference")
+        .transform((value) => value.trim())
+        .pipe(z.string().min(1, "license reference cannot be blank")),
       /** Digest of the custom license text, not of its URL or file name. */
       termsDigest: sha256DigestSchema,
     })

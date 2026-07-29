@@ -17,7 +17,7 @@ const githubComponentPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
 const secretNamePattern =
   /(?:^|[_-])(?:api[_-]?key|access[_-]?key|private[_-]?key|token|secret|password|credentials?|authorization|cookie|database[_-]?url|dsn|pat)(?:[_-]|$)/i;
 const obviousSecretValuePattern =
-  /(?:\b(?:sk|gh[pousr]|github_pat|AKIA)[-_A-Za-z0-9]{12,}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+\S+)/;
+  /(?:\bsk[-_][-_A-Za-z0-9]{10,}\b|\bgh[pousr]_[A-Za-z0-9]{12,}\b|\bgithub_pat_[A-Za-z0-9_]{12,}\b|\bAKIA[A-Z0-9]{12,}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+\S+)/;
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 const reservedWorkspaceRoots = new Set([".git", ".sidecar"]);
 const shellNames = new Set([

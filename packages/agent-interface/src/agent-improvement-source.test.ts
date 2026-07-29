@@ -79,6 +79,51 @@ describe("agent improvement source", () => {
     ).toThrow();
   });
 
+  it("keeps credentials and malformed Unicode out of public source evidence", () => {
+    const customLicense = {
+      kind: "custom" as const,
+      name: "Example Research License 1.0",
+      reference: "LICENSES/Example-Research-1.0.txt",
+      termsDigest: `sha256:${"d".repeat(64)}` as const,
+    };
+    const unsafeSources = [
+      {
+        ...source,
+        license: {
+          ...customLicense,
+          reference: "https://user:pa55@example.test/LICENSE",
+        },
+      },
+      {
+        ...source,
+        license: {
+          ...customLicense,
+          reference: "https://example.test/LICENSE?token=plaintext",
+        },
+      },
+      { ...source, attribution: ["ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890abcd"] },
+      { ...source, sourceIdentity: "https://user:pa55@example.test/profile" },
+      { ...source, sourceRevision: "sk-live-abcdefghijkl" },
+      { ...source, notices: ["Bearer eyJabc.def.ghi"] },
+      { ...source, notices: ["AKIAIOSFODNN7EXAMPLE secret"] },
+      { ...source, attribution: ["Copyright x\uD800y"] },
+      {
+        ...source,
+        license: { ...customLicense, name: "License x\uD800y" },
+      },
+      {
+        ...source,
+        license: { ...customLicense, reference: "LICENSES/x\uD800y.txt" },
+      },
+    ];
+
+    for (const unsafeSource of unsafeSources) {
+      expect(agentImprovementSourceSchema.safeParse(unsafeSource).success).toBe(
+        false,
+      );
+    }
+  });
+
   it("rejects invalid SPDX expressions and disconnected transformation evidence", () => {
     expect(() =>
       agentImprovementSourceSchema.parse({
