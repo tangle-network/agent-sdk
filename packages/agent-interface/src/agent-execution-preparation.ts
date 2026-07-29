@@ -24,6 +24,13 @@ import {
 } from "./agent-profile-materialization.js";
 import { harnessTypeSchema, type HarnessType } from "./harness.js";
 import { agentProfileSchema, reasoningEffortSchema } from "./profile-schema.js";
+import {
+  agentWorkspaceLeaseRecordSchema,
+  agentWorkspaceSourceSnapshotPolicySchema,
+  type AgentWorkspaceExecutionBoundLeaseRecord,
+  type AgentWorkspaceSealedLeaseRecord,
+  type AgentWorkspaceSourceSnapshotPolicy,
+} from "./agent-workspace-lease.js";
 
 export type AgentExecutionPreparationDisposition =
   | "behavior"
@@ -70,6 +77,8 @@ export interface AgentExecutionPreparationResolvedModel {
 export interface AgentExecutionPreparationWorkspace {
   /** Public, non-secret lifecycle identity for the workspace lease. */
   leaseId: string;
+  /** Provider that owns the private prepared workspace capability. */
+  provider: string;
   /**
    * Digest of the immutable allocation tuple (provider, lease/allocation id,
    * and canonical root). This binds `leaseId` to its allocation; it is not a
@@ -79,6 +88,8 @@ export interface AgentExecutionPreparationWorkspace {
   isolation: "per-run" | "shared";
   /** Canonical source snapshot before the isolated copy is prepared. */
   sourceSnapshotDigest: Sha256Digest;
+  /** Public identity of the provider's exact snapshot/canonicalization policy. */
+  sourceSnapshotPolicy: AgentWorkspaceSourceSnapshotPolicy;
   /** Canonical actual workspace after profile activation and before compute. */
   preparedWorkspaceDigest: Sha256Digest;
   profileActivationDigest: Sha256Digest;
@@ -93,15 +104,15 @@ export interface AgentExecutionPreparationMaterializer {
  * Executor acknowledgement emitted after all launch decisions are fixed and
  * before any agent compute begins.
  *
- * `executionPlanDigest` hashes only public launch decisions plus opaque secret
- * slot/reference identities. Secret values remain solely in the private
- * prepared-executor closure/capability; hashing them here would leak equality
- * and permit guessing low-entropy credentials. This receipt proves plan
- * identity, not possession of that private executor capability. Public
- * `reason` prose rejects recognized credential formats but still requires
- * producer-side redaction. Authored/effective profiles at this boundary must
- * likewise contain only public values and opaque secret references; their
- * unsalted identity digests must never cover raw credential values.
+ * `executionPlanDigest` is required to hash only public launch decisions plus
+ * caller-declared public secret-slot/reference identities. Secret values belong
+ * solely in the private prepared-executor closure/capability; hashing them here
+ * would leak equality and permit guessing low-entropy credentials. This receipt
+ * proves public plan identity, not possession of that private capability.
+ * Secret-capable MCP/hook slots structurally accept only tagged public values or
+ * opaque references. Other authored profile text and reference keys remain
+ * caller-declared public data; recognizable-pattern refusal is defense in depth,
+ * not proof that arbitrary text is non-secret.
  */
 export interface AgentExecutionPreparationReceipt {
   kind: "agent-execution-preparation";
@@ -116,7 +127,7 @@ export interface AgentExecutionPreparationReceipt {
   resolvedModel: AgentExecutionPreparationResolvedModel;
   workspace: AgentExecutionPreparationWorkspace;
   axisResults: AgentExecutionPreparationAxisResult[];
-  /** Digest of the public, secret-value-free execution plan identity. */
+  /** Caller-supplied digest of public decisions and secret-reference identities. */
   executionPlanDigest: Sha256Digest;
   materializer: AgentExecutionPreparationMaterializer;
   expiresAtMs: number;
@@ -132,16 +143,11 @@ export interface BuildAgentExecutionPreparationReceiptInput {
   harness: HarnessType;
   harnessVersion: string;
   resolvedModel: AgentExecutionPreparationResolvedModel;
-  workspace: {
-    leaseId: string;
-    identityDigest: Sha256Digest;
-    isolation: "per-run" | "shared";
-    sourceSnapshotDigest: Sha256Digest;
-    preparedWorkspaceDigest: Sha256Digest;
-    profileActivation: Pick<AgentProfileActivationEvidence, "digest">;
-  };
+  /** Exact sealed public lease projection; owner authorization remains private. */
+  workspaceLease: AgentWorkspaceSealedLeaseRecord;
+  profileActivation: Pick<AgentProfileActivationEvidence, "digest">;
   axisResults: readonly AgentExecutionPreparationAxisResult[];
-  /** Digest of public decisions and opaque secret references, never values. */
+  /** Must digest public decisions and reference identities, not resolved values. */
   executionPlanDigest: Sha256Digest;
   materializer: AgentExecutionPreparationMaterializer;
   expiresAtMs: number;
@@ -154,10 +160,11 @@ export interface ValidateAgentExecutionPreparationReceiptOptions {
   requestDigest: Sha256Digest;
   authoredProfile: AgentProfile;
   effectiveProfile: AgentProfile;
-  /** Expected public-plan identity; must not be derived from secret values. */
+  /** Expected public-plan identity; callers must not derive it from secret values. */
   executionPlanDigest: Sha256Digest;
   profileActivation: Pick<AgentProfileActivationEvidence, "digest">;
-  workspace: Omit<AgentExecutionPreparationWorkspace, "profileActivationDigest">;
+  /** Bound lease closes the receipt→workspace link before compute begins. */
+  workspaceLease: AgentWorkspaceExecutionBoundLeaseRecord;
   nowMs?: number;
   preparationId?: string;
   backend?: string;
@@ -168,6 +175,9 @@ export interface ValidateAgentExecutionPreparationReceiptOptions {
 export type AgentExecutionPreparationValidationIssueCode =
   | "invalid-receipt"
   | "invalid-profile"
+  | "invalid-workspace-lease"
+  | "workspace-not-execution-bound"
+  | "execution-binding-mismatch"
   | "digest-mismatch"
   | "expectation-mismatch"
   | "expired"
@@ -338,9 +348,11 @@ export const agentExecutionPreparationReceiptSchema = z
     }),
     workspace: z.strictObject({
       leaseId: publicLifecycleIdentifierSchema,
+      provider: publicLifecycleIdentifierSchema,
       identityDigest: sha256DigestSchema,
       isolation: z.enum(["per-run", "shared"]),
       sourceSnapshotDigest: sha256DigestSchema,
+      sourceSnapshotPolicy: agentWorkspaceSourceSnapshotPolicySchema,
       preparedWorkspaceDigest: sha256DigestSchema,
       profileActivationDigest: sha256DigestSchema,
     }),
@@ -399,17 +411,52 @@ export const agentExecutionPreparationReceiptSchema = z
 
 /**
  * Canonical RFC 8785/SHA-256 identity for one validated, public AgentProfile.
- * Raw credentials are forbidden because this unsalted digest leaks equality;
- * callers must resolve opaque secret references only after this identity is
- * fixed.
+ * Secret-capable MCP/hook fields are tagged; the remaining caller-authored text
+ * is rejected only when it matches recognized credential patterns. This scan is
+ * defense in depth, not proof that arbitrary text is non-secret. Resolve opaque
+ * secret references only after this public identity is fixed.
  */
 export function canonicalAgentProfileDigest(profile: AgentProfile): Sha256Digest {
   const parsed = agentProfileSchema.parse(profile);
+  assertProfileContainsNoRecognizedCredentialValues(
+    parsed,
+    [],
+    new Set<object>(),
+  );
   const material = canonicalProfileValue(parsed, [], new Set<object>());
   if (material === undefined || !isCanonicalJsonValue(material)) {
     throw new Error("AgentProfile must contain finite, acyclic RFC 8785 JSON values");
   }
   return canonicalCandidateDigest(material);
+}
+
+function assertProfileContainsNoRecognizedCredentialValues(
+  value: unknown,
+  path: readonly (string | number)[],
+  seen: Set<object>,
+): void {
+  if (typeof value === "string") {
+    if (looksLikeCredential(value)) {
+      throw new Error(
+        `AgentProfile ${renderPath(path)} matches a recognized credential pattern`,
+      );
+    }
+    return;
+  }
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  for (const [key, entry] of Object.entries(value)) {
+    if (looksLikeCredential(key)) {
+      throw new Error(
+        `AgentProfile ${renderPath(path)} contains a key matching a recognized credential pattern`,
+      );
+    }
+    assertProfileContainsNoRecognizedCredentialValues(
+      entry,
+      [...path, key],
+      seen,
+    );
+  }
 }
 
 /** Build, self-hash, and cross-check one pre-compute executor acknowledgement. */
@@ -418,6 +465,14 @@ export function buildAgentExecutionPreparationReceipt(
 ): AgentExecutionPreparationReceipt {
   const authoredProfile = agentProfileSchema.parse(input.authoredProfile);
   const effectiveProfile = agentProfileSchema.parse(input.effectiveProfile);
+  const workspaceLease = agentWorkspaceLeaseRecordSchema.parse(
+    input.workspaceLease,
+  );
+  if (workspaceLease.phase !== "workspace-sealed") {
+    throw new Error(
+      "execution preparation requires a workspace-sealed lease record",
+    );
+  }
   const axisResults = normalizeAxisResults(
     input.axisResults,
     authoredProfile,
@@ -436,12 +491,14 @@ export function buildAgentExecutionPreparationReceipt(
     harnessVersion: input.harnessVersion,
     resolvedModel,
     workspace: {
-      leaseId: input.workspace.leaseId,
-      identityDigest: input.workspace.identityDigest,
-      isolation: input.workspace.isolation,
-      sourceSnapshotDigest: input.workspace.sourceSnapshotDigest,
-      preparedWorkspaceDigest: input.workspace.preparedWorkspaceDigest,
-      profileActivationDigest: input.workspace.profileActivation.digest,
+      leaseId: workspaceLease.leaseId,
+      provider: workspaceLease.workspace.provider,
+      identityDigest: workspaceLease.workspace.identityDigest,
+      isolation: workspaceLease.isolation,
+      sourceSnapshotDigest: workspaceLease.sourceSnapshotDigest,
+      sourceSnapshotPolicy: { ...workspaceLease.sourceSnapshotPolicy },
+      preparedWorkspaceDigest: workspaceLease.preparedWorkspaceDigest,
+      profileActivationDigest: workspaceLease.profileActivationDigest,
     },
     axisResults,
     executionPlanDigest: input.executionPlanDigest,
@@ -452,31 +509,48 @@ export function buildAgentExecutionPreparationReceipt(
     ...material,
     digest: canonicalCandidateDigest(material),
   };
-  return assertAgentExecutionPreparationReceipt({
+  const validation = validateAgentExecutionPreparationReceiptInternal({
     receipt,
     requestDigest: input.requestDigest,
     authoredProfile,
     effectiveProfile,
     executionPlanDigest: input.executionPlanDigest,
-    profileActivation: input.workspace.profileActivation,
+    profileActivation: input.profileActivation,
     nowMs: input.nowMs,
     preparationId: input.preparationId,
     backend: input.backend,
     harness: input.harness,
     harnessVersion: input.harnessVersion,
-    workspace: {
-      leaseId: input.workspace.leaseId,
-      identityDigest: input.workspace.identityDigest,
-      isolation: input.workspace.isolation,
-      sourceSnapshotDigest: input.workspace.sourceSnapshotDigest,
-      preparedWorkspaceDigest: input.workspace.preparedWorkspaceDigest,
-    },
+    workspaceLease,
+    requireExecutionBinding: false,
   });
+  if (validation.ok) return validation.receipt;
+  throw new AgentExecutionPreparationValidationError(validation.issues);
 }
 
 /** Validate structure, bindings, expiry, model fidelity, and exact path coverage. */
 export function validateAgentExecutionPreparationReceipt(
   options: ValidateAgentExecutionPreparationReceiptOptions,
+): AgentExecutionPreparationValidationResult {
+  return validateAgentExecutionPreparationReceiptInternal({
+    ...options,
+    requireExecutionBinding: true,
+  });
+}
+
+interface InternalValidateAgentExecutionPreparationReceiptOptions
+  extends Omit<
+    ValidateAgentExecutionPreparationReceiptOptions,
+    "workspaceLease"
+  > {
+  workspaceLease:
+    | AgentWorkspaceSealedLeaseRecord
+    | AgentWorkspaceExecutionBoundLeaseRecord;
+  requireExecutionBinding: boolean;
+}
+
+function validateAgentExecutionPreparationReceiptInternal(
+  options: InternalValidateAgentExecutionPreparationReceiptOptions,
 ): AgentExecutionPreparationValidationResult {
   const parsedReceipt = agentExecutionPreparationReceiptSchema.safeParse(
     options.receipt,
@@ -493,6 +567,35 @@ export function validateAgentExecutionPreparationReceipt(
 
   const receipt = parsedReceipt.data;
   const issues: AgentExecutionPreparationValidationIssue[] = [];
+  const workspaceLeaseResult = agentWorkspaceLeaseRecordSchema.safeParse(
+    options.workspaceLease,
+  );
+  if (!workspaceLeaseResult.success) {
+    return {
+      ok: false,
+      issues: workspaceLeaseResult.error.issues.map((issue) => ({
+        code: "invalid-workspace-lease",
+        message: `${issue.path.join(".") || "workspaceLease"}: ${issue.message}`,
+      })),
+    };
+  }
+  const workspaceLease = workspaceLeaseResult.data;
+  const expectedPhase = options.requireExecutionBinding
+    ? "execution-bound"
+    : "workspace-sealed";
+  if (workspaceLease.phase !== expectedPhase) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "workspace-not-execution-bound",
+          message:
+            `execution preparation expected workspace phase ${expectedPhase}, ` +
+            `received ${workspaceLease.phase}`,
+        },
+      ],
+    };
+  }
   const authoredResult = agentProfileSchema.safeParse(options.authoredProfile);
   const effectiveResult = agentProfileSchema.safeParse(options.effectiveProfile);
   if (!authoredResult.success || !effectiveResult.success) {
@@ -557,6 +660,22 @@ export function validateAgentExecutionPreparationReceipt(
     receipt.workspace.profileActivationDigest,
     options.profileActivation.digest,
   );
+  compareDigest(
+    issues,
+    "workspace profile activation",
+    receipt.workspace.profileActivationDigest,
+    workspaceLease.profileActivationDigest,
+  );
+  if (
+    workspaceLease.phase === "execution-bound" &&
+    workspaceLease.executionPreparationDigest !== receipt.digest
+  ) {
+    issues.push({
+      code: "execution-binding-mismatch",
+      message:
+        "workspace execution binding does not name this preparation receipt",
+    });
+  }
 
   compareExpectation(
     issues,
@@ -576,32 +695,70 @@ export function validateAgentExecutionPreparationReceipt(
     issues,
     "workspace lease",
     receipt.workspace.leaseId,
-    options.workspace.leaseId,
+    workspaceLease.leaseId,
+  );
+  compareExpectation(
+    issues,
+    "workspace provider",
+    receipt.workspace.provider,
+    workspaceLease.workspace.provider,
   );
   compareExpectation(
     issues,
     "workspace identity",
     receipt.workspace.identityDigest,
-    options.workspace.identityDigest,
+    workspaceLease.workspace.identityDigest,
   );
   compareExpectation(
     issues,
     "workspace isolation",
     receipt.workspace.isolation,
-    options.workspace.isolation,
+    workspaceLease.isolation,
   );
   compareExpectation(
     issues,
     "source workspace snapshot",
     receipt.workspace.sourceSnapshotDigest,
-    options.workspace.sourceSnapshotDigest,
+    workspaceLease.sourceSnapshotDigest,
+  );
+  compareExpectation(
+    issues,
+    "source snapshot policy kind",
+    receipt.workspace.sourceSnapshotPolicy.kind,
+    workspaceLease.sourceSnapshotPolicy.kind,
+  );
+  compareExpectation(
+    issues,
+    "source snapshot policy name",
+    receipt.workspace.sourceSnapshotPolicy.name,
+    workspaceLease.sourceSnapshotPolicy.name,
+  );
+  compareExpectation(
+    issues,
+    "source snapshot policy version",
+    receipt.workspace.sourceSnapshotPolicy.version,
+    workspaceLease.sourceSnapshotPolicy.version,
+  );
+  compareDigest(
+    issues,
+    "source snapshot policy",
+    receipt.workspace.sourceSnapshotPolicy.digest,
+    workspaceLease.sourceSnapshotPolicy.digest,
   );
   compareExpectation(
     issues,
     "prepared workspace snapshot",
     receipt.workspace.preparedWorkspaceDigest,
-    options.workspace.preparedWorkspaceDigest,
+    workspaceLease.preparedWorkspaceDigest,
   );
+
+  if (receipt.expiresAtMs > workspaceLease.expiresAtMs) {
+    issues.push({
+      code: "expectation-mismatch",
+      message:
+        "execution preparation cannot outlive its workspace lease",
+    });
+  }
 
   const nowMs = options.nowMs ?? Date.now();
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
@@ -613,6 +770,11 @@ export function validateAgentExecutionPreparationReceipt(
     issues.push({
       code: "expired",
       message: `execution preparation expired at ${receipt.expiresAtMs}`,
+    });
+  } else if (workspaceLease.expiresAtMs <= nowMs) {
+    issues.push({
+      code: "expired",
+      message: `workspace lease expired at ${workspaceLease.expiresAtMs}`,
     });
   }
 

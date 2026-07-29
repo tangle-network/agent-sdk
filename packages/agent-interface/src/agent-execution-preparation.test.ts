@@ -5,6 +5,9 @@ import type {
   AgentExecutionPreparationReceipt,
   AgentProfile,
   AgentProfileActivationEvidence,
+  AgentWorkspaceExecutionBoundLeaseRecord,
+  AgentWorkspaceSealedLeaseRecord,
+  AgentWorkspaceSourceSnapshotPolicy,
   Sha256Digest,
 } from "./index.js";
 import {
@@ -15,8 +18,11 @@ import {
   agentExecutionPreparationReceiptSchema,
   agentProfileSchema,
   buildAgentExecutionPreparationReceipt,
+  buildAgentWorkspaceLeaseRecord,
   canonicalAgentProfileDigest,
   canonicalCandidateDigest,
+  defineAgentProfilePublicConfig,
+  defineAgentProfileSecretRef,
   profileMaterializationAxes,
   profileMaterializationRequests,
   validateAgentExecutionPreparationReceipt,
@@ -24,6 +30,69 @@ import {
 
 const sha = (digit: string): Sha256Digest =>
   `sha256:${digit.repeat(64)}` as Sha256Digest;
+
+const sourceSnapshotPolicy: AgentWorkspaceSourceSnapshotPolicy = {
+  kind: "provider-declared",
+  name: "agent-runtime/local-private-workspace-source",
+  version: 1,
+  digest: sha("7"),
+};
+
+interface WorkspaceLeaseFixtureOptions {
+  leaseId?: string;
+  profileActivationDigest?: Sha256Digest;
+  preparedWorkspaceDigest?: Sha256Digest;
+  executionPreparationDigest?: Sha256Digest;
+  policy?: AgentWorkspaceSourceSnapshotPolicy;
+  expiresAtMs?: number;
+}
+
+function workspaceLeaseFixtureBase(options: WorkspaceLeaseFixtureOptions) {
+  return {
+    kind: "agent-workspace-lease" as const,
+    schemaVersion: 1 as const,
+    leaseId: options.leaseId ?? "lease-1",
+    ownerId: "discovery-run-1",
+    workspace: {
+      provider: "agent-runtime/local-private-workspace",
+      root: "/private/workspaces/allocation-1",
+      identityDigest: sha("2"),
+    },
+    isolation: "per-run" as const,
+    sourceSnapshotDigest: sha("8"),
+    sourceSnapshotPolicy: options.policy ?? sourceSnapshotPolicy,
+    createdAtMs: 100,
+    updatedAtMs: 200,
+    expiresAtMs: options.expiresAtMs ?? 3_000,
+  };
+}
+
+function sealedWorkspaceLease(
+  options: WorkspaceLeaseFixtureOptions = {},
+): AgentWorkspaceSealedLeaseRecord {
+  return buildAgentWorkspaceLeaseRecord({
+    ...workspaceLeaseFixtureBase(options),
+    phase: "workspace-sealed",
+    preparedWorkspaceDigest: options.preparedWorkspaceDigest ?? sha("9"),
+    profileActivationDigest: options.profileActivationDigest ?? sha("3"),
+    cleanupAttempts: 0,
+  });
+}
+
+function boundWorkspaceLease(
+  receipt: AgentExecutionPreparationReceipt,
+  options: WorkspaceLeaseFixtureOptions = {},
+): AgentWorkspaceExecutionBoundLeaseRecord {
+  return buildAgentWorkspaceLeaseRecord({
+    ...workspaceLeaseFixtureBase(options),
+    phase: "execution-bound",
+    preparedWorkspaceDigest: options.preparedWorkspaceDigest ?? sha("9"),
+    profileActivationDigest: options.profileActivationDigest ?? sha("3"),
+    executionPreparationDigest:
+      options.executionPreparationDigest ?? receipt.digest,
+    cleanupAttempts: 0,
+  });
+}
 
 const fullProfile: AgentProfile = {
   name: "researcher",
@@ -93,6 +162,8 @@ function buildReceipt(options: {
     resolved?: "high" | "medium";
     fidelity: "exact" | "clamped" | "unsupported";
   };
+  workspaceLease?: AgentWorkspaceSealedLeaseRecord;
+  profileActivation?: Pick<AgentProfileActivationEvidence, "digest">;
 } = {}): AgentExecutionPreparationReceipt {
   const authoredProfile = options.authoredProfile ?? {
     name: "worker",
@@ -123,14 +194,8 @@ function buildReceipt(options: {
         fidelity: "exact",
       },
     },
-    workspace: {
-      leaseId: "lease-1",
-      identityDigest: sha("2"),
-      isolation: "per-run",
-      sourceSnapshotDigest: sha("8"),
-      preparedWorkspaceDigest: sha("9"),
-      profileActivation: { digest: sha("3") },
-    },
+    workspaceLease: options.workspaceLease ?? sealedWorkspaceLease(),
+    profileActivation: options.profileActivation ?? { digest: sha("3") },
     axisResults: options.axisResults ?? coverage(authoredProfile),
     executionPlanDigest: sha("4"),
     materializer: { name: "agent-profile-materialize", version: "0.9.3" },
@@ -168,13 +233,7 @@ function validationOptions(receipt: AgentExecutionPreparationReceipt) {
     effectiveProfile: authoredProfile,
     executionPlanDigest: sha("4"),
     profileActivation: { digest: sha("3") },
-    workspace: {
-      leaseId: "lease-1",
-      identityDigest: sha("2"),
-      isolation: "per-run" as const,
-      sourceSnapshotDigest: sha("8"),
-      preparedWorkspaceDigest: sha("9"),
-    },
+    workspaceLease: boundWorkspaceLease(receipt),
     nowMs: 1_000,
   };
 }
@@ -331,10 +390,115 @@ describe("profile materialization leaves", () => {
       /sparse array hole/,
     );
   });
+
+  it("tags secret-capable config and refuses recognized credential patterns", () => {
+    const profile: AgentProfile = {
+      mcp: {
+        local: {
+          command: "mcp-server",
+          args: [
+            defineAgentProfilePublicConfig("serve"),
+            defineAgentProfileSecretRef("MCP_ARGUMENT", "raw"),
+          ],
+          env: {
+            MCP_TOKEN: defineAgentProfileSecretRef("MCP_TOKEN", "raw"),
+          },
+        },
+        remote: {
+          url: "https://mcp.example.test",
+          headers: {
+            Authorization: defineAgentProfileSecretRef(
+              "MCP_AUTHORIZATION",
+              "bearer",
+            ),
+          },
+        },
+      },
+      hooks: {
+        beforeRun: [
+          {
+            command: "prepare",
+            env: {
+              HOOK_TOKEN: defineAgentProfileSecretRef("HOOK_TOKEN"),
+            },
+          },
+        ],
+      },
+    };
+    const changedReference: AgentProfile = {
+      ...profile,
+      mcp: {
+        local: {
+          command: "mcp-server",
+          args: [
+            defineAgentProfilePublicConfig("serve"),
+            defineAgentProfileSecretRef("MCP_ARGUMENT", "raw"),
+          ],
+          env: {
+            MCP_TOKEN: defineAgentProfileSecretRef("OTHER_MCP_TOKEN", "raw"),
+          },
+        },
+        remote: {
+          url: "https://mcp.example.test",
+          headers: {
+            Authorization: defineAgentProfileSecretRef(
+              "MCP_AUTHORIZATION",
+              "bearer",
+            ),
+          },
+        },
+      },
+    };
+
+    expect(canonicalAgentProfileDigest(profile)).not.toBe(
+      canonicalAgentProfileDigest(changedReference),
+    );
+    expect(
+      agentProfileSchema.safeParse({
+        mcp: { local: { command: "mcp-server", env: { MCP_TOKEN: "raw" } } },
+      }).success,
+    ).toBe(false);
+    expect(() =>
+      canonicalAgentProfileDigest({
+        prompt: { systemPrompt: "Use Bearer raw-credential" },
+      }),
+    ).toThrow(/recognized credential pattern/);
+    expect(() =>
+      canonicalAgentProfileDigest({
+        metadata: {
+          fakeReference: {
+            kind: "secret-ref",
+            key: "Bearer raw-credential",
+          },
+        },
+      }),
+    ).toThrow(/recognized credential pattern/);
+    expect(() =>
+      canonicalAgentProfileDigest({
+        mcp: {
+          local: {
+            command: "mcp-server",
+            env: {
+              MCP_TOKEN: defineAgentProfileSecretRef(
+                "Bearer raw-credential",
+              ),
+            },
+          },
+        },
+      }),
+    ).toThrow(/recognized credential pattern/);
+    expect(() =>
+      canonicalAgentProfileDigest({
+        metadata: {
+          "Bearer raw-credential": "public",
+        },
+      }),
+    ).toThrow(/key matching a recognized credential pattern/);
+  });
 });
 
 describe("AgentExecutionPreparationReceipt", () => {
-  it("builds one versioned, self-hashed, fully bound pre-compute receipt", () => {
+  it("builds from a sealed lease and validates only after execution binding", () => {
     const receipt = buildReceipt();
 
     expect(agentExecutionPreparationReceiptSchema.parse(receipt)).toEqual(receipt);
@@ -345,8 +509,10 @@ describe("AgentExecutionPreparationReceipt", () => {
       harness: "codex",
       workspace: {
         leaseId: "lease-1",
+        provider: "agent-runtime/local-private-workspace",
         isolation: "per-run",
         sourceSnapshotDigest: sha("8"),
+        sourceSnapshotPolicy,
         preparedWorkspaceDigest: sha("9"),
         profileActivationDigest: sha("3"),
       },
@@ -360,6 +526,8 @@ describe("AgentExecutionPreparationReceipt", () => {
     );
     expect(receipt.executionPlanDigest).toBe(sha("4"));
     expect(receipt).not.toHaveProperty("executionPlan");
+    expect(receipt.workspace).not.toHaveProperty("root");
+    expect(receipt.workspace).not.toHaveProperty("ownerToken");
     expect(validateAgentExecutionPreparationReceipt(validationOptions(receipt))).toMatchObject({
       ok: true,
       issues: [],
@@ -610,10 +778,9 @@ describe("AgentExecutionPreparationReceipt", () => {
 
     const workspaceRebind = validateAgentExecutionPreparationReceipt({
       ...validationOptions(receipt),
-      workspace: {
-        ...validationOptions(receipt).workspace,
+      workspaceLease: boundWorkspaceLease(receipt, {
         preparedWorkspaceDigest: sha("0"),
-      },
+      }),
     });
     expect(workspaceRebind.ok).toBe(false);
     if (!workspaceRebind.ok) {
@@ -624,6 +791,55 @@ describe("AgentExecutionPreparationReceipt", () => {
         }),
       );
     }
+  });
+
+  it("requires the receipt digest to be written into the bound lease before compute", () => {
+    const receipt = buildReceipt();
+    const unbound = validateAgentExecutionPreparationReceipt({
+      ...validationOptions(receipt),
+      workspaceLease: sealedWorkspaceLease() as unknown as AgentWorkspaceExecutionBoundLeaseRecord,
+    });
+    expect(unbound).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ code: "workspace-not-execution-bound" })],
+    });
+
+    const wrongReceipt = validateAgentExecutionPreparationReceipt({
+      ...validationOptions(receipt),
+      workspaceLease: boundWorkspaceLease(receipt, {
+        executionPreparationDigest: sha("0"),
+      }),
+    });
+    expect(wrongReceipt).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ code: "execution-binding-mismatch" })],
+    });
+  });
+
+  it("binds snapshot policy and refuses a preparation that outlives its lease", () => {
+    const receipt = buildReceipt();
+    const policyRebind = validateAgentExecutionPreparationReceipt({
+      ...validationOptions(receipt),
+      workspaceLease: boundWorkspaceLease(receipt, {
+        policy: { ...sourceSnapshotPolicy, version: 2 },
+      }),
+    });
+    expect(policyRebind.ok).toBe(false);
+    if (!policyRebind.ok) {
+      expect(policyRebind.issues).toContainEqual(
+        expect.objectContaining({
+          code: "expectation-mismatch",
+          message:
+            "source snapshot policy version does not match the prepared execution",
+        }),
+      );
+    }
+
+    expect(() =>
+      buildReceipt({
+        workspaceLease: sealedWorkspaceLease({ expiresAtMs: 1_500 }),
+      }),
+    ).toThrow(/cannot outlive its workspace lease/);
   });
 
   it("refuses an expired preparation before compute", () => {
@@ -682,14 +898,11 @@ describe("AgentExecutionPreparationReceipt", () => {
         requested: "openai/gpt-5.4",
         resolved: "gpt-5.4-2026-07-01",
       },
-      workspace: {
+      workspaceLease: sealedWorkspaceLease({
         leaseId: "candidate-lease",
-        identityDigest: sha("2"),
-        isolation: "per-run",
-        sourceSnapshotDigest: sha("8"),
-        preparedWorkspaceDigest: sha("9"),
-        profileActivation: shared,
-      },
+        profileActivationDigest: shared.digest,
+      }),
+      profileActivation: shared,
       axisResults: [],
       executionPlanDigest: sha("4"),
       materializer: { name: "candidate-materializer", version: "1.0.0" },

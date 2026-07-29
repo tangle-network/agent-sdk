@@ -1,10 +1,18 @@
 import { z } from "zod";
 import type {
+  AgentProfileConfigValue,
   AgentProfile,
   AgentProfileMcpServer,
 } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
-import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
+import {
+  environmentNameSchema,
+  headerNameSchema,
+  isSafeExecutable,
+  isSafeRelativePath,
+  isWellFormedUnicode,
+  looksLikeCredential,
+} from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
@@ -143,6 +151,83 @@ export const agentProfilePromptSchema = z.strictObject({
   instructions: z.array(z.string()).optional(),
 });
 
+const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
+const secretCapableNamePattern =
+  /(?:^|[_-])(?:api[_-]?key|access[_-]?key|private[_-]?key|token|secret|password|credentials?|authorization|cookie|database[_-]?url|dsn|pat)(?:[_-]|$)/i;
+
+const publicProfileConfigStringSchema = z
+  .string()
+  .refine(
+    (value) =>
+      isWellFormedUnicode(value) &&
+      !controlCharacterPattern.test(value) &&
+      !looksLikeCredential(value),
+    "public profile config cannot carry credential-like material",
+  );
+
+const secretReferenceKeySchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) =>
+      value.trim().length > 0 &&
+      isWellFormedUnicode(value) &&
+      !controlCharacterPattern.test(value),
+    "secret reference key must be a public identity",
+  );
+
+export const agentProfilePublicConfigValueSchema = z.strictObject({
+  kind: z.literal("public"),
+  value: publicProfileConfigStringSchema,
+});
+
+export const agentProfileSecretRefSchema = z.strictObject({
+  kind: z.literal("secret-ref"),
+  key: secretReferenceKeySchema,
+  format: z.enum(["raw", "bearer"]).optional(),
+});
+
+export const agentProfileConfigValueSchema = z.discriminatedUnion("kind", [
+  agentProfilePublicConfigValueSchema,
+  agentProfileSecretRefSchema,
+]) satisfies z.ZodType<AgentProfileConfigValue>;
+
+function profileConfigRecordSchema(keySchema: z.ZodString) {
+  return ownPropertyRecordSchema(agentProfileConfigValueSchema).superRefine(
+    (record, context) => {
+      for (const [name, value] of Object.entries(record)) {
+        const keyResult = keySchema.safeParse(name);
+        if (!keyResult.success) {
+          context.addIssue({
+            code: "custom",
+            path: [name],
+            message: "profile config key is invalid for this field",
+          });
+        }
+        if (
+          value.kind === "public" &&
+          secretCapableNamePattern.test(name)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [name],
+            message: "credential-bearing config names require a secret-ref",
+          });
+        }
+      }
+    },
+  );
+}
+
+export const agentProfileEnvironmentSchema = profileConfigRecordSchema(
+  environmentNameSchema,
+);
+
+export const agentProfileHeaderSchema = profileConfigRecordSchema(
+  headerNameSchema,
+);
+
 export const agentSubagentProfileSchema = z.strictObject({
   description: z.string().optional(),
   prompt: z.string().optional(),
@@ -158,7 +243,7 @@ export const agentProfileHookCommandSchema = z.strictObject({
   timeoutMs: z.number().positive().optional(),
   blocking: z.boolean().optional(),
   matcher: z.string().optional(),
-  env: ownPropertyRecordSchema(z.string()).optional(),
+  env: agentProfileEnvironmentSchema.optional(),
 });
 
 export const agentProfileModeSchema = z.strictObject({
@@ -188,14 +273,26 @@ const remoteMcpUrlSchema = nonBlankMcpValueSchema.refine((value) => {
   } catch {
     return false;
   }
-}, "remote MCP url must be an absolute HTTP(S) URL");
+}, "remote MCP url must be an absolute HTTP(S) URL").refine(
+  (value) => !looksLikeCredential(value),
+  "remote MCP url cannot contain credentials or credential-named query parameters",
+);
 
 const agentProfileLocalMcpServerSchema = z.strictObject({
   transport: z.literal("stdio").optional(),
-  command: nonBlankMcpValueSchema,
-  args: z.array(z.string()).optional(),
-  env: ownPropertyRecordSchema(z.string()).optional(),
-  cwd: z.string().optional(),
+  command: nonBlankMcpValueSchema.refine(
+    isSafeExecutable,
+    "local MCP command must be a canonical public executable",
+  ),
+  args: z.array(agentProfileConfigValueSchema).optional(),
+  env: agentProfileEnvironmentSchema.optional(),
+  cwd: z
+    .string()
+    .refine(
+      (value) => isSafeRelativePath(value, true),
+      "local MCP cwd must be a canonical workspace-relative path",
+    )
+    .optional(),
   url: z.undefined().optional(),
   headers: z.undefined().optional(),
   enabled: z.literal(true).optional(),
@@ -209,7 +306,7 @@ const agentProfileRemoteMcpServerSchema = z.strictObject({
   env: z.undefined().optional(),
   cwd: z.undefined().optional(),
   url: remoteMcpUrlSchema,
-  headers: ownPropertyRecordSchema(z.string()).optional(),
+  headers: agentProfileHeaderSchema.optional(),
   enabled: z.literal(true).optional(),
   metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });

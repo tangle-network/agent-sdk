@@ -126,7 +126,7 @@ describe("agentProfileSchema", () => {
       "mcp": {
         "local": {
           "command": "mcp",
-          "env": { "__proto__": "literal-value" }
+          "metadata": { "__proto__": "literal-value" }
         }
       },
       "extensions": {
@@ -164,7 +164,7 @@ describe("agentProfileSchema", () => {
     ).toBe(true);
     expect(
       Object.prototype.hasOwnProperty.call(
-        parsed.mcp?.local?.env,
+        parsed.mcp?.local?.metadata,
         "__proto__",
       ),
     ).toBe(true);
@@ -202,11 +202,27 @@ describe("agentProfileSchema", () => {
   it("accepts unambiguous local, remote, and disabled MCP servers", () => {
     const profile = {
       mcp: {
-        local: { command: "mcp", args: ["serve"], env: { TOKEN: "value" } },
+        local: {
+          command: "mcp",
+          args: [{ kind: "public" as const, value: "serve" }],
+          env: {
+            MODE: { kind: "public" as const, value: "read-only" },
+            TOKEN: {
+              kind: "secret-ref" as const,
+              key: "LOCAL_MCP_TOKEN",
+            },
+          },
+        },
         remote: {
           transport: "http" as const,
           url: "https://mcp.example.com",
-          headers: { Authorization: "Bearer value" },
+          headers: {
+            Authorization: {
+              kind: "secret-ref" as const,
+              key: "REMOTE_MCP_AUTH",
+              format: "bearer" as const,
+            },
+          },
         },
         disabled: { enabled: false },
         localWithUndefinedRemote: { command: "mcp", url: undefined },
@@ -214,6 +230,19 @@ describe("agentProfileSchema", () => {
           url: "https://mcp.example.com",
           command: undefined,
         },
+      },
+      hooks: {
+        beforeRun: [
+          {
+            command: "prepare",
+            env: {
+              PREPARE_TOKEN: {
+                kind: "secret-ref" as const,
+                key: "HOOK_PREPARE_TOKEN",
+              },
+            },
+          },
+        ],
       },
     };
 
@@ -237,6 +266,8 @@ describe("agentProfileSchema", () => {
       { transport: "http", command: "mcp" },
       { args: ["serve"] },
       { headers: { Authorization: "Bearer value" } },
+      { url: "https://user:password@mcp.example.com" },
+      { url: "https://mcp.example.com?api_key=value" },
       { enabled: true },
       { enabled: false, transport: "stdio" },
       { enabled: false, command: "mcp" },
@@ -245,6 +276,17 @@ describe("agentProfileSchema", () => {
       { enabled: false, cwd: "" },
       { enabled: false, headers: {} },
       { command: " " },
+      { command: "mcp --token=value" },
+      { command: "bash" },
+      { command: "mcp", cwd: "../outside" },
+      {
+        command: "mcp",
+        env: { TOKEN: { kind: "public", value: "not-secret" } },
+      },
+      {
+        command: "mcp",
+        args: [{ kind: "public", value: "Bearer raw-credential" }],
+      },
       { url: " " },
       { url: "not-a-url" },
       { url: "ftp://mcp.example.com" },
@@ -254,6 +296,48 @@ describe("agentProfileSchema", () => {
       expect(
         agentProfileSchema.safeParse({ mcp: { invalid: server } }).success,
       ).toBe(false);
+    }
+  });
+
+  it("requires tagged hook config and secret references for sensitive names", () => {
+    const invalidProfiles = [
+      { hooks: { beforeRun: [{ command: "prepare", env: { MODE: "raw" } }] } },
+      {
+        hooks: {
+          beforeRun: [
+            {
+              command: "prepare",
+              env: { PREPARE_TOKEN: { kind: "public", value: "benign" } },
+            },
+          ],
+        },
+      },
+      {
+        hooks: {
+          beforeRun: [
+            {
+              command: "prepare",
+              env: { TOKEN: { kind: "secret-ref", key: "   " } },
+            },
+          ],
+        },
+      },
+      {
+        hooks: {
+          beforeRun: [
+            {
+              command: "prepare",
+              env: {
+                MODE: { kind: "public", value: "Bearer raw-credential" },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    for (const profile of invalidProfiles) {
+      expect(agentProfileSchema.safeParse(profile).success).toBe(false);
     }
   });
 });

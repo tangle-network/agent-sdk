@@ -847,6 +847,7 @@ export * from "./agent-profile.js";
 export * from "./agent-profile-activation.js";
 export * from "./agent-profile-materialization.js";
 export * from "./agent-execution-preparation.js";
+export * from "./agent-workspace-lease.js";
 export * from "./certified-context.js";
 export * from "./profile-diff.js";
 export * from "./harness.js";
