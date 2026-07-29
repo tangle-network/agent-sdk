@@ -21,6 +21,7 @@ import {
   looksLikeCredential,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import { agentImprovementSourceSchema } from "./agent-improvement-source.js";
 
 const base64Alphabet =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -210,6 +211,22 @@ export function validateEmbeddedArtifact(
   }
 }
 
+function validateResourceSourceDigest(
+  resource: { source?: { sourceDigest: string }; sha256: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (
+    resource.source !== undefined &&
+    resource.source.sourceDigest !== resource.sha256
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["source", "sourceDigest"],
+      message: "resource source digest must equal the frozen resource digest",
+    });
+  }
+}
+
 export const agentCandidateInlineResourceSchema = z
   .object({
     kind: z.literal("inline"),
@@ -217,6 +234,7 @@ export const agentCandidateInlineResourceSchema = z
     content: z.string().refine(isWellFormedUnicode),
     sha256: sha256DigestSchema,
     byteLength: z.number().int().nonnegative(),
+    source: agentImprovementSourceSchema.optional(),
   })
   .strict()
   .superRefine((resource, ctx) => {
@@ -227,6 +245,7 @@ export const agentCandidateInlineResourceSchema = z
         message: "byteLength must match UTF-8 content",
       });
     }
+    validateResourceSourceDigest(resource, ctx);
   }) satisfies z.ZodType<AgentCandidateInlineResource>;
 
 export const agentCandidateGitHubResourceSchema = z
@@ -243,8 +262,10 @@ export const agentCandidateGitHubResourceSchema = z
     name: z.string().min(1).refine(isWellFormedUnicode).optional(),
     sha256: sha256DigestSchema,
     byteLength: z.number().int().nonnegative(),
+    source: agentImprovementSourceSchema.optional(),
   })
-  .strict() satisfies z.ZodType<AgentCandidateGitHubResource>;
+  .strict()
+  .superRefine(validateResourceSourceDigest) satisfies z.ZodType<AgentCandidateGitHubResource>;
 
 export const agentCandidateResourceRefSchema = z.discriminatedUnion("kind", [
   agentCandidateInlineResourceSchema,

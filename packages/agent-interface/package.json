@@ -54,10 +54,12 @@
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",
+    "spdx-expression-parse": "5.0.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/spdx-expression-parse": "4.0.0",
     "typescript": "^6.0.3",
     "vitest": "catalog:"
   }
