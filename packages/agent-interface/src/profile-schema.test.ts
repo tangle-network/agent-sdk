@@ -104,6 +104,101 @@ describe("agentProfileSchema", () => {
     expect(agentProfileSchema.parse(profile)).toEqual(profile);
   });
 
+  it("preserves and validates hostile own record keys without mutating prototypes", () => {
+    const profile = JSON.parse(`{
+      "tools": {
+        "__proto__": false,
+        "constructor": true,
+        "toString": false,
+        "a/b~c": true
+      },
+      "permissions": {
+        "shell": {
+          "__proto__": "deny",
+          "constructor": "ask"
+        }
+      },
+      "model": {
+        "metadata": {
+          "__proto__": { "nested": true }
+        }
+      },
+      "mcp": {
+        "local": {
+          "command": "mcp",
+          "env": { "__proto__": "literal-value" }
+        }
+      },
+      "extensions": {
+        "__proto__": {
+          "__proto__": 0,
+          "constructor": false
+        }
+      }
+    }`);
+
+    const parsed = agentProfileSchema.parse(profile);
+
+    expect(Object.keys(parsed.tools ?? {})).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+      "a/b~c",
+    ]);
+    expect(Object.prototype.hasOwnProperty.call(parsed.tools, "__proto__")).toBe(
+      true,
+    );
+    expect(Object.getPrototypeOf(parsed.tools)).toBe(Object.prototype);
+    expect(parsed.tools?.__proto__).toBe(false);
+    expect(Object.getPrototypeOf(parsed.permissions?.shell)).toBe(
+      Object.prototype,
+    );
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        parsed.permissions?.shell,
+        "__proto__",
+      ),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(parsed.model?.metadata, "__proto__"),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        parsed.mcp?.local?.env,
+        "__proto__",
+      ),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(parsed.extensions, "__proto__"),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        parsed.extensions?.__proto__,
+        "__proto__",
+      ),
+    ).toBe(true);
+
+    const invalid = JSON.parse('{"tools":{"__proto__":"not-a-boolean"}}');
+    expect(agentProfileSchema.safeParse(invalid).success).toBe(false);
+
+    const malformedKey = String.fromCharCode(0xd800);
+    const metadata: Record<string, unknown> = {};
+    Object.defineProperty(metadata, malformedKey, {
+      value: 0,
+      enumerable: true,
+    });
+    expect(agentProfileSchema.safeParse({ metadata }).success).toBe(false);
+
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, malformedKey, {
+      value: false,
+      enumerable: true,
+    });
+    expect(
+      agentProfileSchema.safeParse({ metadata: { nested } }).success,
+    ).toBe(false);
+  });
+
   it("accepts unambiguous local, remote, and disabled MCP servers", () => {
     const profile = {
       mcp: {

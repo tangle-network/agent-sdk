@@ -9,6 +9,7 @@ import type {
   AgentSubagentProfile,
   ReasoningEffort,
 } from "./agent-profile.js";
+import type { AgentProfileActivationEvidence } from "./agent-profile-activation.js";
 import type { HarnessType } from "./harness.js";
 import type {
   AgentProfileImprovementExecutionRef,
@@ -716,15 +717,9 @@ export interface AgentCandidateProfilePlanEvidence {
 }
 
 /** Exact native profile files and the canonical plan that activated them. */
-export interface AgentCandidateProfileActivation {
+export interface AgentCandidateProfileActivation
+  extends AgentProfileActivationEvidence<AgentCandidateProfilePlanEvidence> {
   kind: "agent-candidate-profile-activation";
-  profilePlan: AgentCandidateProfilePlanEvidence;
-  files: Array<{
-    path: string;
-    mode: number;
-    content: string;
-  }>;
-  digest: Sha256Digest;
 }
 
 export interface AgentCandidateExecutionPlanEvidence {
