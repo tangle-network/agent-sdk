@@ -391,7 +391,7 @@ describe("profile materialization leaves", () => {
     );
   });
 
-  it("tags secret-capable config and refuses recognized credential patterns", () => {
+  it("tags secret-capable config while preserving arbitrary public research text", () => {
     const profile: AgentProfile = {
       mcp: {
         local: {
@@ -458,42 +458,30 @@ describe("profile materialization leaves", () => {
         mcp: { local: { command: "mcp-server", env: { MCP_TOKEN: "raw" } } },
       }).success,
     ).toBe(false);
-    expect(() =>
-      canonicalAgentProfileDigest({
-        prompt: { systemPrompt: "Use Bearer raw-credential" },
-      }),
-    ).toThrow(/recognized credential pattern/);
-    expect(() =>
-      canonicalAgentProfileDigest({
-        metadata: {
-          fakeReference: {
-            kind: "secret-ref",
-            key: "Bearer raw-credential",
+    const securityResearchProfile: AgentProfile = {
+      prompt: { systemPrompt: "Explain why Bearer raw-credential is unsafe." },
+      metadata: {
+        example: { kind: "secret-ref", key: "Bearer raw-credential" },
+        "Bearer raw-credential": "public example text",
+      },
+    };
+    expect(canonicalAgentProfileDigest(securityResearchProfile)).toMatch(
+      /^sha256:[a-f0-9]{64}$/,
+    );
+
+    const referenceInSecretSlot: AgentProfile = {
+      mcp: {
+        local: {
+          command: "mcp-server",
+          env: {
+            MCP_TOKEN: defineAgentProfileSecretRef("Bearer raw-credential"),
           },
         },
-      }),
-    ).toThrow(/recognized credential pattern/);
-    expect(() =>
-      canonicalAgentProfileDigest({
-        mcp: {
-          local: {
-            command: "mcp-server",
-            env: {
-              MCP_TOKEN: defineAgentProfileSecretRef(
-                "Bearer raw-credential",
-              ),
-            },
-          },
-        },
-      }),
-    ).toThrow(/recognized credential pattern/);
-    expect(() =>
-      canonicalAgentProfileDigest({
-        metadata: {
-          "Bearer raw-credential": "public",
-        },
-      }),
-    ).toThrow(/key matching a recognized credential pattern/);
+      },
+    };
+    expect(canonicalAgentProfileDigest(referenceInSecretSlot)).not.toBe(
+      canonicalAgentProfileDigest(profile),
+    );
   });
 });
 

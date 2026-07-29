@@ -411,52 +411,19 @@ export const agentExecutionPreparationReceiptSchema = z
 
 /**
  * Canonical RFC 8785/SHA-256 identity for one validated, public AgentProfile.
- * Secret-capable MCP/hook fields are tagged; the remaining caller-authored text
- * is rejected only when it matches recognized credential patterns. This scan is
- * defense in depth, not proof that arbitrary text is non-secret. Resolve opaque
- * secret references only after this public identity is fixed.
+ * Secret-capable MCP/hook fields are tagged. Other prompt, resource, metadata,
+ * and tool text is ordinary public profile data: it may legitimately discuss
+ * credentials, security incidents, or examples that resemble credentials, so
+ * pattern matching cannot decide whether it is secret. Resolve opaque secret
+ * references only after this public identity is fixed.
  */
 export function canonicalAgentProfileDigest(profile: AgentProfile): Sha256Digest {
   const parsed = agentProfileSchema.parse(profile);
-  assertProfileContainsNoRecognizedCredentialValues(
-    parsed,
-    [],
-    new Set<object>(),
-  );
   const material = canonicalProfileValue(parsed, [], new Set<object>());
   if (material === undefined || !isCanonicalJsonValue(material)) {
     throw new Error("AgentProfile must contain finite, acyclic RFC 8785 JSON values");
   }
   return canonicalCandidateDigest(material);
-}
-
-function assertProfileContainsNoRecognizedCredentialValues(
-  value: unknown,
-  path: readonly (string | number)[],
-  seen: Set<object>,
-): void {
-  if (typeof value === "string") {
-    if (looksLikeCredential(value)) {
-      throw new Error(
-        `AgentProfile ${renderPath(path)} matches a recognized credential pattern`,
-      );
-    }
-    return;
-  }
-  if (value === null || typeof value !== "object" || seen.has(value)) return;
-  seen.add(value);
-  for (const [key, entry] of Object.entries(value)) {
-    if (looksLikeCredential(key)) {
-      throw new Error(
-        `AgentProfile ${renderPath(path)} contains a key matching a recognized credential pattern`,
-      );
-    }
-    assertProfileContainsNoRecognizedCredentialValues(
-      entry,
-      [...path, key],
-      seen,
-    );
-  }
 }
 
 /** Build, self-hash, and cross-check one pre-compute executor acknowledgement. */
