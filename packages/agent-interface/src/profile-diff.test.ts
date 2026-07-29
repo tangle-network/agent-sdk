@@ -133,6 +133,34 @@ describe("AgentProfileDiff", () => {
     ]);
   });
 
+  it("reports explicit empty identity values as changes", () => {
+    for (const set of [
+      { name: "" },
+      { description: "" },
+      { version: "" },
+      { tags: [] },
+    ]) {
+      expect(changedAgentProfileAxes({ kind: "agent-profile-diff", set })).toEqual([
+        "identity",
+      ]);
+    }
+  });
+
+  it("does not report structurally empty removals as changed axes", () => {
+    for (const remove of [
+      { tags: [] },
+      { prompt: {} },
+      { model: [] },
+      { connections: [] },
+      { resources: {} },
+      { resources: { tools: [] } },
+    ]) {
+      expect(
+        changedAgentProfileAxes({ kind: "agent-profile-diff", remove }),
+      ).toEqual([]);
+    }
+  });
+
   it("validates generated diffs with the public schema", () => {
     const parsed = agentProfileDiffSchema.parse({
       kind: "agent-profile-diff",

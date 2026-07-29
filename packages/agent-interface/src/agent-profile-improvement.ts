@@ -72,9 +72,9 @@ export interface AgentProfileImprovementExecutionRef extends AgentProfileImprove
  * Ordered portable profile patches retained for review and activation.
  *
  * Applying the steps in order matters: a full resource replacement is a reset
- * followed by a replacement step. Prompt and inline skill content can be
- * sensitive, so the product that persists this value owns access control and
- * redaction.
+ * followed by a replacement step. Complete profile diffs can contain sensitive
+ * host-owned configuration, so the product that persists this value owns access
+ * control and redaction.
  */
 export type AgentProfileImprovementChange = [AgentProfileDiff, ...AgentProfileDiff[]];
 
