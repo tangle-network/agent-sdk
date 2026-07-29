@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 0.39.0
+
+### Minor Changes
+
+- 7c68070: Accept exact `AgentProfileDiff` changes across every profile axis in measured profile-improvement experiments while preserving existing granular surface labels.
+- dfec816: Add a canonical `diffAgentProfiles` inverse that constructs deterministic existing `AgentProfileDiff` steps across every profile axis.
+
 ## 0.38.0
 
 ### Minor Changes
