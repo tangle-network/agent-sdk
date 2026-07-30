@@ -404,6 +404,59 @@ export const agentProfileSchema = z
     validateNestedRecordKeys(profile, context, [], new Set<object>());
   });
 
+const encodedRecordKeyPattern = "^u(?:[0-9a-f]{4})*$";
+
+function isEncodedRecordKeyPropertyNames(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const propertyNames = value as Record<string, unknown>;
+  return (
+    propertyNames.type === "string" &&
+    propertyNames.pattern === encodedRecordKeyPattern
+  );
+}
+
+function removeModelInputSchemaArtifacts(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(removeModelInputSchemaArtifacts);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "$schema") {
+      continue;
+    }
+    if (key === "propertyNames" && isEncodedRecordKeyPropertyNames(entry)) {
+      continue;
+    }
+    result[key] = removeModelInputSchemaArtifacts(entry);
+  }
+  return result;
+}
+
+/**
+ * Model-facing JSON Schema for an authored {@link AgentProfile}.
+ *
+ * This is generated from {@link agentProfileSchema}'s input contract rather
+ * than restating the profile shape. Zod sees encoded record keys at its
+ * preprocessing boundary, so the generated `propertyNames` constraints for
+ * that internal encoding are removed before exposing the schema to callers.
+ * The root dialect declaration is also omitted because tool APIs embed this
+ * value as a subschema rather than serving it as a standalone document.
+ * Runtime admission remains the canonical Zod validator above.
+ */
+export const agentProfileJsonSchema = removeModelInputSchemaArtifacts(
+  z.toJSONSchema(agentProfileSchema, {
+    target: "draft-2020-12",
+    io: "input",
+    unrepresentable: "any",
+  }),
+) as z.core.JSONSchema.JSONSchema;
+
 function validateNestedRecordKeys(
   value: unknown,
   context: z.RefinementCtx,
