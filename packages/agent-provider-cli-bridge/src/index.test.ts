@@ -1,9 +1,55 @@
 import { createServer } from "node:http";
+import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "./index.js";
 
 describe("createCliBridgeProvider", () => {
+  it("keeps profile authority separate from the task and forwards it unchanged", async () => {
+    let body: Record<string, unknown> | undefined;
+    const profile: AgentProfile = {
+      name: "scientist",
+      harness: "pi",
+      model: {
+        provider: "tangle-router",
+        default: "glm-5.2",
+        reasoningEffort: "xhigh",
+      },
+      prompt: { systemPrompt: "Use this system prompt exactly once." },
+      mcp: {
+        coordination: {
+          transport: "http",
+          url: "http://127.0.0.1:4444/mcp",
+        },
+      },
+    };
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return new Response(
+          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    const environment = await provider.create({ profile });
+
+    await consumeTurn(environment, {
+      prompt: "run the task",
+      sessionId: "profile-session",
+      turnId: "profile-turn",
+      executionId: "profile-run",
+    });
+
+    expect(body).toMatchObject({
+      model: "pi/tangle-router/glm-5.2",
+      effort: "xhigh",
+      messages: [{ role: "user", content: "run the task" }],
+    });
+    expect(body?.agent_profile).toEqual(profile);
+  });
+
   it("streams canonical text, tool, usage, and result events", async () => {
     let body: Record<string, unknown> | undefined;
     const provider = createCliBridgeProvider({

@@ -548,12 +548,15 @@ function toChatCompletionsBody(
   const profile = inlineProfile(environmentInput.profile);
   return {
     model: resolveBridgeModel(options, environmentInput, turn, profile),
-    messages: messagesFromTurn(turn, profile),
+    messages: messagesFromTurn(turn),
     stream: true,
     ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
     run_id: runId,
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
     ...(profile ? { agent_profile: profile } : {}),
+    ...(profile?.model?.reasoningEffort
+      ? { effort: profile.model.reasoningEffort }
+      : {}),
     ...(environmentInput.env ? { env: environmentInput.env } : {}),
     ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
     ...(executionFromInput(options, environmentInput) ? { execution: executionFromInput(options, environmentInput) } : {}),
@@ -587,12 +590,8 @@ function resolveBridgeModel(
   return `${harness}/${model}`;
 }
 
-function messagesFromTurn(turn: AgentTurnInput, profile: AgentProfile | undefined): Array<Record<string, unknown>> {
-  const messages: Array<Record<string, unknown>> = [];
-  const systemPrompt = profile?.prompt?.systemPrompt;
-  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-  messages.push({ role: "user", content: contentFromTurn(turn) });
-  return messages;
+function messagesFromTurn(turn: AgentTurnInput): Array<Record<string, unknown>> {
+  return [{ role: "user", content: contentFromTurn(turn) }];
 }
 
 function contentFromTurn(turn: AgentTurnInput): string | InputPart[] {
