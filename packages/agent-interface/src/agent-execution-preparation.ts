@@ -118,7 +118,9 @@ export interface AgentExecutionPreparationReceipt {
   schemaVersion: 1;
   preparationId: string;
   requestDigest: Sha256Digest;
+  /** Canonical identity before executor overrides. */
   authoredProfileDigest: Sha256Digest;
+  /** Canonical identity after executor overrides. */
   effectiveProfileDigest: Sha256Digest;
   backend: string;
   harness: HarnessType;

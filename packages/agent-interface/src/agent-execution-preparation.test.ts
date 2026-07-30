@@ -498,6 +498,91 @@ describe("profile materialization leaves", () => {
 });
 
 describe("AgentExecutionPreparationReceipt", () => {
+  it("binds authored routing preferences and separately receipts execution overrides", () => {
+    const authoredProfile: AgentProfile = {
+      name: "worker",
+      harness: "pi",
+      model: {
+        default: "tangle/glm-5.2",
+        provider: "tangle-router",
+      },
+    };
+    const harnessChanged: AgentProfile = {
+      ...authoredProfile,
+      harness: "codex",
+    };
+    const modelChanged: AgentProfile = {
+      ...authoredProfile,
+      model: {
+        ...authoredProfile.model,
+        default: "anthropic/claude-opus-4-1",
+      },
+    };
+    const providerChanged: AgentProfile = {
+      ...authoredProfile,
+      model: {
+        ...authoredProfile.model,
+        provider: "anthropic",
+      },
+    };
+    const authoredDigests = [
+      authoredProfile,
+      harnessChanged,
+      modelChanged,
+      providerChanged,
+    ].map(canonicalAgentProfileDigest);
+    expect(new Set(authoredDigests)).toHaveLength(4);
+
+    const effectiveProfile: AgentProfile = {
+      ...authoredProfile,
+      harness: "codex",
+      model: {
+        default: "anthropic/claude-opus-4-1",
+        provider: "anthropic",
+      },
+    };
+    const overriddenAxes = new Set([
+      "harness",
+      "modelDefault",
+      "modelProvider",
+    ]);
+    const receipt = buildReceipt({
+      authoredProfile,
+      effectiveProfile,
+      axisResults: coverage(authoredProfile).map((result) =>
+        overriddenAxes.has(result.axis)
+          ? {
+              ...result,
+              disposition: "overridden" as const,
+              reason: "execution request selected a different route",
+            }
+          : result,
+      ),
+    });
+
+    expect(receipt.authoredProfileDigest).toBe(
+      canonicalAgentProfileDigest(authoredProfile),
+    );
+    expect(receipt.effectiveProfileDigest).toBe(
+      canonicalAgentProfileDigest(effectiveProfile),
+    );
+    expect(receipt.authoredProfileDigest).not.toBe(
+      receipt.effectiveProfileDigest,
+    );
+    expect(receipt).toMatchObject({
+      harness: "codex",
+      resolvedModel: {
+        requested: "anthropic/claude-opus-4-1",
+        provider: "anthropic",
+      },
+    });
+    expect(
+      receipt.axisResults
+        .filter((result) => result.disposition === "overridden")
+        .map((result) => result.axis),
+    ).toEqual(["modelDefault", "modelProvider", "harness"]);
+  });
+
   it("builds from a sealed lease and validates only after execution binding", () => {
     const receipt = buildReceipt();
 
