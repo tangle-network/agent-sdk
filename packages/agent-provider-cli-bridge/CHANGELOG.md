@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.3.0
+
+### Minor Changes
+
+- b5e6e1b: Make CLI bridge turns resumable, idempotent, and cancellation-safe using server-owned run state, and derive bridge selection from run data.
+
+### Patch Changes
+
+- Updated dependencies [886666b]
+  - @tangle-network/agent-interface@0.40.0
+
 ## 0.2.33
 
 ### Patch Changes

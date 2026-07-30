@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.40.0
+
+### Minor Changes
+
+- 886666b: Add the canonical `snapshotAgentProfile` intake function to detach, validate, and recursively freeze an exact `AgentProfile` without adding execution policy or defaults.
+
 ## 0.39.0
 
 ### Minor Changes
