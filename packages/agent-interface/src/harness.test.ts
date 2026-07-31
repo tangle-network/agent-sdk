@@ -7,6 +7,10 @@ import { type HarnessType, harnessTypeSchema } from "./harness.js";
  * `KNOWN_HARNESSES`). Pinning it here makes an accidental add/remove a failing
  * test in the owning package rather than a silent behavior change three repos
  * away.
+ *
+ * `forge` (tailcallhq/forgecode) and `cursor` (cursor-agent) ship provider
+ * adapters downstream; their absence here is what forced those packages to keep
+ * divergent copies of the enum.
  */
 const CANONICAL_HARNESSES = [
   "claude-code",
@@ -38,13 +42,5 @@ describe("harnessTypeSchema", () => {
       expect(harnessTypeSchema.parse(harness)).toBe(harness);
     }
     expect(harnessTypeSchema.safeParse("not-a-harness").success).toBe(false);
-  });
-
-  it("carries the CLI runners that shipped as provider adapters without a canonical entry", () => {
-    // forge (tailcallhq/forgecode) and cursor (cursor-agent) have full provider
-    // adapters downstream; they were absent here, which forced those packages to
-    // keep divergent copies of the enum.
-    expect(harnessTypeSchema.options).toContain("forge");
-    expect(harnessTypeSchema.options).toContain("cursor");
   });
 });
