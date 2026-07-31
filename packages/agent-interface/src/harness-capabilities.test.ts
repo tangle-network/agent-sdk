@@ -47,6 +47,17 @@ describe("harness ↔ model compatibility", () => {
     expect(harnessSupportsModel("nanoclaw", "anthropic/claude-sonnet-4-6")).toBe(true);
   });
 
+  it("forge and cursor are router-backed multi-provider CLIs", () => {
+    for (const harness of ["forge", "cursor"] as const) {
+      expect(harnessProviders(harness)).toBeNull();
+      expect(harnessSupportsModel(harness, "openai/gpt-5")).toBe(true);
+      expect(harnessSupportsModel(harness, "anthropic/claude-sonnet-4-6")).toBe(true);
+      // No provider lock means no snapping away from the caller's model.
+      expect(snapHarnessToModel(harness, "zai/glm-4.7")).toBe(harness);
+      expect(harnessHonorsSelectors(harness)).toBe(true);
+    }
+  });
+
   it("provider-less / sentinel ids are compatible everywhere", () => {
     expect(harnessSupportsModel("claude-code", "default")).toBe(true);
     expect(harnessSupportsModel("codex", "gemini-2.5-flash-lite")).toBe(true);
