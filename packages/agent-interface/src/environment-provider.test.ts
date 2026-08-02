@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { AgentEnvironmentCapabilitiesSchema } from "./environment-provider.js";
+import {
+  AgentEnvironmentCapabilitiesSchema,
+  AgentNativeContextContinuationResultSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+} from "./environment-provider.js";
+import {
+  nativeContextContinuationRequestDigest,
+  nativeContextContinuationTurnDigest,
+} from "./portable-context.js";
 
 const capabilities = {
   profile: {
@@ -21,6 +29,7 @@ const capabilities = {
     turnIdempotency: true,
   },
   sessions: { continue: true, list: true, messages: true },
+  nativeContinuation: { atomicBoundary: true, requestIdempotency: true },
   workspace: {
     read: true,
     write: true,
@@ -76,6 +85,21 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     ).toThrow(/requires checkpoint, fork, lookup, and cleanup together/);
   });
 
+  it("requires native continuation admission and retry safety together", () => {
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        nativeContinuation: { atomicBoundary: true, requestIdempotency: false },
+      }),
+    ).toThrow(/requires session continuation, atomic boundary admission, and request idempotency together/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        sessions: { ...capabilities.sessions, continue: false },
+      }),
+    ).toThrow(/requires session continuation/);
+  });
+
   it("rejects duplicate open capability values", () => {
     expect(() =>
       AgentEnvironmentCapabilitiesSchema.parse({
@@ -92,5 +116,105 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         exactProcess: { egress: ["blocked", "blocked"] },
       }),
     ).toThrow(/egress modes must be unique/);
+  });
+});
+
+describe("AgentNativeContextContinuationResultSchema", () => {
+  const run = {
+    runId: "run-before",
+    provider: "cli-bridge",
+    environmentId: "environment-1",
+    sessionId: "session-1",
+    executionId: "execution-before",
+  };
+  const expectedBoundary = {
+    runId: run.runId,
+    provider: run.provider,
+    environmentId: run.environmentId,
+    sessionId: run.sessionId,
+    boundary: { kind: "revision" as const, revision: "revision-before" },
+    observedAt: "2026-08-01T20:00:00.000Z",
+  };
+  const material = {
+    turnDigest: nativeContextContinuationTurnDigest({ prompt: "continue" }),
+    run,
+    expectedBoundary,
+  };
+  const request = {
+    operationId: "continue-1",
+    requestDigest: nativeContextContinuationRequestDigest(material),
+    ...material,
+  };
+  const outcome = {
+    acknowledgement: {
+      operationId: request.operationId,
+      requestDigest: request.requestDigest,
+      status: "accepted" as const,
+      historyMessagesSent: 0,
+      actualBoundary: expectedBoundary,
+    },
+    result: { text: "done", success: true, sessionId: run.sessionId },
+    controlRef: {
+      ...run,
+      runId: "run-after",
+      executionId: "execution-after",
+    },
+  };
+
+  it("validates and exactly binds a successful continuation outcome", () => {
+    const parsed = AgentNativeContextContinuationResultSchema.parse(outcome);
+    expect("controlRef" in parsed).toBe(true);
+    if (!("controlRef" in parsed)) throw new Error("expected successful outcome");
+    expect(
+      agentNativeContextContinuationResultMatchesRequest(request, parsed),
+    ).toBe(true);
+    expect(
+      agentNativeContextContinuationResultMatchesRequest(request, {
+        ...parsed,
+        controlRef: { ...parsed.controlRef, sessionId: "wrong-session" },
+      }),
+    ).toBe(false);
+  });
+
+  it("requires current control coordinates only for successful outcomes", () => {
+    expect(() =>
+      AgentNativeContextContinuationResultSchema.parse({
+        acknowledgement: outcome.acknowledgement,
+        result: outcome.result,
+      }),
+    ).toThrow();
+    expect(
+      AgentNativeContextContinuationResultSchema.parse({
+        acknowledgement: {
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          status: "unknown_session",
+          historyMessagesSent: 0,
+        },
+      }),
+    ).toMatchObject({ acknowledgement: { status: "unknown_session" } });
+    expect(() =>
+      AgentNativeContextContinuationResultSchema.parse({
+        acknowledgement: {
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          status: "unknown_session",
+          historyMessagesSent: 0,
+        },
+        result: outcome.result,
+      }),
+    ).toThrow();
+    expect(() =>
+      AgentNativeContextContinuationResultSchema.parse({
+        acknowledgement: {
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          status: "transport_failure",
+          historyMessagesSent: 0,
+          message: "outcome unknown",
+          retryable: false,
+        },
+      }),
+    ).toThrow(/must be retryable/);
   });
 });

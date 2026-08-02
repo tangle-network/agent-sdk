@@ -39,13 +39,23 @@ const AgentProfileCapabilitiesSchema = z.strictObject({
   validation: z.boolean(),
   extensions: z.array(z.string().min(1)).optional(),
 }) satisfies z.ZodType<AgentProfileCapabilities>;
-import type {
-  ContextTransferReceipt,
-  ContextTransferRequest,
-  NativeContextBoundaryProof,
-  NativeContextContinuationRequest,
+import {
+  ContextTransferReceiptSchema,
+  NativeContextContinuationAcknowledgementSchema,
+  NativeContextContinuationRequestSchema,
+  nativeContextContinuationAcknowledgementMatches,
+  type ContextTransferReceipt,
+  type ContextTransferRequest,
+  type NativeContextBoundaryProof,
+  type NativeContextContinuationAcknowledgement,
+  type NativeContextContinuationRequest,
+  type NativeContextContinuationTurn,
 } from "./portable-context.js";
-import type { AgentRunControlRef } from "./runtime-control.js";
+import {
+  AgentRunControlRefSchema,
+  CanonicalStreamEventSchema,
+  type AgentRunControlRef,
+} from "./runtime-control.js";
 import type { AgentWorkspaceBranching } from "./workspace-branching.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
@@ -304,6 +314,135 @@ export interface AgentTurnResult {
   contextTransferReceipt?: ContextTransferReceipt;
 }
 
+const TokenUsageSchema = z.strictObject({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative().optional(),
+  cacheReadInputTokens: z.number().int().nonnegative().optional(),
+  cacheCreationInputTokens: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  cost: z.number().finite().nonnegative().optional(),
+}) satisfies z.ZodType<TokenUsage>;
+
+const AgentEnvironmentEventSchema = z.strictObject({
+  type: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+  id: z.string().min(1).optional(),
+  normalized: CanonicalStreamEventSchema.optional(),
+  usage: TokenUsageSchema.optional(),
+  providerEvent: z.unknown().optional(),
+}) satisfies z.ZodType<AgentEnvironmentEvent>;
+
+/** Runtime validator for a provider turn returned from durable continuation. */
+export const AgentTurnResultSchema = z.strictObject({
+  text: z.string(),
+  success: z.boolean(),
+  error: z.string().optional(),
+  sessionId: z.string().min(1).optional(),
+  usage: TokenUsageSchema.optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  events: z.array(AgentEnvironmentEventSchema).optional(),
+  contextTransferReceipt: ContextTransferReceiptSchema.optional(),
+}) satisfies z.ZodType<AgentTurnResult>;
+
+/** Durable provider result for one digest-bound native continuation operation. */
+export const AgentNativeContextContinuationResultSchema = z.union([
+  z
+    .strictObject({
+      acknowledgement: NativeContextContinuationAcknowledgementSchema.and(
+        z.object({ status: z.enum(["accepted", "replayed"]) }),
+      ),
+      result: AgentTurnResultSchema,
+      /** Exact provider coordinates after the continuation completed. */
+      controlRef: AgentRunControlRefSchema,
+    })
+    .superRefine((outcome, refinement) => {
+      if (outcome.result.contextTransferReceipt !== undefined) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["result", "contextTransferReceipt"],
+          message: "native continuation cannot return a context transfer receipt",
+        });
+      }
+    }),
+  z
+    .strictObject({
+      acknowledgement: NativeContextContinuationAcknowledgementSchema.and(
+        z.object({
+          status: z.enum([
+            "conflict",
+            "boundary_mismatch",
+            "unverified",
+            "unknown_session",
+            "transport_failure",
+          ]),
+        }),
+      ),
+    })
+    .superRefine((outcome, refinement) => {
+      if (
+        outcome.acknowledgement.status === "transport_failure" &&
+        outcome.acknowledgement.retryable !== true
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["acknowledgement", "retryable"],
+          message:
+            "a durable native continuation transport failure must be retryable",
+        });
+      }
+    }),
+]);
+export type AgentNativeContextContinuationResult = z.infer<
+  typeof AgentNativeContextContinuationResultSchema
+>;
+
+/** Runtime-only controls kept outside the digest-bound user turn. */
+export interface AgentNativeContextContinuationOptions {
+  turn: NativeContextContinuationTurn;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+/** Cross-check a successful result against its exact request and retained session. */
+export function agentNativeContextContinuationResultMatchesRequest(
+  request: NativeContextContinuationRequest,
+  outcome: AgentNativeContextContinuationResult,
+): boolean {
+  const parsedRequest =
+    NativeContextContinuationRequestSchema.safeParse(request);
+  const parsedOutcome =
+    AgentNativeContextContinuationResultSchema.safeParse(outcome);
+  if (!parsedRequest.success || !parsedOutcome.success) return false;
+  const exactOutcome = parsedOutcome.data;
+  if (
+    exactOutcome.acknowledgement.status !== "accepted" &&
+    exactOutcome.acknowledgement.status !== "replayed"
+  ) {
+    return false;
+  }
+  if (!("result" in exactOutcome) || !("controlRef" in exactOutcome)) {
+    return false;
+  }
+  if (
+    !nativeContextContinuationAcknowledgementMatches(
+      parsedRequest.data,
+      exactOutcome.acknowledgement,
+    )
+  ) {
+    return false;
+  }
+  const source = parsedRequest.data.run;
+  const current = exactOutcome.controlRef;
+  return (
+    current.provider === source.provider &&
+    current.environmentId === source.environmentId &&
+    current.sessionId === source.sessionId &&
+    (exactOutcome.result.sessionId === undefined ||
+      exactOutcome.result.sessionId === current.sessionId)
+  );
+}
+
 export interface AgentSessionRef {
   id: string;
   provider?: string;
@@ -341,6 +480,15 @@ export interface AgentSession {
   contextBoundary?(options?: {
     signal?: AbortSignal;
   }): Promise<NativeContextBoundaryProof | null>;
+  /**
+   * Atomically verify the boundary and admit one digest-bound continuation.
+   * Repeating an operation id with the same request returns the original result;
+   * repeating it with a different request returns a conflict without dispatch.
+   */
+  continueNative?(
+    request: NativeContextContinuationRequest,
+    options: AgentNativeContextContinuationOptions,
+  ): Promise<AgentNativeContextContinuationResult>;
   cancel(): Promise<void>;
 }
 
@@ -391,6 +539,13 @@ export interface AgentEnvironmentCapabilities {
     list: boolean;
     messages: boolean;
   };
+  /** Absent when verified, retry-safe same-session continuation is unsupported. */
+  nativeContinuation?: {
+    /** Boundary comparison and operation admission are one atomic provider action. */
+    atomicBoundary: boolean;
+    /** Operation id + request digest recover retries and reject changed input. */
+    requestIdempotency: boolean;
+  };
   /** Absent when the provider cannot originate or answer interactions. */
   interactions?: InteractionCapabilities;
   workspace: {
@@ -435,6 +590,12 @@ export const AgentEnvironmentCapabilitiesSchema = z
       list: z.boolean(),
       messages: z.boolean(),
     }),
+    nativeContinuation: z
+      .strictObject({
+        atomicBoundary: z.boolean(),
+        requestIdempotency: z.boolean(),
+      })
+      .optional(),
     interactions: InteractionCapabilitiesSchema.optional(),
     workspace: z.strictObject({
       read: z.boolean(),
@@ -461,6 +622,19 @@ export const AgentEnvironmentCapabilitiesSchema = z
       .optional(),
   })
   .superRefine((capabilities, refinement) => {
+    if (
+      capabilities.nativeContinuation !== undefined &&
+      (!capabilities.nativeContinuation.atomicBoundary ||
+        !capabilities.nativeContinuation.requestIdempotency ||
+        !capabilities.sessions.continue)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["nativeContinuation"],
+        message:
+          "native continuation requires session continuation, atomic boundary admission, and request idempotency together",
+      });
+    }
     const durableBranching = [
       capabilities.branching.retrySafe ?? false,
       capabilities.branching.lookup ?? false,

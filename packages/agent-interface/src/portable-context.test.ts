@@ -13,6 +13,7 @@ import {
   contextTransferRequestDigest,
   nativeContextContinuationAcknowledgementMatches,
   nativeContextContinuationRequestDigest,
+  nativeContextContinuationTurnDigest,
   portableContextPlanDigest,
   portableContextPlanRequestDigest,
   portableContextPlanResultMatchesRequest,
@@ -448,6 +449,7 @@ describe("portable context plan and transfer", () => {
 });
 
 describe("native continuation boundary", () => {
+  const turnDigest = nativeContextContinuationTurnDigest({ prompt: "Continue the task." });
   const proof = {
     runId: "run-source",
     provider: "cli-bridge",
@@ -462,6 +464,7 @@ describe("native continuation boundary", () => {
       NativeContextContinuationRequestSchema.parse({
         operationId: "continue-duplicates",
         requestDigest: `sha256:${"1".repeat(64)}`,
+        turnDigest,
         run: {
           runId: "run-source",
           provider: "cli-bridge",
@@ -482,6 +485,7 @@ describe("native continuation boundary", () => {
 
   it("requires the proof to match the retained run", () => {
     const material = {
+      turnDigest,
       run: {
         runId: "run-source",
         provider: "cli-bridge",
@@ -510,6 +514,33 @@ describe("native continuation boundary", () => {
     ).toThrow(/must match/);
   });
 
+  it("binds operation identity to the exact new turn", () => {
+    const base = {
+      turnDigest,
+      run: {
+        runId: "run-source",
+        provider: "cli-bridge",
+        environmentId: "environment-source",
+        sessionId: "session-source",
+      },
+      expectedBoundary: proof,
+    };
+    const request = NativeContextContinuationRequestSchema.parse({
+      operationId: "continue-turn-binding",
+      requestDigest: nativeContextContinuationRequestDigest(base),
+      ...base,
+    });
+    const changedTurnDigest = nativeContextContinuationTurnDigest({ prompt: "Different turn." });
+
+    expect(changedTurnDigest).not.toBe(request.turnDigest);
+    expect(() =>
+      NativeContextContinuationRequestSchema.parse({
+        ...request,
+        turnDigest: changedTurnDigest,
+      }),
+    ).toThrow(/request digest does not match/);
+  });
+
   it("rejects accepted native continuation that resends history", () => {
     const requestDigest = `sha256:${"1".repeat(64)}` as const;
     expect(
@@ -533,6 +564,7 @@ describe("native continuation boundary", () => {
 
   it("rejects invalid acknowledgements in the exact-match helper itself", () => {
     const material = {
+      turnDigest,
       run: {
         runId: "run-source",
         provider: "cli-bridge",
@@ -590,6 +622,7 @@ describe("native continuation boundary", () => {
 
   it("binds replay and conflict acknowledgements to the exact operation", () => {
     const material = {
+      turnDigest,
       run: {
         runId: "run-source",
         provider: "cli-bridge",
@@ -632,6 +665,7 @@ describe("native continuation boundary", () => {
     "transport_failure",
   ] as const)("does not accept a %s native continuation", (status) => {
     const material = {
+      turnDigest,
       run: {
         runId: "run-source",
         provider: "cli-bridge",

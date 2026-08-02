@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  nativeContextContinuationTurnDigest,
   portableContextPlanDigest,
   portableContextPlanRequestDigest,
   portableConversationContextDigest,
@@ -7,6 +8,8 @@ import {
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
   type AgentEnvironmentProvider,
+  type AgentNativeContextContinuationOptions,
+  type AgentNativeContextContinuationResult,
   type AgentWorkspaceBranching,
   type ContextTransferReceipt,
   type ContextTransferRequest,
@@ -14,7 +17,6 @@ import {
   type InteractionRequest,
   type InteractionResponseCommand,
   type NativeContextBoundaryProof,
-  type NativeContextContinuationAcknowledgement,
   type NativeContextContinuationRequest,
   type PortableContextPlan,
   type PortableContextPlanRequest,
@@ -270,6 +272,7 @@ describe("runPortableContextConformance", () => {
       ),
       run,
       acceptedAt: "2026-08-01T20:06:00.000Z",
+      turn: { prompt: "Continue from the retained session." },
       async plan(request) {
         counters.plans += 1;
         if (request.requestId === "context-over-limit") {
@@ -372,24 +375,43 @@ function nativeContinuationResponder(
     string,
     {
       requestDigest: `sha256:${string}`;
-      acknowledgement: NativeContextContinuationAcknowledgement;
+      outcome: Extract<
+        AgentNativeContextContinuationResult,
+        { result: unknown }
+      >;
     }
   >();
-  return async (request: NativeContextContinuationRequest) => {
+  return async (
+    request: NativeContextContinuationRequest,
+    options: AgentNativeContextContinuationOptions,
+  ) => {
+    if (
+      request.turnDigest !==
+      nativeContextContinuationTurnDigest(options.turn)
+    ) {
+      throw new Error(
+        "native continuation request does not bind the supplied turn",
+      );
+    }
     const prior = operations.get(request.operationId);
     if (prior) {
       if (prior.requestDigest !== request.requestDigest) {
         return {
-          operationId: request.operationId,
-          requestDigest: request.requestDigest,
-          existingRequestDigest: prior.requestDigest,
-          status: "conflict" as const,
-          historyMessagesSent: 0,
+          acknowledgement: {
+            operationId: request.operationId,
+            requestDigest: request.requestDigest,
+            existingRequestDigest: prior.requestDigest,
+            status: "conflict" as const,
+            historyMessagesSent: 0,
+          },
         };
       }
       return {
-        ...prior.acknowledgement,
-        status: "replayed" as const,
+        ...prior.outcome,
+        acknowledgement: {
+          ...prior.outcome.acknowledgement,
+          status: "replayed" as const,
+        },
       };
     }
     if (
@@ -397,26 +419,44 @@ function nativeContinuationResponder(
       JSON.stringify(proof.boundary)
     ) {
       return {
-        operationId: request.operationId,
-        requestDigest: request.requestDigest,
-        status: "boundary_mismatch" as const,
-        historyMessagesSent: 0,
-        actualBoundary: proof,
+        acknowledgement: {
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          status: "boundary_mismatch" as const,
+          historyMessagesSent: 0,
+          actualBoundary: proof,
+        },
       };
     }
     counters.nativeContinuations += 1;
-    const acknowledgement: NativeContextContinuationAcknowledgement = {
+    const acknowledgement = {
       operationId: request.operationId,
       requestDigest: request.requestDigest,
-      status: "accepted",
+      status: "accepted" as const,
       historyMessagesSent: 0,
       actualBoundary: proof,
     };
+    const controlRef = {
+      runId: `${request.run.runId}-continued`,
+      provider: request.run.provider,
+      environmentId: request.run.environmentId,
+      sessionId: request.run.sessionId,
+      executionId: `${request.operationId}-execution`,
+    };
+    const outcome = {
+      acknowledgement,
+      result: {
+        text: "continued",
+        success: true,
+        sessionId: request.run.sessionId,
+      },
+      controlRef,
+    } satisfies AgentNativeContextContinuationResult;
     operations.set(request.operationId, {
       requestDigest: request.requestDigest,
-      acknowledgement,
+      outcome,
     });
-    return acknowledgement;
+    return outcome;
   };
 }
 
@@ -863,6 +903,47 @@ describe("capability denial", () => {
         createProvider: () => provider,
       }),
     ).rejects.toThrow(/streaming.detach is disabled/);
+  });
+
+  it("rejects native continuation capability without its session operation", async () => {
+    const provider: AgentEnvironmentProvider = {
+      name: "missing-native-continuation",
+      capabilities: () => ({
+        ...disabledCapabilities(),
+        sessions: { continue: true, list: false, messages: false },
+        nativeContinuation: {
+          atomicBoundary: true,
+          requestIdempotency: true,
+        },
+      }),
+      async create() {
+        return {
+          id: "environment-1",
+          provider: "missing-native-continuation",
+          status: async () => "running",
+          async *stream() {
+            yield { type: "result", data: { finalText: "ok" } };
+          },
+          session: (id) => ({
+            id,
+            status: async () => null,
+            async *events() {},
+            result: async () => ({ text: "ok", success: true }),
+            prompt: async () => ({ text: "ok", success: true }),
+            contextBoundary: async () => null,
+            cancel: async () => {},
+          }),
+          destroy: async () => {},
+        };
+      },
+    };
+
+    await expect(
+      runAgentEnvironmentProviderConformance({
+        name: "missing-native-continuation",
+        createProvider: () => provider,
+      }),
+    ).rejects.toThrow(/requires continueNative/);
   });
 
   it("rejects partial durable-branch operations and still destroys the environment", async () => {
