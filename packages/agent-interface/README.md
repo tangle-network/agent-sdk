@@ -30,7 +30,11 @@ Partial input or output always requires explicit user or policy acceptance, even
 `contextTransferResultMatchesRequest()` checks the operation identifier and request digest for every outcome before a caller accepts, retries, or reports it.
 Its successful receipt repeats the exact destination and carries the provider's session-creation operation and timestamp, identifying the one fresh provider session that admitted the context.
 `NativeContextBoundaryProof` is the separate path for same-session continuation and includes the exact run identity.
-Continuation is valid only when the provider proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.
+`NativeContextContinuationRequest.turnDigest` binds the operation to the exact new JSON-stable user turn; timeout and abort controls live outside that turn under `AgentNativeContextContinuationOptions`.
+Continuation is valid only when the provider atomically proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.
+Providers advertise `nativeContinuation` only when both guarantees are implemented and expose `AgentSession.continueNative()` as the single durable operation.
+An accepted or replayed operation returns its original turn result and exact current control reference; `AgentNativeContextContinuationResultSchema` validates that shape and `agentNativeContextContinuationResultMatchesRequest()` checks its request and retained-session bindings.
+A changed request with the same operation identifier conflicts without dispatch.
 
 Providers that support recoverable workspace copies expose `workspaceBranching` and set `branching.retrySafe`, `branching.lookup`, and `branching.cleanup` together.
 Checkpoint and fork requests bind an idempotency key to a canonical request digest.
@@ -39,7 +43,7 @@ A checkpoint with dependent forks returns `in_use` plus the blocking environment
 The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
 
 All new wire values have exported Zod schemas on the package root.
-Omitting `interactions` or leaving the three durable branching flags false is the compatible declaration for existing providers.
+Omitting `interactions` and `nativeContinuation`, or leaving the three durable branching flags false, is the compatible declaration for existing providers.
 
 ## Install
 

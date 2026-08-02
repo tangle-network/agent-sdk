@@ -775,19 +775,46 @@ export type NativeContextBoundaryProof = z.infer<
 export interface NativeContextContinuationRequest {
   operationId: string;
   requestDigest: Sha256Digest;
+  turnDigest: Sha256Digest;
   run: AgentRunControlRef;
   expectedBoundary: NativeContextBoundaryProof;
 }
 
 export interface NativeContextContinuationRequestMaterial {
+  turnDigest: Sha256Digest;
   run: AgentRunControlRef;
   expectedBoundary: NativeContextBoundaryProof;
+}
+
+/** JSON-stable user turn admitted by a native same-session continuation. */
+export interface NativeContextContinuationTurn {
+  prompt?: string;
+  parts?: InputPart[];
+  model?: string;
+  context?: Record<string, unknown>;
+  providerOptions?: Record<string, unknown>;
+}
+
+export const NativeContextContinuationTurnSchema = z.strictObject({
+  prompt: z.string().optional(),
+  parts: z.array(InputPartSchema).optional(),
+  model: z.string().min(1).optional(),
+  context: jsonRecordSchema.optional(),
+  providerOptions: jsonRecordSchema.optional(),
+}) satisfies z.ZodType<NativeContextContinuationTurn>;
+
+/** Bind retry identity to the exact new user turn, excluding timeout and abort controls. */
+export function nativeContextContinuationTurnDigest(
+  turn: NativeContextContinuationTurn,
+): Sha256Digest {
+  return wireDigest(NativeContextContinuationTurnSchema.parse(turn));
 }
 
 export function nativeContextContinuationRequestDigest(
   request: NativeContextContinuationRequestMaterial,
 ): Sha256Digest {
   return wireDigest({
+    turnDigest: request.turnDigest,
     run: request.run,
     expectedBoundary: request.expectedBoundary,
   });
@@ -797,6 +824,7 @@ export const NativeContextContinuationRequestSchema = z
   .strictObject({
     operationId: idSchema,
     requestDigest: sha256DigestSchema,
+    turnDigest: sha256DigestSchema,
     run: AgentRunControlRefSchema,
     expectedBoundary: NativeContextBoundaryProofSchema,
   })

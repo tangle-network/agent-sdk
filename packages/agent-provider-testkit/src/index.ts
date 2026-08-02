@@ -6,13 +6,19 @@ import type {
   AgentEnvironmentProvider,
   AgentExactProcessEnvironment,
   AgentExactProcessLaunch,
+  AgentNativeContextContinuationOptions,
+  AgentNativeContextContinuationResult,
   AgentSession,
   AgentSessionRef,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
   CreateAgentExactProcessEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCapabilitiesSchema,
+  AgentNativeContextContinuationResultSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+} from "@tangle-network/agent-interface/environment-provider";
 import {
   AgentRunControlRefSchema,
   ContextTransferResultSchema,
@@ -21,7 +27,6 @@ import {
   InteractionRequestSchema,
   InteractionResponseCommandSchema,
   NativeContextBoundaryProofSchema,
-  NativeContextContinuationAcknowledgementSchema,
   NativeContextContinuationRequestSchema,
   PortableContextPlanRequestSchema,
   PortableContextPlanResultSchema,
@@ -35,6 +40,7 @@ import {
   contextTransferResultMatchesRequest,
   nativeContextContinuationAcknowledgementMatches,
   nativeContextContinuationRequestDigest,
+  nativeContextContinuationTurnDigest,
   portableContextPlanResultMatchesRequest,
   validateInteractionResponse,
   workspaceCheckpointResultMatchesRequest,
@@ -52,8 +58,8 @@ import {
   type InteractionResponseCommand,
   type NativeContextBoundary,
   type NativeContextBoundaryProof,
-  type NativeContextContinuationAcknowledgement,
   type NativeContextContinuationRequest,
+  type NativeContextContinuationTurn,
   type PortableContextPlanRequest,
   type PortableContextPlanResult,
   type WorkspaceCheckpointRequest,
@@ -131,12 +137,14 @@ export interface PortableContextConformanceOptions {
   rejectionRequest: PortableContextPlanRequest;
   run: AgentRunControlRef;
   acceptedAt: string;
+  turn: NativeContextContinuationTurn;
   plan(request: PortableContextPlanRequest): Promise<PortableContextPlanResult>;
   transfer(request: ContextTransferRequest): Promise<ContextTransferResult>;
   boundary(run: AgentRunControlRef): Promise<NativeContextBoundaryProof | null>;
   continueNative(
     request: NativeContextContinuationRequest,
-  ): Promise<NativeContextContinuationAcknowledgement>;
+    options: AgentNativeContextContinuationOptions,
+  ): Promise<AgentNativeContextContinuationResult>;
   counters(): PortableContextConformanceCounters | Promise<PortableContextConformanceCounters>;
 }
 
@@ -286,6 +294,26 @@ export async function runAgentEnvironmentProviderConformance(
       );
     }
     checked.push("stream");
+
+    if (capabilities.nativeContinuation !== undefined) {
+      assert(
+        typeof environment.session === "function",
+        "native continuation requires session()",
+        checked,
+      );
+      const session = environment.session(`${options.name}-session`);
+      assert(
+        typeof session.contextBoundary === "function",
+        "native continuation requires contextBoundary()",
+        checked,
+      );
+      assert(
+        typeof session.continueNative === "function",
+        "native continuation capability requires continueNative()",
+        checked,
+      );
+      checked.push("native-continuation-operations");
+    }
 
     if (options.requireDispatch || capabilities.streaming.detach) {
       assert(
@@ -826,6 +854,7 @@ export async function runPortableContextConformance(
     await options.boundary(options.run),
   );
   const continuationMaterial = {
+    turnDigest: nativeContextContinuationTurnDigest(options.turn),
     run: options.run,
     expectedBoundary: proof,
   };
@@ -841,6 +870,7 @@ export async function runPortableContextConformance(
     boundary: differentBoundary(proof.boundary),
   };
   const mismatchMaterial = {
+    turnDigest: continuation.turnDigest,
     run: options.run,
     expectedBoundary: mismatchedBoundary,
   };
@@ -849,9 +879,10 @@ export async function runPortableContextConformance(
     requestDigest: nativeContextContinuationRequestDigest(mismatchMaterial),
     ...mismatchMaterial,
   });
-  const mismatchAck = NativeContextContinuationAcknowledgementSchema.parse(
-    await options.continueNative(mismatch),
+  const mismatchOutcome = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(mismatch, { turn: options.turn }),
   );
+  const mismatchAck = mismatchOutcome.acknowledgement;
   assert(
     mismatchAck.status === "boundary_mismatch" &&
       !nativeContextContinuationAcknowledgementMatches(mismatch, mismatchAck),
@@ -865,17 +896,23 @@ export async function runPortableContextConformance(
   );
   checked.push("continuation-boundary-rejection");
 
-  const continuationAck = NativeContextContinuationAcknowledgementSchema.parse(
-    await options.continueNative(continuation),
+  const continuationOutcome = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(continuation, { turn: options.turn }),
+  );
+  const continuationAck = continuationOutcome.acknowledgement;
+  assert(
+    "result" in continuationOutcome && "controlRef" in continuationOutcome,
+    "accepted native continuation omitted its result or control reference",
+    checked,
   );
   assert(
     continuationAck.status === "accepted" &&
-      nativeContextContinuationAcknowledgementMatches(
+      agentNativeContextContinuationResultMatchesRequest(
         continuation,
-        continuationAck,
+        continuationOutcome,
       ) &&
       continuationAck.historyMessagesSent === 0,
-    "matching native continuation must send no duplicate history",
+    "matching native continuation must return an exact result and current control reference",
     checked,
   );
   assert(
@@ -887,17 +924,27 @@ export async function runPortableContextConformance(
   checked.push("verified-native-continuation");
 
   const afterContinuation = await options.counters();
-  const replayedContinuation =
-    NativeContextContinuationAcknowledgementSchema.parse(
-      await options.continueNative(continuation),
-    );
+  const replayedContinuation = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(continuation, { turn: options.turn }),
+  );
+  const replayedAcknowledgement = replayedContinuation.acknowledgement;
   assert(
-    replayedContinuation.status === "replayed" &&
-      nativeContextContinuationAcknowledgementMatches(
+    "result" in replayedContinuation && "controlRef" in replayedContinuation,
+    "replayed native continuation omitted its result or control reference",
+    checked,
+  );
+  assert(
+    replayedAcknowledgement.status === "replayed" &&
+      agentNativeContextContinuationResultMatchesRequest(
         continuation,
         replayedContinuation,
+      ) &&
+      deepEqual(replayedContinuation.result, continuationOutcome.result) &&
+      deepEqual(
+        replayedContinuation.controlRef,
+        continuationOutcome.controlRef,
       ),
-    "native continuation retry must recover the original operation",
+    "native continuation retry must recover the original result and control reference",
     checked,
   );
   assert(
@@ -905,13 +952,14 @@ export async function runPortableContextConformance(
     "native continuation retry must dispatch nothing",
     checked,
   );
-  const changedProof = {
-    ...proof,
-    observedAt: new Date(Date.parse(proof.observedAt) + 1).toISOString(),
+  const changedTurn = {
+    ...options.turn,
+    prompt: `${options.turn.prompt ?? ""} changed`,
   };
   const changedContinuationMaterial = {
+    turnDigest: nativeContextContinuationTurnDigest(changedTurn),
     run: options.run,
-    expectedBoundary: changedProof,
+    expectedBoundary: proof,
   };
   const changedContinuation = NativeContextContinuationRequestSchema.parse({
     operationId: continuation.operationId,
@@ -920,10 +968,9 @@ export async function runPortableContextConformance(
     ),
     ...changedContinuationMaterial,
   });
-  const continuationConflict =
-    NativeContextContinuationAcknowledgementSchema.parse(
-      await options.continueNative(changedContinuation),
-    );
+  const continuationConflict = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(changedContinuation, { turn: changedTurn }),
+  ).acknowledgement;
   assert(
     continuationConflict.status === "conflict" &&
       continuationConflict.existingRequestDigest ===

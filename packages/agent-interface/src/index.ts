@@ -18,7 +18,12 @@ import type {
   SdkPlanHost,
 } from "./plan.js";
 export type * from "./environment-provider.js";
-export { AgentEnvironmentCapabilitiesSchema } from "./environment-provider.js";
+export {
+  AgentEnvironmentCapabilitiesSchema,
+  AgentNativeContextContinuationResultSchema,
+  AgentTurnResultSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+} from "./environment-provider.js";
 export * from "./plan.js";
 export * from "./runtime-control.js";
 export * from "./portable-context.js";

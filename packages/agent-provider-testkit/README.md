@@ -30,11 +30,12 @@ Run it once against the environment response method and once against the retaine
 `runPortableContextConformance()` requires both a ready request and a distinct `rejectionRequest` with an intentionally impossible token budget.
 It proves planning creates no run or session, results cannot cross request identities, a real over-limit response and digest mismatch dispatch nothing, and one accepted digest returns an exact fresh-session receipt.
 It also proves transfer retry recovers that session, changed-input retry conflicts, a stale native boundary is rejected, a matching native boundary sends no copied history, and native retry creates no duplicate continuation.
+The native operation binds the exact new turn digest, replays the original result and current control reference on retry, and rejects a changed turn under the same operation identifier without dispatch.
 
 `runWorkspaceBranchingConformance()` proves checkpoint and fork retries return the original resources, lookup recovers both results, changed-input key reuse conflicts, checkpoint deletion reports dependent forks without deleting either resource, and repeated ordered cleanup confirms the resources are absent.
 If any later assertion fails after a resource is created, the check cleans up only references first proven to match the original request, recovers lost responses through exact lookup, and reports cleanup failures alongside the original failure.
 
-The base provider check strictly validates capabilities, requires disabled optional operations to be absent, rejects partial durable-branch declarations, and destroys created environments even when a check fails.
+The base provider check strictly validates capabilities, requires disabled optional operations to be absent, requires native continuation claims to expose both session operations, rejects partial durable-branch declarations, and destroys created environments even when a check fails.
 If both the check and environment destruction fail, it reports both errors.
 
 `runAgentExactProcessProviderLifecycleChecks()` checks idempotent create and collision rejection, bounded exact-byte file round trips, terminal reasons, output replay, recovery, lookup, and deletion.
