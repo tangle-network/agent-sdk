@@ -1,5 +1,26 @@
 # @tangle-network/agent-interface
 
+## 0.41.0
+
+### Minor Changes
+
+- 7011e7e: Add provider-neutral durable run references, strictly validated capabilities and replayable event envelopes, scope-bound interaction acknowledgements, request-bound portable context transfer with enforced token limits and provider-confirmed fresh sessions, retry-safe native continuation, and recoverable workspace branching contracts.
+  Keep the original SDK adapter interaction method source-compatible and add a separate durable command method.
+
+  Add reusable conformance checks for detached competing-run isolation, every interaction acknowledgement outcome, real over-limit planning, cross-request rejection, context receipts, retry conflicts, continuation boundaries, workspace operation recovery, dependency-ordered cleanup, absent disabled operations, and combined operation/cleanup failures.
+
+  Add exact session and immutable execution control references to detached and reconstructed Tangle sessions, bind result, replay, and cancel to that exact execution, validate capability and Sandbox result data, omit disabled methods, adapt inclusive Sandbox replay to exclusive cursors, reject unproven or mismatched receipts without advancing local state, and fail explicitly for unsupported context inputs.
+  Pack and test the Tangle provider together with the interface, testkit, and public Sandbox 0.17.0 dependency.
+
+- 32acb32: Add `forge` and `cursor` to `HarnessType` / `harnessTypeSchema`.
+
+  Both ship full provider adapters downstream (`sdk-provider-forge`,
+  `sdk-provider-cursor`), but were absent from the canonical enum, which forced
+  agent-dev-container and agent-app to maintain divergent copies of the harness
+  taxonomy. They are multi-provider CLI runners with no vendor lock, so they carry
+  no entry in the capability tables and resolve as router-backed — matching the
+  behavior downstream already relied on.
+
 ## 0.40.0
 
 ### Minor Changes
