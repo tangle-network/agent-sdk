@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   AgentProfile,
   AgentProfileCapabilities,
@@ -5,6 +6,47 @@ import type {
 } from "./agent-profile.js";
 import type { AgentCandidateTermination } from "./agent-candidate.js";
 import type { InputPart, StreamEvent, TokenUsage } from "./index.js";
+import {
+  InteractionCapabilitiesSchema,
+  type InteractionAcknowledgement,
+  type InteractionCapabilities,
+  type InteractionResponseCommand,
+} from "./interaction.js";
+/*
+ * Keep the provider contract runtime-validatable. Provider capability data is
+ * commonly read from a remote service or adapter configuration, so its static
+ * TypeScript type is not a trust boundary.
+ */
+const AgentProfileCapabilitiesSchema = z.strictObject({
+  namedProfiles: z.boolean(),
+  systemPrompt: z.boolean(),
+  instructions: z.boolean(),
+  tools: z.boolean(),
+  permissions: z.boolean(),
+  mcp: z.boolean(),
+  subagents: z.boolean(),
+  resources: z.strictObject({
+    files: z.boolean(),
+    instructions: z.boolean(),
+    tools: z.boolean().optional(),
+    skills: z.boolean().optional(),
+    agents: z.boolean().optional(),
+    commands: z.boolean().optional(),
+  }),
+  hooks: z.boolean().optional(),
+  modes: z.boolean().optional(),
+  runtimeUpdate: z.boolean(),
+  validation: z.boolean(),
+  extensions: z.array(z.string().min(1)).optional(),
+}) satisfies z.ZodType<AgentProfileCapabilities>;
+import type {
+  ContextTransferReceipt,
+  ContextTransferRequest,
+  NativeContextBoundaryProof,
+  NativeContextContinuationRequest,
+} from "./portable-context.js";
+import type { AgentRunControlRef } from "./runtime-control.js";
+import type { AgentWorkspaceBranching } from "./workspace-branching.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
 export type AgentProfileRef = AgentProfile | string;
@@ -240,6 +282,12 @@ export interface AgentTurnInput {
   lastEventId?: string;
   turnId?: string;
   detach?: boolean;
+  /** Stable coordinates for a retained run when one already exists. */
+  controlRef?: AgentRunControlRef;
+  /** Approved portable history for a fresh provider session. */
+  contextTransfer?: ContextTransferRequest;
+  /** Verified same-session continuation; never carries duplicate history. */
+  nativeContinuation?: NativeContextContinuationRequest;
   context?: Record<string, unknown>;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;
@@ -253,11 +301,14 @@ export interface AgentTurnResult {
   usage?: TokenUsage;
   metadata?: Record<string, unknown>;
   events?: AgentEnvironmentEvent[];
+  contextTransferReceipt?: ContextTransferReceipt;
 }
 
 export interface AgentSessionRef {
   id: string;
   provider?: string;
+  controlRef?: AgentRunControlRef;
+  contextTransferReceipt?: ContextTransferReceipt;
   metadata?: Record<string, unknown>;
 }
 
@@ -272,13 +323,24 @@ export interface AgentEnvironmentEvent {
 
 export interface AgentSession {
   readonly id: string;
+  readonly controlRef?: AgentRunControlRef;
   status(): Promise<AgentSessionStatus | null>;
   events(options?: {
+    /** Exclusive stable event id previously emitted by this session. */
     since?: string;
+    /** Provider execution selected by the durable control reference, when required. */
+    executionId?: string;
     signal?: AbortSignal;
   }): AsyncIterable<AgentEnvironmentEvent>;
   result(): Promise<AgentTurnResult>;
   prompt(input: AgentTurnInput): Promise<AgentTurnResult>;
+  respondToInteraction?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<InteractionAcknowledgement>;
+  contextBoundary?(options?: {
+    signal?: AbortSignal;
+  }): Promise<NativeContextBoundaryProof | null>;
   cancel(): Promise<void>;
 }
 
@@ -289,7 +351,14 @@ export interface AgentEnvironment {
   status(): Promise<AgentEnvironmentStatus>;
   stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent>;
   dispatch?(input: AgentTurnInput): Promise<AgentSessionRef>;
-  session?(id: string): AgentSession;
+  session?(
+    id: string,
+    options?: { controlRef?: AgentRunControlRef },
+  ): AgentSession;
+  respondToInteraction?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<InteractionAcknowledgement>;
   read?(path: string, options?: { sessionId?: string }): Promise<string>;
   write?(
     path: string,
@@ -302,6 +371,8 @@ export interface AgentEnvironment {
     checkpoint: CheckpointRef,
     options?: ForkRequest,
   ): Promise<AgentEnvironment>;
+  /** Durable, retry-safe checkpoint and environment-fork operations. */
+  readonly workspaceBranching?: AgentWorkspaceBranching;
   placement?(): Promise<PlacementInfo>;
   refresh?(): Promise<void>;
   destroy?(): Promise<void>;
@@ -320,6 +391,8 @@ export interface AgentEnvironmentCapabilities {
     list: boolean;
     messages: boolean;
   };
+  /** Absent when the provider cannot originate or answer interactions. */
+  interactions?: InteractionCapabilities;
   workspace: {
     read: boolean;
     write: boolean;
@@ -331,6 +404,12 @@ export interface AgentEnvironmentCapabilities {
   branching: {
     checkpoint: boolean;
     fork: boolean;
+    /** True only when key + canonical request digest semantics are implemented. */
+    retrySafe?: boolean;
+    /** True only when operations can be recovered by idempotency key. */
+    lookup?: boolean;
+    /** True only when checkpoints and forked environments have confirmed cleanup. */
+    cleanup?: boolean;
   };
   placement: boolean;
   usage: boolean;
@@ -340,6 +419,83 @@ export interface AgentEnvironmentCapabilities {
     egress: readonly AgentExactProcessEgressMode[];
   };
 }
+
+/** Strict runtime validator for provider capability negotiation. */
+export const AgentEnvironmentCapabilitiesSchema = z
+  .strictObject({
+    profile: AgentProfileCapabilitiesSchema,
+    streaming: z.strictObject({
+      live: z.boolean(),
+      replay: z.boolean(),
+      detach: z.boolean(),
+      turnIdempotency: z.boolean(),
+    }),
+    sessions: z.strictObject({
+      continue: z.boolean(),
+      list: z.boolean(),
+      messages: z.boolean(),
+    }),
+    interactions: InteractionCapabilitiesSchema.optional(),
+    workspace: z.strictObject({
+      read: z.boolean(),
+      write: z.boolean(),
+      exec: z.boolean(),
+      git: z.boolean(),
+      upload: z.boolean(),
+      download: z.boolean(),
+    }),
+    branching: z.strictObject({
+      checkpoint: z.boolean(),
+      fork: z.boolean(),
+      retrySafe: z.boolean().optional(),
+      lookup: z.boolean().optional(),
+      cleanup: z.boolean().optional(),
+    }),
+    placement: z.boolean(),
+    usage: z.boolean(),
+    confidential: z.boolean(),
+    exactProcess: z
+      .strictObject({
+        egress: z.array(z.enum(["blocked", "strict"])).min(1),
+      })
+      .optional(),
+  })
+  .superRefine((capabilities, refinement) => {
+    const durableBranching = [
+      capabilities.branching.retrySafe ?? false,
+      capabilities.branching.lookup ?? false,
+      capabilities.branching.cleanup ?? false,
+    ];
+    if (
+      durableBranching.some(Boolean) &&
+      (!durableBranching.every(Boolean) ||
+        !capabilities.branching.checkpoint ||
+        !capabilities.branching.fork)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["branching"],
+        message:
+          "retry-safe branching requires checkpoint, fork, lookup, and cleanup together",
+      });
+    }
+    const egress = capabilities.exactProcess?.egress;
+    if (egress && new Set(egress).size !== egress.length) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["exactProcess", "egress"],
+        message: "exact process egress modes must be unique",
+      });
+    }
+    const extensions = capabilities.profile.extensions;
+    if (extensions && new Set(extensions).size !== extensions.length) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["profile", "extensions"],
+        message: "profile extension namespaces must be unique",
+      });
+    }
+  }) satisfies z.ZodType<AgentEnvironmentCapabilities>;
 
 export interface CreateAgentEnvironmentInput {
   profile: AgentProfileRef;

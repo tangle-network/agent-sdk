@@ -31,6 +31,7 @@ jobs:
           test "$(npm --version)" = "11.18.0"
       - run: pnpm -r build
       - run: pnpm check:package-artifacts
+      - run: pnpm check:control-artifacts
       - uses: changesets/action@v1
         with:
           version: pnpm changeset:version

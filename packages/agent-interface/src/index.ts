@@ -5,7 +5,12 @@
  * This package defines the contract between the sidecar and provider implementations.
  */
 
-import type { InteractionRequest, InteractionResponse } from "./interaction.js";
+import type {
+  InteractionAcknowledgement,
+  InteractionRequest,
+  InteractionResponse,
+  InteractionResponseCommand,
+} from "./interaction.js";
 import type {
   AgentExecutionOutcome,
   DurablePlan,
@@ -13,7 +18,11 @@ import type {
   SdkPlanHost,
 } from "./plan.js";
 export type * from "./environment-provider.js";
+export { AgentEnvironmentCapabilitiesSchema } from "./environment-provider.js";
 export * from "./plan.js";
+export * from "./runtime-control.js";
+export * from "./portable-context.js";
+export * from "./workspace-branching.js";
 
 // Capabilities describe what a provider supports
 export type BackendCapabilities = {
@@ -815,10 +824,17 @@ export interface SdkProviderAdapter {
   downloadArtifact?(sessionId: string, path: string): Promise<Uint8Array>;
   /**
    * Respond to an outstanding interaction (question, permission, …). The
-   * generalized inbound channel; the adapter translates the response into the
-   * provider's native control call to unblock the agent.
+   * original best-effort inbound channel. Kept source-compatible for existing
+   * adapters; durable callers should use `respondToInteractionCommand`.
    */
   respondToInteraction?(response: InteractionResponse): Promise<void>;
+  /**
+   * Retry-safe interaction response bound to an exact run and caller operation.
+   */
+  respondToInteractionCommand?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<InteractionAcknowledgement>;
 }
 export * from "./interaction.js";
 export * from "./agent-candidate.js";
