@@ -5,6 +5,42 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+## Durable runs, interactions, and context
+
+`AgentRunControlRef` identifies a retained run without depending on a live JavaScript object.
+`RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
+
+An environment advertises `interactions` only when it can originate and answer typed requests.
+`AgentEnvironmentCapabilitiesSchema` strictly validates the complete capability document at runtime, including all-or-nothing durable branching declarations.
+Optional provider methods must be absent when their capability is false so clients cannot expose an action the provider has denied.
+The capability names supported request kinds, answer field types, response scopes, secret answers, concurrency, replay, and response idempotency.
+`AgentEnvironment.respondToInteraction()` and `AgentSession.respondToInteraction()` bind each response to its run, environment, optional provider session, interaction, and caller operation identifier.
+Their acknowledgement distinguishes acceptance, exact prior resolution, conflicting prior resolution, expiry, cancellation, unknown interaction, unknown run, binding mismatch, and transport failure.
+Acknowledgements deliberately contain no answer value or answer hash because both can disclose low-entropy secret answers.
+Response data is accepted only after `validateInteractionResponse()` checks it against the exact outstanding request, rejects undeclared fields, and enforces the request's permission scopes.
+An omitted permission scope permits only a one-time response; session and persistent grants must be explicit.
+The legacy `SdkProviderAdapter.respondToInteraction(response)` remains source-compatible, while new adapters use `respondToInteractionCommand(command)` for exact binding and durable acknowledgement.
+
+Portable conversation transfer reuses `BackendMessage` and `InputPart` rather than defining another message format.
+Planning is represented separately from execution: a plan embeds the immutable source, lists every message and part decision, names the destination runner, contains the exact derived context, and carries a canonical digest.
+Every plan request has a canonical request digest, and every ready, over-limit, or unsupported result repeats the request identifier and digest.
+`portableContextPlanResultMatchesRequest()` verifies that the result belongs to the exact request, the returned source and destination match, and a ready plan stays within its requested token limit.
+Partial input or output always requires explicit user or policy acceptance, even when no individual message was transformed.
+`ContextTransferRequest` binds an operation identifier to that accepted plan, while `ContextTransferResult` distinguishes first admission, exact replay, changed-input conflict, and unknown transport outcome.
+`contextTransferResultMatchesRequest()` checks the operation identifier and request digest for every outcome before a caller accepts, retries, or reports it.
+Its successful receipt repeats the exact destination and carries the provider's session-creation operation and timestamp, identifying the one fresh provider session that admitted the context.
+`NativeContextBoundaryProof` is the separate path for same-session continuation and includes the exact run identity.
+Continuation is valid only when the provider proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.
+
+Providers that support recoverable workspace copies expose `workspaceBranching` and set `branching.retrySafe`, `branching.lookup`, and `branching.cleanup` together.
+Checkpoint and fork requests bind an idempotency key to a canonical request digest.
+Every returned resource repeats and validates that identity, lookups recover remote success after caller restart, changed-input key reuse returns a conflict, and cleanup binds its acknowledgement to the exact provider and target.
+A checkpoint with dependent forks returns `in_use` plus the blocking environment identifiers and remains recoverable until those forks are destroyed.
+The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
+
+All new wire values have exported Zod schemas on the package root.
+Omitting `interactions` or leaving the three durable branching flags false is the compatible declaration for existing providers.
+
 ## Install
 
 ```bash

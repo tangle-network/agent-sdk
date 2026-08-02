@@ -37,11 +37,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check-types": "tsc --noEmit",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run"
+    "test": "vitest run src"
   },
   "dependencies": {
     "@tangle-network/agent-interface": "0.40.0"
