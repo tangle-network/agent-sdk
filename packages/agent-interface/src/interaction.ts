@@ -41,6 +41,8 @@ export const InteractionFieldSchema = z
       type: z.literal("text"),
       multiline: z.boolean().optional(),
       placeholder: z.string().optional(),
+      /** Maximum answer length chosen by the request author. Omission means no contract limit. */
+      maxLength: z.number().int().positive().optional(),
       default: z.string().optional(),
     }),
     z.strictObject({
@@ -82,9 +84,24 @@ export const InteractionFieldSchema = z
       ...FieldBase,
       type: z.literal("secret"),
       placeholder: z.string().optional(),
+      /** Maximum answer length chosen by the request author. Omission means no contract limit. */
+      maxLength: z.number().int().positive().optional(),
     }),
   ])
   .superRefine((field, context) => {
+    if (
+      field.type === "text" &&
+      field.default !== undefined &&
+      field.maxLength !== undefined &&
+      field.default.length > field.maxLength
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["default"],
+        message: "text field default exceeds maxLength",
+      });
+      return;
+    }
     if (field.type === "number") {
       if (
         field.min !== undefined &&
@@ -577,9 +594,14 @@ export function validateInteractionAnswer(
     }
     switch (field.type) {
       case "text":
-      case "secret":
-        if (typeof v !== "string") errors.push(`field "${field.name}" must be a string`);
+      case "secret": {
+        if (typeof v !== "string") {
+          errors.push(`field "${field.name}" must be a string`);
+        } else if (field.maxLength !== undefined && v.length > field.maxLength) {
+          errors.push(`field "${field.name}" exceeds maxLength ${field.maxLength}`);
+        }
         break;
+      }
       case "number":
         if (typeof v !== "number" || !Number.isFinite(v)) {
           errors.push(`field "${field.name}" must be a finite number`);
