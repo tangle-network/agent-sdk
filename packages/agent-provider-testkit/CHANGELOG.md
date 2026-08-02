@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [f681bb0]
+  - @tangle-network/agent-interface@0.42.1
+
 ## 0.5.0
 
 ### Minor Changes
