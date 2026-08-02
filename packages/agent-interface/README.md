@@ -7,7 +7,7 @@ shapes; higher-level packages import from here rather than redefining them.
 
 ## Durable runs, interactions, and context
 
-`AgentRunControlRef` identifies a retained run without depending on a live JavaScript object.
+`AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
 `RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
 Providers advertise `retainedControl` only when exact run, result, event, cancellation, replay, detach, turn, and session identity are all implemented together.
 `AgentSession.cancelRun()` accepts a canonical request digest bound to one operation and `AgentRunControlRef`, so a caller can safely repeat the same cancellation after losing the first acknowledgement.

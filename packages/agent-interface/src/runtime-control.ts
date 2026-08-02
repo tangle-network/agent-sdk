@@ -21,6 +21,8 @@ export interface AgentRunControlRef {
   environmentId: string;
   sessionId?: string;
   executionId?: string;
+  /** Provider admission digest for detecting changed-input run reuse. */
+  requestDigest?: Sha256Digest;
 }
 
 export const AgentRunControlRefSchema = z.strictObject({
@@ -29,6 +31,7 @@ export const AgentRunControlRefSchema = z.strictObject({
   environmentId: stableIdSchema,
   sessionId: stableIdSchema.optional(),
   executionId: stableIdSchema.optional(),
+  requestDigest: sha256DigestSchema.optional(),
 }) satisfies z.ZodType<AgentRunControlRef>;
 
 export type AgentRunCancellationEffect =

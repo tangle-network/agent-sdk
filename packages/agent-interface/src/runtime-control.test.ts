@@ -17,6 +17,7 @@ describe("durable run control", () => {
       environmentId: "local-1",
       sessionId: "session-1",
       executionId: "execution-1",
+      requestDigest: `sha256:${"a".repeat(64)}`,
     };
     expect(AgentRunControlRefSchema.parse(reference)).toEqual(reference);
     expect(() =>
