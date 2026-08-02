@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { StreamEvent } from "./index.js";
+import {
+  canonicalCandidateDigest,
+  sha256DigestSchema,
+} from "./agent-candidate-schema-common.js";
+import type { Sha256Digest } from "./agent-candidate.js";
 import { InteractionRequestSchema } from "./interaction.js";
 import { DurablePlanSchema } from "./plan.js";
 
@@ -16,6 +21,8 @@ export interface AgentRunControlRef {
   environmentId: string;
   sessionId?: string;
   executionId?: string;
+  /** Provider admission digest for detecting changed-input run reuse. */
+  requestDigest?: Sha256Digest;
 }
 
 export const AgentRunControlRefSchema = z.strictObject({
@@ -24,7 +31,102 @@ export const AgentRunControlRefSchema = z.strictObject({
   environmentId: stableIdSchema,
   sessionId: stableIdSchema.optional(),
   executionId: stableIdSchema.optional(),
+  requestDigest: sha256DigestSchema.optional(),
 }) satisfies z.ZodType<AgentRunControlRef>;
+
+export type AgentRunCancellationEffect =
+  | "cancel_requested"
+  | "cancelled"
+  | "not_live"
+  | "unknown";
+
+export interface AgentRunCancellationRequestMaterial {
+  operationId: string;
+  run: AgentRunControlRef;
+  reason?: string;
+}
+
+export interface AgentRunCancellationRequest
+  extends AgentRunCancellationRequestMaterial {
+  requestDigest: Sha256Digest;
+}
+
+export function agentRunCancellationRequestDigest(
+  request: AgentRunCancellationRequestMaterial,
+): Sha256Digest {
+  return canonicalCandidateDigest({
+    operationId: request.operationId,
+    run: AgentRunControlRefSchema.parse(request.run),
+    ...(request.reason === undefined ? {} : { reason: request.reason }),
+  });
+}
+
+export const AgentRunCancellationRequestSchema = z
+  .strictObject({
+    operationId: stableIdSchema,
+    requestDigest: sha256DigestSchema,
+    run: AgentRunControlRefSchema,
+    reason: z.string().min(1).max(2_048).optional(),
+  })
+  .superRefine((request, refinement) => {
+    if (request.requestDigest !== agentRunCancellationRequestDigest(request)) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["requestDigest"],
+        message: "run cancellation request digest does not match its content",
+      });
+    }
+  }) satisfies z.ZodType<AgentRunCancellationRequest>;
+
+export interface AgentRunCancellationAcknowledgement {
+  operationId: string;
+  requestDigest: Sha256Digest;
+  run: AgentRunControlRef;
+  status: "accepted" | "replayed" | "conflict" | "unknown";
+  effect: AgentRunCancellationEffect;
+  message?: string;
+  retryable?: boolean;
+}
+
+export const AgentRunCancellationAcknowledgementSchema = z
+  .strictObject({
+    operationId: stableIdSchema,
+    requestDigest: sha256DigestSchema,
+    run: AgentRunControlRefSchema,
+    status: z.enum(["accepted", "replayed", "conflict", "unknown"]),
+    effect: z.enum(["cancel_requested", "cancelled", "not_live", "unknown"]),
+    message: z.string().min(1).optional(),
+    retryable: z.boolean().optional(),
+  })
+  .superRefine((acknowledgement, refinement) => {
+    const known = acknowledgement.effect !== "unknown";
+    if (
+      ((acknowledgement.status === "accepted" || acknowledgement.status === "replayed") && !known) ||
+      ((acknowledgement.status === "conflict" || acknowledgement.status === "unknown") && known)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["effect"],
+        message: "cancellation status and effect certainty do not agree",
+      });
+    }
+  }) satisfies z.ZodType<AgentRunCancellationAcknowledgement>;
+
+export function agentRunCancellationAcknowledgementMatchesRequest(
+  request: AgentRunCancellationRequest,
+  acknowledgement: AgentRunCancellationAcknowledgement,
+): boolean {
+  const exactRequest = AgentRunCancellationRequestSchema.safeParse(request);
+  const exactAcknowledgement =
+    AgentRunCancellationAcknowledgementSchema.safeParse(acknowledgement);
+  if (!exactRequest.success || !exactAcknowledgement.success) return false;
+  return (
+    exactAcknowledgement.data.operationId === exactRequest.data.operationId &&
+    exactAcknowledgement.data.requestDigest === exactRequest.data.requestDigest &&
+    canonicalCandidateDigest(exactAcknowledgement.data.run) ===
+      canonicalCandidateDigest(exactRequest.data.run)
+  );
+}
 
 const unknownRecordSchema = z.record(z.string(), z.unknown());
 const partBase = {

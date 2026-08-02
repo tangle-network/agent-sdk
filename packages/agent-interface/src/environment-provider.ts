@@ -52,6 +52,8 @@ import {
   type NativeContextContinuationTurn,
 } from "./portable-context.js";
 import {
+  type AgentRunCancellationAcknowledgement,
+  type AgentRunCancellationRequest,
   AgentRunControlRefSchema,
   CanonicalStreamEventSchema,
   type AgentRunControlRef,
@@ -489,6 +491,11 @@ export interface AgentSession {
     request: NativeContextContinuationRequest,
     options: AgentNativeContextContinuationOptions,
   ): Promise<AgentNativeContextContinuationResult>;
+  /** Retry-safe cancellation bound to one exact run and caller operation. */
+  cancelRun?(
+    request: AgentRunCancellationRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentRunCancellationAcknowledgement>;
   cancel(): Promise<void>;
 }
 
@@ -538,6 +545,13 @@ export interface AgentEnvironmentCapabilities {
     continue: boolean;
     list: boolean;
     messages: boolean;
+  };
+  /** Present only when every retained-run identity and retry promise is implemented. */
+  retainedControl?: {
+    exactRunIdentity: boolean;
+    resultIdentity: boolean;
+    eventIdentity: boolean;
+    cancellationIdempotency: boolean;
   };
   /** Absent when verified, retry-safe same-session continuation is unsupported. */
   nativeContinuation?: {
@@ -590,6 +604,14 @@ export const AgentEnvironmentCapabilitiesSchema = z
       list: z.boolean(),
       messages: z.boolean(),
     }),
+    retainedControl: z
+      .strictObject({
+        exactRunIdentity: z.boolean(),
+        resultIdentity: z.boolean(),
+        eventIdentity: z.boolean(),
+        cancellationIdempotency: z.boolean(),
+      })
+      .optional(),
     nativeContinuation: z
       .strictObject({
         atomicBoundary: z.boolean(),
@@ -622,6 +644,24 @@ export const AgentEnvironmentCapabilitiesSchema = z
       .optional(),
   })
   .superRefine((capabilities, refinement) => {
+    if (
+      capabilities.retainedControl !== undefined &&
+      (!capabilities.retainedControl.exactRunIdentity ||
+        !capabilities.retainedControl.resultIdentity ||
+        !capabilities.retainedControl.eventIdentity ||
+        !capabilities.retainedControl.cancellationIdempotency ||
+        !capabilities.streaming.replay ||
+        !capabilities.streaming.detach ||
+        !capabilities.streaming.turnIdempotency ||
+        !capabilities.sessions.continue)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["retainedControl"],
+        message:
+          "retained control requires exact run, result, event, cancellation, replay, detach, turn, and session identity together",
+      });
+    }
     if (
       capabilities.nativeContinuation !== undefined &&
       (!capabilities.nativeContinuation.atomicBoundary ||
