@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.43.0
+
+### Minor Changes
+
+- 7000e82: Define explicit retained-run capability proof and digest-bound, retry-safe cancellation requests and acknowledgements.
+
 ## 0.42.1
 
 ### Patch Changes
