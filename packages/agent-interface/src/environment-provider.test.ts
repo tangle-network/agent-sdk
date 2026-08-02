@@ -100,6 +100,34 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     ).toThrow(/requires session continuation/);
   });
 
+  it("advertises retained run control only with every identity guarantee", () => {
+    const retainedControl = {
+      exactRunIdentity: true,
+      resultIdentity: true,
+      eventIdentity: true,
+      cancellationIdempotency: true,
+    };
+    expect(
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        retainedControl,
+      }),
+    ).toMatchObject({ retainedControl });
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        retainedControl: { ...retainedControl, resultIdentity: false },
+      }),
+    ).toThrow(/retained control requires exact run/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        streaming: { ...capabilities.streaming, detach: false },
+        retainedControl,
+      }),
+    ).toThrow(/retained control requires exact run/);
+  });
+
   it("rejects duplicate open capability values", () => {
     expect(() =>
       AgentEnvironmentCapabilitiesSchema.parse({

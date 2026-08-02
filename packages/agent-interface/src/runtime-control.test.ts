@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentRunCancellationAcknowledgementSchema,
+  AgentRunCancellationRequestSchema,
   AgentRunControlRefSchema,
   CanonicalStreamEventSchema,
   RuntimeEventEnvelopeSchema,
+  agentRunCancellationAcknowledgementMatchesRequest,
+  agentRunCancellationRequestDigest,
 } from "./runtime-control.js";
 
 describe("durable run control", () => {
@@ -18,6 +22,44 @@ describe("durable run control", () => {
     expect(() =>
       AgentRunControlRefSchema.parse({ ...reference, provider: " cli-bridge" }),
     ).toThrow(/outer whitespace/);
+  });
+
+  it("binds a retry-safe cancellation to one exact run and request digest", () => {
+    const material = {
+      operationId: "cancel-1",
+      run: {
+        runId: "run-1",
+        provider: "cli-bridge",
+        environmentId: "local-1",
+        sessionId: "session-1",
+        executionId: "execution-1",
+      },
+      reason: "user requested stop",
+    };
+    const request = AgentRunCancellationRequestSchema.parse({
+      ...material,
+      requestDigest: agentRunCancellationRequestDigest(material),
+    });
+    const acknowledgement = AgentRunCancellationAcknowledgementSchema.parse({
+      operationId: request.operationId,
+      requestDigest: request.requestDigest,
+      run: request.run,
+      status: "accepted",
+      effect: "cancel_requested",
+    });
+    expect(
+      agentRunCancellationAcknowledgementMatchesRequest(request, acknowledgement),
+    ).toBe(true);
+    expect(() =>
+      AgentRunCancellationRequestSchema.parse({ ...request, reason: "changed" }),
+    ).toThrow(/digest/);
+    expect(() =>
+      AgentRunCancellationAcknowledgementSchema.parse({
+        ...acknowledgement,
+        status: "accepted",
+        effect: "unknown",
+      }),
+    ).toThrow(/certainty/);
   });
 });
 
