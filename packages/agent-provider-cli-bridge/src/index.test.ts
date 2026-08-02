@@ -1,7 +1,16 @@
 import { createServer } from "node:http";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
-import { createCliBridgeProvider } from "./index.js";
+import {
+  createCliBridgeProvider as createProvider,
+  defaultCliBridgeCapabilities,
+} from "./index.js";
+
+const createCliBridgeProvider = (options: Parameters<typeof createProvider>[0]) =>
+  createProvider({
+    ...options,
+    capabilities: options.capabilities ?? defaultCliBridgeCapabilities(),
+  });
 
 describe("createCliBridgeProvider", () => {
   it("streams canonical text, tool, usage, and result events", async () => {
@@ -346,7 +355,7 @@ describe("createCliBridgeProvider", () => {
         run_id: "run-2",
       }),
     ]);
-    expect(provider.capabilities()).toMatchObject({ streaming: { replay: true } });
+    expect(await provider.capabilities()).toMatchObject({ streaming: { replay: false } });
   });
 
   it("waits through a 202 cancellation when a caller stops reading", async () => {
