@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.42.1
+
+### Patch Changes
+
+- f681bb0: Add caller-defined maximum lengths to text and secret interaction fields and enforce them when validating answers.
+
 ## 0.42.0
 
 ### Minor Changes
