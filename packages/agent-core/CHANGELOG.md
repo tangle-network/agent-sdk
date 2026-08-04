@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.4.34
+
+### Patch Changes
+
+- 2385d13: Allow callers to cancel retry backoff through `RetryConfig.signal` so an aborted operation never waits for or starts another attempt.
+
 ## 0.4.33
 
 ### Patch Changes
