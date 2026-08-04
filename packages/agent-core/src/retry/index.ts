@@ -67,6 +67,7 @@ export async function withRetry<T>(
     try {
       return await fn(attempt);
     } catch (error) {
+      config.signal?.throwIfAborted();
       lastError = SDKError.fromError(error);
 
       // Check if we should retry

@@ -246,6 +246,20 @@ describe("withRetry", () => {
     await expect(resultPromise).rejects.toBe(reason);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("should preserve cancellation that occurs during an active attempt", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller stopped the active attempt");
+    const fn = vi.fn().mockImplementation(async () => {
+      controller.abort(reason);
+      throw new DOMException("aborted", "AbortError");
+    });
+
+    await expect(withRetry(fn, { signal: controller.signal })).rejects.toBe(
+      reason,
+    );
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("generateIdempotencyKey", () => {
