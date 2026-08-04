@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import type { AgentProfile } from "./agent-profile.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import type { HarnessType } from "./harness.js";
@@ -14,7 +15,7 @@ describe("AgentProfile.harness (optional overridable preference)", () => {
     expect(parsed.harness).toBe("codex");
   });
 
-  it("is optional — a profile without harness still parses (harness-agnostic identity)", () => {
+  it("is optional — a profile without a preference still parses", () => {
     const parsed = agentProfileSchema.parse({ name: "w" });
     expect(parsed.harness).toBeUndefined();
   });
@@ -26,12 +27,15 @@ describe("AgentProfile.harness (optional overridable preference)", () => {
     expect(() => agentProfileSchema.parse({ harness: "kimi" })).toThrow();
   });
 
-  it("does not constrain identity — the same profile is valid with any harness swapped in", () => {
+  it("accepts every known runner while binding each preference into authored identity", () => {
     const base: AgentProfile = { name: "w", prompt: { systemPrompt: "do the task" } };
+    const digests = [];
     for (const harness of ["claude-code", "opencode", "pi", "cli-base"] as const) {
       const parsed = agentProfileSchema.parse({ ...base, harness });
       expect(parsed.harness).toBe(harness);
       expect(parsed.prompt).toEqual(base.prompt);
+      digests.push(canonicalAgentProfileDigest(parsed));
     }
+    expect(new Set(digests)).toHaveLength(4);
   });
 });

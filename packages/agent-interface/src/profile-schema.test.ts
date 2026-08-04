@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   REASONING_EFFORTS,
+  type AgentProfile,
   type AgentProfileMcpServer,
 } from "./agent-profile.js";
+import { harnessTypeSchema } from "./harness.js";
 import { validateAgentProfileSecurity } from "./profile-security.js";
 import {
   agentProfileDiffSchema,
+  agentProfileJsonSchema,
   agentProfileSchema,
   capabilitySchema,
   reasoningEffortSchema,
@@ -363,6 +367,180 @@ describe("agentProfileSchema", () => {
     for (const profile of invalidProfiles) {
       expect(agentProfileSchema.safeParse(profile).success).toBe(false);
     }
+  });
+});
+
+describe("agentProfileJsonSchema", () => {
+  it("describes the complete authored profile without encoded record-key constraints", () => {
+    const properties = agentProfileJsonSchema.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+
+    expect(properties.prompt).toMatchObject({
+      type: "object",
+      properties: {
+        systemPrompt: { type: "string" },
+        instructions: { type: "array", items: { type: "string" } },
+      },
+    });
+    expect(properties.model).toMatchObject({
+      type: "object",
+      properties: {
+        default: { type: "string" },
+        provider: { type: "string" },
+      },
+    });
+    expect(properties.harness).toEqual({
+      type: "string",
+      enum: harnessTypeSchema.options,
+    });
+    expect(properties.extensions).toMatchObject({
+      type: "object",
+      additionalProperties: {
+        anyOf: [{ type: "object", additionalProperties: {} }, {}],
+      },
+    });
+    expect(properties.tools).toMatchObject({
+      type: "object",
+      additionalProperties: { type: "boolean" },
+    });
+    expect(properties.permissions).toMatchObject({
+      type: "object",
+      additionalProperties: {
+        anyOf: [
+          { type: "string", enum: ["allow", "deny", "ask"] },
+          {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              enum: ["allow", "deny", "ask"],
+            },
+          },
+        ],
+      },
+    });
+
+    const serialized = JSON.stringify(agentProfileJsonSchema);
+    expect(serialized).not.toContain("^u(?:[0-9a-f]{4})*$");
+    expect(serialized).not.toContain('"propertyNames"');
+    expect(serialized).not.toContain('"$schema"');
+  });
+
+  it("admits one ordinary complete profile through both published contracts", () => {
+    const profile: AgentProfile = {
+      name: "research-worker",
+      description: "Investigate one question and preserve evidence.",
+      version: "1.0.0",
+      tags: ["research", "technical"],
+      prompt: {
+        systemPrompt: "Investigate the supplied task.",
+        instructions: ["Record evidence.", "State uncertainty."],
+      },
+      model: {
+        default: "router/frontier",
+        small: "router/fast",
+        provider: "router",
+        reasoningEffort: "high",
+        metadata: { routing: { latencyClass: "interactive" } },
+      },
+      harness: "pi",
+      permissions: {
+        shell: "allow",
+        network: { read: "allow", write: "ask" },
+      },
+      tools: { read_file: true, write_file: false },
+      mcp: {
+        knowledge: {
+          transport: "http",
+          url: "https://mcp.example.com",
+          headers: {
+            Authorization: {
+              kind: "secret-ref",
+              key: "MCP_AUTH",
+              format: "bearer",
+            },
+          },
+        },
+      },
+      connections: [
+        {
+          connectionId: "github-primary",
+          capabilities: ["repo.read"],
+          alias: "source",
+        },
+      ],
+      subagents: {
+        reviewer: {
+          description: "Review evidence.",
+          prompt: "Find unsupported claims.",
+          model: "router/frontier",
+          tools: { read_file: true },
+          permissions: { shell: "deny" },
+          maxSteps: 4,
+          metadata: { focus: { citations: true } },
+        },
+      },
+      resources: {
+        files: [
+          {
+            path: "AGENTS.md",
+            resource: {
+              kind: "inline",
+              name: "instructions",
+              content: "Preserve primary evidence.",
+            },
+          },
+        ],
+        skills: [
+          {
+            kind: "inline",
+            name: "source-review",
+            content: "Check every claim against its source.",
+          },
+        ],
+        instructions: "Follow the supplied research protocol.",
+        failOnError: true,
+      },
+      hooks: {
+        beforeRun: [
+          {
+            command: "prepare",
+            timeoutMs: 1_000,
+            blocking: true,
+            matcher: "research",
+            env: {
+              MODE: { kind: "public", value: "read-only" },
+            },
+          },
+        ],
+      },
+      modes: {
+        review: {
+          description: "Audit a draft.",
+          model: "router/frontier",
+          prompt: "Check the draft.",
+          tools: { read_file: true },
+          permissions: { shell: "deny" },
+          metadata: { severity: "strict" },
+        },
+      },
+      confidential: {
+        tee: "tdx",
+        attestationNonce: "public-nonce",
+        sealed: true,
+        attestationRefresh: true,
+      },
+      metadata: { owner: { team: "discovery" } },
+      extensions: {
+        provider: { session: { durable: true } },
+      },
+    };
+
+    const modelInputSchema = z.fromJSONSchema(agentProfileJsonSchema);
+
+    expect(modelInputSchema.safeParse(profile).success).toBe(true);
+    expect(agentProfileSchema.safeParse(profile).success).toBe(true);
   });
 });
 

@@ -17,6 +17,22 @@ const environment = await provider.create({
     model: { default: 'gpt-5' },
   },
 })
+
+const reference = await environment.dispatch({
+  prompt: 'inspect the repository',
+  sessionId: 'research-session',
+  executionId: 'research-turn-1',
+})
+const session = environment.session(reference.id)
+
+for await (const event of session.events({ since: '0' })) {
+  // Sequence-numbered bridge events, including normalized usage and result data.
+}
+
+await session.prompt({
+  prompt: 'change direction using the evidence already collected',
+  executionId: 'research-turn-2',
+})
 ```
 
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
@@ -24,7 +40,13 @@ Execution fails before network use when none is present.
 
 Passing the same `sessionId` on later turns continues the same CLI conversation.
 `executionId` gives a turn stable bridge identity, and `lastEventId` reattaches after a reader failure.
-Stopping a reader or destroying the environment cancels every active bridge run and waits for terminal confirmation.
+`dispatch()` starts a bridge-owned durable run and returns after detaching its HTTP reader.
+The returned `AgentSession` exposes status, cursor-based event replay, the terminal result, continuation, and cancellation.
+Cancellation returns only after cli-bridge confirms the run is terminal.
+When `dispatch()` receives no `sessionId`, it creates one from that turn's stable run id and returns it.
+Replay and result reads fail loudly after cli-bridge's configured replay retention expires.
+Stopping a `session.events()` reader detaches only that replay observer.
+Stopping a direct `environment.stream()` reader or destroying the environment cancels its active bridge runs and waits for terminal confirmation.
 
 Response headers and streamed bodies have no transport timeout by default.
 For unattended runs, set `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` so an unresponsive bridge cannot wait forever.

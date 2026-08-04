@@ -4,17 +4,22 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
+  AgentSession,
+  AgentSessionRef,
+  AgentSessionStatus,
   AgentProfileRef,
   AgentTurnInput,
+  AgentTurnResult,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import type {
-  AgentProfile,
-  InputPart,
-  MessagePartUpdatedEvent,
-  TextPart,
-  TokenUsage,
-  ToolPart,
+import {
+  type AgentProfile,
+  type InputPart,
+  type MessagePartUpdatedEvent,
+  snapshotAgentProfile,
+  type TextPart,
+  type TokenUsage,
+  type ToolPart,
 } from "@tangle-network/agent-interface";
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -50,9 +55,19 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
     name,
     capabilities: () => options.capabilities ?? defaultCliBridgeCapabilities(),
     async create(input) {
+      if (typeof input.profile === "string") {
+        throw new Error(
+          `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
+        );
+      }
+      const environmentInput: CreateAgentEnvironmentInput = {
+        ...input,
+        profile: snapshotAgentProfile(input.profile),
+      };
       const transport = createTransport(options);
       const environmentId = input.idempotencyKey ?? crypto.randomUUID();
       const runs = new Map<string, CliBridgeRun>();
+      const sessions = new Map<string, CliBridgeSessionState>();
       const readers = new Set<AbortController>();
       let destroyed = false;
       let closePromise: Promise<void> | undefined;
@@ -60,13 +75,20 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
         turn: AgentTurnInput,
       ): AsyncIterable<AgentEnvironmentEvent> {
         if (destroyed) throw new Error("cli-bridge environment is destroyed");
+        const prepared = prepareCliBridgeRun(
+          options,
+          environmentInput,
+          turn,
+          environmentId,
+          false,
+        );
         yield* streamTrackedCliBridgeTurn(
           options,
-          input,
-          turn,
+          environmentInput,
+          prepared,
           transport,
-          environmentId,
           runs,
+          sessions,
           readers,
         );
       };
@@ -76,6 +98,39 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
         ...(input.name ? { name: input.name } : {}),
         status: async () => (destroyed ? "stopped" : "running"),
         stream,
+        async dispatch(turn: AgentTurnInput): Promise<AgentSessionRef> {
+          if (destroyed) throw new Error("cli-bridge environment is destroyed");
+          const prepared = prepareCliBridgeRun(
+            options,
+            environmentInput,
+            turn,
+            environmentId,
+            true,
+          );
+          return dispatchCliBridgeTurn(
+            options,
+            environmentInput,
+            prepared,
+            transport,
+            name,
+            runs,
+            sessions,
+          );
+        },
+        session(id: string): AgentSession {
+          return createCliBridgeSession({
+            id,
+            providerName: name,
+            options,
+            environmentInput,
+            environmentId,
+            transport,
+            runs,
+            sessions,
+            readers,
+            isDestroyed: () => destroyed,
+          });
+        },
         placement: async () => ({
           kind: options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
           providerMetadata: { baseUrl: options.baseUrl },
@@ -106,6 +161,7 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
               );
             }
             await transport.close();
+            sessions.clear();
           })();
           closePromise = attempt;
           try {
@@ -124,8 +180,17 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
 
 interface CliBridgeRun {
   readonly id: string;
+  readonly sessionId?: string;
+  readonly turnId: string;
+  readonly requestBody: string;
   readonly readers: Set<AbortController>;
+  requestDigest?: string;
   cancellation?: Promise<CliBridgeRunSnapshot>;
+}
+
+interface CliBridgeSessionState {
+  readonly id: string;
+  current: CliBridgeRun;
 }
 
 interface CliBridgeRunSnapshot {
@@ -134,21 +199,98 @@ interface CliBridgeRunSnapshot {
   readonly terminal: boolean;
 }
 
-async function* streamTrackedCliBridgeTurn(
+interface PreparedCliBridgeRun {
+  readonly run: CliBridgeRun;
+  readonly turn: AgentTurnInput;
+}
+
+function prepareCliBridgeRun(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   originalTurn: AgentTurnInput,
-  transport: CliBridgeTransport,
   environmentId: string,
+  requireSession: boolean,
+): PreparedCliBridgeRun {
+  const turnId = originalTurn.turnId ?? crypto.randomUUID();
+  const runId = cliBridgeRunId(environmentId, originalTurn, turnId);
+  const sessionId = originalTurn.sessionId ?? (requireSession ? runId : undefined);
+  const turn = {
+    ...originalTurn,
+    turnId,
+    ...(sessionId ? { sessionId } : {}),
+  };
+  return {
+    turn,
+    run: {
+      id: runId,
+      ...(sessionId ? { sessionId } : {}),
+      turnId,
+      requestBody: JSON.stringify(
+        toChatCompletionsBody(options, environmentInput, turn, runId),
+      ),
+      readers: new Set<AbortController>(),
+    },
+  };
+}
+
+function bindCliBridgeRun(
+  prepared: CliBridgeRun,
   runs: Map<string, CliBridgeRun>,
+): CliBridgeRun | undefined {
+  const previous = runs.get(prepared.id);
+  runs.set(prepared.id, prepared);
+  return previous;
+}
+
+function restoreCliBridgeRun(
+  run: CliBridgeRun,
+  previous: CliBridgeRun | undefined,
+  runs: Map<string, CliBridgeRun>,
+): void {
+  if (runs.get(run.id) !== run) return;
+  if (previous) {
+    runs.set(run.id, previous);
+  } else {
+    runs.delete(run.id);
+  }
+}
+
+function bindCliBridgeSession(
+  run: CliBridgeRun,
+  sessions: Map<string, CliBridgeSessionState>,
+): CliBridgeRun | undefined {
+  if (!run.sessionId) return undefined;
+  const previous = sessions.get(run.sessionId)?.current;
+  sessions.set(run.sessionId, { id: run.sessionId, current: run });
+  return previous;
+}
+
+function restoreCliBridgeSession(
+  run: CliBridgeRun,
+  previous: CliBridgeRun | undefined,
+  sessions: Map<string, CliBridgeSessionState>,
+): void {
+  if (!run.sessionId || sessions.get(run.sessionId)?.current !== run) return;
+  if (previous) {
+    sessions.set(run.sessionId, { id: run.sessionId, current: previous });
+  } else {
+    sessions.delete(run.sessionId);
+  }
+}
+
+async function* streamTrackedCliBridgeTurn(
+  options: CliBridgeProviderOptions,
+  environmentInput: CreateAgentEnvironmentInput,
+  prepared: PreparedCliBridgeRun,
+  transport: CliBridgeTransport,
+  runs: Map<string, CliBridgeRun>,
+  sessions: Map<string, CliBridgeSessionState>,
   readers: Set<AbortController>,
 ): AsyncIterable<AgentEnvironmentEvent> {
+  const originalTurn = prepared.turn;
   if (originalTurn.detach) {
     throw new Error("cli-bridge provider does not support detached turns");
   }
-  const sessionId = originalTurn.sessionId;
-  const turnId = originalTurn.turnId ?? crypto.randomUUID();
-  const runId = cliBridgeRunId(environmentId, originalTurn, turnId);
   const controller = new AbortController();
   const signals = [
     originalTurn.signal,
@@ -157,19 +299,13 @@ async function* streamTrackedCliBridgeTurn(
   ].filter((signal): signal is AbortSignal => signal !== undefined);
   const turn = {
     ...originalTurn,
-    turnId,
     ...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
   };
-  const requestBody = JSON.stringify(
-    toChatCompletionsBody(options, environmentInput, turn, runId),
-  );
-  const run = runs.get(runId) ?? {
-    id: runId,
-    readers: new Set<AbortController>(),
-  };
+  const run = prepared.run;
+  const previousRun = bindCliBridgeRun(run, runs);
+  const previousSessionRun = bindCliBridgeSession(run, sessions);
   run.readers.add(controller);
   readers.add(controller);
-  runs.set(runId, run);
 
   let drained = false;
   let threw = false;
@@ -177,11 +313,12 @@ async function* streamTrackedCliBridgeTurn(
     for await (const event of streamCliBridgeTurn(
       options,
       turn,
-      requestBody,
+      run.requestBody,
       transport,
-      runId,
+      run.id,
       originalTurn.lastEventId,
       signals.length > 0 ? AbortSignal.any(signals) : undefined,
+      (response) => captureCliBridgeRunIdentity(response, run, false),
     )) {
       yield event;
     }
@@ -190,7 +327,8 @@ async function* streamTrackedCliBridgeTurn(
   } catch (error) {
     threw = true;
     if (error instanceof CliBridgeRequestRejectedError) {
-      if (runs.get(run.id) === run) runs.delete(run.id);
+      restoreCliBridgeRun(run, previousRun, runs);
+      restoreCliBridgeSession(run, previousSessionRun, sessions);
       throw error;
     }
     let snapshot: CliBridgeRunSnapshot | null | undefined;
@@ -218,6 +356,405 @@ async function* streamTrackedCliBridgeTurn(
   }
 }
 
+async function dispatchCliBridgeTurn(
+  options: CliBridgeProviderOptions,
+  environmentInput: CreateAgentEnvironmentInput,
+  prepared: PreparedCliBridgeRun,
+  transport: CliBridgeTransport,
+  providerName: string,
+  runs: Map<string, CliBridgeRun>,
+  sessions: Map<string, CliBridgeSessionState>,
+): Promise<AgentSessionRef> {
+  const run = prepared.run;
+  const previousRun = bindCliBridgeRun(run, runs);
+  const previousSessionRun = bindCliBridgeSession(run, sessions);
+  const signals = [
+    prepared.turn.signal,
+    environmentInput.signal,
+  ].filter((signal): signal is AbortSignal => signal !== undefined);
+  const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+  let accepted = false;
+  let responseBody: AsyncIterable<Uint8Array> | undefined;
+  try {
+    const response = await transport.fetch(
+      `${trimSlash(options.baseUrl)}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          ...requestHeaders(options),
+          accept: "text/event-stream",
+          ...(run.sessionId ? { "x-session-id": run.sessionId } : {}),
+        },
+        body: run.requestBody,
+        ...(signal ? { signal } : {}),
+      },
+    );
+    if (!response.ok) {
+      let detail = "request rejected";
+      try {
+        detail = await response.text();
+      } catch {
+        // The HTTP status already proves this request was rejected.
+      }
+      throw new CliBridgeRequestRejectedError(response.status, detail);
+    }
+    accepted = true;
+    if (!response.body) throw new Error("cli-bridge response body is empty");
+    responseBody = response.body;
+    captureCliBridgeRunIdentity(response, run, true);
+    await detachCliBridgeReader(responseBody);
+    responseBody = undefined;
+    return {
+      id: run.sessionId!,
+      provider: providerName,
+      metadata: {
+        runId: run.id,
+        requestDigest: run.requestDigest,
+      },
+    };
+  } catch (error) {
+    let failure = error;
+    if (responseBody) {
+      try {
+        await detachCliBridgeReader(responseBody);
+      } catch (detachError) {
+        failure = new AggregateError(
+          [failure, detachError],
+          `cli-bridge dispatch "${run.id}" failed and its reader did not detach`,
+        );
+      }
+    }
+    if (failure instanceof CliBridgeRequestRejectedError) {
+      restoreCliBridgeRun(run, previousRun, runs);
+      restoreCliBridgeSession(run, previousSessionRun, sessions);
+      throw failure;
+    }
+    if (accepted || signal?.aborted) {
+      try {
+        await cancelCliBridgeRun(options, transport, run);
+        if (runs.get(run.id) === run) runs.delete(run.id);
+      } catch (cancellationError) {
+        throw new AggregateError(
+          [failure, cancellationError],
+          `cli-bridge dispatch "${run.id}" failed and cancellation was not confirmed`,
+        );
+      }
+    } else {
+      restoreCliBridgeRun(run, previousRun, runs);
+    }
+    restoreCliBridgeSession(run, previousSessionRun, sessions);
+    throw failure;
+  }
+}
+
+interface CreateCliBridgeSessionArgs {
+  readonly id: string;
+  readonly providerName: string;
+  readonly options: CliBridgeProviderOptions;
+  readonly environmentInput: CreateAgentEnvironmentInput;
+  readonly environmentId: string;
+  readonly transport: CliBridgeTransport;
+  readonly runs: Map<string, CliBridgeRun>;
+  readonly sessions: Map<string, CliBridgeSessionState>;
+  readonly readers: Set<AbortController>;
+  readonly isDestroyed: () => boolean;
+}
+
+function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession {
+  const currentRun = (): CliBridgeRun | undefined => {
+    if (args.isDestroyed()) throw new Error("cli-bridge environment is destroyed");
+    return args.sessions.get(args.id)?.current;
+  };
+  const requireCurrentRun = (): CliBridgeRun => {
+    const run = currentRun();
+    if (!run) throw new Error(`cli-bridge session "${args.id}" has no run`);
+    return run;
+  };
+
+  return {
+    id: args.id,
+    async status(): Promise<AgentSessionStatus | null> {
+      const run = currentRun();
+      if (!run) return null;
+      const snapshot = await getCliBridgeRun(args.options, args.transport, run.id);
+      if (!snapshot) return null;
+      if (snapshot.terminal && args.runs.get(run.id) === run) {
+        args.runs.delete(run.id);
+      }
+      return agentSessionStatusFromRun(snapshot);
+    },
+    async *events(options): AsyncIterable<AgentEnvironmentEvent> {
+      const run = requireCurrentRun();
+      yield* streamCliBridgeSessionEvents(
+        args.options,
+        args.environmentInput,
+        run,
+        args.transport,
+        args.runs,
+        args.readers,
+        options,
+      );
+    },
+    async result(): Promise<AgentTurnResult> {
+      const run = requireCurrentRun();
+      return collectCliBridgeTurnResult(
+        streamCliBridgeSessionEvents(
+          args.options,
+          args.environmentInput,
+          run,
+          args.transport,
+          args.runs,
+          args.readers,
+          { since: "0" },
+        ),
+        run,
+        args.options,
+        args.transport,
+      );
+    },
+    async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
+      if (input.sessionId && input.sessionId !== args.id) {
+        throw new Error(
+          `cli-bridge session "${args.id}" cannot prompt session "${input.sessionId}"`,
+        );
+      }
+      const prepared = prepareCliBridgeRun(
+        args.options,
+        args.environmentInput,
+        {
+          ...input,
+          sessionId: args.id,
+        },
+        args.environmentId,
+        false,
+      );
+      const result = await collectCliBridgeTurnResult(
+        streamTrackedCliBridgeTurn(
+          args.options,
+          args.environmentInput,
+          prepared,
+          args.transport,
+          args.runs,
+          args.sessions,
+          args.readers,
+        ),
+        prepared.run,
+        args.options,
+        args.transport,
+      );
+      return { ...result, sessionId: args.id };
+    },
+    async cancel(): Promise<void> {
+      const run = requireCurrentRun();
+      await cancelCliBridgeRun(args.options, args.transport, run);
+      if (args.runs.get(run.id) === run) args.runs.delete(run.id);
+    },
+  };
+}
+
+async function* streamCliBridgeSessionEvents(
+  options: CliBridgeProviderOptions,
+  environmentInput: CreateAgentEnvironmentInput,
+  run: CliBridgeRun,
+  transport: CliBridgeTransport,
+  runs: Map<string, CliBridgeRun>,
+  readers: Set<AbortController>,
+  eventOptions?: { since?: string; signal?: AbortSignal },
+): AsyncIterable<AgentEnvironmentEvent> {
+  const controller = new AbortController();
+  const signals = [
+    eventOptions?.signal,
+    environmentInput.signal,
+    controller.signal,
+  ].filter((signal): signal is AbortSignal => signal !== undefined);
+  const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+  run.readers.add(controller);
+  readers.add(controller);
+  let drained = false;
+  try {
+    yield* streamCliBridgeTurn(
+      options,
+      {
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        turnId: run.turnId,
+      },
+      run.requestBody,
+      transport,
+      run.id,
+      eventOptions?.since ?? "0",
+      signal,
+      (response) => captureCliBridgeRunIdentity(response, run, false),
+    );
+    drained = true;
+    if (runs.get(run.id) === run) runs.delete(run.id);
+  } finally {
+    if (!drained) {
+      controller.abort(
+        new DOMException("cli-bridge session event reader detached", "AbortError"),
+      );
+    }
+    run.readers.delete(controller);
+    readers.delete(controller);
+  }
+}
+
+async function collectCliBridgeTurnResult(
+  source: AsyncIterable<AgentEnvironmentEvent>,
+  run: CliBridgeRun,
+  options: CliBridgeProviderOptions,
+  transport: CliBridgeTransport,
+): Promise<AgentTurnResult> {
+  const events: AgentEnvironmentEvent[] = [];
+  let text = "";
+  let usage: TokenUsage | undefined;
+  let streamError: unknown;
+  try {
+    for await (const event of source) {
+      events.push(event);
+      const finalText = event.data.finalText;
+      if (typeof finalText === "string") {
+        text = finalText;
+      } else if (typeof event.data.delta === "string") {
+        text += event.data.delta;
+      }
+      usage = addTokenUsage(usage, event.usage);
+    }
+  } catch (error) {
+    streamError = error;
+  }
+
+  const snapshot = await getCliBridgeRun(options, transport, run.id);
+  if (!snapshot) {
+    if (streamError) throw streamError;
+    throw new Error(`cli-bridge lost run "${run.id}" before reading its result`);
+  }
+  if (!snapshot.terminal) {
+    if (streamError) throw streamError;
+    throw new Error(`cli-bridge run "${run.id}" has no terminal result`);
+  }
+  const success = snapshot.status === "done" && streamError === undefined;
+  return {
+    text,
+    success,
+    ...(!success
+      ? {
+          error: streamError instanceof Error
+            ? streamError.message
+            : `cli-bridge run ended ${snapshot.status}`,
+        }
+      : {}),
+    ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+    ...(usage ? { usage } : {}),
+    metadata: {
+      runId: run.id,
+      status: snapshot.status,
+      ...(run.requestDigest ? { requestDigest: run.requestDigest } : {}),
+    },
+    events,
+  };
+}
+
+function agentSessionStatusFromRun(
+  snapshot: CliBridgeRunSnapshot,
+): AgentSessionStatus {
+  if (snapshot.status === "done") return "completed";
+  if (snapshot.status === "error") return "failed";
+  if (snapshot.status === "cancelled") return "cancelled";
+  return "running";
+}
+
+function addTokenUsage(
+  current: TokenUsage | undefined,
+  next: TokenUsage | undefined,
+): TokenUsage | undefined {
+  if (!next) return current;
+  if (!current) return { ...next };
+  return {
+    inputTokens: current.inputTokens + next.inputTokens,
+    outputTokens: current.outputTokens + next.outputTokens,
+    ...(current.totalTokens !== undefined || next.totalTokens !== undefined
+      ? { totalTokens: (current.totalTokens ?? 0) + (next.totalTokens ?? 0) }
+      : {}),
+    ...(current.cacheReadInputTokens !== undefined ||
+        next.cacheReadInputTokens !== undefined
+      ? {
+          cacheReadInputTokens:
+            (current.cacheReadInputTokens ?? 0) +
+            (next.cacheReadInputTokens ?? 0),
+        }
+      : {}),
+    ...(current.cacheCreationInputTokens !== undefined ||
+        next.cacheCreationInputTokens !== undefined
+      ? {
+          cacheCreationInputTokens:
+            (current.cacheCreationInputTokens ?? 0) +
+            (next.cacheCreationInputTokens ?? 0),
+        }
+      : {}),
+    ...(current.reasoningTokens !== undefined || next.reasoningTokens !== undefined
+      ? {
+          reasoningTokens:
+            (current.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0),
+        }
+      : {}),
+    ...(current.cost !== undefined || next.cost !== undefined
+      ? { cost: (current.cost ?? 0) + (next.cost ?? 0) }
+      : {}),
+  };
+}
+
+function captureCliBridgeRunIdentity(
+  response: CliBridgeResponse,
+  run: CliBridgeRun,
+  required: boolean,
+): void {
+  const responseRunId = response.headers.get("x-run-id");
+  const requestDigest = response.headers.get("x-run-request-digest");
+  if (responseRunId !== null && responseRunId !== run.id) {
+    throw new Error(
+      `cli-bridge accepted run "${responseRunId}" for requested run "${run.id}"`,
+    );
+  }
+  if ((required || run.requestDigest !== undefined) && responseRunId === null) {
+    throw new Error("cli-bridge response omitted X-Run-Id");
+  }
+  if (required && requestDigest === null) {
+    throw new Error("cli-bridge dispatch response omitted X-Run-Request-Digest");
+  }
+  if (
+    requestDigest !== null &&
+    run.requestDigest !== undefined &&
+    requestDigest !== run.requestDigest
+  ) {
+    throw new Error(
+      `cli-bridge changed request digest for run "${run.id}" from "${run.requestDigest}" to "${requestDigest}"`,
+    );
+  }
+  if (run.requestDigest !== undefined && requestDigest === null) {
+    throw new Error(
+      `cli-bridge replay response omitted X-Run-Request-Digest for run "${run.id}"`,
+    );
+  }
+  if (requestDigest !== null) run.requestDigest = requestDigest;
+}
+
+async function detachCliBridgeReader(
+  body: AsyncIterable<Uint8Array>,
+): Promise<void> {
+  const cancellable = body as AsyncIterable<Uint8Array> & {
+    cancel?: () => Promise<void>;
+  };
+  if (cancellable.cancel) {
+    await cancellable.cancel();
+    return;
+  }
+  const iterator = body[Symbol.asyncIterator]();
+  if (!iterator.return) {
+    throw new Error("cli-bridge response body cannot detach its reader");
+  }
+  await iterator.return();
+}
+
 async function cancelCliBridgeRun(
   options: CliBridgeProviderOptions,
   transport: CliBridgeTransport,
@@ -237,6 +774,7 @@ async function cancelCliBridgeRun(
       throw new Error(`cli-bridge cancel ${response.status}: ${await response.text()}`);
     }
     let snapshot: CliBridgeRunSnapshot | null = cancelSnapshot(await response.text());
+    assertCliBridgeRunSnapshotIdentity(snapshot, run.id);
     const waitBudgetMs = options.cancelWaitMs ?? 30_000;
     const deadline = Date.now() + waitBudgetMs;
     while (!snapshot.terminal) {
@@ -287,7 +825,20 @@ async function getCliBridgeRun(
   if (!response.ok) {
     throw new Error(`cli-bridge run status ${response.status}: ${await response.text()}`);
   }
-  return runSnapshot(await response.text());
+  const snapshot = runSnapshot(await response.text());
+  assertCliBridgeRunSnapshotIdentity(snapshot, runId);
+  return snapshot;
+}
+
+function assertCliBridgeRunSnapshotIdentity(
+  snapshot: CliBridgeRunSnapshot,
+  expectedRunId: string,
+): void {
+  if (snapshot.id !== expectedRunId) {
+    throw new Error(
+      `cli-bridge returned run "${snapshot.id}" for requested run "${expectedRunId}"`,
+    );
+  }
 }
 
 async function* streamCliBridgeTurn(
@@ -298,6 +849,7 @@ async function* streamCliBridgeTurn(
   runId: string,
   lastEventId?: string,
   signal?: AbortSignal,
+  onAccepted?: (response: CliBridgeResponse) => void,
 ): AsyncIterable<AgentEnvironmentEvent> {
   const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
     method: "POST",
@@ -319,6 +871,7 @@ async function* streamCliBridgeTurn(
     }
     throw new CliBridgeRequestRejectedError(response.status, detail);
   }
+  onAccepted?.(response);
   if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
@@ -326,6 +879,7 @@ async function* streamCliBridgeTurn(
   const messageId = turn.turnId ?? `${sessionId}:assistant`;
   const emittedToolCalls = new Set<string>();
   let completed = false;
+  let sawUsage = false;
   let terminalCursor: string | undefined;
   for await (const frame of parseSse(response.body)) {
     if (frame.data === "[DONE]") continue;
@@ -347,6 +901,7 @@ async function* streamCliBridgeTurn(
     const nextUsage = usageFromOpenAi(parsed.usage);
     const frameEvents: AgentEnvironmentEvent[] = [];
     if (nextUsage) {
+      sawUsage = true;
       frameEvents.push({ type: "usage", data: {}, usage: nextUsage });
     }
     if (chunk) {
@@ -429,7 +984,11 @@ async function* streamCliBridgeTurn(
       requestBody,
       transport,
       signal,
+      onAccepted,
     );
+    if (result.usage && !sawUsage) {
+      yield { type: "usage", data: {}, usage: result.usage };
+    }
     yield {
       type: "result",
       data: {
@@ -454,7 +1013,12 @@ async function readFullCliBridgeResult(
   requestBody: string,
   transport: CliBridgeTransport,
   signal?: AbortSignal,
-): Promise<{ text: string; finishReason: string }> {
+  onAccepted?: (response: CliBridgeResponse) => void,
+): Promise<{
+  text: string;
+  finishReason: string;
+  usage?: TokenUsage;
+}> {
   const body = safeJson(requestBody);
   if (!body) throw new Error("cli-bridge replay request is not valid JSON");
   const response = await transport.fetch(`${trimSlash(options.baseUrl)}/v1/chat/completions`, {
@@ -466,6 +1030,7 @@ async function readFullCliBridgeResult(
   if (!response.ok) {
     throw new Error(`cli-bridge replay result ${response.status}: ${await response.text()}`);
   }
+  onAccepted?.(response);
   const parsed = safeJson(await response.text());
   if (parsed?.error && typeof parsed.error === "object") {
     const error = parsed.error as Record<string, unknown>;
@@ -487,7 +1052,12 @@ async function readFullCliBridgeResult(
   if (choice.finish_reason === "error" || choice.finish_reason === "timeout") {
     throw new Error(`cli-bridge replay result ended ${choice.finish_reason}`);
   }
-  return { text: message.content, finishReason: choice.finish_reason };
+  const usage = usageFromOpenAi(parsed?.usage);
+  return {
+    text: message.content,
+    finishReason: choice.finish_reason,
+    ...(usage ? { usage } : {}),
+  };
 }
 
 interface CliBridgeTransport {
@@ -506,6 +1076,9 @@ interface CliBridgeResponse {
   readonly ok: boolean;
   readonly status: number;
   readonly body: AsyncIterable<Uint8Array> | null;
+  readonly headers: {
+    get(name: string): string | null;
+  };
   text(): Promise<string>;
 }
 
@@ -548,12 +1121,15 @@ function toChatCompletionsBody(
   const profile = inlineProfile(environmentInput.profile);
   return {
     model: resolveBridgeModel(options, environmentInput, turn, profile),
-    messages: messagesFromTurn(turn, profile),
+    messages: messagesFromTurn(turn),
     stream: true,
     ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
     run_id: runId,
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
     ...(profile ? { agent_profile: profile } : {}),
+    ...(profile?.model?.reasoningEffort
+      ? { effort: profile.model.reasoningEffort }
+      : {}),
     ...(environmentInput.env ? { env: environmentInput.env } : {}),
     ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
     ...(executionFromInput(options, environmentInput) ? { execution: executionFromInput(options, environmentInput) } : {}),
@@ -587,12 +1163,8 @@ function resolveBridgeModel(
   return `${harness}/${model}`;
 }
 
-function messagesFromTurn(turn: AgentTurnInput, profile: AgentProfile | undefined): Array<Record<string, unknown>> {
-  const messages: Array<Record<string, unknown>> = [];
-  const systemPrompt = profile?.prompt?.systemPrompt;
-  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-  messages.push({ role: "user", content: contentFromTurn(turn) });
-  return messages;
+function messagesFromTurn(turn: AgentTurnInput): Array<Record<string, unknown>> {
+  return [{ role: "user", content: contentFromTurn(turn) }];
 }
 
 function contentFromTurn(turn: AgentTurnInput): string | InputPart[] {
@@ -808,7 +1380,7 @@ export function defaultCliBridgeCapabilities(): AgentEnvironmentCapabilities {
       runtimeUpdate: false,
       validation: false,
     },
-    streaming: { live: true, replay: true, detach: false, turnIdempotency: true },
+    streaming: { live: true, replay: true, detach: true, turnIdempotency: true },
     sessions: { continue: true, list: false, messages: false },
     workspace: { read: false, write: false, exec: false, git: false, upload: false, download: false },
     branching: { checkpoint: false, fork: false },
