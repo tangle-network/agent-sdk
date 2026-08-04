@@ -122,7 +122,10 @@ describe("reasoning effort support", () => {
     // no-thinking runners
     expect(harnessReasoningEfforts("cli-base")).toEqual(["none"]);
     // Explicit sets match each native CLI; model data narrows them later.
+    // codex accepts `none` (thinking off) — the picker hid it for months while
+    // the API enumerated it first.
     expect(harnessReasoningEfforts("codex")).toEqual([
+      "none",
       "minimal",
       "low",
       "medium",
@@ -130,6 +133,7 @@ describe("reasoning effort support", () => {
       "xhigh",
       "ultracode",
     ]);
+    // pi's `--thinking` tops out at `max`, which canonical `ultracode` reaches.
     expect(harnessReasoningEfforts("pi")).toEqual([
       "none",
       "minimal",
@@ -137,6 +141,7 @@ describe("reasoning effort support", () => {
       "medium",
       "high",
       "xhigh",
+      "ultracode",
     ]);
     expect(harnessReasoningEfforts("openclaw")).toEqual([
       "none",
@@ -173,6 +178,7 @@ describe("reasoning effort support", () => {
       "medium",
     ]);
     expect(reasoningEffortsFor("codex", { maxEffort: "high" })).toEqual([
+      "none",
       "minimal",
       "low",
       "medium",
