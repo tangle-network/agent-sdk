@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.4.35
+
+### Patch Changes
+
+- 0d34ae7: Preserve the caller's exact abort reason when cancellation occurs during an active retry attempt.
+
 ## 0.4.34
 
 ### Patch Changes
