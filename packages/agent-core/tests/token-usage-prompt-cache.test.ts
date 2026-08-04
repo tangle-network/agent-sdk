@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   addTokenUsage,
   cacheHitRate,
+  GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+  GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  genAiUsageAttributes,
   promptTokens,
   readTokenUsage,
   TOKEN_USAGE_CACHE_READ_EXCLUSIVE_KEYS,
@@ -205,6 +209,35 @@ describe("prompt-cache aware token usage", () => {
     expect(
       readTokenUsage({ tokenUsage: { prompt_tokens: "12", completion_tokens: 3.8 } }),
     ).toEqual({ inputTokens: 12, outputTokens: 3 });
+  });
+
+  it("keeps the whole prompt recoverable on the GenAI attribute bag", () => {
+    // `gen_ai.usage.input_tokens` carries the billed tail. Without the two cache
+    // attributes beside it, a warm call would be indistinguishable from a cold
+    // one on the exact attribute cost aggregates key off, and the prompt volume
+    // would be unrecoverable downstream.
+    const usage = readTokenUsage({ usage: ZAI_TURN_2 })!;
+    const attrs = genAiUsageAttributes({ model: "glm-5.2", ...usage });
+    expect(attrs).toEqual({
+      "gen_ai.request.model": "glm-5.2",
+      "gen_ai.usage.input_tokens": 80,
+      "gen_ai.usage.output_tokens": 42,
+      "gen_ai.usage.cache_read_input_tokens": 8576,
+      "gen_ai.usage.cache_creation_input_tokens": 0,
+    });
+    const total =
+      Number(attrs[GEN_AI_USAGE_INPUT_TOKENS]) +
+      Number(attrs[GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS]) +
+      Number(attrs[GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS]);
+    expect(total).toBe(8656);
+  });
+
+  it("omits the cache attributes entirely for an unmetered producer", () => {
+    // Absent stays absent: a synthesized 0 would read as "measured, no cache".
+    expect(genAiUsageAttributes({ inputTokens: 10, outputTokens: 2 })).toEqual({
+      "gen_ai.usage.input_tokens": 10,
+      "gen_ai.usage.output_tokens": 2,
+    });
   });
 
   it("freezes the cache key vocabularies", () => {
