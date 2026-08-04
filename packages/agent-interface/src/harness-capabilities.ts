@@ -142,23 +142,27 @@ export function snapHarnessToModel(
 
 /**
  * The explicit reasoning-effort set a harness's runtime accepts when it ISN'T a plain `none…ceiling`
- * slice — grounded in the cli-bridge adapters (NOT the canonical ladder):
- *   - codex: `model_reasoning_effort` accepts `minimal|low|medium|high|xhigh|max|ultra`; canonical
- *     `ultracode` maps to native `ultra`. Per-model catalog data narrows this list.
+ * slice — measured against the pinned CLI binaries, NOT inferred from the canonical ladder:
+ *   - codex: `model_reasoning_effort` accepts `none|minimal|low|medium|high|xhigh|max`, plus `ultra`
+ *     which the API's own enumeration omits but accepts end-to-end; canonical `ultracode` maps to
+ *     native `ultra`. Per-model catalog data narrows this list.
  *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`; canonical `ultracode` maps to
- *     native `max`. It cannot express `none` or `minimal`.
- *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh`; canonical `none` maps to `off`.
- *   - openclaw: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max`; canonical `none` maps
- *     to `off` and `ultracode` maps to `max`.
+ *     native `max`. It cannot express `none` or `minimal`, and an unsupported value is warned about
+ *     and silently replaced with the default rather than rejected — so the set must not overstate.
+ *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max`; canonical `none` maps to
+ *     `off` and `ultracode` to `max`.
+ *   - openclaw: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max` (and `adaptive`, which
+ *     defers the choice rather than naming a rung); canonical `none` maps to `off` and `ultracode`
+ *     to `max`.
  *   - kimi-code: `--thinking` is binary. Canonical `none` emits `--no-thinking`; any non-none level
  *     emits `--thinking`, represented here by `high`.
  */
 const harnessReasoningEffortsOverride: Partial<
   Record<HarnessType, readonly ReasoningEffort[]>
 > = {
-  codex: ["minimal", "low", "medium", "high", "xhigh", "ultracode"],
+  codex: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
   "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
-  pi: ["none", "minimal", "low", "medium", "high", "xhigh"],
+  pi: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
   openclaw: [
     "none",
     "minimal",
