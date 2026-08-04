@@ -216,6 +216,36 @@ describe("withRetry", () => {
     await resultPromise;
     expect(fn).toHaveBeenCalledTimes(2);
   });
+
+  it("should not start an attempt after the caller has cancelled", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+    const fn = vi.fn().mockResolvedValue("unexpected");
+    controller.abort(reason);
+
+    await expect(withRetry(fn, { signal: controller.signal })).rejects.toBe(
+      reason,
+    );
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("should cancel an active backoff without starting another attempt", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller stopped during backoff");
+    const retryableError = new SDKError("retry me", { code: "NETWORK" });
+    const fn = vi.fn().mockRejectedValue(retryableError);
+
+    const resultPromise = withRetry(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 60_000,
+      jitter: 0,
+      signal: controller.signal,
+      onRetry: () => controller.abort(reason),
+    });
+
+    await expect(resultPromise).rejects.toBe(reason);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("generateIdempotencyKey", () => {
