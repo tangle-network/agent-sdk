@@ -21,6 +21,16 @@ export const GEN_AI_RESPONSE_MODEL = "gen_ai.response.model";
 export const GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens";
 /** Completion / output token count. */
 export const GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
+
+/** Prompt tokens served from the provider's prompt cache. Emitted separately
+ *  from {@link GEN_AI_USAGE_INPUT_TOKENS} because the two bill at rates ~50x
+ *  apart, so an aggregate that cannot tell them apart cannot compute cost. */
+export const GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS =
+  "gen_ai.usage.cache_read_input_tokens";
+
+/** Prompt tokens written INTO the provider's prompt cache. */
+export const GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS =
+  "gen_ai.usage.cache_creation_input_tokens";
 /** Operation name (e.g. `"invoke_agent"`). */
 export const GEN_AI_OPERATION_NAME = "gen_ai.operation.name";
 /** Conversation / session id grouping a multi-turn agent run. */
@@ -62,6 +72,10 @@ export interface GenAiUsage {
   inputTokens?: number;
   /** Completion tokens; omitted unless a finite, non-negative number. */
   outputTokens?: number;
+  /** Prompt tokens served from cache; omitted unless finite and non-negative. */
+  cacheReadTokens?: number;
+  /** Prompt tokens written into cache; omitted unless finite and non-negative. */
+  cacheWriteTokens?: number;
 }
 
 function isNonNegativeFinite(n: number | undefined): n is number {
@@ -87,6 +101,17 @@ export function genAiUsageAttributes(
   }
   if (isNonNegativeFinite(usage.outputTokens)) {
     attrs[GEN_AI_USAGE_OUTPUT_TOKENS] = usage.outputTokens;
+  }
+  // Emitted alongside, never folded into, `input_tokens`. `input_tokens` is the
+  // freshly billed tail; a consumer that wants the whole prompt sums the three,
+  // and one that wants cost prices them separately. Folding them together would
+  // make a warm call indistinguishable from a cold one on the exact attribute
+  // cost aggregates key off.
+  if (isNonNegativeFinite(usage.cacheReadTokens)) {
+    attrs[GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS] = usage.cacheReadTokens;
+  }
+  if (isNonNegativeFinite(usage.cacheWriteTokens)) {
+    attrs[GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS] = usage.cacheWriteTokens;
   }
   return attrs;
 }
