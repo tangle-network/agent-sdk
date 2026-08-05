@@ -1,5 +1,6 @@
 import type {
   AgentProfile,
+  AgentProfilePrompt,
   AgentProfileResources,
   AgentProfileResourceRef,
 } from "./agent-profile.js";
@@ -43,6 +44,7 @@ export type AgentProfileRemoveList = true | readonly string[];
 
 export interface AgentProfilePromptRemoval {
   systemPrompt?: true;
+  appendSystemPrompt?: true;
   instructions?: AgentProfileRemoveList;
 }
 
@@ -107,6 +109,20 @@ export interface AgentProfileDiff {
 export function defineAgentProfileDiff<T extends AgentProfileDiff>(diff: T): T {
   return diff;
 }
+
+const agentProfilePromptDiffPropertyAxes = [
+  "systemPrompt",
+  "appendSystemPrompt",
+  "instructions",
+] as const satisfies readonly (keyof AgentProfilePrompt)[];
+
+type MissingAgentProfilePromptDiffPropertyAxis = Exclude<
+  keyof AgentProfilePrompt,
+  (typeof agentProfilePromptDiffPropertyAxes)[number]
+>;
+const _agentProfilePromptDiffPropertyAxesAreExhaustive:
+  MissingAgentProfilePromptDiffPropertyAxis extends never ? true : never = true;
+void _agentProfilePromptDiffPropertyAxesAreExhaustive;
 
 const agentProfileResourceDiffPropertyAxes = [
   "files",
@@ -349,6 +365,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
   } else if (remove.prompt && next.prompt) {
     const prompt = { ...next.prompt };
     if (remove.prompt.systemPrompt) prompt.systemPrompt = undefined;
+    if (remove.prompt.appendSystemPrompt) prompt.appendSystemPrompt = undefined;
     prompt.instructions = removeValues(prompt.instructions, remove.prompt.instructions);
     next.prompt = Object.values(prompt).some((value) => value !== undefined)
       ? prompt

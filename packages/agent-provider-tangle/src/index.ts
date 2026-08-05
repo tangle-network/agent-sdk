@@ -1088,7 +1088,10 @@ export function defaultTangleSandboxCapabilities(): AgentEnvironmentCapabilities
   return {
     profile: {
       namedProfiles: true,
-      systemPrompt: true,
+      // The whole profile is forwarded to the sandbox, which materializes it
+      // with the harness it selects; both intents are expressible on the wire.
+      // The effective bits belong to that harness, not to this adapter.
+      systemPrompt: { replace: true, append: true },
       instructions: true,
       tools: true,
       permissions: true,

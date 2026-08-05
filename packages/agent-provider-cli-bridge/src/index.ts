@@ -789,7 +789,10 @@ export function defaultCliBridgeCapabilities(): AgentEnvironmentCapabilities {
   return {
     profile: {
       namedProfiles: false,
-      systemPrompt: true,
+      // messagesFromTurn prepends prompt text as a `role: "system"` message,
+      // which the bridge's harness receives on top of its own system prompt.
+      // Nothing here can delete that prompt, so replacement is refused.
+      systemPrompt: { replace: false, append: true },
       instructions: true,
       tools: true,
       permissions: true,

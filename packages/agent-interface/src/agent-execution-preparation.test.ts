@@ -101,6 +101,7 @@ const fullProfile: AgentProfile = {
   tags: ["science"],
   prompt: {
     systemPrompt: "Run discriminating experiments.",
+    appendSystemPrompt: "Report the exact command you ran.",
     instructions: ["Keep exact evidence."],
   },
   model: {
@@ -239,8 +240,8 @@ function validationOptions(receipt: AgentExecutionPreparationReceipt) {
 }
 
 describe("profile materialization leaves", () => {
-  it("enumerates every one of the 29 canonical AgentProfile leaves", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(29);
+  it("enumerates every one of the 30 canonical AgentProfile leaves", () => {
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(30);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
       AGENT_PROFILE_MATERIALIZATION_AXES,
     );
@@ -281,7 +282,7 @@ describe("profile materialization leaves", () => {
     const profile: AgentProfile = {
       name: " ",
       tags: [],
-      prompt: { systemPrompt: "", instructions: [] },
+      prompt: { systemPrompt: "", appendSystemPrompt: "", instructions: [] },
       tools: {},
       resources: { failOnError: false },
       metadata: {
@@ -297,6 +298,7 @@ describe("profile materialization leaves", () => {
       "name",
       "tags",
       "systemPrompt",
+      "appendSystemPrompt",
       "instructions",
       "tools",
       "resourceFailOnError",
@@ -306,6 +308,7 @@ describe("profile materialization leaves", () => {
       { axis: "name", path: "/name" },
       { axis: "tags", path: "/tags" },
       { axis: "systemPrompt", path: "/prompt/systemPrompt" },
+      { axis: "appendSystemPrompt", path: "/prompt/appendSystemPrompt" },
       { axis: "instructions", path: "/prompt/instructions" },
       { axis: "tools", path: "/tools" },
       { axis: "resourceFailOnError", path: "/resources/failOnError" },
