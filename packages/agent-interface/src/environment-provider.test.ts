@@ -12,7 +12,7 @@ import {
 const capabilities = {
   profile: {
     namedProfiles: true,
-    systemPrompt: true,
+    systemPrompt: { replace: true, append: true },
     instructions: true,
     tools: true,
     permissions: true,
@@ -71,6 +71,38 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         providerNativeBypass: true,
       }),
     ).toThrow();
+  });
+
+  it("requires both system-prompt intents to be declared independently", () => {
+    for (const systemPrompt of [
+      true,
+      false,
+      { replace: true },
+      { append: true },
+      { replace: true, append: true, prepend: true },
+    ]) {
+      expect(() =>
+        AgentEnvironmentCapabilitiesSchema.parse({
+          ...capabilities,
+          profile: { ...capabilities.profile, systemPrompt },
+        }),
+      ).toThrow();
+    }
+
+    for (const systemPrompt of [
+      { replace: false, append: false },
+      { replace: false, append: true },
+      { replace: true, append: false },
+      { replace: true, append: true },
+    ]) {
+      const document = {
+        ...capabilities,
+        profile: { ...capabilities.profile, systemPrompt },
+      };
+      expect(AgentEnvironmentCapabilitiesSchema.parse(document)).toEqual(
+        document,
+      );
+    }
   });
 
   it("requires durable branching features to be all-or-nothing", () => {

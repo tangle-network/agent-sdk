@@ -450,8 +450,19 @@ export interface AgentCandidateProfilePlanMaterial {
   }>;
   env: Record<string, AgentCandidateConfigValue>;
   flags: AgentCandidateConfigValue[];
-  /** Exact system-prompt replacement supplied to the harness, when supported. */
+  /**
+   * Exact system-prompt REPLACEMENT supplied to the harness, when supported.
+   * Present only where the harness's own system prompt is deleted in favor of
+   * this text.
+   */
   systemPrompt?: AgentCandidateConfigValue;
+  /**
+   * Exact text ADDED to the harness's own system prompt, which stays intact.
+   * Recorded separately from the replacement so plan identity distinguishes the
+   * two intents; a harness that lowers this into a flag or file still records
+   * it here, because the same bytes in the two fields are two different runs.
+   */
+  appendSystemPrompt?: AgentCandidateConfigValue;
   unsupported: Array<{ dimension: string; reason: string }>;
 }
 

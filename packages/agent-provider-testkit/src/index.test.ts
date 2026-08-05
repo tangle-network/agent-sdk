@@ -66,7 +66,7 @@ function fakeProvider(): AgentEnvironmentProvider {
     capabilities: () => ({
       profile: {
         namedProfiles: true,
-        systemPrompt: true,
+        systemPrompt: { replace: true, append: true },
         instructions: true,
         tools: true,
         permissions: true,

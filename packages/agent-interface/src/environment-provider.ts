@@ -19,7 +19,15 @@ import {
  */
 const AgentProfileCapabilitiesSchema = z.strictObject({
   namedProfiles: z.boolean(),
-  systemPrompt: z.boolean(),
+  /*
+   * Both bits are required with no default: a document that omits either one,
+   * or sends a bare boolean, fails validation instead of being read as
+   * replacement-supported, which for every append-only backend is false.
+   */
+  systemPrompt: z.strictObject({
+    replace: z.boolean(),
+    append: z.boolean(),
+  }),
   instructions: z.boolean(),
   tools: z.boolean(),
   permissions: z.boolean(),

@@ -48,6 +48,12 @@ The older `checkpoint()` and `fork()` methods remain source-compatible for provi
 All new wire values have exported Zod schemas on the package root.
 Omitting `interactions` and `nativeContinuation`, or leaving the three durable branching flags false, is the compatible declaration for existing providers.
 
+`profile.systemPrompt` declares two independent bits rather than one flag.
+`replace` means the provider deletes the harness's own system prompt and installs `prompt.systemPrompt`; `append` means it keeps that prompt and adds `prompt.appendSystemPrompt` to it.
+A provider that can only append must declare `replace: false` and refuse a profile carrying `systemPrompt`, because quietly appending a requested replacement leaves the instructions the caller asked to delete in force.
+
+
+
 ## Install
 
 ```bash
@@ -77,7 +83,8 @@ const provider: AgentEnvironmentProvider = {
   capabilities: () => ({
     profile: {
       namedProfiles: false,
-      systemPrompt: true,
+      // Most harnesses can only add to their built-in prompt, not delete it.
+      systemPrompt: { replace: false, append: true },
       instructions: true,
       tools: true,
       permissions: true,

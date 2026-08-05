@@ -33,12 +33,14 @@ import {
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentRunControlRef,
+  HarnessType,
   InputPart,
   TokenUsage,
 } from "@tangle-network/agent-interface";
 import {
   AgentRunControlRefSchema,
   ContextTransferReceiptSchema,
+  harnessSystemPromptIntents,
 } from "@tangle-network/agent-interface";
 import {
   createTangleExactProcessProvider,
@@ -1084,11 +1086,20 @@ function sessionStatusFromUnknown(status: unknown): AgentSessionStatus {
   return statusFromUnknown(status);
 }
 
-export function defaultTangleSandboxCapabilities(): AgentEnvironmentCapabilities {
+/**
+ * @param harness The harness the sandbox will materialize the profile with. The prompt intents are
+ * that harness's, not this adapter's: forwarding the whole profile on the wire makes both fields
+ * *expressible*, but the sandbox's materializer refuses the intent its harness has no control for
+ * (opencode has no replacement, codex and gemini no addition). Omit it and both intents declare
+ * `false` — an adapter that cannot name its harness cannot promise either one.
+ */
+export function defaultTangleSandboxCapabilities(
+  harness?: HarnessType,
+): AgentEnvironmentCapabilities {
   return {
     profile: {
       namedProfiles: true,
-      systemPrompt: true,
+      systemPrompt: harnessSystemPromptIntents(harness),
       instructions: true,
       tools: true,
       permissions: true,

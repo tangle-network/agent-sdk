@@ -1,4 +1,5 @@
 import {
+  type AgentProfileSystemPromptCapability,
   REASONING_EFFORTS,
   type ReasoningEffort,
 } from "./agent-profile.js";
@@ -6,10 +7,11 @@ import type { HarnessType } from "./harness.js";
 
 /**
  * The unified harness capability layer — the single source of truth for:
- *   1. harness ↔ model compatibility (which models a harness can run), and
- *   2. reasoning-effort support (which thinking levels a harness/model expresses).
+ *   1. harness ↔ model compatibility (which models a harness can run),
+ *   2. reasoning-effort support (which thinking levels a harness/model expresses), and
+ *   3. system-prompt intents (whether a harness can replace its own prompt, add to it, or neither).
  *
- * Both are facets of the same question — "what can this (harness, model) pair actually do" — and
+ * All are facets of the same question — "what can this (harness, model) pair actually do" — and
  * apply to BOTH harness-backed systems (vendor-locked CLIs like claude-code/codex/kimi) AND
  * router-backed systems (opencode, cli-base: any model the router serves). Lifted here so the
  * cli-bridge backends, the sandbox UI pickers, and the router all read one truth instead of each
@@ -266,4 +268,80 @@ export function harnessHonorsEffort(harness: HarnessType): boolean {
 /** Whether the harness honors BOTH chat selectors — i.e. the model and effort pickers are live. */
 export function harnessHonorsSelectors(harness: HarnessType): boolean {
   return harnessHonorsModel(harness) && harnessHonorsEffort(harness);
+}
+
+// ── System-prompt intents (which prompt channel the harness actually owns) ────
+
+/**
+ * The system-prompt intents a harness's own controls can execute, measured by reading the request
+ * each installed CLI sends — NOT taken from its help text:
+ *
+ *   - claude-code 2.1.222 and pi 0.83.0 own both. `--system-prompt` drops the built-in prompt from
+ *     the request (27,673 B → the caller's bytes on claude-code, 2,582 B → the caller's on pi);
+ *     `--append-system-prompt` leaves it in place and adds the caller's text after it.
+ *   - codex 0.146.0 owns replacement only: the `model_instructions_file` config key becomes the
+ *     request's entire instructions text. It has no additive control — its AGENTS.md lands in a
+ *     developer/user message, not the system channel.
+ *   - gemini 0.26.0 owns replacement only: `.gemini/system.md` under `GEMINI_SYSTEM_MD=1` replaces
+ *     the base prompt. Its one additive path is GEMINI.md memory, which IS the `instructions`
+ *     surface, so an addition lowered there would be byte-indistinguishable from `instructions`.
+ *   - opencode 1.17.18 owns addition only THROUGH A WORKSPACE: config-declared `instructions[]`
+ *     files compose into the same single `role: "system"` message as its built-in prompt, which
+ *     stays in place. Its replacement control (`agent.<name>.prompt`) binds to one agent chosen at
+ *     launch, which a workspace plan cannot guarantee — but an executor that selects that agent
+ *     can, so `replace: false` here is the plan-forwarding answer, not opencode's ceiling.
+ *
+ * Every other harness owns NEITHER, including the ones whose prompt path is a `role: "system"` chat
+ * message: that message is flattened into the user turn before the CLI sees it, so it is not a
+ * system-prompt channel at all — honoring an intent through it would put the caller's text in
+ * ordinary user content while the harness's own prompt ran unchanged. A harness with no entry
+ * refuses both, so one added later cannot inherit a capability by omission.
+ */
+const harnessSystemPromptControls: Partial<
+  Record<HarnessType, AgentProfileSystemPromptCapability>
+> = {
+  "claude-code": { replace: true, append: true },
+  pi: { replace: true, append: true },
+  codex: { replace: true, append: false },
+  gemini: { replace: true, append: false },
+  opencode: { replace: false, append: true },
+};
+
+const noSystemPromptControls: AgentProfileSystemPromptCapability = {
+  replace: false,
+  append: false,
+};
+
+/**
+ * Which system-prompt intents a harness honors THROUGH A WORKSPACE — the value an adapter that
+ * lowers a profile to files, env vars, and CLI flags and then hands the result to a launcher it
+ * does not own should declare as {@link AgentProfileCapabilities.systemPrompt}. That is the shape
+ * of every caller today (the cli-bridge and tangle providers both forward a plan), which is why
+ * this answer depends on the harness alone.
+ *
+ * It is NOT the whole truth for an adapter that starts the harness itself, because one control in
+ * the table above lives outside any workspace: opencode's `agent.<name>.prompt` really does replace
+ * its built-in prompt, but it binds to the single agent whoever starts the server selects. A plan
+ * cannot name that agent, so `opencode` reads `replace: false` here — while an adapter that writes
+ * opencode's server config AND picks the primary agent (`sdk-provider-opencode`) does honor
+ * replacement, and declares `replace: true` for itself. The capability is a property of the
+ * (harness, executor) pair; this function answers it for the plan-forwarding executor.
+ *
+ * Do not widen the table to close that gap: a harness-keyed `true` would promise the intent to
+ * every plan-forwarding caller, and those callers cannot deliver it. An executor that owns a
+ * launcher control states so where it binds it — `materializeProfile`'s `binds` option in
+ * `@tangle-network/agent-profile-materialize`, which turns the plan's refusal into a binding that
+ * executor must then apply.
+ *
+ * Pass `undefined` when the harness is not known at declaration time: the answer is then
+ * `{ replace: false, append: false }`, because an adapter that cannot name its harness cannot
+ * promise either intent, and `false` means "refuse" rather than "silently substitute the other".
+ * An adapter that forwards a profile to some other layer must still declare what that layer's
+ * harness really does — being able to put the field on the wire is not the same as honoring it.
+ */
+export function harnessSystemPromptIntents(
+  harness: HarnessType | undefined,
+): AgentProfileSystemPromptCapability {
+  if (!harness) return noSystemPromptControls;
+  return harnessSystemPromptControls[harness] ?? noSystemPromptControls;
 }

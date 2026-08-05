@@ -8,13 +8,15 @@ import type {
   AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import type {
-  AgentProfile,
-  InputPart,
-  MessagePartUpdatedEvent,
-  TextPart,
-  TokenUsage,
-  ToolPart,
+import {
+  type AgentProfile,
+  type HarnessType,
+  harnessSystemPromptIntents,
+  type InputPart,
+  type MessagePartUpdatedEvent,
+  type TextPart,
+  type TokenUsage,
+  type ToolPart,
 } from "@tangle-network/agent-interface";
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -548,7 +550,7 @@ function toChatCompletionsBody(
   const profile = inlineProfile(environmentInput.profile);
   return {
     model: resolveBridgeModel(options, environmentInput, turn, profile),
-    messages: messagesFromTurn(turn, profile),
+    messages: messagesFromTurn(turn),
     stream: true,
     ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
     run_id: runId,
@@ -587,12 +589,18 @@ function resolveBridgeModel(
   return `${harness}/${model}`;
 }
 
-function messagesFromTurn(turn: AgentTurnInput, profile: AgentProfile | undefined): Array<Record<string, unknown>> {
-  const messages: Array<Record<string, unknown>> = [];
-  const systemPrompt = profile?.prompt?.systemPrompt;
-  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-  messages.push({ role: "user", content: contentFromTurn(turn) });
-  return messages;
+/**
+ * The turn's messages, and nothing else.
+ *
+ * No `role: "system"` message is synthesized from the profile. `prompt.systemPrompt` means DELETE
+ * the harness's own prompt; lowering it here would have added it on top of that prompt instead —
+ * the opposite intent, invisible to the caller. Both prompt intents ride `agent_profile` on the
+ * same request (see {@link toChatCompletionsBody}), where the bridge binds each to the control its
+ * harness actually owns or refuses it. The bridge additionally rejects any request that carries
+ * system-role messages beside `agent_profile`, so synthesizing one here failed the request outright.
+ */
+function messagesFromTurn(turn: AgentTurnInput): Array<Record<string, unknown>> {
+  return [{ role: "user", content: contentFromTurn(turn) }];
 }
 
 function contentFromTurn(turn: AgentTurnInput): string | InputPart[] {
@@ -785,11 +793,18 @@ function trimSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-export function defaultCliBridgeCapabilities(): AgentEnvironmentCapabilities {
+/**
+ * @param harness The bridge backend these capabilities describe. The prompt intents belong to that
+ * harness, not to this adapter — the adapter only forwards `agent_profile`. Omit it and both intents
+ * declare `false`: an adapter that cannot name its harness cannot promise either one.
+ */
+export function defaultCliBridgeCapabilities(
+  harness?: HarnessType,
+): AgentEnvironmentCapabilities {
   return {
     profile: {
       namedProfiles: false,
-      systemPrompt: true,
+      systemPrompt: harnessSystemPromptIntents(harness),
       instructions: true,
       tools: true,
       permissions: true,

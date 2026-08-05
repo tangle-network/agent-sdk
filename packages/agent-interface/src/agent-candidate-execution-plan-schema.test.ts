@@ -5,6 +5,7 @@ import {
   agentCandidateProfilePlanMaterialSchema,
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
+import { canonicalCandidateJson } from "./agent-candidate-schema-common.js";
 import { candidateSha } from "./agent-candidate.test-fixture.js";
 
 function workspace(path: string, digit: string) {
@@ -308,6 +309,35 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
       agentCandidateProfilePlanMaterialSchema.parse({
         ...material,
         systemPrompt: "Use the repository rules.",
+      }),
+    ).toThrow();
+  });
+
+  it("separates an added system prompt from a replacement in plan identity", () => {
+    const base = {
+      sourceProfileDigest: candidateSha("0"),
+      harness: "claude-code",
+      files: [],
+      env: {},
+      flags: [],
+      unsupported: [],
+    };
+    const value = { kind: "public", value: "Use the repository rules." };
+
+    const added = { ...base, appendSystemPrompt: value };
+    expect(agentCandidateProfilePlanMaterialSchema.parse(added)).toEqual(added);
+
+    const both = { ...base, systemPrompt: value, appendSystemPrompt: value };
+    expect(agentCandidateProfilePlanMaterialSchema.parse(both)).toEqual(both);
+
+    // The same bytes under the two intents are two different plans.
+    expect(canonicalCandidateJson(added)).not.toBe(
+      canonicalCandidateJson({ ...base, systemPrompt: value }),
+    );
+    expect(() =>
+      agentCandidateProfilePlanMaterialSchema.parse({
+        ...base,
+        appendSystemPrompt: "Use the repository rules.",
       }),
     ).toThrow();
   });
