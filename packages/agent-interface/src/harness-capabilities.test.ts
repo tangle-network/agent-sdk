@@ -6,12 +6,14 @@ import {
   harnessProviders,
   harnessReasoningEfforts,
   harnessSupportsModel,
+  harnessSystemPromptIntents,
   modelProvider,
   preferredHarnessForModel,
   reasoningEffortsFor,
   snapHarnessToModel,
   snapModelToHarness,
 } from "./harness-capabilities.js";
+import { harnessTypeSchema } from "./harness.js";
 
 const CATALOG = [
   "anthropic/claude-opus-4-6",
@@ -219,4 +221,54 @@ describe("per-turn selector support", () => {
     expect(harnessHonorsSelectors("openclaw")).toBe(false); // effort yes, model no
   });
 
+});
+
+describe("system-prompt intents", () => {
+  it("gives each harness the intents its own controls execute, not the union", () => {
+    // claude-code / pi own both: --system-prompt drops the built-in prompt,
+    // --append-system-prompt keeps it and adds after it.
+    expect(harnessSystemPromptIntents("claude-code")).toEqual({ replace: true, append: true });
+    expect(harnessSystemPromptIntents("pi")).toEqual({ replace: true, append: true });
+    // codex / gemini own replacement only (model_instructions_file, .gemini/system.md).
+    expect(harnessSystemPromptIntents("codex")).toEqual({ replace: true, append: false });
+    expect(harnessSystemPromptIntents("gemini")).toEqual({ replace: true, append: false });
+    // opencode owns addition only: its replacement control binds to a launch-time agent.
+    expect(harnessSystemPromptIntents("opencode")).toEqual({ replace: false, append: true });
+  });
+
+  it("refuses both for every harness with no system-prompt control of its own", () => {
+    for (const h of [
+      "nanoclaw",
+      "kimi-code",
+      "hermes",
+      "openclaw",
+      "amp",
+      "factory-droids",
+      "forge",
+      "cursor",
+      "acp",
+      "cli-base",
+    ] as const) {
+      expect(harnessSystemPromptIntents(h)).toEqual({ replace: false, append: false });
+    }
+  });
+
+  it("refuses both when the harness is unknown at declaration time", () => {
+    // An adapter that cannot name its harness cannot promise either intent. `false` means
+    // "refuse", never "substitute the other intent silently".
+    expect(harnessSystemPromptIntents(undefined)).toEqual({ replace: false, append: false });
+  });
+
+  it("covers every harness in the union, so a new one refuses by default", () => {
+    for (const h of harnessTypeSchema.options) {
+      const intents = harnessSystemPromptIntents(h);
+      expect(typeof intents.replace).toBe("boolean");
+      expect(typeof intents.append).toBe("boolean");
+    }
+    // Exactly the measured owners, so widening the table is a deliberate edit here.
+    const replacers = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).replace);
+    const appenders = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).append);
+    expect([...replacers].sort()).toEqual(["claude-code", "codex", "gemini", "pi"]);
+    expect([...appenders].sort()).toEqual(["claude-code", "opencode", "pi"]);
+  });
 });

@@ -63,6 +63,46 @@ describe("createTangleProvider", () => {
     );
   });
 
+  it("declares the prompt intents of the sandbox's harness, and neither without one", async () => {
+    // Forwarding the whole profile makes both fields expressible on the wire, which is NOT the same
+    // as honoring them: the sandbox materializer refuses the intent its harness has no control for.
+    // Declaring `{ replace: true, append: true }` unconditionally would tell a caller running an
+    // opencode sandbox that a replacement lands, and it is refused there.
+    expect(defaultTangleSandboxCapabilities("claude-code").profile.systemPrompt).toEqual({
+      replace: true,
+      append: true,
+    });
+    expect(defaultTangleSandboxCapabilities("opencode").profile.systemPrompt).toEqual({
+      replace: false,
+      append: true,
+    });
+    expect(defaultTangleSandboxCapabilities("codex").profile.systemPrompt).toEqual({
+      replace: true,
+      append: false,
+    });
+    expect(defaultTangleSandboxCapabilities("gemini").profile.systemPrompt).toEqual({
+      replace: true,
+      append: false,
+    });
+    expect(defaultTangleSandboxCapabilities().profile.systemPrompt).toEqual({
+      replace: false,
+      append: false,
+    });
+
+    // Whatever it declares still has to pass the capability schema at the provider boundary.
+    const provider = createTangleProvider({
+      client: {
+        async create() {
+          throw new Error("not called");
+        },
+      },
+      capabilities: defaultTangleSandboxCapabilities("opencode"),
+    });
+    await expect(provider.capabilities()).resolves.toMatchObject({
+      profile: { systemPrompt: { replace: false, append: true } },
+    });
+  });
+
   it("rejects malformed configured capabilities at the provider boundary", async () => {
     const provider = createTangleProvider({
       client: {
