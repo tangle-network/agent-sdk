@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-e2b
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [d8020a5]
+  - @tangle-network/agent-interface@0.45.0
+
 ## 0.3.0
 
 ### Minor Changes
