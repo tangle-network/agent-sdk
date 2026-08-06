@@ -1,5 +1,12 @@
 # @tangle-network/agent-core
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [d8020a5]
+  - @tangle-network/agent-interface@0.45.0
+
 ## 0.5.1
 
 ### Patch Changes

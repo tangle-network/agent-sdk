@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.45.0
+
+### Minor Changes
+
+- d8020a5: Add `prime` (PrimeIntellect prime-agent, the RLM fork of the pi line) to the canonical harness enum, with its reasoning-effort set (`none…ultracode`, mapping to the fork's `--thinking off…max`) and system-prompt controls (`replace` + `append`). `prime` is router-backed: no provider lock. It is deliberately distinct from `pi` — the fork's wire protocol has diverged and its daemon rejects pi-line clients.
+
 ## 0.44.0
 
 ### Minor Changes

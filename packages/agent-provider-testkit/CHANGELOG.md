@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [d8020a5]
+  - @tangle-network/agent-interface@0.45.0
+
 ## 0.5.4
 
 ### Patch Changes
