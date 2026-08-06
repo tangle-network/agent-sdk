@@ -153,6 +153,9 @@ export function snapHarnessToModel(
  *     and silently replaced with the default rather than rejected — so the set must not overstate.
  *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max`; canonical `none` maps to
  *     `off` and `ultracode` to `max`.
+ *   - prime: the prime fork of the pi line accepts the same `--thinking` set
+ *     (`off|minimal|low|medium|high|xhigh|max`); canonical `none` maps to `off` and `ultracode` to
+ *     `max`.
  *   - openclaw: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max` (and `adaptive`, which
  *     defers the choice rather than naming a rung); canonical `none` maps to `off` and `ultracode`
  *     to `max`.
@@ -165,6 +168,7 @@ const harnessReasoningEffortsOverride: Partial<
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
   "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
   pi: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
+  prime: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
   openclaw: [
     "none",
     "minimal",
@@ -302,6 +306,7 @@ const harnessSystemPromptControls: Partial<
 > = {
   "claude-code": { replace: true, append: true },
   pi: { replace: true, append: true },
+  prime: { replace: true, append: true },
   codex: { replace: true, append: false },
   gemini: { replace: true, append: false },
   opencode: { replace: false, append: true },

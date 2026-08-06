@@ -19,6 +19,7 @@ const CANONICAL_HARNESSES = [
   "opencode",
   "kimi-code",
   "pi",
+  "prime",
   "gemini",
   "hermes",
   "openclaw",
