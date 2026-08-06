@@ -17,6 +17,10 @@ import { z } from "zod";
  *
  * `forge` (tailcallhq/forgecode) and `cursor` (cursor-agent) are multi-provider CLI harnesses with
  * no vendor lock, so they carry no entry in the capability tables and resolve as router-backed.
+ *
+ * `prime` (PrimeIntellect-ai/prime-agent) is the prime fork of the pi line — the RLM
+ * IPython-kernel harness. It is a distinct harness from `pi`: the fork's wire protocol has
+ * diverged (its daemon rejects pi-line clients), so the two are not interchangeable at run time.
  */
 export type HarnessType =
   | "claude-code"
@@ -25,6 +29,7 @@ export type HarnessType =
   | "opencode"
   | "kimi-code"
   | "pi"
+  | "prime"
   | "gemini"
   | "hermes"
   | "openclaw"
@@ -43,6 +48,7 @@ export const harnessTypeSchema = z.enum([
   "opencode",
   "kimi-code",
   "pi",
+  "prime",
   "gemini",
   "hermes",
   "openclaw",

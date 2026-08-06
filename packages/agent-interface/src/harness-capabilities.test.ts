@@ -60,6 +60,21 @@ describe("harness ↔ model compatibility", () => {
     }
   });
 
+  it("prime is router-backed and expresses the pi line's full thinking set", () => {
+    expect(harnessProviders("prime")).toBeNull();
+    expect(harnessSupportsModel("prime", "zai/glm-5.2")).toBe(true);
+    expect(snapHarnessToModel("prime", "zai/glm-5.2")).toBe("prime");
+    expect(harnessReasoningEfforts("prime")).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "ultracode",
+    ]);
+  });
+
   it("provider-less / sentinel ids are compatible everywhere", () => {
     expect(harnessSupportsModel("claude-code", "default")).toBe(true);
     expect(harnessSupportsModel("codex", "gemini-2.5-flash-lite")).toBe(true);
@@ -268,7 +283,7 @@ describe("system-prompt intents", () => {
     // Exactly the measured owners, so widening the table is a deliberate edit here.
     const replacers = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).replace);
     const appenders = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).append);
-    expect([...replacers].sort()).toEqual(["claude-code", "codex", "gemini", "pi"]);
-    expect([...appenders].sort()).toEqual(["claude-code", "opencode", "pi"]);
+    expect([...replacers].sort()).toEqual(["claude-code", "codex", "gemini", "pi", "prime"]);
+    expect([...appenders].sort()).toEqual(["claude-code", "opencode", "pi", "prime"]);
   });
 });
