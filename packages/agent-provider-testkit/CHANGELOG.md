@@ -1,5 +1,21 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.6.0
+
+### Minor Changes
+
+- b44d502: Expose exact, digest-bound run-control requests and acknowledgements for retry-safe steering, cancellation, status, and reconnect operations.
+
+  Split interaction, context transfer, workspace branching, provider conformance, and Tangle environment behavior into focused public modules while preserving the package-root API.
+
+  Harden provider inputs, replay identity, cleanup ownership, iterator cancellation, capability reporting, and packed-consumer checks.
+
+### Patch Changes
+
+- Updated dependencies [b44d502]
+- Updated dependencies [d27deb9]
+  - @tangle-network/agent-interface@0.46.0
+
 ## 0.5.5
 
 ### Patch Changes
