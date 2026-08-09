@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.46.1
+
+### Patch Changes
+
+- 077635f: Add exact provider-turn interaction binding to `AgentExecutionInput` so runtimes and provider adapters share one typed identity contract.
+
 ## 0.46.0
 
 ### Minor Changes
