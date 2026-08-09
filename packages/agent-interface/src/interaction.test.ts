@@ -165,6 +165,44 @@ describe("select field schema", () => {
   });
 });
 
+describe("free-text field schema", () => {
+  it.each(["text", "secret"] as const)(
+    "accepts a caller-defined maxLength on %s fields",
+    (type) => {
+      const parsed = InteractionFieldSchema.parse({
+        type,
+        name: "answer",
+        label: "Answer",
+        maxLength: 4096,
+      });
+      expect(parsed).toMatchObject({ type, maxLength: 4096 });
+    },
+  );
+
+  it.each([0, -1, 1.5])("rejects invalid maxLength %s", (maxLength) => {
+    expect(() =>
+      InteractionFieldSchema.parse({
+        type: "text",
+        name: "answer",
+        label: "Answer",
+        maxLength,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a text default longer than maxLength", () => {
+    expect(() =>
+      InteractionFieldSchema.parse({
+        type: "text",
+        name: "answer",
+        label: "Answer",
+        maxLength: 3,
+        default: "four",
+      }),
+    ).toThrow(/default exceeds maxLength/);
+  });
+});
+
 describe("number field schema", () => {
   it("rejects inverted bounds", () => {
     expect(() =>
@@ -278,6 +316,22 @@ describe("validateInteractionAnswer number", () => {
       ).toEqual({
         ok: false,
         errors: ['field "count" must be a finite number'],
+      });
+    },
+  );
+});
+
+describe("validateInteractionAnswer free text", () => {
+  it.each(["text", "secret"] as const)(
+    "enforces the caller-defined maxLength on %s answers",
+    (type) => {
+      const spec: InteractionAnswerSpec = {
+        fields: [{ type, name: "answer", label: "Answer", maxLength: 3 }],
+      };
+      expect(validateInteractionAnswer(spec, { answer: "yes" })).toEqual({ ok: true });
+      expect(validateInteractionAnswer(spec, { answer: "four" })).toEqual({
+        ok: false,
+        errors: ['field "answer" exceeds maxLength 3'],
       });
     },
   );
