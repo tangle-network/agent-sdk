@@ -98,6 +98,26 @@ export async function runAgentEnvironmentProviderConformance(
     }
     checked.push("stream");
 
+    if (capabilities.nativeContinuation !== undefined) {
+      assert(
+        typeof environment.session === "function",
+        "native continuation requires session()",
+        checked,
+      );
+      const session = environment.session(`${options.name}-native-session`);
+      assert(
+        typeof session.contextBoundary === "function",
+        "native continuation requires session.contextBoundary()",
+        checked,
+      );
+      assert(
+        typeof session.continueNative === "function",
+        "native continuation requires session.continueNative()",
+        checked,
+      );
+      checked.push("native-continuation-operations");
+    }
+
     if (options.requireDispatch || capabilities.streaming.detach) {
       assert(
         typeof environment.dispatch === "function",

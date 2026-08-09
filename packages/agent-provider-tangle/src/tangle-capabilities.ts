@@ -1,4 +1,8 @@
-import type { AgentEnvironmentCapabilities } from "@tangle-network/agent-interface/environment-provider";
+import type {
+  AgentEnvironmentCapabilities,
+  HarnessType,
+} from "@tangle-network/agent-interface";
+import { harnessSystemPromptIntents } from "@tangle-network/agent-interface";
 import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 /**
@@ -9,11 +13,13 @@ import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
  * to what a specific client actually exposes, because a capability the client
  * cannot back becomes an action the caller selects and finds missing.
  */
-export function defaultTangleSandboxCapabilities(): AgentEnvironmentCapabilities {
+export function defaultTangleSandboxCapabilities(
+  harness?: HarnessType,
+): AgentEnvironmentCapabilities {
   return {
     profile: {
       namedProfiles: true,
-      systemPrompt: true,
+      systemPrompt: harnessSystemPromptIntents(harness),
       instructions: true,
       tools: true,
       permissions: true,

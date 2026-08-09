@@ -2,7 +2,6 @@ import {
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextBoundaryProofSchema,
-  NativeContextContinuationAcknowledgementSchema,
   NativeContextContinuationRequestSchema,
   PortableContextPlanRequestSchema,
   PortableContextPlanResultSchema,
@@ -14,6 +13,10 @@ import {
   nativeContextContinuationTurnDigest,
   portableContextPlanResultMatchesRequest,
 } from "@tangle-network/agent-interface";
+import {
+  AgentNativeContextContinuationResultSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   PortableContextConformanceOptions,
   PortableContextConformanceReport,
@@ -25,6 +28,7 @@ import {
 } from "./portable-context-helpers.js";
 import { assert, deepEqual } from "./conformance-helpers.js";
 
+/** Prove planning purity, digest-bound fresh transfer, and verified continuation. */
 export async function runPortableContextConformance(
   options: PortableContextConformanceOptions,
 ): Promise<PortableContextConformanceReport> {
@@ -183,7 +187,7 @@ export async function runPortableContextConformance(
   );
   const continuationMaterial = {
     operationId: `${request.requestId}-continue`,
-    turnDigest: nativeContextContinuationTurnDigest({ prompt: "continue" }),
+    turnDigest: nativeContextContinuationTurnDigest(options.turn),
     run: options.run,
     expectedBoundary: proof,
   };
@@ -207,9 +211,10 @@ export async function runPortableContextConformance(
     requestDigest: nativeContextContinuationRequestDigest(mismatchMaterial),
     ...mismatchMaterial,
   });
-  const mismatchAck = NativeContextContinuationAcknowledgementSchema.parse(
-    await options.continueNative(mismatch),
+  const mismatchOutcome = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(mismatch, { turn: options.turn }),
   );
+  const mismatchAck = mismatchOutcome.acknowledgement;
   assert(
     mismatchAck.status === "boundary_mismatch" &&
       !nativeContextContinuationAcknowledgementMatches(mismatch, mismatchAck),
@@ -223,17 +228,23 @@ export async function runPortableContextConformance(
   );
   checked.push("continuation-boundary-rejection");
 
-  const continuationAck = NativeContextContinuationAcknowledgementSchema.parse(
-    await options.continueNative(continuation),
+  const continuationOutcome = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(continuation, { turn: options.turn }),
+  );
+  const continuationAck = continuationOutcome.acknowledgement;
+  assert(
+    "result" in continuationOutcome && "controlRef" in continuationOutcome,
+    "accepted native continuation omitted its result or control reference",
+    checked,
   );
   assert(
     continuationAck.status === "accepted" &&
-      nativeContextContinuationAcknowledgementMatches(
+      agentNativeContextContinuationResultMatchesRequest(
         continuation,
-        continuationAck,
+        continuationOutcome,
       ) &&
       continuationAck.historyMessagesSent === 0,
-    "matching native continuation must send no duplicate history",
+    "matching native continuation must return an exact result and current control reference",
     checked,
   );
   assert(
@@ -245,17 +256,27 @@ export async function runPortableContextConformance(
   checked.push("verified-native-continuation");
 
   const afterContinuation = await options.counters();
-  const replayedContinuation =
-    NativeContextContinuationAcknowledgementSchema.parse(
-      await options.continueNative(continuation),
-    );
+  const replayedContinuation = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(continuation, { turn: options.turn }),
+  );
+  const replayedAcknowledgement = replayedContinuation.acknowledgement;
   assert(
-    replayedContinuation.status === "replayed" &&
-      nativeContextContinuationAcknowledgementMatches(
+    "result" in replayedContinuation && "controlRef" in replayedContinuation,
+    "replayed native continuation omitted its result or control reference",
+    checked,
+  );
+  assert(
+    replayedAcknowledgement.status === "replayed" &&
+      agentNativeContextContinuationResultMatchesRequest(
         continuation,
         replayedContinuation,
+      ) &&
+      deepEqual(replayedContinuation.result, continuationOutcome.result) &&
+      deepEqual(
+        replayedContinuation.controlRef,
+        continuationOutcome.controlRef,
       ),
-    "native continuation retry must recover the original operation",
+    "native continuation retry must recover the original result and control reference",
     checked,
   );
   assert(
@@ -263,15 +284,15 @@ export async function runPortableContextConformance(
     "native continuation retry must dispatch nothing",
     checked,
   );
-  const changedProof = {
-    ...proof,
-    observedAt: new Date(Date.parse(proof.observedAt) + 1).toISOString(),
+  const changedTurn = {
+    ...options.turn,
+    prompt: `${options.turn.prompt ?? ""} changed`,
   };
   const changedContinuationMaterial = {
     operationId: continuation.operationId,
-    turnDigest: continuation.turnDigest,
+    turnDigest: nativeContextContinuationTurnDigest(changedTurn),
     run: options.run,
-    expectedBoundary: changedProof,
+    expectedBoundary: proof,
   };
   const changedContinuation = NativeContextContinuationRequestSchema.parse({
     requestDigest: nativeContextContinuationRequestDigest(
@@ -279,10 +300,9 @@ export async function runPortableContextConformance(
     ),
     ...changedContinuationMaterial,
   });
-  const continuationConflict =
-    NativeContextContinuationAcknowledgementSchema.parse(
-      await options.continueNative(changedContinuation),
-    );
+  const continuationConflict = AgentNativeContextContinuationResultSchema.parse(
+    await options.continueNative(changedContinuation, { turn: changedTurn }),
+  ).acknowledgement;
   assert(
     continuationConflict.status === "conflict" &&
       continuationConflict.existingRequestDigest ===
@@ -308,5 +328,3 @@ export async function runPortableContextConformance(
     checked,
   };
 }
-
-/** Prove retry recovery, changed-input conflicts, and confirmed cleanup. */

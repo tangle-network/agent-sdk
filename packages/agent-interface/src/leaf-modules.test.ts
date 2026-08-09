@@ -442,7 +442,11 @@ describe("interface split leaf modules", () => {
     expect(agentNativeContextContinuationResultMatchesRequest(request, advancedNativeOutcome)).toBe(true);
     const wrongNativeOutcome = AgentNativeContextContinuationResultSchema.parse({
       ...advancedNativeOutcome,
-      controlRef: { ...advancedNativeOutcome.controlRef, provider: "wrong-provider" },
+      controlRef: {
+        ...exactRun,
+        provider: "wrong-provider",
+        requestDigest: digest("d"),
+      },
     });
     expect(agentNativeContextContinuationResultMatchesRequest(request, wrongNativeOutcome)).toBe(false);
     expect(() =>

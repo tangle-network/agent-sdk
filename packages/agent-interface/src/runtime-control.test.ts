@@ -35,7 +35,7 @@ describe("durable run control", () => {
         environmentId: "local-1",
         sessionId: "session-1",
         executionId: "execution-1",
-        requestDigest: `sha256:${"b".repeat(64)}`,
+        requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
       },
       reason: "user requested stop",
     };

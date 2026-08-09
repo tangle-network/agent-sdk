@@ -9,8 +9,8 @@ import type {
 } from "@tangle-network/agent-interface";
 import type {
   NativeContextBoundaryProof,
-  NativeContextContinuationAcknowledgement,
   NativeContextContinuationRequest,
+  NativeContextContinuationTurn,
   PortableContextPlanRequest,
   PortableContextPlanResult,
   WorkspaceCheckpointRequest,
@@ -21,6 +21,8 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentProvider,
   AgentExactProcessLaunch,
+  AgentNativeContextContinuationOptions,
+  AgentNativeContextContinuationResult,
   AgentSession,
   AgentSessionRef,
   AgentTurnInput,
@@ -99,12 +101,14 @@ export interface PortableContextConformanceOptions {
   rejectionRequest: PortableContextPlanRequest;
   run: AgentExactRunControlRef;
   acceptedAt: string;
+  turn: NativeContextContinuationTurn;
   plan(request: PortableContextPlanRequest): Promise<PortableContextPlanResult>;
   transfer(request: ContextTransferRequest): Promise<ContextTransferResult>;
   boundary(run: AgentExactRunControlRef): Promise<NativeContextBoundaryProof | null>;
   continueNative(
     request: NativeContextContinuationRequest,
-  ): Promise<NativeContextContinuationAcknowledgement>;
+    options: AgentNativeContextContinuationOptions,
+  ): Promise<AgentNativeContextContinuationResult>;
   counters(): PortableContextConformanceCounters | Promise<PortableContextConformanceCounters>;
 }
 

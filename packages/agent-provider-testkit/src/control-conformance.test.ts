@@ -471,6 +471,7 @@ function nativeContinuationResponder(
       environmentId: request.run.environmentId,
       sessionId: request.run.sessionId,
       executionId: `${request.operationId}-execution`,
+      requestDigest: request.requestDigest,
     };
     const outcome = {
       acknowledgement,
@@ -993,7 +994,7 @@ describe("capability denial", () => {
         name: "missing-native-continuation",
         createProvider: () => provider,
       }),
-    ).rejects.toThrow(/requires continueNative/);
+    ).rejects.toThrow(/requires session\.continueNative/);
   });
 
   it("rejects partial durable-branch operations and still destroys the environment", async () => {
