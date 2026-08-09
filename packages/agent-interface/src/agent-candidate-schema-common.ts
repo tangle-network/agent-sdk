@@ -279,7 +279,7 @@ function configRecordSchema(keySchema: z.ZodString) {
   return z
     .record(keySchema, agentCandidateConfigValueSchema)
     .superRefine((config, ctx) => {
-      for (const [name, value] of Object.entries(config)) {
+      for (const name of Object.keys(config)) {
         if (secretNamePattern.test(name)) {
           ctx.addIssue({
             code: "custom",

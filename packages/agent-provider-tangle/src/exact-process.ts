@@ -1,27 +1,39 @@
-import { isAbsolute } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import type { CreateSandboxOptions } from "@tangle-network/sandbox";
-import type { AgentCandidateTermination } from "@tangle-network/agent-interface";
 import type {
-  AgentExactProcess,
   AgentExactProcessEnvironment,
-  AgentExactProcessLaunch,
   AgentExactProcessProvider,
-  AgentExactProcessStatus,
   CreateAgentExactProcessEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   SandboxClientLike,
   SandboxInstanceLike,
-  SandboxProcessLike,
-  SandboxProcessStatusLike,
-} from "./index.js";
+  TangleExactProcessOptions,
+} from "./tangle-types.js";
+import {
+  assertBoundedJson,
+  attachCleanupHandle,
+  awaitWithSignal,
+  boundedIdentifier,
+  boundedString,
+  exactProcessRequestDigest,
+  isBoundedJson,
+  MAX_LIST_RESULTS,
+} from "./tangle-contract-safety.js";
+import { sandboxInstanceAsExactProcessEnvironment } from "./tangle-exact-process-environment.js";
+import {
+  assertExactProcessSandbox,
+  assertSupportedProviderOptions,
+  assertUnreservedMetadata,
+  EXACT_PROCESS_METADATA_KEY,
+  isExactProcessRequestConflict,
+  isExactProcessSandbox,
+  metadataMatches,
+  assertSignalOptions,
+} from "./tangle-exact-process-validation.js";
 
 const IMMUTABLE_TANGLE_IMAGE =
   /^(?:sha256:[a-f0-9]{64}|\S+@sha256:[a-f0-9]{64})$/i;
-const EXACT_PROCESS_METADATA_KEY = "tangle.exactProcess";
 const LIST_PAGE_SIZE = 1_000;
-const MAX_LIST_OFFSET = 1_000;
 
 type TangleExactSandboxOptions = Omit<
   CreateSandboxOptions,
@@ -39,16 +51,16 @@ type TangleExactSandboxOptions = Omit<
       };
 };
 
-export interface TangleExactProcessOptions {
-  teamId?: string;
-}
-
 export function createTangleExactProcessProvider(input: {
   client: SandboxClientLike;
   options: TangleExactProcessOptions;
   providerName: string;
 }): AgentExactProcessProvider {
   const { client, options, providerName } = input;
+  boundedIdentifier(providerName, "Tangle exact process provider");
+  if (options.teamId !== undefined) {
+    boundedIdentifier(options.teamId, "Tangle exact process team id");
+  }
   const get = client.get;
   const list = client.list;
   if (!get || !list) {
@@ -56,61 +68,142 @@ export function createTangleExactProcessProvider(input: {
   }
   return {
     async create(createInput): Promise<AgentExactProcessEnvironment> {
+      createInput.signal?.throwIfAborted();
       assertSupportedProviderOptions(createInput.providerOptions);
       assertUnreservedMetadata(createInput.metadata);
-      const box = await client.create(exactSandboxOptions(createInput, options), {
+      const identityDigest = exactProcessRequestDigest(createInput, providerName, options);
+      createInput.signal?.throwIfAborted();
+      const createPromise = client.create(exactSandboxOptions(createInput, options, providerName, identityDigest), {
         ...(createInput.signal ? { signal: createInput.signal } : {}),
         ...(createInput.provisionTimeoutMs === undefined
           ? {}
           : { timeoutMs: createInput.provisionTimeoutMs }),
       });
+      let box: SandboxInstanceLike;
       try {
-        assertExactProcessSandbox(box);
+        box = await awaitWithSignal(createPromise, createInput.signal);
+      } catch (error) {
+        if (createInput.signal?.aborted) {
+          void createPromise
+            .then(async (lateBox) => {
+              if (!lateBox.delete) {
+                attachCleanupHandle(error, lateBox);
+                return;
+              }
+              try {
+                await lateBox.delete();
+              } catch (cleanupError) {
+                attachCleanupHandle(error, lateBox, cleanupError);
+              }
+            })
+            .catch((lateError) => attachCleanupHandle(error, undefined, lateError));
+        }
+        throw error;
+      }
+      try {
+        createInput.signal?.throwIfAborted();
+        assertExactProcessSandbox(box, providerName, options.teamId, identityDigest);
         return sandboxInstanceAsExactProcessEnvironment(box, providerName);
       } catch (error) {
-        if (!box.delete) throw error;
+        if (
+          isExactProcessRequestConflict(
+            box,
+            providerName,
+            options.teamId,
+            createInput.idempotencyKey,
+            identityDigest,
+          )
+        ) {
+          throw new Error(
+            "Tangle exact process idempotency key conflicts with an existing request",
+            { cause: error },
+          );
+        }
+        if (!box.delete) {
+          const baseError = error instanceof Error ? error : new Error(String(error));
+          throw Object.assign(baseError, {
+            cleanupHandle: box,
+            message: `${error instanceof Error ? error.message : String(error)}; provider returned no cleanup handle`,
+          });
+        }
         try {
           await box.delete();
         } catch (cleanupError) {
-          throw new AggregateError(
+          const combined = new AggregateError(
             [error, cleanupError],
             "Tangle exact process validation and cleanup both failed",
           );
+          attachCleanupHandle(combined, box, cleanupError);
+          throw combined;
         }
         throw error;
       }
     },
-    async get(id): Promise<AgentExactProcessEnvironment | null> {
-      const box = await get.call(client, id);
-      if (!box || !isExactProcessSandbox(box)) return null;
+    async get(id, operation = {}): Promise<AgentExactProcessEnvironment | null> {
+      assertSignalOptions(operation, "Tangle exact process get");
+      boundedIdentifier(id, "exact process environment id");
+      operation.signal?.throwIfAborted();
+      const box = await awaitWithSignal(
+        get.call(client, id, operation.signal ? { signal: operation.signal } : undefined),
+        operation.signal,
+      );
+      operation.signal?.throwIfAborted();
+      if (
+        !box ||
+        boundedIdentifier(box.id, "exact process environment id") !== id ||
+        (box.metadata !== undefined && !isBoundedJson(box.metadata)) ||
+        !isExactProcessSandbox(box, providerName, options.teamId)
+      ) return null;
       return sandboxInstanceAsExactProcessEnvironment(box, providerName);
     },
-    async list(query): Promise<AgentExactProcessEnvironment[]> {
+    async list(query, operation = {}): Promise<AgentExactProcessEnvironment[]> {
+      assertSignalOptions(operation, "Tangle exact process list");
+      query?.signal?.throwIfAborted();
+      operation.signal?.throwIfAborted();
+      const signal = query?.signal ?? operation.signal;
       assertSupportedProviderOptions(query?.providerOptions);
+      assertExactProcessListQuery(query);
       const matches: AgentExactProcessEnvironment[] = [];
-      for (let offset = 0; offset <= MAX_LIST_OFFSET; offset += LIST_PAGE_SIZE) {
-        const page = await list.call(client, {
+      for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+        if (offset > MAX_LIST_RESULTS) {
+          throw new Error("Tangle exact process list exceeded its page bound");
+        }
+        signal?.throwIfAborted();
+        const page = await awaitWithSignal(list.call(client, {
           ...(options.teamId
             ? { scope: `team:${options.teamId}` }
             : { scope: "personal" }),
           limit: LIST_PAGE_SIZE,
           offset,
-        });
+          ...(signal ? { signal } : {}),
+        }), signal);
+        if (!Array.isArray(page) || page.length > LIST_PAGE_SIZE) {
+          throw new Error("Tangle exact process list returned an invalid page size");
+        }
+        if (offset + page.length > MAX_LIST_RESULTS) {
+          throw new Error("Tangle exact process list exceeded its result bound");
+        }
+        signal?.throwIfAborted();
         for (const box of page) {
+          signal?.throwIfAborted();
+          boundedIdentifier(box.id, "exact process environment id");
+          if (box.metadata !== undefined && !isBoundedJson(box.metadata)) {
+            throw new Error("Tangle exact process metadata exceeds its bound");
+          }
           if (
-            isExactProcessSandbox(box) &&
+            isExactProcessSandbox(box, providerName, options.teamId) &&
             metadataMatches(box.metadata, query?.metadata)
           ) {
             matches.push(
               sandboxInstanceAsExactProcessEnvironment(box, providerName),
             );
+            if (matches.length > MAX_LIST_RESULTS) {
+              throw new Error("Tangle exact process list exceeded its result bound");
+            }
           }
         }
         if (page.length < LIST_PAGE_SIZE) return matches;
       }
-      throw new Error(
-        "Tangle exact process lookup exceeds the Sandbox list pagination limit",
-      );
     },
   };
 }
@@ -118,15 +211,17 @@ export function createTangleExactProcessProvider(input: {
 function exactSandboxOptions(
   input: CreateAgentExactProcessEnvironmentInput,
   defaults: TangleExactProcessOptions,
+  providerName: string,
+  identityDigest: `sha256:${string}`,
 ): TangleExactSandboxOptions {
+  boundedString(input.image, "exact process image");
+  boundedIdentifier(input.idempotencyKey, "exact process idempotencyKey");
+  assertBoundedJson(input.metadata);
   if (!input.image.trim()) throw new Error("exact process image is required");
   if (!IMMUTABLE_TANGLE_IMAGE.test(input.image)) {
     throw new Error(
       "Tangle exact process image must include a sha256 manifest digest",
     );
-  }
-  if (!input.idempotencyKey.trim()) {
-    throw new Error("exact process idempotencyKey is required");
   }
   if (
     !Number.isSafeInteger(input.maxLifetimeMs) ||
@@ -174,7 +269,13 @@ function exactSandboxOptions(
     idempotencyKey: input.idempotencyKey,
     metadata: {
       ...input.metadata,
-      [EXACT_PROCESS_METADATA_KEY]: true,
+      [EXACT_PROCESS_METADATA_KEY]: {
+        version: 1,
+        provider: providerName,
+        ...(defaults.teamId ? { teamId: defaults.teamId } : {}),
+        idempotencyKey: input.idempotencyKey,
+        requestDigest: identityDigest,
+      },
     },
     ...(defaults.teamId ? { teamId: defaults.teamId } : {}),
     resources,
@@ -208,245 +309,32 @@ function sandboxResourcesFromRequest(
   };
 }
 
-function sandboxInstanceAsExactProcessEnvironment(
-  box: SandboxInstanceLike,
-  providerName: string,
-): AgentExactProcessEnvironment {
-  if (
-    !box.fs ||
-    box.fs.supportsWriteMode !== true ||
-    !box.process ||
-    !box.delete
-  ) {
-    throw new Error(
-      "Tangle sandbox does not expose exact files, processes, and deletion",
-    );
-  }
-  const process = box.process;
-  const fs = box.fs;
-  const destroy = box.delete.bind(box);
-  return {
-    id: String(box.id),
-    provider: providerName,
-    ...(box.metadata ? { metadata: box.metadata } : {}),
-    process: {
-      async list(): Promise<AgentExactProcessStatus[]> {
-        return (await process.list()).map(exactProcessStatusFromSandbox);
-      },
-      async get(pid: number): Promise<AgentExactProcess | null> {
-        const handle = await process.get(pid);
-        return handle ? sandboxProcessAsExactProcess(handle) : null;
-      },
-      async spawn(
-        launch: AgentExactProcessLaunch,
-        operation = {},
-      ): Promise<AgentExactProcess> {
-        operation.signal?.throwIfAborted();
-        validateExactProcessLaunch(launch);
-        const handle = await process.spawnExact(
-          launch.executable,
-          launch.args,
-          {
-            cwd: launch.cwd,
-            env: { ...launch.env },
-            inheritEnv: false,
-            ...(launch.stdin === undefined ? {} : { stdin: launch.stdin }),
-            timeoutMs: launch.timeoutMs,
-            ...(operation.signal ? { signal: operation.signal } : {}),
-          },
-        );
-        operation.signal?.throwIfAborted();
-        return sandboxProcessAsExactProcess(handle);
-      },
-    },
-    async writeFile(path, bytes, options): Promise<void> {
-      options.signal?.throwIfAborted();
-      assertAbsoluteFilePath(path);
-      if (
-        !Number.isSafeInteger(options.mode) ||
-        options.mode < 0 ||
-        options.mode > 0o7777
-      ) {
-        throw new Error(
-          "Tangle exact process file mode must be between 0 and 07777",
-        );
-      }
-      await fs.write(path, Buffer.from(bytes).toString("base64"), {
-        encoding: "base64",
-        mode: options.mode,
-      });
-      options.signal?.throwIfAborted();
-    },
-    async readFile(path, options): Promise<Uint8Array> {
-      options.signal?.throwIfAborted();
-      assertAbsoluteFilePath(path);
-      if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1) {
-        throw new Error(
-          "Tangle exact process maxBytes must be a positive integer",
-        );
-      }
-      const stat = await fs.stat(path);
-      options.signal?.throwIfAborted();
-      if (!stat.isFile) {
-        throw new Error("Tangle exact process path is not a regular file");
-      }
-      if (stat.size > options.maxBytes) {
-        throw new Error("Tangle exact process file exceeds maxBytes");
-      }
-      const result = await fs.readBatch([path], { encoding: "base64" });
-      options.signal?.throwIfAborted();
-      const file = result.files[0];
-      if (
-        result.errors.length !== 0 ||
-        result.files.length !== 1 ||
-        !file ||
-        file.path !== path ||
-        file.encoding !== "base64"
-      ) {
-        throw new Error(
-          result.errors[0]?.error ??
-            "Tangle exact process file read returned an invalid result",
-        );
-      }
-      const bytes = Uint8Array.from(Buffer.from(file.content, "base64"));
-      if (
-        bytes.byteLength !== file.size ||
-        bytes.byteLength !== stat.size ||
-        bytes.byteLength > options.maxBytes
-      ) {
-        throw new Error(
-          "Tangle exact process file read violated its byte bound",
-        );
-      }
-      return bytes;
-    },
-    async destroy(): Promise<void> {
-      await destroy();
-    },
-  };
-}
-
-function validateExactProcessLaunch(input: AgentExactProcessLaunch): void {
-  if (
-    !input.executable ||
-    (!isAbsolute(input.executable) && !input.env.PATH?.trim())
-  ) {
-    throw new Error(
-      "Tangle exact process executable must be absolute unless env.PATH is supplied",
-    );
-  }
-  if (!input.cwd) throw new Error("Tangle exact process cwd is required");
-  if (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 0) {
-    throw new Error(
-      "Tangle exact process timeoutMs must be a non-negative integer",
-    );
-  }
-}
-
-function sandboxProcessAsExactProcess(
-  process: SandboxProcessLike,
-): AgentExactProcess {
-  return {
-    pid: process.pid,
-    async status(): Promise<AgentExactProcessStatus> {
-      return exactProcessStatusFromSandbox(await process.status());
-    },
-    async wait(): Promise<AgentCandidateTermination> {
-      await process.wait();
-      const status = exactProcessStatusFromSandbox(await process.status());
-      if (!status.termination) {
-        throw new Error("Tangle exact process remained running after wait()");
-      }
-      return status.termination;
-    },
-    async kill(): Promise<void> {
-      await process.kill("SIGKILL", { tree: true });
-    },
-    async *stdout(): AsyncIterable<string> {
-      yield* process.stdout();
-    },
-    async *stderr(): AsyncIterable<string> {
-      yield* process.stderr();
-    },
-  };
-}
-
-function exactProcessStatusFromSandbox(
-  status: SandboxProcessStatusLike,
-): AgentExactProcessStatus {
-  if (status.running && status.exitSignal) {
-    throw new Error("Tangle exact process reported an exit signal while running");
-  }
-  const termination = processTermination(status);
-  return {
-    pid: status.pid,
-    running: status.running,
-    exitCode: status.exitCode,
-    ...(status.exitSignal ? { exitSignal: status.exitSignal } : {}),
-    ...(termination ? { termination } : {}),
-  };
-}
-
-function processTermination(
-  status: SandboxProcessStatusLike,
-): AgentCandidateTermination | undefined {
-  if (status.running) return undefined;
-  return status.exitSignal
-    ? { kind: "signal", signal: status.exitSignal }
-    : { kind: "exit", exitCode: status.exitCode };
-}
-
-function assertExactProcessSandbox(box: SandboxInstanceLike): void {
-  if (!isExactProcessSandbox(box)) {
-    throw new Error(
-      "Tangle Sandbox did not create the requested process-only runtime",
-    );
-  }
-}
-
-function isExactProcessSandbox(box: SandboxInstanceLike): boolean {
-  return (
-    box.metadata?.runtimeMode === "control" &&
-    box.metadata[EXACT_PROCESS_METADATA_KEY] === true
-  );
-}
-
-function assertUnreservedMetadata(metadata: Record<string, unknown>): void {
-  const reserved = [
-    "capabilities",
-    "customer_id",
-    "exactProcess",
-    "integrationLaunch",
-    "runtimeMode",
-    "teamId",
-    EXACT_PROCESS_METADATA_KEY,
-  ];
-  if (reserved.some((name) => Object.hasOwn(metadata, name))) {
-    throw new Error("exact process ownership metadata is reserved by Tangle");
-  }
-}
-
-function assertSupportedProviderOptions(
-  providerOptions: Record<string, unknown> | undefined,
+function assertExactProcessListQuery(
+  query: { metadata?: Record<string, unknown>; providerOptions?: Record<string, unknown>; signal?: AbortSignal } | undefined,
 ): void {
-  if (providerOptions && Object.keys(providerOptions).length > 0) {
-    throw new Error("Tangle exact process providerOptions are not supported");
+  if (
+    query !== undefined &&
+    (!query ||
+      typeof query !== "object" ||
+      Array.isArray(query) ||
+      (Object.getPrototypeOf(query) !== Object.prototype &&
+        Object.getPrototypeOf(query) !== null))
+  ) {
+    throw new Error("Tangle exact process list query must be a plain object");
   }
-}
-
-function assertAbsoluteFilePath(path: string): void {
-  if (!isAbsolute(path)) {
-    throw new Error("Tangle exact process file path must be absolute");
+  if (query?.metadata !== undefined) {
+    if (
+      !query.metadata ||
+      typeof query.metadata !== "object" ||
+      Array.isArray(query.metadata) ||
+      !isBoundedJson(query.metadata)
+    ) {
+      throw new Error("Tangle exact process metadata query exceeds its bound");
+    }
   }
-}
-
-function metadataMatches(
-  actual: Record<string, unknown> | undefined,
-  expected: Record<string, unknown> | undefined,
-): boolean {
-  if (!expected) return true;
-  if (!actual) return false;
-  return Object.entries(expected).every(([key, value]) =>
-    isDeepStrictEqual(actual[key], value),
-  );
+  if (query !== undefined) {
+    const keys = new Set(Object.keys(query));
+    for (const key of ["metadata", "providerOptions", "signal"]) keys.delete(key);
+    if (keys.size > 0) throw new Error("Tangle exact process list query contains unsupported fields");
+  }
 }

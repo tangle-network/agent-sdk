@@ -160,16 +160,20 @@ try {
     join(consumer, "tangle-control-consumer.test.ts"),
   );
 
-  for (const shim of [
-    "environment-provider",
-    "interaction",
-    "portable-context",
-    "runtime-control",
-    "workspace-branching",
-  ]) {
+  const shimSources = {
+    "environment-provider": "@tangle-network/agent-interface",
+    "environment-runtime":
+      "@tangle-network/agent-interface/environment-provider",
+    interaction: "@tangle-network/agent-interface",
+    "interaction-envelope": "@tangle-network/agent-interface",
+    "portable-context": "@tangle-network/agent-interface",
+    "runtime-control": "@tangle-network/agent-interface",
+    "workspace-branching": "@tangle-network/agent-interface",
+  };
+  for (const [shim, source] of Object.entries(shimSources)) {
     writeFileSync(
       join(consumer, `${shim}.ts`),
-      'export * from "@tangle-network/agent-interface";\n',
+      `export * from "${source}";\n`,
     );
   }
   writeFileSync(

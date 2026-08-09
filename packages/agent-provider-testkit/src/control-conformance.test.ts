@@ -4,6 +4,8 @@ import {
   portableContextPlanDigest,
   portableContextPlanRequestDigest,
   portableConversationContextDigest,
+  interactionRequestDigest,
+  interactionResponseCommandDigest,
   validateInteractionResponse,
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
@@ -16,12 +18,14 @@ import {
   type InteractionAcknowledgement,
   type InteractionRequest,
   type InteractionResponseCommand,
+  type InteractionRequestMaterial,
   type NativeContextBoundaryProof,
   type NativeContextContinuationRequest,
   type PortableContextPlan,
   type PortableContextPlanRequest,
   type PortableConversationContext,
   type WorkspaceCheckpointRef,
+  type WorkspaceForkRequest,
 } from "@tangle-network/agent-interface";
 import {
   runAgentEnvironmentProviderConformance,
@@ -33,22 +37,8 @@ import {
 
 describe("runInteractionResponseConformance", () => {
   it("proves wrong bindings, operation replay, and response conflicts", async () => {
-    const command: InteractionResponseCommand = {
-      operationId: "respond-1",
-      binding: {
-        runId: "run-1",
-        environmentId: "environment-1",
-        sessionId: "session-1",
-        interactionId: "interaction-1",
-      },
-      response: {
-        id: "interaction-1",
-        outcome: "accepted",
-        data: { answer: "yes" },
-      },
-    };
-    const request: InteractionRequest = {
-      id: command.binding.interactionId,
+    const interactionRequestMaterial: InteractionRequestMaterial = {
+      id: "interaction-1",
       kind: "question",
       title: "Continue?",
       answerSpec: {
@@ -62,6 +52,34 @@ describe("runInteractionResponseConformance", () => {
         ],
       },
       responseScopes: ["interaction"],
+      binding: {
+        runId: "run-1",
+        provider: "test-provider",
+        environmentId: "environment-1",
+        sessionId: "session-1",
+        executionId: "execution-1",
+        interactionId: "interaction-1",
+      },
+    };
+    const request: InteractionRequest = {
+      ...interactionRequestMaterial,
+      requestDigest: interactionRequestDigest(interactionRequestMaterial),
+    };
+    const commandMaterial = {
+      operationId: "respond-1",
+      binding: {
+        ...request.binding,
+        requestDigest: request.requestDigest,
+      },
+      response: {
+        id: "interaction-1",
+        outcome: "accepted" as const,
+        data: { answer: "yes" },
+      },
+    };
+    const command: InteractionResponseCommand = {
+      ...commandMaterial,
+      commandDigest: interactionResponseCommandDigest(commandMaterial),
     };
     for (const name of ["environment response", "session response"]) {
       const report = await runInteractionResponseConformance({
@@ -94,6 +112,8 @@ describe("runSessionReplayConformance", () => {
       provider: "replay-fake",
       environmentId: "environment-1",
       sessionId: "session-1",
+      executionId: "execution-1",
+      requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
     };
     const events = [
       { id: "event-1", type: "status", data: { status: "processing" } },
@@ -160,6 +180,8 @@ describe("runSessionReplayConformance", () => {
       provider: "replay-fake",
       environmentId: "environment-1",
       sessionId: "session-1",
+      executionId: "execution-1",
+      requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
     };
     const events = [
       { id: "event-1", type: "status", data: { status: "processing" } },
@@ -236,12 +258,16 @@ describe("runPortableContextConformance", () => {
       provider: "cli-bridge",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
     };
     const proof: NativeContextBoundaryProof = {
       runId: run.runId,
       provider: run.provider,
       environmentId: run.environmentId,
       sessionId: run.sessionId,
+      executionId: run.executionId,
+      requestDigest: run.requestDigest,
       boundary: {
         kind: "messages",
         messageIds: source.messages.map((message) => message.id),
@@ -349,10 +375,13 @@ function contextTransferResponder(counters: {
           requestDigest: request.requestDigest,
           planDigest: request.plan.digest,
           contextDigest: request.plan.context.digest,
+          source: request.plan.source.source,
           destination: request.plan.destination,
-          provider: "cli-bridge",
-          environmentId: "environment-destination",
-          sessionId: "session-fresh",
+          provider: request.plan.destination.provider,
+          environmentId: request.plan.destination.environmentId,
+          sessionId: request.plan.destination.sessionId,
+          runId: request.plan.destination.runId,
+          executionId: request.plan.destination.executionId,
           sessionCreatedForOperationId: request.operationId,
           sessionCreatedAt: "2026-08-01T20:06:00.500Z",
           transferredMessageIds: ["message-1"],
@@ -442,6 +471,7 @@ function nativeContinuationResponder(
       environmentId: request.run.environmentId,
       sessionId: request.run.sessionId,
       executionId: `${request.operationId}-execution`,
+      requestDigest: request.requestDigest,
     };
     const outcome = {
       acknowledgement,
@@ -467,6 +497,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const checkpointMaterial = {
       source,
@@ -489,6 +521,7 @@ describe("runWorkspaceBranchingConformance", () => {
           checkpoint,
           name: "destination branch",
           metadata: { branchId: "branch-destination" },
+          placement: { kind: "sandbox" as const, sandboxId: "sandbox-destination", region: "us-west" },
         };
         return {
           ...material,
@@ -509,6 +542,7 @@ describe("runWorkspaceBranchingConformance", () => {
         "fork-recovery",
         "fork-conflict",
         "cleanup-dependency-order",
+        "cleanup-operation-conflict",
         "confirmed-cleanup",
         "cleanup-lookup",
       ],
@@ -521,6 +555,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -558,6 +594,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -605,6 +643,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -654,6 +694,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -717,6 +759,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -764,6 +808,8 @@ describe("runWorkspaceBranchingConformance", () => {
       provider: "tangle",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
     };
     const material = { source, name: "source boundary" };
     const checkpointRequest = {
@@ -784,10 +830,14 @@ describe("runWorkspaceBranchingConformance", () => {
           environment: {
             environmentId: "victim-fork",
             provider: request.checkpoint.provider,
+            sourceEnvironmentId: request.checkpoint.source.environmentId,
+            source: request.checkpoint.source,
             sourceCheckpointId: "victim-checkpoint",
             idempotencyKey: request.idempotencyKey,
             requestDigest: request.requestDigest,
             createdAt: "2026-08-01T20:10:00.000Z",
+            placement: request.placement,
+            confidentialRequested: false,
             confidential: false,
           },
         };
@@ -819,6 +869,7 @@ function workspaceForkRequest(checkpoint: WorkspaceCheckpointRef) {
   const material = {
     checkpoint,
     name: "destination branch",
+    placement: { kind: "sandbox" as const, sandboxId: "sandbox-destination", region: "us-west" },
   };
   return {
     ...material,
@@ -943,7 +994,7 @@ describe("capability denial", () => {
         name: "missing-native-continuation",
         createProvider: () => provider,
       }),
-    ).rejects.toThrow(/requires continueNative/);
+    ).rejects.toThrow(/requires session\.continueNative/);
   });
 
   it("rejects partial durable-branch operations and still destroys the environment", async () => {
@@ -1124,6 +1175,7 @@ function interactionResponder(
     ): InteractionAcknowledgement => ({
       operationId: command.operationId,
       binding: command.binding,
+      commandDigest: command.commandDigest,
       status,
       ...(message ? { message } : {}),
       ...(retryable !== undefined ? { retryable } : {}),
@@ -1200,6 +1252,8 @@ function portableSource(): PortableConversationContext {
       provider: "cli-bridge",
       environmentId: "environment-source",
       sessionId: "session-source",
+      executionId: "execution-source",
+      requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
     },
     completeness: "complete" as const,
     messages: [
@@ -1227,9 +1281,8 @@ function portablePlanRequest(
   destination: PortableContextPlan["destination"],
   maxInputTokens: number,
 ): PortableContextPlanRequest {
-  const material = { source, destination, maxInputTokens };
+  const material = { requestId, source, destination, maxInputTokens };
   return {
-    requestId,
     requestDigest: portableContextPlanRequestDigest(material),
     ...material,
   };
@@ -1249,7 +1302,15 @@ function portablePlan(source: PortableConversationContext): PortableContextPlan 
   const material = {
     planId: "plan-1",
     source,
-    destination: { runner: "codex", provider: "cli-bridge" },
+    destination: {
+      runner: "codex",
+      provider: "cli-bridge",
+      environmentId: "environment-destination",
+      sessionId: "session-fresh",
+      runId: "run-fresh",
+      executionId: "execution-fresh",
+      profileDigest: `sha256:${"c".repeat(64)}` as `sha256:${string}`,
+    },
     messages: [
       {
         messageId: "message-1",
@@ -1278,13 +1339,18 @@ function portablePlan(source: PortableConversationContext): PortableContextPlan 
 
 function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
   const checkpoints = new Map<string, WorkspaceCheckpointRef>();
+  const cleanupOperations = new Map<string, `sha256:${string}`>();
   const forks = new Map<string, {
     provider: string;
     environmentId: string;
+    sourceEnvironmentId: string;
+    source: WorkspaceCheckpointRef["source"];
     sourceCheckpointId: string;
     idempotencyKey: string;
     requestDigest: `sha256:${string}`;
     createdAt: string;
+    placement: WorkspaceForkRequest["placement"];
+    confidentialRequested: boolean;
     confidential: boolean;
     metadata?: Record<string, unknown>;
   }>();
@@ -1337,15 +1403,31 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       return { status: "found", ...request, checkpoint };
     },
     async deleteCheckpoint(request) {
+      const priorDigest = cleanupOperations.get(request.operationId);
+      if (priorDigest !== undefined && priorDigest !== request.requestDigest) {
+        return {
+          operationId: request.operationId,
+          kind: request.kind,
+          targetId: request.targetId,
+          provider: request.provider,
+          requestDigest: request.requestDigest,
+          status: "conflict",
+          existingRequestDigest: priorDigest,
+          message: "cleanup operation was reused with different input",
+        };
+      }
+      cleanupOperations.set(request.operationId, request.requestDigest);
       const entry = [...checkpoints.entries()].find(
         ([, checkpoint]) => checkpoint.checkpointId === request.targetId,
       );
       if (!entry) {
-        return {
-          operationId: request.operationId,
-          targetId: request.targetId,
-          provider: request.provider,
-          status: "already_absent",
+      return {
+        operationId: request.operationId,
+        kind: request.kind,
+        targetId: request.targetId,
+        provider: request.provider,
+        requestDigest: request.requestDigest,
+        status: "already_absent",
         };
       }
       const blockingTargetIds = [...forks.values()]
@@ -1358,8 +1440,10 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       if (blockingTargetIds.length > 0) {
         return {
           operationId: request.operationId,
+          kind: request.kind,
           targetId: request.targetId,
           provider: request.provider,
+          requestDigest: request.requestDigest,
           status: "in_use",
           message: "forked environments still depend on this checkpoint",
           blockingTargetIds,
@@ -1368,8 +1452,10 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       checkpoints.delete(entry[0]);
       return {
         operationId: request.operationId,
+        kind: request.kind,
         targetId: request.targetId,
         provider: request.provider,
+        requestDigest: request.requestDigest,
         status: "deleted",
       };
     },
@@ -1389,11 +1475,15 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       const environment = {
         provider: request.checkpoint.provider,
         environmentId: "environment-fork-1",
+        sourceEnvironmentId: request.checkpoint.source.environmentId,
+        source: request.checkpoint.source,
         sourceCheckpointId: request.checkpoint.checkpointId,
         idempotencyKey: request.idempotencyKey,
         requestDigest: request.requestDigest,
         createdAt: "2026-08-01T20:10:01.000Z",
-        confidential: true,
+        placement: request.placement,
+        confidentialRequested: request.confidential?.requested ?? false,
+        confidential: request.confidential?.requested ?? false,
         metadata: request.metadata,
       };
       forks.set(request.idempotencyKey, environment);
@@ -1408,22 +1498,40 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       return { status: "found", ...request, environment };
     },
     async destroyFork(request) {
+      const priorDigest = cleanupOperations.get(request.operationId);
+      if (priorDigest !== undefined && priorDigest !== request.requestDigest) {
+        return {
+          operationId: request.operationId,
+          kind: request.kind,
+          targetId: request.targetId,
+          provider: request.provider,
+          requestDigest: request.requestDigest,
+          status: "conflict",
+          existingRequestDigest: priorDigest,
+          message: "cleanup operation was reused with different input",
+        };
+      }
+      cleanupOperations.set(request.operationId, request.requestDigest);
       const entry = [...forks.entries()].find(
         ([, environment]) => environment.environmentId === request.targetId,
       );
       if (!entry) {
         return {
           operationId: request.operationId,
+          kind: request.kind,
           targetId: request.targetId,
           provider: request.provider,
+          requestDigest: request.requestDigest,
           status: "already_absent",
         };
       }
       forks.delete(entry[0]);
       return {
         operationId: request.operationId,
+        kind: request.kind,
         targetId: request.targetId,
         provider: request.provider,
+        requestDigest: request.requestDigest,
         status: "deleted",
       };
     },

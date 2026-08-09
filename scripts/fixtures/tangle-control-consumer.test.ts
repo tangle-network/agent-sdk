@@ -74,12 +74,20 @@ describe("packed Tangle exact-session control", () => {
         yield {
           id: "event-1",
           type: "status",
-          data: { status: "processing" },
+          data: {
+            status: "processing",
+            executionId: "execution-1",
+            sessionId: "session-1",
+          },
         } as SandboxEvent;
         yield {
           id: "event-2",
           type: "result",
-          data: { finalText: "ok" },
+          data: {
+            finalText: "ok",
+            executionId: "execution-1",
+            sessionId: "session-1",
+          },
         } as SandboxEvent;
       },
       result: async (options) => {
