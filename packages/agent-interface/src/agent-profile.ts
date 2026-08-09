@@ -63,10 +63,12 @@ export function defineGitHubResource(
 ): AgentProfileResourceRef {
   return {
     kind: "github",
-    repository: options.repository,
     path,
-    ref: options.ref,
-    name: options.name,
+    ...(options.repository === undefined
+      ? {}
+      : { repository: options.repository }),
+    ...(options.ref === undefined ? {} : { ref: options.ref }),
+    ...(options.name === undefined ? {} : { name: options.name }),
   };
 }
 
@@ -518,6 +520,30 @@ export interface AgentProfileValidationResult {
   normalizedProfile?: AgentProfile;
 }
 
+/**
+ * Layer objects the way a spread would, except that an `undefined` entry means
+ * "not specified" and is never written to the result.
+ *
+ * Profile identity is an RFC 8785 digest over the profile, and canonicalization
+ * enumerates own keys: `{ tools: undefined }` is a different document from `{}`,
+ * so writing a key with no value moves the digest of a profile whose content did
+ * not change, or is refused outright by the canonical JSON domain. Later sources
+ * therefore win only where they carry a value; removal is expressed through
+ * {@link AgentProfileDiff}'s `remove` channel, never by overlaying `undefined`.
+ */
+function assignDefined<T extends object>(
+  ...sources: readonly (Partial<T> | undefined)[]
+): Partial<T> {
+  const merged: Record<string, unknown> = {};
+  for (const source of sources) {
+    if (source === undefined) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as Partial<T>;
+}
+
 function mergeStringArrays(
   base: string[] | undefined,
   overlay: string[] | undefined,
@@ -546,10 +572,7 @@ function mergeRecord<T extends Record<string, unknown>>(
   overlay: T | undefined,
 ): T | undefined {
   if (!base && !overlay) return undefined;
-  return {
-    ...(base ?? {}),
-    ...(overlay ?? {}),
-  } as T;
+  return assignDefined<T>(base, overlay) as T;
 }
 
 function mergeOptionalArrays<T>(
@@ -563,9 +586,16 @@ function mergeOptionalArrays<T>(
 /**
  * Merge two public AgentProfile values.
  *
- * Overlay fields win on conflicts. Additive fields compose instead: array-like
- * instruction sets are concatenated, and `prompt.appendSystemPrompt` values are
- * joined base-first with a blank line between them.
+ * Overlay fields win on conflicts, but only where they carry a value: an
+ * `undefined` entry reads as "not specified" and keeps the base value, because
+ * removal is the `remove` channel's job on {@link AgentProfileDiff}. Keys that
+ * resolve to nothing are omitted rather than written as `undefined` — RFC 8785
+ * canonicalization enumerates own keys, so a present-but-undefined key is a
+ * different document from an absent one.
+ *
+ * Additive fields compose instead of overwriting: array-like instruction sets
+ * are concatenated, and `prompt.appendSystemPrompt` values are joined
+ * base-first with a blank line between them.
  */
 export function mergeAgentProfiles(
   base: AgentProfile | undefined,
@@ -575,9 +605,7 @@ export function mergeAgentProfiles(
 
   const mergedPrompt =
     base?.prompt || overlay?.prompt
-      ? {
-          ...(base?.prompt ?? {}),
-          ...(overlay?.prompt ?? {}),
+      ? assignDefined<AgentProfilePrompt>(base?.prompt, overlay?.prompt, {
           appendSystemPrompt: mergeAppendedSystemPrompts(
             base?.prompt?.appendSystemPrompt,
             overlay?.prompt?.appendSystemPrompt,
@@ -586,42 +614,42 @@ export function mergeAgentProfiles(
             base?.prompt?.instructions,
             overlay?.prompt?.instructions,
           ),
-        }
+        })
       : undefined;
 
   const mergedResources =
     base?.resources || overlay?.resources
-      ? {
-          ...(base?.resources ?? {}),
-          ...(overlay?.resources ?? {}),
-          files: mergeOptionalArrays(
-            base?.resources?.files,
-            overlay?.resources?.files,
-          ),
-          tools: mergeOptionalArrays(
-            base?.resources?.tools,
-            overlay?.resources?.tools,
-          ),
-          skills: mergeOptionalArrays(
-            base?.resources?.skills,
-            overlay?.resources?.skills,
-          ),
-          agents: mergeOptionalArrays(
-            base?.resources?.agents,
-            overlay?.resources?.agents,
-          ),
-          commands: mergeOptionalArrays(
-            base?.resources?.commands,
-            overlay?.resources?.commands,
-          ),
-          instructions:
-            overlay?.resources?.instructions ?? base?.resources?.instructions,
-        }
+      ? assignDefined<AgentProfileResources>(
+          base?.resources,
+          overlay?.resources,
+          {
+            files: mergeOptionalArrays(
+              base?.resources?.files,
+              overlay?.resources?.files,
+            ),
+            tools: mergeOptionalArrays(
+              base?.resources?.tools,
+              overlay?.resources?.tools,
+            ),
+            skills: mergeOptionalArrays(
+              base?.resources?.skills,
+              overlay?.resources?.skills,
+            ),
+            agents: mergeOptionalArrays(
+              base?.resources?.agents,
+              overlay?.resources?.agents,
+            ),
+            commands: mergeOptionalArrays(
+              base?.resources?.commands,
+              overlay?.resources?.commands,
+            ),
+            instructions:
+              overlay?.resources?.instructions ?? base?.resources?.instructions,
+          },
+        )
       : undefined;
 
-  return {
-    ...(base ?? {}),
-    ...(overlay ?? {}),
+  return assignDefined<AgentProfile>(base, overlay, {
     prompt: mergedPrompt,
     permissions: mergeRecord(base?.permissions, overlay?.permissions),
     tools: mergeRecord(base?.tools, overlay?.tools),
@@ -633,5 +661,5 @@ export function mergeAgentProfiles(
     modes: mergeRecord(base?.modes, overlay?.modes),
     metadata: mergeRecord(base?.metadata, overlay?.metadata),
     extensions: mergeRecord(base?.extensions, overlay?.extensions),
-  };
+  });
 }
