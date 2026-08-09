@@ -216,7 +216,7 @@ describe("interface split leaf modules", () => {
     expect(
       AgentProfileCapabilitiesSchema.parse({
         namedProfiles: true,
-        systemPrompt: true,
+        systemPrompt: { replace: true, append: true },
         instructions: true,
         tools: true,
         permissions: true,
@@ -231,7 +231,7 @@ describe("interface split leaf modules", () => {
     expect(() =>
       AgentProfileCapabilitiesSchema.parse({
         namedProfiles: true,
-        systemPrompt: true,
+        systemPrompt: { replace: true, append: true },
         instructions: true,
         tools: true,
         permissions: true,
@@ -434,10 +434,15 @@ describe("interface split leaf modules", () => {
       controlRef: exactRun,
     });
     expect(agentNativeContextContinuationResultMatchesRequest(request, nativeOutcome)).toBe(true);
-    const wrongNativeOutcome = AgentNativeContextContinuationResultSchema.parse({
+    const advancedNativeOutcome = AgentNativeContextContinuationResultSchema.parse({
       acknowledgement,
       result: { text: "continued", success: true },
       controlRef: { ...exactRun, requestDigest: digest("d") },
+    });
+    expect(agentNativeContextContinuationResultMatchesRequest(request, advancedNativeOutcome)).toBe(true);
+    const wrongNativeOutcome = AgentNativeContextContinuationResultSchema.parse({
+      ...advancedNativeOutcome,
+      controlRef: { ...advancedNativeOutcome.controlRef, provider: "wrong-provider" },
     });
     expect(agentNativeContextContinuationResultMatchesRequest(request, wrongNativeOutcome)).toBe(false);
     expect(() =>
@@ -449,7 +454,7 @@ describe("interface split leaf modules", () => {
     expect(AgentEnvironmentCapabilitiesSchema.parse({
       profile: {
         namedProfiles: true,
-        systemPrompt: true,
+        systemPrompt: { replace: true, append: true },
         instructions: true,
         tools: true,
         permissions: true,

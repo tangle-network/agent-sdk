@@ -7,7 +7,14 @@ import {
 
 export const AgentProfileCapabilitiesSchema = z.strictObject({
   namedProfiles: z.boolean(),
-  systemPrompt: z.boolean(),
+  /*
+   * Replacement and addition are independent provider capabilities. Require
+   * both declarations so an omitted bit cannot be mistaken for support.
+   */
+  systemPrompt: z.strictObject({
+    replace: z.boolean(),
+    append: z.boolean(),
+  }),
   instructions: z.boolean(),
   tools: z.boolean(),
   permissions: z.boolean(),

@@ -584,7 +584,13 @@ describe("native continuation boundary", () => {
     expect(
       agentNativeContextContinuationResultMatchesRequest(request, {
         ...outcome,
-        controlRef: { ...request.run, runId: "run-wrong" },
+        controlRef: { ...request.run, runId: "run-after" },
+      }),
+    ).toBe(true);
+    expect(
+      agentNativeContextContinuationResultMatchesRequest(request, {
+        ...outcome,
+        controlRef: { ...request.run, provider: "provider-wrong" },
       }),
     ).toBe(false);
   });

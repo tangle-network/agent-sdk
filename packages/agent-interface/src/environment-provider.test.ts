@@ -186,24 +186,27 @@ describe("AgentNativeContextContinuationResultSchema", () => {
     environmentId: "environment-1",
     sessionId: "session-1",
     executionId: "execution-before",
+    requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
   };
   const expectedBoundary = {
     runId: run.runId,
     provider: run.provider,
     environmentId: run.environmentId,
     sessionId: run.sessionId,
+    executionId: run.executionId,
+    requestDigest: run.requestDigest,
     boundary: { kind: "revision" as const, revision: "revision-before" },
     observedAt: "2026-08-01T20:00:00.000Z",
   };
   const material = {
+    operationId: "continue-1",
     turnDigest: nativeContextContinuationTurnDigest({ prompt: "continue" }),
     run,
     expectedBoundary,
   };
   const request = {
-    operationId: "continue-1",
-    requestDigest: nativeContextContinuationRequestDigest(material),
     ...material,
+    requestDigest: nativeContextContinuationRequestDigest(material),
   };
   const outcome = {
     acknowledgement: {
@@ -218,6 +221,7 @@ describe("AgentNativeContextContinuationResultSchema", () => {
       ...run,
       runId: "run-after",
       executionId: "execution-after",
+      requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
     },
   };
 

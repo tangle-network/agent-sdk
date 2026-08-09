@@ -171,12 +171,9 @@ export function agentNativeContextContinuationResultMatchesRequest(
   ) return false;
   const current = exactOutcome.controlRef;
   return (
-    current.runId === request.run.runId &&
     current.provider === request.run.provider &&
     current.environmentId === request.run.environmentId &&
     current.sessionId === request.run.sessionId &&
-    current.executionId === request.run.executionId &&
-    current.requestDigest === request.run.requestDigest &&
     (exactOutcome.result.sessionId === undefined ||
       exactOutcome.result.sessionId === current.sessionId)
   );
