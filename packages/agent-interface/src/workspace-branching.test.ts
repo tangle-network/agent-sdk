@@ -12,8 +12,10 @@ import {
   workspaceCheckpointRequestDigest,
   workspaceCheckpointResultMatchesRequest,
   workspaceCleanupAcknowledgementMatches,
+  workspaceCleanupRequestDigest,
   workspaceForkRequestDigest,
   workspaceForkResultMatchesRequest,
+  forkedEnvironmentConfidentialityVerified,
   type WorkspaceCheckpointRef,
 } from "./workspace-branching.js";
 
@@ -22,6 +24,8 @@ const source = {
   provider: "tangle",
   environmentId: "environment-source",
   sessionId: "session-1",
+  executionId: "execution-1",
+  requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
 };
 
 const checkpointMaterial = {
@@ -139,6 +143,7 @@ describe("retry-safe environment fork", () => {
     checkpoint,
     name: "branch destination",
     metadata: { branchId: "branch-2" },
+    placement: { kind: "sandbox" as const, sandboxId: "sandbox-2", region: "us-west" },
   };
   const request = {
     ...forkMaterial,
@@ -148,12 +153,15 @@ describe("retry-safe environment fork", () => {
   const environment = {
     provider: "tangle",
     environmentId: "environment-destination",
+    sourceEnvironmentId: source.environmentId,
+    source,
     sourceCheckpointId: checkpoint.checkpointId,
     idempotencyKey: request.idempotencyKey,
     requestDigest: request.requestDigest,
     createdAt: "2026-08-01T20:00:01.000Z",
-    placement: { kind: "sandbox" as const, sandboxId: "sandbox-2", region: "us-west" },
-    confidential: true,
+    placement: forkMaterial.placement,
+    confidentialRequested: false,
+    confidential: false,
     metadata: forkMaterial.metadata,
   };
 
@@ -247,6 +255,63 @@ describe("retry-safe environment fork", () => {
         },
       }),
     ).toBe(false);
+    expect(
+      workspaceForkResultMatchesRequest(request, {
+        status: "found",
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+        environment: {
+          ...environment,
+          environmentId: checkpoint.source.environmentId,
+        },
+      }),
+    ).toBe(false);
+    const confidentialMaterial = {
+      ...forkMaterial,
+      confidential: {
+        requested: true,
+        nonce: "nonce-1",
+        policy: "policy-1",
+        profileDigest: checkpoint.requestDigest,
+      },
+    };
+    const confidentialRequest = {
+      ...confidentialMaterial,
+      idempotencyKey: "fork-confidential",
+      requestDigest: workspaceForkRequestDigest(confidentialMaterial),
+    };
+    expect(
+      forkedEnvironmentConfidentialityVerified(confidentialRequest, {
+        ...environment,
+        confidentialRequested: true,
+        requestDigest: confidentialRequest.requestDigest,
+        confidential: true,
+      }),
+    ).toBe(false);
+    const attestation = {
+      provider: "tangle",
+      requested: true as const,
+      nonce: "nonce-1",
+      measurement: `sha256:${"4".repeat(64)}` as const,
+      environmentId: environment.environmentId,
+      source,
+      requestDigest: confidentialRequest.requestDigest,
+      profileDigest: checkpoint.requestDigest,
+      policy: "policy-1",
+      quote: "quote-1",
+      providerKeyId: "tangle-key-1",
+      providerSignature: "signature-1",
+      verifiedAt: "2026-08-01T20:00:02.000Z",
+    };
+    expect(
+      forkedEnvironmentConfidentialityVerified(confidentialRequest, {
+        ...environment,
+        confidentialRequested: true,
+        confidential: false,
+        requestDigest: confidentialRequest.requestDigest,
+        confidentialAttestation: attestation,
+      }, () => true),
+    ).toBe(true);
   });
 });
 
@@ -263,8 +328,14 @@ describe("workspace cleanup acknowledgement", () => {
     (status) => {
       const request = {
         operationId: "cleanup-1",
+        kind: "checkpoint" as const,
         targetId: "checkpoint-1",
         provider: "tangle",
+        requestDigest: workspaceCleanupRequestDigest({
+          kind: "checkpoint",
+          targetId: "checkpoint-1",
+          provider: "tangle",
+        }),
       };
       const acknowledgement = WorkspaceCleanupAcknowledgementSchema.parse({
         ...request,
@@ -272,6 +343,9 @@ describe("workspace cleanup acknowledgement", () => {
         ...(["unknown", "in_use", "conflict", "transport_failure"].includes(status)
           ? {
               message: "remote cleanup outcome",
+              ...(status === "conflict"
+                ? { existingRequestDigest: `sha256:${"f".repeat(64)}` }
+                : {}),
               ...(status === "in_use"
                 ? { blockingTargetIds: ["environment-fork-1"] }
                 : {}),
@@ -292,12 +366,44 @@ describe("workspace cleanup acknowledgement", () => {
     expect(() =>
       WorkspaceCleanupAcknowledgementSchema.parse({
         operationId: "cleanup-1",
+        kind: "checkpoint",
         targetId: "checkpoint-1",
         provider: "tangle",
+        requestDigest: workspaceCleanupRequestDigest({
+          kind: "checkpoint",
+          targetId: "checkpoint-1",
+          provider: "tangle",
+        }),
         status: "in_use",
         message: "a fork still depends on this checkpoint",
       }),
     ).toThrow(/blocking target/);
+  });
+
+  it("requires a distinct existing digest for cleanup conflicts", () => {
+    const request = {
+      operationId: "cleanup-1",
+      kind: "checkpoint" as const,
+      targetId: "checkpoint-1",
+      provider: "tangle",
+      requestDigest: workspaceCleanupRequestDigest({
+        kind: "checkpoint",
+        targetId: "checkpoint-1",
+        provider: "tangle",
+      }),
+    };
+    for (const existingRequestDigest of [undefined, request.requestDigest]) {
+      expect(() =>
+        WorkspaceCleanupAcknowledgementSchema.parse({
+          ...request,
+          status: "conflict",
+          message: "cleanup operation was reused with different input",
+          ...(existingRequestDigest === undefined
+            ? {}
+            : { existingRequestDigest }),
+        }),
+      ).toThrow(/existing digest|different request/);
+    }
   });
 
   it.each(["unknown", "transport_failure"] as const)(
@@ -306,8 +412,14 @@ describe("workspace cleanup acknowledgement", () => {
       expect(() =>
         WorkspaceCleanupAcknowledgementSchema.parse({
           operationId: "cleanup-1",
+          kind: "checkpoint",
           targetId: "checkpoint-1",
           provider: "tangle",
+          requestDigest: workspaceCleanupRequestDigest({
+            kind: "checkpoint",
+            targetId: "checkpoint-1",
+            provider: "tangle",
+          }),
           status,
           message: "remote cleanup outcome",
         }),
@@ -318,11 +430,54 @@ describe("workspace cleanup acknowledgement", () => {
   it("rejects malformed requests before matching acknowledgements", () => {
     expect(
       workspaceCleanupAcknowledgementMatches(
-        { operationId: "", targetId: "checkpoint-1", provider: "tangle" },
         {
           operationId: "",
+          kind: "checkpoint",
           targetId: "checkpoint-1",
           provider: "tangle",
+          requestDigest: workspaceCleanupRequestDigest({
+            kind: "checkpoint",
+            targetId: "checkpoint-1",
+            provider: "tangle",
+          }),
+        },
+        {
+          operationId: "",
+          kind: "checkpoint",
+          targetId: "checkpoint-1",
+          provider: "tangle",
+          requestDigest: workspaceCleanupRequestDigest({
+            kind: "checkpoint",
+            targetId: "checkpoint-1",
+            provider: "tangle",
+          }),
+          status: "deleted",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      workspaceCleanupAcknowledgementMatches(
+        {
+          operationId: "cleanup-1",
+          kind: "checkpoint",
+          targetId: "checkpoint-1",
+          provider: "tangle",
+          requestDigest: workspaceCleanupRequestDigest({
+            kind: "checkpoint",
+            targetId: "checkpoint-1",
+            provider: "tangle",
+          }),
+        },
+        {
+          operationId: "cleanup-1",
+          kind: "fork",
+          targetId: "checkpoint-1",
+          provider: "tangle",
+          requestDigest: workspaceCleanupRequestDigest({
+            kind: "fork",
+            targetId: "checkpoint-1",
+            provider: "tangle",
+          }),
           status: "deleted",
         },
       ),

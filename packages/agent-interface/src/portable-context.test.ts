@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentNativeContextContinuationResultSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+} from "./environment-runtime.js";
+import {
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextContinuationAcknowledgementSchema,
@@ -19,6 +23,7 @@ import {
   portableContextPlanResultMatchesRequest,
   portableConversationContextDigest,
   type ContextTransferReceipt,
+  type ContextTransferRequestMaterial,
   type PortableContextPlan,
   type PortableConversationContext,
 } from "./portable-context.js";
@@ -30,6 +35,8 @@ const sourceMaterial = {
     provider: "cli-bridge",
     environmentId: "environment-source",
     sessionId: "session-source",
+    executionId: "execution-source",
+    requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
   },
   completeness: "complete" as const,
   messages: [
@@ -71,6 +78,11 @@ function contextPlan(): PortableContextPlan {
     destination: {
       runner: "codex",
       provider: "cli-bridge",
+      environmentId: "environment-destination",
+      sessionId: "session-destination",
+      runId: "run-destination",
+      executionId: "execution-destination",
+      profileDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
     },
     messages: [
       {
@@ -134,15 +146,16 @@ describe("portable context plan and transfer", () => {
     expect(() =>
       PortableContextPlanSchema.parse({
         ...plan,
-        destination: { runner: "kimi" },
+        destination: { ...plan.destination, runner: "kimi" },
       }),
     ).toThrow(/plan digest/);
   });
 
   it("rejects output history that was not derived from the embedded source", () => {
     const plan = contextPlan();
+    const { digest: _contextDigest, ...contextMaterial } = plan.context;
     const forgedContextMaterial = {
-      ...plan.context,
+      ...contextMaterial,
       messages: [
         {
           ...plan.context.messages[0]!,
@@ -167,12 +180,12 @@ describe("portable context plan and transfer", () => {
 
   it("represents a typed over-limit result before dispatch", () => {
     const requestMaterial = {
+      requestId: "plan-request-1",
       source,
       destination: contextPlan().destination,
       maxInputTokens: 64_000,
     };
     const request = {
-      requestId: "plan-request-1",
       requestDigest: portableContextPlanRequestDigest(requestMaterial),
       ...requestMaterial,
     };
@@ -246,7 +259,7 @@ describe("portable context plan and transfer", () => {
     const planMaterial = {
       planId: "partial-plan",
       source: partialSource,
-      destination: { runner: "codex" },
+      destination: contextPlan().destination,
       messages: [
         {
           messageId: "message-1",
@@ -271,6 +284,7 @@ describe("portable context plan and transfer", () => {
     }).toThrow(/either context is partial/);
 
     const transferMaterial = {
+      operationId: "partial-transfer",
       plan,
       acceptance: {
         planDigest: plan.digest,
@@ -280,7 +294,6 @@ describe("portable context plan and transfer", () => {
     };
     expect(() =>
       ContextTransferRequestSchema.parse({
-        operationId: "partial-transfer",
         requestDigest: contextTransferRequestDigest(transferMaterial),
         ...transferMaterial,
       }),
@@ -290,6 +303,7 @@ describe("portable context plan and transfer", () => {
   it("rejects an unapproved or mismatched transformed plan", () => {
     const plan = contextPlan();
     const systemMaterial = {
+      operationId: "transfer-1",
       plan,
       acceptance: {
         planDigest: plan.digest,
@@ -299,12 +313,12 @@ describe("portable context plan and transfer", () => {
     };
     expect(() =>
       ContextTransferRequestSchema.parse({
-        operationId: "transfer-1",
         requestDigest: contextTransferRequestDigest(systemMaterial),
         ...systemMaterial,
       }),
     ).toThrow(/requires user or policy acceptance/);
     const mismatchMaterial = {
+      operationId: "transfer-1",
       plan,
       acceptance: {
         planDigest: source.digest,
@@ -314,7 +328,6 @@ describe("portable context plan and transfer", () => {
     };
     expect(() =>
       ContextTransferRequestSchema.parse({
-        operationId: "transfer-1",
         requestDigest: contextTransferRequestDigest(mismatchMaterial),
         ...mismatchMaterial,
       }),
@@ -324,6 +337,7 @@ describe("portable context plan and transfer", () => {
   it("matches a fresh-session receipt exactly to the accepted plan", () => {
     const plan = contextPlan();
     const material = {
+      operationId: "transfer-1",
       plan,
       acceptance: {
         planDigest: plan.digest,
@@ -332,7 +346,6 @@ describe("portable context plan and transfer", () => {
       },
     };
     const request = ContextTransferRequestSchema.parse({
-      operationId: "transfer-1",
       requestDigest: contextTransferRequestDigest(material),
       ...material,
     });
@@ -342,10 +355,13 @@ describe("portable context plan and transfer", () => {
       requestDigest: request.requestDigest,
       planDigest: plan.digest,
       contextDigest: plan.context.digest,
+      source: plan.source.source,
       destination: plan.destination,
       provider: "cli-bridge",
-      environmentId: "destination-1",
-      sessionId: "session-new",
+      environmentId: plan.destination.environmentId,
+      sessionId: plan.destination.sessionId,
+      runId: plan.destination.runId,
+      executionId: plan.destination.executionId,
       sessionCreatedForOperationId: request.operationId,
       sessionCreatedAt: "2026-08-01T20:01:00.500Z",
       transferredMessageIds: ["message-1"],
@@ -359,7 +375,26 @@ describe("portable context plan and transfer", () => {
         ...receipt,
         sessionId: source.source.sessionId!,
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      contextTransferReceiptMatches(request, {
+        ...receipt,
+        sessionCreatedAt: "2026-08-01T20:00:59.999Z",
+      }),
+    ).toBe(false);
+    expect(
+      contextTransferReceiptMatches(request, {
+        ...receipt,
+        admittedAt: "2026-08-01T20:01:00.250Z",
+      }),
+    ).toBe(false);
+    expect(
+      contextTransferReceiptMatches(request, {
+        ...receipt,
+        environmentId: source.source.environmentId!,
+        sessionId: "session-new-in-source-environment",
+      }),
+    ).toBe(false);
     expect(
       contextTransferReceiptMatches(request, {
         ...receipt,
@@ -370,7 +405,7 @@ describe("portable context plan and transfer", () => {
     expect(
       contextTransferReceiptMatches(request, {
         ...receipt,
-        destination: { runner: "kimi", provider: "cli-bridge" },
+        destination: { ...receipt.destination, runner: "kimi" },
       }),
     ).toBe(false);
     expect(
@@ -403,6 +438,26 @@ describe("portable context plan and transfer", () => {
         existingRequestDigest: request.requestDigest,
       }),
     ).toMatchObject({ status: "conflict" });
+
+    const invalidSource = {
+      ...source,
+      source: { ...source.source, sessionId: undefined },
+    } as unknown as PortableConversationContext;
+    const noSourceSessionMaterial = {
+      operationId: "transfer-no-source-session",
+      plan: { ...plan, source: invalidSource, context: { ...plan.context, source: invalidSource.source } },
+      acceptance: {
+        planDigest: plan.digest,
+        acceptedAt: "2026-08-01T20:01:00.000Z",
+        acceptedBy: "user" as const,
+      },
+    } as unknown as ContextTransferRequestMaterial;
+    expect(
+      ContextTransferRequestSchema.safeParse({
+        requestDigest: `sha256:${"f".repeat(64)}`,
+        ...noSourceSessionMaterial,
+      }).success,
+    ).toBe(false);
   });
 
   it.each(["conflict", "unknown", "transport_failure"] as const)(
@@ -410,6 +465,7 @@ describe("portable context plan and transfer", () => {
     (status) => {
       const plan = contextPlan();
       const material = {
+        operationId: "transfer-bound-result",
         plan,
         acceptance: {
           planDigest: plan.digest,
@@ -418,7 +474,6 @@ describe("portable context plan and transfer", () => {
         },
       };
       const request = ContextTransferRequestSchema.parse({
-        operationId: "transfer-bound-result",
         requestDigest: contextTransferRequestDigest(material),
         ...material,
       });
@@ -449,12 +504,22 @@ describe("portable context plan and transfer", () => {
 });
 
 describe("native continuation boundary", () => {
-  const turnDigest = nativeContextContinuationTurnDigest({ prompt: "Continue the task." });
+  const turnDigest = nativeContextContinuationTurnDigest({ prompt: "continue" });
+  const exactRun = {
+    runId: "run-source",
+    provider: "cli-bridge",
+    environmentId: "environment-source",
+    sessionId: "session-source",
+    executionId: "execution-source",
+    requestDigest: source.source.requestDigest,
+  };
   const proof = {
     runId: "run-source",
     provider: "cli-bridge",
     environmentId: "environment-source",
     sessionId: "session-source",
+    executionId: "execution-source",
+    requestDigest: source.source.requestDigest,
     boundary: { kind: "messages" as const, messageIds: ["message-1", "message-2"], digest: source.digest },
     observedAt: "2026-08-01T20:02:00.000Z",
   };
@@ -464,13 +529,7 @@ describe("native continuation boundary", () => {
       NativeContextContinuationRequestSchema.parse({
         operationId: "continue-duplicates",
         requestDigest: `sha256:${"1".repeat(64)}`,
-        turnDigest,
-        run: {
-          runId: "run-source",
-          provider: "cli-bridge",
-          environmentId: "environment-source",
-          sessionId: "session-source",
-        },
+        run: exactRun,
         expectedBoundary: {
           ...proof,
           boundary: {
@@ -485,17 +544,12 @@ describe("native continuation boundary", () => {
 
   it("requires the proof to match the retained run", () => {
     const material = {
+      operationId: "continue-1",
       turnDigest,
-      run: {
-        runId: "run-source",
-        provider: "cli-bridge",
-        environmentId: "environment-source",
-        sessionId: "session-source",
-      },
+      run: exactRun,
       expectedBoundary: proof,
     };
     const request = {
-      operationId: "continue-1",
       requestDigest: nativeContextContinuationRequestDigest(material),
       ...material,
     };
@@ -512,36 +566,30 @@ describe("native continuation boundary", () => {
         run: { ...request.run, runId: "run-wrong" },
       }),
     ).toThrow(/must match/);
-  });
 
-  it("binds operation identity to the exact new turn", () => {
-    const base = {
-      turnDigest,
-      run: {
-        runId: "run-source",
-        provider: "cli-bridge",
-        environmentId: "environment-source",
-        sessionId: "session-source",
+    const outcome = AgentNativeContextContinuationResultSchema.parse({
+      acknowledgement: {
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        status: "accepted",
+        historyMessagesSent: 0,
+        actualBoundary: proof,
       },
-      expectedBoundary: proof,
-    };
-    const request = NativeContextContinuationRequestSchema.parse({
-      operationId: "continue-turn-binding",
-      requestDigest: nativeContextContinuationRequestDigest(base),
-      ...base,
+      result: { text: "continued", success: true, sessionId: request.run.sessionId },
+      controlRef: request.run,
     });
-    const changedTurnDigest = nativeContextContinuationTurnDigest({ prompt: "Different turn." });
-
-    expect(changedTurnDigest).not.toBe(request.turnDigest);
-    expect(() =>
-      NativeContextContinuationRequestSchema.parse({
-        ...request,
-        turnDigest: changedTurnDigest,
+    expect(
+      agentNativeContextContinuationResultMatchesRequest(request, outcome),
+    ).toBe(true);
+    expect(
+      agentNativeContextContinuationResultMatchesRequest(request, {
+        ...outcome,
+        controlRef: { ...request.run, runId: "run-wrong" },
       }),
-    ).toThrow(/request digest does not match/);
+    ).toBe(false);
   });
 
-  it("rejects accepted native continuation that resends history", () => {
+  it("parses nonzero history but rejects it at the exact-match boundary", () => {
     const requestDigest = `sha256:${"1".repeat(64)}` as const;
     expect(
       NativeContextContinuationAcknowledgementSchema.parse({
@@ -552,29 +600,24 @@ describe("native continuation boundary", () => {
         actualBoundary: proof,
       }),
     ).toMatchObject({ status: "accepted" });
-    expect(() =>
-      NativeContextContinuationAcknowledgementSchema.parse({
-        operationId: "continue-1",
-        requestDigest,
-        status: "accepted",
-        historyMessagesSent: 2,
-      }),
-    ).toThrow(/must never resend/);
+    const nonzeroHistory = NativeContextContinuationAcknowledgementSchema.parse({
+      operationId: "continue-1",
+      requestDigest,
+      status: "accepted",
+      historyMessagesSent: 2,
+      actualBoundary: proof,
+    });
+    expect(nonzeroHistory.historyMessagesSent).toBe(2);
   });
 
   it("rejects invalid acknowledgements in the exact-match helper itself", () => {
     const material = {
+      operationId: "continue-direct-check",
       turnDigest,
-      run: {
-        runId: "run-source",
-        provider: "cli-bridge",
-        environmentId: "environment-source",
-        sessionId: "session-source",
-      },
+      run: exactRun,
       expectedBoundary: proof,
     };
     const request = NativeContextContinuationRequestSchema.parse({
-      operationId: "continue-direct-check",
       requestDigest: nativeContextContinuationRequestDigest(material),
       ...material,
     });
@@ -611,6 +654,15 @@ describe("native continuation boundary", () => {
         operationId: request.operationId,
         requestDigest: request.requestDigest,
         status: "accepted",
+        historyMessagesSent: 1,
+        actualBoundary: proof,
+      }),
+    ).toBe(false);
+    expect(
+      nativeContextContinuationAcknowledgementMatches(request, {
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        status: "accepted",
         historyMessagesSent: 0,
         actualBoundary: {
           ...proof,
@@ -622,17 +674,12 @@ describe("native continuation boundary", () => {
 
   it("binds replay and conflict acknowledgements to the exact operation", () => {
     const material = {
+      operationId: "continue-1",
       turnDigest,
-      run: {
-        runId: "run-source",
-        provider: "cli-bridge",
-        environmentId: "environment-source",
-        sessionId: "session-source",
-      },
+      run: exactRun,
       expectedBoundary: proof,
     };
     const request = NativeContextContinuationRequestSchema.parse({
-      operationId: "continue-1",
       requestDigest: nativeContextContinuationRequestDigest(material),
       ...material,
     });
@@ -665,17 +712,12 @@ describe("native continuation boundary", () => {
     "transport_failure",
   ] as const)("does not accept a %s native continuation", (status) => {
     const material = {
+      operationId: "continue-failure",
       turnDigest,
-      run: {
-        runId: "run-source",
-        provider: "cli-bridge",
-        environmentId: "environment-source",
-        sessionId: "session-source",
-      },
+      run: exactRun,
       expectedBoundary: proof,
     };
     const request = NativeContextContinuationRequestSchema.parse({
-      operationId: "continue-failure",
       requestDigest: nativeContextContinuationRequestDigest(material),
       ...material,
     });

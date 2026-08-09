@@ -8,6 +8,7 @@ import {
   agentRunCancellationAcknowledgementMatchesRequest,
   agentRunCancellationRequestDigest,
 } from "./runtime-control.js";
+import { interactionRequestDigest } from "./interaction-envelope.js";
 
 describe("durable run control", () => {
   it("validates provider-neutral coordinates needed after process restart", () => {
@@ -34,6 +35,7 @@ describe("durable run control", () => {
         environmentId: "local-1",
         sessionId: "session-1",
         executionId: "execution-1",
+        requestDigest: `sha256:${"b".repeat(64)}`,
       },
       reason: "user requested stop",
     };
@@ -137,6 +139,28 @@ describe("runtime event envelope", () => {
           kind: "question",
           title: "Continue?",
           answerSpec: { fields: [] },
+          binding: {
+            runId: "run-1",
+            provider: "cli-bridge",
+            environmentId: "environment-1",
+            sessionId: "session-1",
+            executionId: "execution-1",
+            interactionId: "interaction-1",
+          },
+          requestDigest: interactionRequestDigest({
+            id: "interaction-1",
+            kind: "question",
+            title: "Continue?",
+            answerSpec: { fields: [] },
+            binding: {
+              runId: "run-1",
+              provider: "cli-bridge",
+              environmentId: "environment-1",
+              sessionId: "session-1",
+              executionId: "execution-1",
+              interactionId: "interaction-1",
+            },
+          }),
         },
       },
       { type: "interaction.cancel", id: "interaction-1", reason: "done" },

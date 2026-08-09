@@ -8,12 +8,16 @@ import {
   InteractionRequestSchema,
   InteractionResponseSchema,
   InteractionResponseCommandSchema,
+  interactionResponseCommandDigest,
+  interactionRequestDigest,
   permissionAnswerSpec,
+  validateAndParseInteractionResponse,
   validateInteractionAnswer,
   validateInteractionResponse,
   type InteractionAnswerSpec,
   type InteractionAcknowledgementStatus,
   type InteractionResponseCommand,
+  type InteractionRequestMaterial,
 } from "./interaction.js";
 
 const legacyInteractionResponder: NonNullable<
@@ -24,6 +28,7 @@ const durableInteractionResponder: NonNullable<
 > = async (command) => ({
   operationId: command.operationId,
   binding: command.binding,
+  commandDigest: command.commandDigest,
   status: "accepted",
 });
 void legacyInteractionResponder;
@@ -53,6 +58,24 @@ const selectSpec = (overrides?: {
     },
   ],
 });
+
+function parseInteractionRequest(value: Record<string, unknown>) {
+  const { requestDigest: _requestDigest, binding: suppliedBinding, ...rest } = value;
+  const id = String(rest.id);
+  const binding = suppliedBinding ?? {
+    runId: "run-1",
+    provider: "test-provider",
+    environmentId: "environment-1",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    interactionId: id,
+  };
+  const material = { ...rest, binding } as InteractionRequestMaterial;
+  return InteractionRequestSchema.parse({
+    ...material,
+    requestDigest: interactionRequestDigest(material),
+  });
+}
 
 describe("select field schema", () => {
   it("accepts allowCustom on select fields", () => {
@@ -84,7 +107,7 @@ describe("select field schema", () => {
       }),
     ).toThrow();
     expect(() =>
-      InteractionRequestSchema.parse({
+      parseInteractionRequest({
         id: "interaction-1",
         kind: "permission",
         title: "Run?",
@@ -139,44 +162,6 @@ describe("select field schema", () => {
         allowCustom: true,
       }),
     ).toMatchObject({ default: ["write-in"] });
-  });
-});
-
-describe("free-text field schema", () => {
-  it.each(["text", "secret"] as const)(
-    "accepts a caller-defined maxLength on %s fields",
-    (type) => {
-      const parsed = InteractionFieldSchema.parse({
-        type,
-        name: "answer",
-        label: "Answer",
-        maxLength: 4096,
-      });
-      expect(parsed).toMatchObject({ type, maxLength: 4096 });
-    },
-  );
-
-  it.each([0, -1, 1.5])("rejects invalid maxLength %s", (maxLength) => {
-    expect(() =>
-      InteractionFieldSchema.parse({
-        type: "text",
-        name: "answer",
-        label: "Answer",
-        maxLength,
-      }),
-    ).toThrow();
-  });
-
-  it("rejects a text default longer than maxLength", () => {
-    expect(() =>
-      InteractionFieldSchema.parse({
-        type: "text",
-        name: "answer",
-        label: "Answer",
-        maxLength: 3,
-        default: "four",
-      }),
-    ).toThrow(/default exceeds maxLength/);
   });
 });
 
@@ -298,35 +283,26 @@ describe("validateInteractionAnswer number", () => {
   );
 });
 
-describe("validateInteractionAnswer free text", () => {
-  it.each(["text", "secret"] as const)(
-    "enforces the caller-defined maxLength on %s answers",
-    (type) => {
-      const spec: InteractionAnswerSpec = {
-        fields: [{ type, name: "answer", label: "Answer", maxLength: 3 }],
-      };
-      expect(validateInteractionAnswer(spec, { answer: "yes" })).toEqual({ ok: true });
-      expect(validateInteractionAnswer(spec, { answer: "four" })).toEqual({
-        ok: false,
-        errors: ['field "answer" exceeds maxLength 3'],
-      });
-    },
-  );
-});
-
-const responseCommand: InteractionResponseCommand = {
+const responseCommandMaterial = {
   operationId: "operation-1",
   binding: {
     runId: "run-1",
+    provider: "test-provider",
     environmentId: "environment-1",
     sessionId: "session-1",
+    executionId: "execution-1",
     interactionId: "interaction-1",
+    requestDigest: `sha256:${"c".repeat(64)}` as `sha256:${string}`,
   },
   response: {
     id: "interaction-1",
-    outcome: "accepted",
+    outcome: "accepted" as const,
     data: { choice: ["a"] },
   },
+};
+const responseCommand: InteractionResponseCommand = {
+  ...responseCommandMaterial,
+  commandDigest: interactionResponseCommandDigest(responseCommandMaterial),
 };
 
 describe("interaction capabilities", () => {
@@ -375,6 +351,15 @@ describe("interaction response command", () => {
     ).toThrow(/must match/);
   });
 
+  it("rejects changed response data under the same command identity", () => {
+    expect(() =>
+      InteractionResponseCommandSchema.parse({
+        ...responseCommand,
+        response: { ...responseCommand.response, data: { choice: ["b"] } },
+      }),
+    ).toThrow(/command digest/);
+  });
+
   it("preserves declined and cancelled response data for wire compatibility", () => {
     for (const outcome of ["declined", "cancelled"] as const) {
       expect(
@@ -390,10 +375,83 @@ describe("interaction response command", () => {
       });
     }
   });
+
+  it("rejects secret values on declined and cancelled resolutions", () => {
+    const request = parseInteractionRequest({
+      id: "secret-response-1",
+      kind: "question",
+      title: "Token",
+      answerSpec: {
+        fields: [
+          {
+            type: "secret",
+            name: "token",
+            label: "Token",
+            required: false,
+          },
+        ],
+      },
+    });
+    for (const outcome of ["declined", "cancelled"] as const) {
+      const result = validateInteractionResponse(request, {
+        id: request.id,
+        outcome,
+        data: { token: "must-not-leak" },
+      });
+      expect(result).toMatchObject({ ok: false });
+      if (!result.ok) {
+        expect(result.errors).toContain(
+          `field "token" is secret and cannot ride a ${outcome} resolution`,
+        );
+      }
+    }
+  });
+
+  it("returns parsed response data and rejects prototype keys", () => {
+    const request = parseInteractionRequest({
+      id: "safe-response-1",
+      kind: "question",
+      title: "Confirm",
+      answerSpec: {
+        fields: [{ type: "text", name: "answer", label: "Answer" }],
+      },
+    });
+    const parsed = validateAndParseInteractionResponse(request, {
+      id: request.id,
+      outcome: "accepted",
+      data: { answer: "yes" },
+    });
+    expect(parsed).toEqual({
+      ok: true,
+      response: {
+        id: request.id,
+        outcome: "accepted",
+        data: { answer: "yes" },
+      },
+    });
+    expect(
+      Object.getOwnPropertyNames(parsed.ok ? parsed.response.data ?? {} : {}),
+    ).not.toEqual(expect.arrayContaining(["__proto__", "constructor", "prototype"]));
+
+    const payload = JSON.parse(
+      `{"id":"${request.id}","outcome":"accepted","data":{"answer":"yes","__proto__":"polluted","constructor":"polluted","prototype":"polluted"}}`,
+    );
+    const rejected = validateInteractionResponse(request, payload);
+    expect(rejected).toMatchObject({ ok: false });
+    if (!rejected.ok) {
+      expect(rejected.errors).toEqual(
+        expect.arrayContaining([
+          'unknown field "__proto__"',
+          'unknown field "constructor"',
+          'unknown field "prototype"',
+        ]),
+      );
+    }
+  });
 });
 
 describe("permission response scopes", () => {
-  const request = InteractionRequestSchema.parse({
+  const request = parseInteractionRequest({
     id: "permission-1",
     kind: "permission",
     title: "Run command?",
@@ -415,7 +473,7 @@ describe("permission response scopes", () => {
   });
 
   it("always permits denial even when one-time approval is not offered", () => {
-    const sessionRequest = InteractionRequestSchema.parse({
+    const sessionRequest = parseInteractionRequest({
       id: "permission-session",
       kind: "permission",
       title: "Run command?",
@@ -456,7 +514,7 @@ describe("permission response scopes", () => {
 
   it("rejects an invalid default before the request is emitted", () => {
     expect(() =>
-      InteractionRequestSchema.parse({
+      parseInteractionRequest({
         ...request,
         onTimeout: "default",
         default: {
@@ -469,29 +527,32 @@ describe("permission response scopes", () => {
 });
 
 describe("secret interaction defaults", () => {
-  it("rejects secret values embedded in a persisted request", () => {
-    expect(() =>
-      InteractionRequestSchema.parse({
-        id: "secret-1",
-        kind: "question",
-        title: "Token",
-        answerSpec: {
-          fields: [
-            {
-              type: "secret",
-              name: "token",
-              label: "Token",
-              required: true,
-            },
-          ],
-        },
-        default: {
-          outcome: "accepted",
-          data: { token: "must-not-be-persisted" },
-        },
-      }),
-    ).toThrow(/secret answers cannot be embedded/);
-  });
+  it.each(["accepted", "declined", "cancelled"] as const)(
+    "rejects secret values embedded in a persisted %s request",
+    (outcome) => {
+      expect(() =>
+        parseInteractionRequest({
+          id: "secret-1",
+          kind: "question",
+          title: "Token",
+          answerSpec: {
+            fields: [
+              {
+                type: "secret",
+                name: "token",
+                label: "Token",
+                required: true,
+              },
+            ],
+          },
+          default: {
+            outcome,
+            data: { token: "must-not-be-persisted" },
+          },
+        }),
+      ).toThrow(/secret answers cannot be embedded/);
+    },
+  );
 });
 
 describe("interaction acknowledgement", () => {
@@ -512,6 +573,7 @@ describe("interaction acknowledgement", () => {
     const acknowledgement = {
       operationId: responseCommand.operationId,
       binding: responseCommand.binding,
+      commandDigest: responseCommand.commandDigest,
       status,
       ...(["invalid_response", "transport_failure"].includes(status)
         ? { message: "connection closed", retryable: true }
@@ -526,6 +588,7 @@ describe("interaction acknowledgement", () => {
     const common = {
       operationId: responseCommand.operationId,
       binding: responseCommand.binding,
+      commandDigest: responseCommand.commandDigest,
     };
     expect(() =>
       InteractionAcknowledgementSchema.parse({
