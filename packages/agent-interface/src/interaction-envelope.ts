@@ -70,6 +70,13 @@ export type InteractionRequestBinding = z.infer<
   typeof InteractionRequestBindingSchema
 >;
 
+/** Exact execution coordinates shared by every interaction from one provider turn. */
+export const InteractionExecutionBindingSchema =
+  InteractionRequestBindingSchema.omit({ interactionId: true });
+export type InteractionExecutionBinding = z.infer<
+  typeof InteractionExecutionBindingSchema
+>;
+
 /** Binding carried by a response command and acknowledgement. */
 export const InteractionBindingSchema = z.strictObject({
   ...InteractionRequestBindingSchema.shape,

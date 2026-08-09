@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { SdkProviderAdapter } from "./index.js";
+import type { AgentExecutionInput, SdkProviderAdapter } from "./index.js";
 
 import {
+  InteractionExecutionBindingSchema,
   InteractionAcknowledgementSchema,
   InteractionCapabilitiesSchema,
   InteractionFieldSchema,
@@ -16,9 +17,24 @@ import {
   validateInteractionResponse,
   type InteractionAnswerSpec,
   type InteractionAcknowledgementStatus,
+  type InteractionExecutionBinding,
   type InteractionResponseCommand,
   type InteractionRequestMaterial,
 } from "./interaction.js";
+
+const exactExecutionBinding: InteractionExecutionBinding = {
+  runId: "run-1",
+  provider: "test-provider",
+  environmentId: "environment-1",
+  sessionId: "session-1",
+  executionId: "execution-1",
+};
+
+const interactionExecutionInput: AgentExecutionInput = {
+  systemPrompt: "system",
+  interactionBinding: exactExecutionBinding,
+};
+void interactionExecutionInput;
 
 const legacyInteractionResponder: NonNullable<
   SdkProviderAdapter["respondToInteraction"]
@@ -76,6 +92,27 @@ function parseInteractionRequest(value: Record<string, unknown>) {
     requestDigest: interactionRequestDigest(material),
   });
 }
+
+describe("interaction execution binding", () => {
+  it("carries one exact provider-turn identity into execution input", () => {
+    expect(InteractionExecutionBindingSchema.parse(exactExecutionBinding)).toEqual(
+      exactExecutionBinding,
+    );
+  });
+
+  it("rejects incomplete or interaction-specific coordinates", () => {
+    const { executionId: _executionId, ...incomplete } = exactExecutionBinding;
+    expect(InteractionExecutionBindingSchema.safeParse(incomplete).success).toBe(
+      false,
+    );
+    expect(
+      InteractionExecutionBindingSchema.safeParse({
+        ...exactExecutionBinding,
+        interactionId: "interaction-1",
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("select field schema", () => {
   it("accepts allowCustom on select fields", () => {
