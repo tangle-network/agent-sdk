@@ -4,6 +4,7 @@ import {
   type AgentProfile,
   type AgentProfileConfigValue,
   type AgentProfileMcpServer,
+  type AgentProfilePrompt,
 } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import {
@@ -139,8 +140,15 @@ export const agentProfileModelHintsSchema = z.strictObject({
   metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
 
+/**
+ * Replacement and addition are separate, independently optional fields, and the
+ * pair is admitted on purpose: the effective prompt is `systemPrompt` followed
+ * by `appendSystemPrompt`. No cross-field refinement rejects the combination,
+ * because {@link mergeAgentProfiles} can produce it from two valid profiles.
+ */
 export const agentProfilePromptSchema = z.strictObject({
   systemPrompt: z.string().optional(),
+  appendSystemPrompt: z.string().optional(),
   instructions: z.array(z.string()).optional(),
 });
 
@@ -334,6 +342,7 @@ const removeListSchema = z.union([z.literal(true), z.array(z.string().min(1))]);
 
 export const agentProfilePromptRemovalSchema = z.strictObject({
   systemPrompt: z.literal(true).optional(),
+  appendSystemPrompt: z.literal(true).optional(),
   instructions: removeListSchema.optional(),
 });
 
@@ -518,6 +527,25 @@ const _agentProfileSchemaMatchesInterface: MutuallyAssignable<
   AgentProfile
 > = true;
 void _agentProfileSchemaMatchesInterface;
+
+// Plain assignability cannot see a missing OPTIONAL field: an object type
+// without `x?` is assignable to one with it, in both directions. Since nearly
+// every profile field is optional, comparing the same shapes with optionality
+// removed is what actually catches a field added to one side only — and a field
+// missing from this strict schema means valid profiles get rejected at runtime.
+// Applied at the top level and again inside the prompt, whose two intents are
+// distinct enough that losing one is a silent semantic change, not a parse error.
+const _agentProfileSchemaFieldsMatchInterface: MutuallyAssignable<
+  Required<z.infer<typeof agentProfileSchema>>,
+  Required<AgentProfile>
+> = true;
+void _agentProfileSchemaFieldsMatchInterface;
+
+const _agentProfilePromptSchemaFieldsMatchInterface: MutuallyAssignable<
+  Required<z.infer<typeof agentProfilePromptSchema>>,
+  Required<AgentProfilePrompt>
+> = true;
+void _agentProfilePromptSchemaFieldsMatchInterface;
 
 /**
  * A registered capability: a stable id paired with its canonical

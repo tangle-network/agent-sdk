@@ -280,17 +280,6 @@ describe("candidate receipts", () => {
     ],
     "candidate",
   );
-  const taskWorkspace = workspaceSnapshot(
-    [
-      {
-        path: "src/task.ts",
-        mode: 0o644,
-        sha256: candidateSha("0"),
-        byteLength: 12,
-      },
-    ],
-    "task",
-  );
   const memoryWorkspace = workspaceSnapshot([], "memory");
   const resolvedModel = {
     requested: "openai/gpt-5.4",

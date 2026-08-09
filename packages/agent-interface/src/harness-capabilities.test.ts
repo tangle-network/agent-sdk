@@ -6,12 +6,14 @@ import {
   harnessProviders,
   harnessReasoningEfforts,
   harnessSupportsModel,
+  harnessSystemPromptIntents,
   modelProvider,
   preferredHarnessForModel,
   reasoningEffortsFor,
   snapHarnessToModel,
   snapModelToHarness,
 } from "./harness-capabilities.js";
+import { harnessTypeSchema } from "./harness.js";
 
 const CATALOG = [
   "anthropic/claude-opus-4-6",
@@ -45,6 +47,32 @@ describe("harness ↔ model compatibility", () => {
     expect(harnessProviders("nanoclaw")).toBeNull();
     expect(harnessSupportsModel("nanoclaw", "openai/gpt-5")).toBe(true);
     expect(harnessSupportsModel("nanoclaw", "anthropic/claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("forge and cursor are router-backed multi-provider CLIs", () => {
+    for (const harness of ["forge", "cursor"] as const) {
+      expect(harnessProviders(harness)).toBeNull();
+      expect(harnessSupportsModel(harness, "openai/gpt-5")).toBe(true);
+      expect(harnessSupportsModel(harness, "anthropic/claude-sonnet-4-6")).toBe(true);
+      // No provider lock means no snapping away from the caller's model.
+      expect(snapHarnessToModel(harness, "zai/glm-4.7")).toBe(harness);
+      expect(harnessHonorsSelectors(harness)).toBe(true);
+    }
+  });
+
+  it("prime is router-backed and expresses the pi line's full thinking set", () => {
+    expect(harnessProviders("prime")).toBeNull();
+    expect(harnessSupportsModel("prime", "zai/glm-5.2")).toBe(true);
+    expect(snapHarnessToModel("prime", "zai/glm-5.2")).toBe("prime");
+    expect(harnessReasoningEfforts("prime")).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "ultracode",
+    ]);
   });
 
   it("provider-less / sentinel ids are compatible everywhere", () => {
@@ -111,7 +139,10 @@ describe("reasoning effort support", () => {
     // no-thinking runners
     expect(harnessReasoningEfforts("cli-base")).toEqual(["none"]);
     // Explicit sets match each native CLI; model data narrows them later.
+    // codex accepts `none` (thinking off) — the picker hid it for months while
+    // the API enumerated it first.
     expect(harnessReasoningEfforts("codex")).toEqual([
+      "none",
       "minimal",
       "low",
       "medium",
@@ -119,6 +150,7 @@ describe("reasoning effort support", () => {
       "xhigh",
       "ultracode",
     ]);
+    // pi's `--thinking` tops out at `max`, which canonical `ultracode` reaches.
     expect(harnessReasoningEfforts("pi")).toEqual([
       "none",
       "minimal",
@@ -126,6 +158,7 @@ describe("reasoning effort support", () => {
       "medium",
       "high",
       "xhigh",
+      "ultracode",
     ]);
     expect(harnessReasoningEfforts("openclaw")).toEqual([
       "none",
@@ -162,6 +195,7 @@ describe("reasoning effort support", () => {
       "medium",
     ]);
     expect(reasoningEffortsFor("codex", { maxEffort: "high" })).toEqual([
+      "none",
       "minimal",
       "low",
       "medium",
@@ -202,4 +236,54 @@ describe("per-turn selector support", () => {
     expect(harnessHonorsSelectors("openclaw")).toBe(false); // effort yes, model no
   });
 
+});
+
+describe("system-prompt intents", () => {
+  it("gives each harness the intents its own controls execute, not the union", () => {
+    // claude-code / pi own both: --system-prompt drops the built-in prompt,
+    // --append-system-prompt keeps it and adds after it.
+    expect(harnessSystemPromptIntents("claude-code")).toEqual({ replace: true, append: true });
+    expect(harnessSystemPromptIntents("pi")).toEqual({ replace: true, append: true });
+    // codex / gemini own replacement only (model_instructions_file, .gemini/system.md).
+    expect(harnessSystemPromptIntents("codex")).toEqual({ replace: true, append: false });
+    expect(harnessSystemPromptIntents("gemini")).toEqual({ replace: true, append: false });
+    // opencode owns addition only: its replacement control binds to a launch-time agent.
+    expect(harnessSystemPromptIntents("opencode")).toEqual({ replace: false, append: true });
+  });
+
+  it("refuses both for every harness with no system-prompt control of its own", () => {
+    for (const h of [
+      "nanoclaw",
+      "kimi-code",
+      "hermes",
+      "openclaw",
+      "amp",
+      "factory-droids",
+      "forge",
+      "cursor",
+      "acp",
+      "cli-base",
+    ] as const) {
+      expect(harnessSystemPromptIntents(h)).toEqual({ replace: false, append: false });
+    }
+  });
+
+  it("refuses both when the harness is unknown at declaration time", () => {
+    // An adapter that cannot name its harness cannot promise either intent. `false` means
+    // "refuse", never "substitute the other intent silently".
+    expect(harnessSystemPromptIntents(undefined)).toEqual({ replace: false, append: false });
+  });
+
+  it("covers every harness in the union, so a new one refuses by default", () => {
+    for (const h of harnessTypeSchema.options) {
+      const intents = harnessSystemPromptIntents(h);
+      expect(typeof intents.replace).toBe("boolean");
+      expect(typeof intents.append).toBe("boolean");
+    }
+    // Exactly the measured owners, so widening the table is a deliberate edit here.
+    const replacers = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).replace);
+    const appenders = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).append);
+    expect([...replacers].sort()).toEqual(["claude-code", "codex", "gemini", "pi", "prime"]);
+    expect([...appenders].sort()).toEqual(["claude-code", "opencode", "pi", "prime"]);
+  });
 });

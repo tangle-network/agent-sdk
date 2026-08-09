@@ -22,10 +22,12 @@ export interface RetryConfig {
   shouldRetry?: (error: SDKError, attempt: number) => boolean;
   /** Callback before retry */
   onRetry?: (error: SDKError, attempt: number, delayMs: number) => void;
+  /** Cancels pending backoff and prevents another attempt. */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_RETRY_CONFIG: Required<
-  Omit<RetryConfig, "shouldRetry" | "onRetry">
+  Omit<RetryConfig, "shouldRetry" | "onRetry" | "signal">
 > = {
   maxAttempts: 3,
   initialDelayMs: 1000,
@@ -61,9 +63,11 @@ export async function withRetry<T>(
   let lastError: SDKError | null = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    config.signal?.throwIfAborted();
     try {
       return await fn(attempt);
     } catch (error) {
+      config.signal?.throwIfAborted();
       lastError = SDKError.fromError(error);
 
       // Check if we should retry
@@ -80,7 +84,7 @@ export async function withRetry<T>(
 
       config.onRetry?.(lastError, attempt + 1, delay);
 
-      await sleep(delay);
+      await sleep(delay, config.signal);
     }
   }
 
@@ -88,8 +92,22 @@ export async function withRetry<T>(
 }
 
 /** Sleep utility */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Idempotency key generator */

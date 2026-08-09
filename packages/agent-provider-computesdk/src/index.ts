@@ -219,7 +219,7 @@ export function defaultComputeSdkCapabilities(): AgentEnvironmentCapabilities {
   return {
     profile: {
       namedProfiles: false,
-      systemPrompt: false,
+      systemPrompt: { replace: false, append: false },
       instructions: false,
       tools: false,
       permissions: false,

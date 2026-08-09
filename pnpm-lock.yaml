@@ -175,8 +175,8 @@ importers:
         specifier: workspace:*
         version: link:../agent-provider-testkit
       '@tangle-network/sandbox':
-        specifier: 0.13.0-develop.20260726215211.b0dddb3
-        version: 0.13.0-develop.20260726215211.b0dddb3
+        specifier: 0.17.0
+        version: 0.17.0
       '@types/node':
         specifier: 'catalog:'
         version: 25.6.0
@@ -192,6 +192,18 @@ importers:
       '@tangle-network/agent-interface':
         specifier: workspace:*
         version: link:../agent-interface
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.6.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(vite@8.1.0(@types/node@25.6.0)(yaml@2.9.0))
+
+  packages/agent-trace-contract:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -979,11 +991,11 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tangle-network/agent-core@0.4.23':
-    resolution: {integrity: sha512-H65d7pd7B7py8yr2786uq40WdnVPylWiRn/E7SEt8ujTjypiz+k/10+moJ2d4AGbaduNrovLtSgG/iEyT9Q8aA==}
+  '@tangle-network/agent-core@0.4.27':
+    resolution: {integrity: sha512-gD3z0p+h8/XB2/vWQF6/RtKTLcoJOSrB85+ndYyX/3/l0pkUuVBTjm/RISiQBJyNVozgZz5iqhIV2O136keclA==}
 
-  '@tangle-network/sandbox@0.13.0-develop.20260726215211.b0dddb3':
-    resolution: {integrity: sha512-LZEzGHfqohMhF3nKKdgZUITn73Sycr4qpIk0G3ChAjCYBjihAsNOhjLF40Ea8WE9RXTqyjDCrrUxv/TTtxuu4Q==}
+  '@tangle-network/sandbox@0.17.0':
+    resolution: {integrity: sha512-tjhUphaAtilB79DGoUu46RtYqYX2dXB9NVFXg+g92e7w+80RwW7yyWdEPXmT7jVJ5Av2aPebOfqZiy/3RM5oCw==}
     peerDependencies:
       '@mastra/core': ^1.36.0
       '@modelcontextprotocol/sdk': ^1.29.0
@@ -3170,14 +3182,14 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tangle-network/agent-core@0.4.23':
+  '@tangle-network/agent-core@0.4.27':
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
       zod: 4.4.3
 
-  '@tangle-network/sandbox@0.13.0-develop.20260726215211.b0dddb3':
+  '@tangle-network/sandbox@0.17.0':
     dependencies:
-      '@tangle-network/agent-core': 0.4.23
+      '@tangle-network/agent-core': 0.4.27
       '@tangle-network/agent-interface': link:packages/agent-interface
       zod: 4.4.3
 

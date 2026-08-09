@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-tangle",
-  "version": "0.4.6",
+  "version": "0.6.1",
   "description": "AgentEnvironmentProvider adapter for Tangle sandboxes",
   "type": "module",
   "license": "MIT",
@@ -35,6 +35,42 @@
     "dist/index.js",
     "dist/exact-process.d.ts",
     "dist/exact-process.js",
+    "dist/tangle-exact-process-environment.d.ts",
+    "dist/tangle-exact-process-environment.js",
+    "dist/tangle-contract-safety.d.ts",
+    "dist/tangle-contract-safety.js",
+    "dist/tangle-exact-process-runtime.d.ts",
+    "dist/tangle-exact-process-runtime.js",
+    "dist/tangle-exact-process-validation.d.ts",
+    "dist/tangle-exact-process-validation.js",
+    "dist/tangle-capabilities.d.ts",
+    "dist/tangle-capabilities.js",
+    "dist/tangle-create-options.d.ts",
+    "dist/tangle-create-options.js",
+    "dist/tangle-environment-values.d.ts",
+    "dist/tangle-environment-values.js",
+    "dist/tangle-environment.d.ts",
+    "dist/tangle-environment.js",
+    "dist/tangle-environment-dispatch.d.ts",
+    "dist/tangle-environment-dispatch.js",
+    "dist/tangle-environment-session.d.ts",
+    "dist/tangle-environment-session.js",
+    "dist/tangle-environment-control.d.ts",
+    "dist/tangle-environment-control.js",
+    "dist/tangle-environment-validation.d.ts",
+    "dist/tangle-environment-validation.js",
+    "dist/tangle-events.d.ts",
+    "dist/tangle-events.js",
+    "dist/tangle-prompt.d.ts",
+    "dist/tangle-prompt.js",
+    "dist/tangle-provider.d.ts",
+    "dist/tangle-provider.js",
+    "dist/tangle-result-values.d.ts",
+    "dist/tangle-result-values.js",
+    "dist/tangle-session-control.d.ts",
+    "dist/tangle-session-control.js",
+    "dist/tangle-types.d.ts",
+    "dist/tangle-types.js",
     "README.md",
     "LICENSE"
   ],
@@ -46,10 +82,10 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.40.0"
+    "@tangle-network/agent-interface": "0.46.1"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.13.0-develop.20260726215211.b0dddb3 <1.0.0"
+    "@tangle-network/sandbox": ">=0.17.0 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -58,7 +94,7 @@
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
-    "@tangle-network/sandbox": "0.13.0-develop.20260726215211.b0dddb3",
+    "@tangle-network/sandbox": "0.17.0",
     "@types/node": "catalog:",
     "typescript": "^6.0.3",
     "vitest": "catalog:"

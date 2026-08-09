@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
-import { createCliBridgeProvider } from "./index.js";
+import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
 
 describe("createCliBridgeProvider", () => {
   it("rejects a named profile before network use", async () => {
@@ -1179,6 +1179,73 @@ describe("createCliBridgeProvider", () => {
     });
 
     expect(body?.model).toBe("runner/override/model");
+  });
+
+  it("sends both prompt intents through agent_profile and synthesizes no system message", async () => {
+    let body: Record<string, unknown> | undefined;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return terminalResponse("ok");
+      },
+    });
+    const environment = await provider.create({
+      backend: "claude-code",
+      profile: {
+        name: "worker",
+        prompt: {
+          systemPrompt: "REPLACEMENT_ONLY",
+          appendSystemPrompt: "ADDITION_ONLY",
+          instructions: ["PROJECT_INSTRUCTION"],
+        },
+      },
+    });
+
+    await consumeTurn(environment, { prompt: "go" });
+
+    // Both intents travel intact on agent_profile, where the bridge binds each to the control its
+    // harness owns (claude-code: --system-prompt / --append-system-prompt) or refuses it.
+    expect(
+      (body?.agent_profile as { prompt?: Record<string, unknown> } | undefined)?.prompt,
+    ).toEqual({
+      systemPrompt: "REPLACEMENT_ONLY",
+      appendSystemPrompt: "ADDITION_ONLY",
+      instructions: ["PROJECT_INSTRUCTION"],
+    });
+    // The turn carries the user turn and nothing else. A synthesized `role: "system"` message would
+    // (a) lower the REPLACEMENT intent as an ADDITION, and (b) make the bridge reject the whole
+    // request, which refuses system-role messages beside agent_profile.
+    expect(body?.messages).toEqual([{ role: "user", content: "go" }]);
+    const roles = (body?.messages as Array<{ role: string }>).map((message) => message.role);
+    expect(roles).not.toContain("system");
+    expect(JSON.stringify(body?.messages)).not.toContain("REPLACEMENT_ONLY");
+    expect(JSON.stringify(body?.messages)).not.toContain("ADDITION_ONLY");
+  });
+
+  it("declares the prompt intents of the named bridge harness, and neither without one", () => {
+    // The adapter forwards agent_profile; the intents belong to the harness the bridge runs. Being
+    // able to put the field on the wire is not honoring it, so an unnamed harness declares neither.
+    expect(defaultCliBridgeCapabilities("claude-code").profile.systemPrompt).toEqual({
+      replace: true,
+      append: true,
+    });
+    expect(defaultCliBridgeCapabilities("opencode").profile.systemPrompt).toEqual({
+      replace: false,
+      append: true,
+    });
+    expect(defaultCliBridgeCapabilities("codex").profile.systemPrompt).toEqual({
+      replace: true,
+      append: false,
+    });
+    expect(defaultCliBridgeCapabilities("acp").profile.systemPrompt).toEqual({
+      replace: false,
+      append: false,
+    });
+    expect(defaultCliBridgeCapabilities().profile.systemPrompt).toEqual({
+      replace: false,
+      append: false,
+    });
   });
 });
 

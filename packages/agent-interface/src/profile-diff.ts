@@ -1,5 +1,6 @@
 import type {
   AgentProfile,
+  AgentProfilePrompt,
   AgentProfileResources,
   AgentProfileResourceRef,
 } from "./agent-profile.js";
@@ -43,6 +44,7 @@ export type AgentProfileRemoveList = true | readonly string[];
 
 export interface AgentProfilePromptRemoval {
   systemPrompt?: true;
+  appendSystemPrompt?: true;
   instructions?: AgentProfileRemoveList;
 }
 
@@ -107,6 +109,20 @@ export interface AgentProfileDiff {
 export function defineAgentProfileDiff<T extends AgentProfileDiff>(diff: T): T {
   return diff;
 }
+
+const agentProfilePromptDiffPropertyAxes = [
+  "systemPrompt",
+  "appendSystemPrompt",
+  "instructions",
+] as const satisfies readonly (keyof AgentProfilePrompt)[];
+
+type MissingAgentProfilePromptDiffPropertyAxis = Exclude<
+  keyof AgentProfilePrompt,
+  (typeof agentProfilePromptDiffPropertyAxes)[number]
+>;
+const _agentProfilePromptDiffPropertyAxesAreExhaustive:
+  MissingAgentProfilePromptDiffPropertyAxis extends never ? true : never = true;
+void _agentProfilePromptDiffPropertyAxesAreExhaustive;
 
 const agentProfileResourceDiffPropertyAxes = [
   "files",
@@ -300,21 +316,29 @@ function removeResources(
   const next: AgentProfileResources = { ...resources };
   if (removal.files !== undefined) {
     if (removal.files === true) {
-      next.files = undefined;
+      delete next.files;
     } else {
       const removeSet = new Set(removal.files);
-      next.files = next.files?.filter((file) => {
-        const name = resourceName(file.resource);
-        return !removeSet.has(file.path) && !(name && removeSet.has(name));
-      });
+      setOrDelete(
+        next,
+        "files",
+        next.files?.filter((file) => {
+          const name = resourceName(file.resource);
+          return !removeSet.has(file.path) && !(name && removeSet.has(name));
+        }),
+      );
     }
   }
-  next.tools = removeResourceRefs(next.tools, removal.tools);
-  next.skills = removeResourceRefs(next.skills, removal.skills);
-  next.agents = removeResourceRefs(next.agents, removal.agents);
-  next.commands = removeResourceRefs(next.commands, removal.commands);
-  if (removal.instructions) next.instructions = undefined;
-  if (removal.failOnError) next.failOnError = undefined;
+  setOrDelete(next, "tools", removeResourceRefs(next.tools, removal.tools));
+  setOrDelete(next, "skills", removeResourceRefs(next.skills, removal.skills));
+  setOrDelete(next, "agents", removeResourceRefs(next.agents, removal.agents));
+  setOrDelete(
+    next,
+    "commands",
+    removeResourceRefs(next.commands, removal.commands),
+  );
+  if (removal.instructions) delete next.instructions;
+  if (removal.failOnError) delete next.failOnError;
 
   for (const key of [
     "files",
@@ -323,12 +347,29 @@ function removeResources(
     "agents",
     "commands",
   ] as const) {
-    if (next[key]?.length === 0) next[key] = undefined;
+    if (next[key]?.length === 0) delete next[key];
   }
 
-  return Object.values(next).some((value) => value !== undefined)
-    ? next
-    : undefined;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/**
+ * Write a resolved optional value, or drop the key when the value is gone.
+ *
+ * Removal deletes the key instead of blanking it: profile identity is an RFC
+ * 8785 digest over own keys, so a key left behind holding `undefined` either
+ * changes that digest or is refused by the canonical JSON domain.
+ */
+function setOrDelete<T extends object, K extends keyof T>(
+  target: Partial<T>,
+  key: K,
+  value: T[K] | undefined,
+): void {
+  if (value === undefined) {
+    delete target[key];
+    return;
+  }
+  target[key] = value;
 }
 
 function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): AgentProfile {
@@ -336,61 +377,80 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
   const next: AgentProfile = { ...profile };
 
   if (remove.identity) {
-    next.name = undefined;
-    next.description = undefined;
-    next.version = undefined;
+    delete next.name;
+    delete next.description;
+    delete next.version;
   }
   if (remove.tags !== undefined) {
-    next.tags = removeValues(asMutable(next.tags), remove.tags);
+    setOrDelete(next, "tags", removeValues(asMutable(next.tags), remove.tags));
   }
 
   if (remove.prompt === true) {
-    next.prompt = undefined;
+    delete next.prompt;
   } else if (remove.prompt && next.prompt) {
-    const prompt = { ...next.prompt };
-    if (remove.prompt.systemPrompt) prompt.systemPrompt = undefined;
-    prompt.instructions = removeValues(prompt.instructions, remove.prompt.instructions);
-    next.prompt = Object.values(prompt).some((value) => value !== undefined)
-      ? prompt
-      : undefined;
+    const prompt: AgentProfilePrompt = { ...next.prompt };
+    if (remove.prompt.systemPrompt) delete prompt.systemPrompt;
+    if (remove.prompt.appendSystemPrompt) delete prompt.appendSystemPrompt;
+    setOrDelete(
+      prompt,
+      "instructions",
+      removeValues(prompt.instructions, remove.prompt.instructions),
+    );
+    setOrDelete(
+      next,
+      "prompt",
+      Object.keys(prompt).length > 0 ? prompt : undefined,
+    );
   }
 
   if (remove.model !== undefined) {
-    next.model = removeKeys(next.model, remove.model);
+    setOrDelete(next, "model", removeKeys(next.model, remove.model));
   }
-  if (remove.harness !== undefined) next.harness = undefined;
+  if (remove.harness !== undefined) delete next.harness;
   if (remove.permissions !== undefined) {
-    next.permissions = removeKeys(next.permissions, remove.permissions);
+    setOrDelete(
+      next,
+      "permissions",
+      removeKeys(next.permissions, remove.permissions),
+    );
   }
   if (remove.tools !== undefined) {
-    next.tools = removeKeys(next.tools, remove.tools);
+    setOrDelete(next, "tools", removeKeys(next.tools, remove.tools));
   }
   if (remove.mcp !== undefined) {
-    next.mcp = removeKeys(next.mcp, remove.mcp);
+    setOrDelete(next, "mcp", removeKeys(next.mcp, remove.mcp));
   }
   if (remove.subagents !== undefined) {
-    next.subagents = removeKeys(next.subagents, remove.subagents);
+    setOrDelete(next, "subagents", removeKeys(next.subagents, remove.subagents));
   }
   if (remove.resources !== undefined) {
-    next.resources = removeResources(next.resources, remove.resources);
+    setOrDelete(
+      next,
+      "resources",
+      removeResources(next.resources, remove.resources),
+    );
   }
   if (remove.hooks !== undefined) {
-    next.hooks = removeKeys(next.hooks, remove.hooks);
+    setOrDelete(next, "hooks", removeKeys(next.hooks, remove.hooks));
   }
   if (remove.modes !== undefined) {
-    next.modes = removeKeys(next.modes, remove.modes);
+    setOrDelete(next, "modes", removeKeys(next.modes, remove.modes));
   }
-  if (remove.confidential) next.confidential = undefined;
+  if (remove.confidential) delete next.confidential;
   if (remove.metadata !== undefined) {
-    next.metadata = removeKeys(next.metadata, remove.metadata);
+    setOrDelete(next, "metadata", removeKeys(next.metadata, remove.metadata));
   }
   if (remove.extensions !== undefined) {
-    next.extensions = removeKeys(next.extensions, remove.extensions);
+    setOrDelete(
+      next,
+      "extensions",
+      removeKeys(next.extensions, remove.extensions),
+    );
   }
 
   if (next.connections && remove.connections !== undefined) {
     if (remove.connections === true) {
-      next.connections = undefined;
+      delete next.connections;
     } else {
       const removeSet = new Set(remove.connections);
       const filtered = next.connections.filter(
@@ -398,7 +458,11 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
           !removeSet.has(connection.connectionId) &&
           !(connection.alias && removeSet.has(connection.alias)),
       );
-      next.connections = filtered.length > 0 ? filtered : undefined;
+      setOrDelete(
+        next,
+        "connections",
+        filtered.length > 0 ? filtered : undefined,
+      );
     }
   }
 
@@ -475,13 +539,20 @@ export function pruneAgentProfileDiff(
     if (remove) delete remove[axis];
   }
 
-  return {
-    ...diff,
-    ...(set && Object.values(set).some((value) => value !== undefined)
-      ? { set }
-      : { set: undefined }),
-    ...(remove && Object.values(remove).some((value) => value !== undefined)
-      ? { remove }
-      : { remove: undefined }),
-  };
+  const pruned: AgentProfileDiff = { ...diff };
+  setOrDelete(
+    pruned,
+    "set",
+    set && Object.values(set).some((value) => value !== undefined)
+      ? set
+      : undefined,
+  );
+  setOrDelete(
+    pruned,
+    "remove",
+    remove && Object.values(remove).some((value) => value !== undefined)
+      ? remove
+      : undefined,
+  );
+  return pruned;
 }

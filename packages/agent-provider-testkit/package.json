@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-testkit",
-  "version": "0.3.10",
+  "version": "0.6.1",
   "description": "Framework-neutral conformance checks for AgentEnvironmentProvider implementations",
   "type": "module",
   "license": "MIT",
@@ -33,18 +33,40 @@
   "files": [
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/conformance-helpers.d.ts",
+    "dist/conformance-helpers.js",
+    "dist/conformance-types.d.ts",
+    "dist/conformance-types.js",
+    "dist/exact-process-conformance.d.ts",
+    "dist/exact-process-conformance.js",
+    "dist/exact-process-helpers.d.ts",
+    "dist/exact-process-helpers.js",
+    "dist/interaction-conformance.d.ts",
+    "dist/interaction-conformance.js",
+    "dist/portable-context-conformance.d.ts",
+    "dist/portable-context-conformance.js",
+    "dist/portable-context-helpers.d.ts",
+    "dist/portable-context-helpers.js",
+    "dist/provider-conformance.d.ts",
+    "dist/provider-conformance.js",
+    "dist/session-replay-conformance.d.ts",
+    "dist/session-replay-conformance.js",
+    "dist/workspace-branching-conformance.d.ts",
+    "dist/workspace-branching-conformance.js",
+    "dist/workspace-cleanup-conformance.d.ts",
+    "dist/workspace-cleanup-conformance.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check-types": "tsc --noEmit",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run"
+    "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.40.0"
+    "@tangle-network/agent-interface": "0.46.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -66,7 +66,7 @@ function fakeProvider(): AgentEnvironmentProvider {
     capabilities: () => ({
       profile: {
         namedProfiles: true,
-        systemPrompt: true,
+        systemPrompt: { replace: true, append: true },
         instructions: true,
         tools: true,
         permissions: true,
@@ -86,7 +86,7 @@ function fakeProvider(): AgentEnvironmentProvider {
         validation: true,
       },
       streaming: { live: true, replay: false, detach: false, turnIdempotency: true },
-      sessions: { continue: true, list: false, messages: false },
+      sessions: { continue: false, list: false, messages: false },
       workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false },
       branching: { checkpoint: false, fork: false },
       placement: false,

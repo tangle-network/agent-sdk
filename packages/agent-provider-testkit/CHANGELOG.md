@@ -1,5 +1,96 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [077635f]
+  - @tangle-network/agent-interface@0.46.1
+
+## 0.6.0
+
+### Minor Changes
+
+- b44d502: Expose exact, digest-bound run-control requests and acknowledgements for retry-safe steering, cancellation, status, and reconnect operations.
+
+  Split interaction, context transfer, workspace branching, provider conformance, and Tangle environment behavior into focused public modules while preserving the package-root API.
+
+  Harden provider inputs, replay identity, cleanup ownership, iterator cancellation, capability reporting, and packed-consumer checks.
+
+### Patch Changes
+
+- Updated dependencies [b44d502]
+- Updated dependencies [d27deb9]
+  - @tangle-network/agent-interface@0.46.0
+
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [d8020a5]
+  - @tangle-network/agent-interface@0.45.0
+
+## 0.5.4
+
+### Patch Changes
+
+- Updated dependencies [3bbafd2]
+  - @tangle-network/agent-interface@0.44.0
+
+## 0.5.3
+
+### Patch Changes
+
+- Updated dependencies [682814e]
+  - @tangle-network/agent-interface@0.43.1
+
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [7000e82]
+  - @tangle-network/agent-interface@0.43.0
+
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [f681bb0]
+  - @tangle-network/agent-interface@0.42.1
+
+## 0.5.0
+
+### Minor Changes
+
+- cece8b3: Bind native same-session continuation requests to the exact new turn digest.
+  Add an optional provider capability and session operation that atomically verifies the boundary, durably admits one operation identifier and request digest, returns a runtime-validated result plus current control reference, replays that exact outcome after uncertain transport failures, and rejects changed input without dispatch.
+
+  Keep timeout and abort controls outside the digest-bound turn.
+  Extend portable-context conformance to prove exact turn binding, result and control-reference recovery, changed-turn conflict, and zero duplicate continuation effects.
+
+### Patch Changes
+
+- Updated dependencies [cece8b3]
+  - @tangle-network/agent-interface@0.42.0
+
+## 0.4.0
+
+### Minor Changes
+
+- 7011e7e: Add provider-neutral durable run references, strictly validated capabilities and replayable event envelopes, scope-bound interaction acknowledgements, request-bound portable context transfer with enforced token limits and provider-confirmed fresh sessions, retry-safe native continuation, and recoverable workspace branching contracts.
+  Keep the original SDK adapter interaction method source-compatible and add a separate durable command method.
+
+  Add reusable conformance checks for detached competing-run isolation, every interaction acknowledgement outcome, real over-limit planning, cross-request rejection, context receipts, retry conflicts, continuation boundaries, workspace operation recovery, dependency-ordered cleanup, absent disabled operations, and combined operation/cleanup failures.
+
+  Add exact session and immutable execution control references to detached and reconstructed Tangle sessions, bind result, replay, and cancel to that exact execution, validate capability and Sandbox result data, omit disabled methods, adapt inclusive Sandbox replay to exclusive cursors, reject unproven or mismatched receipts without advancing local state, and fail explicitly for unsupported context inputs.
+  Pack and test the Tangle provider together with the interface, testkit, and public Sandbox 0.17.0 dependency.
+
+### Patch Changes
+
+- Updated dependencies [7011e7e]
+- Updated dependencies [32acb32]
+  - @tangle-network/agent-interface@0.41.0
+
 ## 0.3.10
 
 ### Patch Changes

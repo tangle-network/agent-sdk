@@ -63,10 +63,12 @@ export function defineGitHubResource(
 ): AgentProfileResourceRef {
   return {
     kind: "github",
-    repository: options.repository,
     path,
-    ref: options.ref,
-    name: options.name,
+    ...(options.repository === undefined
+      ? {}
+      : { repository: options.repository }),
+    ...(options.ref === undefined ? {} : { ref: options.ref }),
+    ...(options.name === undefined ? {} : { name: options.name }),
   };
 }
 
@@ -167,14 +169,58 @@ export interface AgentProfileModelHints {
 
 /**
  * Prompt shaping for an agent.
+ *
+ * Replacement and addition are two different intents against the same channel
+ * and are never interchangeable. A backend that can only do one of them must
+ * refuse the other rather than substituting it, which is why
+ * {@link AgentProfileCapabilities.systemPrompt} carries a separate bit for each.
+ *
+ * Setting `systemPrompt` and `appendSystemPrompt` together is legal and ordered:
+ * the replacement is installed first and the addition composes on top of it, so
+ * the effective prompt is `systemPrompt` then `appendSystemPrompt`. The pair is
+ * deliberately allowed because {@link mergeAgentProfiles} composes the two
+ * fields independently — refusing it would let two individually valid profiles
+ * merge into an invalid one.
  */
 export interface AgentProfilePrompt {
   /**
-   * Full system prompt replacement, when supported.
+   * REPLACE the harness's own system prompt with this text.
+   *
+   * The harness's built-in prompt is DELETED, not extended: the model stops
+   * receiving the tool descriptions, output conventions, refusal rules, and
+   * workflow scaffolding it was tuned against, so behavior can move far beyond
+   * the words written here. Supply a prompt that stands on its own.
+   *
+   * Honored only where {@link AgentProfileSystemPromptCapability.replace} is
+   * true — a harness that exposes a real replacement control (`pi
+   * --system-prompt <file>` with context files, skills, and prompt templates
+   * off; gemini `.gemini/system.md` with `GEMINI_SYSTEM_MD=1`). A backend that
+   * can only add text must reject this field. Folding it into an addition is a
+   * silent semantic downgrade: the instructions the caller asked to delete stay
+   * in force, and nothing in the result says so.
    */
   systemPrompt?: string;
   /**
-   * Additional instruction lines appended to the active prompt.
+   * ADD this text to the harness's own system prompt, which stays intact.
+   *
+   * The model keeps everything it was tuned against and receives this on top,
+   * in the same privileged position as the system prompt. Maps to claude-code
+   * `--append-system-prompt`, and to a leading `role: "system"` message on
+   * harnesses that take a message list.
+   *
+   * Distinct from {@link AgentProfilePrompt.instructions}, which harnesses
+   * materialize into their lower-privilege project-instruction surface.
+   *
+   * Honored only where {@link AgentProfileSystemPromptCapability.append} is
+   * true.
+   */
+  appendSystemPrompt?: string;
+  /**
+   * Additional instruction lines composed into the agent's project-instruction
+   * surface — the harness's `AGENTS.md` / `CLAUDE.md`-style files or its own
+   * caller-instruction preamble. Lower privilege than
+   * {@link AgentProfilePrompt.appendSystemPrompt} and placed wherever the
+   * harness keeps caller instructions rather than in the system prompt.
    */
   instructions?: string[];
 }
@@ -401,11 +447,36 @@ export function defineAgentProfile<T extends AgentProfile>(profile: T): T {
 }
 
 /**
+ * What a backend can do to the harness's system prompt.
+ *
+ * Two independent bits, because most harnesses can do exactly one of them. A
+ * single boolean cannot separate "I delete the built-in prompt and install
+ * yours" from "I keep the built-in prompt and add yours to it", so a caller
+ * reading it has no way to tell whether a requested replacement will actually
+ * happen. Neither bit implies the other: declare each from what the backend's
+ * materialization really does, not from whether it accepts the field.
+ */
+export interface AgentProfileSystemPromptCapability {
+  /**
+   * The backend honors {@link AgentProfilePrompt.systemPrompt} by deleting the
+   * harness's own system prompt and installing the caller's. `false` means a
+   * profile carrying `systemPrompt` must be REFUSED — never quietly added to
+   * the built-in prompt instead.
+   */
+  replace: boolean;
+  /**
+   * The backend honors {@link AgentProfilePrompt.appendSystemPrompt} by keeping
+   * the harness's own system prompt and adding the caller's text to it.
+   */
+  append: boolean;
+}
+
+/**
  * Capabilities describing how a backend interprets AgentProfile.
  */
 export interface AgentProfileCapabilities {
   namedProfiles: boolean;
-  systemPrompt: boolean;
+  systemPrompt: AgentProfileSystemPromptCapability;
   instructions: boolean;
   tools: boolean;
   permissions: boolean;
@@ -448,6 +519,30 @@ export interface AgentProfileValidationResult {
   normalizedProfile?: AgentProfile;
 }
 
+/**
+ * Layer objects the way a spread would, except that an `undefined` entry means
+ * "not specified" and is never written to the result.
+ *
+ * Profile identity is an RFC 8785 digest over the profile, and canonicalization
+ * enumerates own keys: `{ tools: undefined }` is a different document from `{}`,
+ * so writing a key with no value moves the digest of a profile whose content did
+ * not change, or is refused outright by the canonical JSON domain. Later sources
+ * therefore win only where they carry a value; removal is expressed through
+ * {@link AgentProfileDiff}'s `remove` channel, never by overlaying `undefined`.
+ */
+function assignDefined<T extends object>(
+  ...sources: readonly (Partial<T> | undefined)[]
+): Partial<T> {
+  const merged: Record<string, unknown> = {};
+  for (const source of sources) {
+    if (source === undefined) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as Partial<T>;
+}
+
 function mergeStringArrays(
   base: string[] | undefined,
   overlay: string[] | undefined,
@@ -456,15 +551,27 @@ function mergeStringArrays(
   return [...(base ?? []), ...(overlay ?? [])];
 }
 
+/**
+ * Additive prompt text composes instead of overwriting: an overlay that adds
+ * one line must not delete what the base added. `systemPrompt` keeps
+ * overlay-wins semantics because two replacements cannot both apply, while two
+ * additions always can. An explicitly empty addition contributes no separator.
+ */
+function mergeAppendedSystemPrompts(
+  base: string | undefined,
+  overlay: string | undefined,
+): string | undefined {
+  if (base === undefined || base === "") return overlay ?? base;
+  if (overlay === undefined || overlay === "") return base;
+  return `${base}\n\n${overlay}`;
+}
+
 function mergeRecord<T extends Record<string, unknown>>(
   base: T | undefined,
   overlay: T | undefined,
 ): T | undefined {
   if (!base && !overlay) return undefined;
-  return {
-    ...(base ?? {}),
-    ...(overlay ?? {}),
-  } as T;
+  return assignDefined<T>(base, overlay) as T;
 }
 
 function mergeOptionalArrays<T>(
@@ -478,7 +585,16 @@ function mergeOptionalArrays<T>(
 /**
  * Merge two public AgentProfile values.
  *
- * Overlay fields win on conflicts. Array-like instruction sets are appended.
+ * Overlay fields win on conflicts, but only where they carry a value: an
+ * `undefined` entry reads as "not specified" and keeps the base value, because
+ * removal is the `remove` channel's job on {@link AgentProfileDiff}. Keys that
+ * resolve to nothing are omitted rather than written as `undefined` — RFC 8785
+ * canonicalization enumerates own keys, so a present-but-undefined key is a
+ * different document from an absent one.
+ *
+ * Additive fields compose instead of overwriting: array-like instruction sets
+ * are concatenated, and `prompt.appendSystemPrompt` values are joined
+ * base-first with a blank line between them.
  */
 export function mergeAgentProfiles(
   base: AgentProfile | undefined,
@@ -488,49 +604,51 @@ export function mergeAgentProfiles(
 
   const mergedPrompt =
     base?.prompt || overlay?.prompt
-      ? {
-          ...(base?.prompt ?? {}),
-          ...(overlay?.prompt ?? {}),
+      ? assignDefined<AgentProfilePrompt>(base?.prompt, overlay?.prompt, {
+          appendSystemPrompt: mergeAppendedSystemPrompts(
+            base?.prompt?.appendSystemPrompt,
+            overlay?.prompt?.appendSystemPrompt,
+          ),
           instructions: mergeStringArrays(
             base?.prompt?.instructions,
             overlay?.prompt?.instructions,
           ),
-        }
+        })
       : undefined;
 
   const mergedResources =
     base?.resources || overlay?.resources
-      ? {
-          ...(base?.resources ?? {}),
-          ...(overlay?.resources ?? {}),
-          files: mergeOptionalArrays(
-            base?.resources?.files,
-            overlay?.resources?.files,
-          ),
-          tools: mergeOptionalArrays(
-            base?.resources?.tools,
-            overlay?.resources?.tools,
-          ),
-          skills: mergeOptionalArrays(
-            base?.resources?.skills,
-            overlay?.resources?.skills,
-          ),
-          agents: mergeOptionalArrays(
-            base?.resources?.agents,
-            overlay?.resources?.agents,
-          ),
-          commands: mergeOptionalArrays(
-            base?.resources?.commands,
-            overlay?.resources?.commands,
-          ),
-          instructions:
-            overlay?.resources?.instructions ?? base?.resources?.instructions,
-        }
+      ? assignDefined<AgentProfileResources>(
+          base?.resources,
+          overlay?.resources,
+          {
+            files: mergeOptionalArrays(
+              base?.resources?.files,
+              overlay?.resources?.files,
+            ),
+            tools: mergeOptionalArrays(
+              base?.resources?.tools,
+              overlay?.resources?.tools,
+            ),
+            skills: mergeOptionalArrays(
+              base?.resources?.skills,
+              overlay?.resources?.skills,
+            ),
+            agents: mergeOptionalArrays(
+              base?.resources?.agents,
+              overlay?.resources?.agents,
+            ),
+            commands: mergeOptionalArrays(
+              base?.resources?.commands,
+              overlay?.resources?.commands,
+            ),
+            instructions:
+              overlay?.resources?.instructions ?? base?.resources?.instructions,
+          },
+        )
       : undefined;
 
-  return {
-    ...(base ?? {}),
-    ...(overlay ?? {}),
+  return assignDefined<AgentProfile>(base, overlay, {
     prompt: mergedPrompt,
     permissions: mergeRecord(base?.permissions, overlay?.permissions),
     tools: mergeRecord(base?.tools, overlay?.tools),
@@ -542,5 +660,5 @@ export function mergeAgentProfiles(
     modes: mergeRecord(base?.modes, overlay?.modes),
     metadata: mergeRecord(base?.metadata, overlay?.metadata),
     extensions: mergeRecord(base?.extensions, overlay?.extensions),
-  };
+  });
 }

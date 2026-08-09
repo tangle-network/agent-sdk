@@ -1,0 +1,470 @@
+import { z } from "zod";
+import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
+import type { InputPart } from "./parts.js";
+import type { StreamEvent } from "./stream-events.js";
+import type { TokenUsage } from "./execution-types.js";
+import { InteractionCapabilitiesSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand } from "./interaction.js";
+import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
+import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
+import type { AgentWorkspaceBranching } from "./workspace-branching.js";
+import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
+import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
+import { InputPartSchema } from "./portable-context-shared.js";
+import type { AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
+import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
+
+export interface AgentTurnInput {
+  prompt?: string;
+  parts?: InputPart[];
+  sessionId?: string;
+  model?: string;
+  timeoutMs?: number;
+  executionId?: string;
+  lastEventId?: string;
+  turnId?: string;
+  detach?: boolean;
+  /** Stable coordinates for a retained run when one already exists. */
+  controlRef?: AgentRunControlRef;
+  /** Approved portable history for a fresh provider session. */
+  contextTransfer?: ContextTransferRequest;
+  /** Verified same-session continuation; never carries duplicate history. */
+  nativeContinuation?: NativeContextContinuationRequest;
+  context?: Record<string, unknown>;
+  signal?: AbortSignal;
+  providerOptions?: Record<string, unknown>;
+}
+
+export const AgentTurnInputSchema = z.strictObject({
+  prompt: boundedStringSchema.optional(),
+  parts: z.array(InputPartSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  sessionId: boundedIdentifierSchema.optional(),
+  model: boundedIdentifierSchema.optional(),
+  timeoutMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  executionId: boundedIdentifierSchema.optional(),
+  lastEventId: boundedIdentifierSchema.optional(),
+  turnId: boundedIdentifierSchema.optional(),
+  detach: z.boolean().optional(),
+  controlRef: AgentRunControlRefSchema.optional(),
+  contextTransfer: ContextTransferRequestSchema.optional(),
+  nativeContinuation: NativeContextContinuationRequestSchema.optional(),
+  context: boundedJsonRecordSchema.optional(),
+  signal: z.custom<AbortSignal>().optional(),
+  providerOptions: boundedJsonRecordSchema.optional(),
+}) satisfies z.ZodType<AgentTurnInput>;
+
+export interface AgentTurnResult {
+  text: string;
+  success: boolean;
+  error?: string;
+  sessionId?: string;
+  usage?: TokenUsage;
+  metadata?: Record<string, unknown>;
+  events?: AgentEnvironmentEvent[];
+  contextTransferReceipt?: ContextTransferReceipt;
+}
+
+const TokenUsageSchema = z.strictObject({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative().optional(),
+  cacheReadInputTokens: z.number().int().nonnegative().optional(),
+  cacheCreationInputTokens: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  cost: z.number().finite().nonnegative().optional(),
+}) satisfies z.ZodType<TokenUsage>;
+
+const AgentEnvironmentEventSchema = z.strictObject({
+  type: boundedIdentifierSchema,
+  data: boundedJsonRecordSchema,
+  id: boundedIdentifierSchema.optional(),
+  normalized: CanonicalStreamEventSchema.optional(),
+  usage: TokenUsageSchema.optional(),
+  providerEvent: boundedJsonSchema.optional(),
+}) satisfies z.ZodType<AgentEnvironmentEvent>;
+
+/** Runtime validator for a provider turn returned from durable continuation. */
+export const AgentTurnResultSchema = z.strictObject({
+  text: boundedStringSchema,
+  success: z.boolean(),
+  error: boundedStringSchema.optional(),
+  sessionId: boundedIdentifierSchema.optional(),
+  usage: TokenUsageSchema.optional(),
+  metadata: boundedJsonRecordSchema.optional(),
+  events: z.array(AgentEnvironmentEventSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  contextTransferReceipt: ContextTransferReceiptSchema.optional(),
+}) satisfies z.ZodType<AgentTurnResult>;
+
+/** Durable provider result for one digest-bound native continuation. */
+export const AgentNativeContextContinuationResultSchema = z.union([
+  z
+    .strictObject({
+      acknowledgement: NativeContextContinuationAcknowledgementSchema.and(
+        z.object({ status: z.enum(["accepted", "replayed"]) }),
+      ),
+      result: AgentTurnResultSchema,
+      controlRef: AgentExactRunControlRefSchema,
+    })
+    .superRefine((outcome, refinement) => {
+      if (outcome.result.contextTransferReceipt !== undefined) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["result", "contextTransferReceipt"],
+          message: "native continuation cannot return a context transfer receipt",
+        });
+      }
+    }),
+  z
+    .strictObject({
+      acknowledgement: NativeContextContinuationAcknowledgementSchema.and(
+        z.object({
+          status: z.enum([
+            "conflict",
+            "boundary_mismatch",
+            "unverified",
+            "unknown_session",
+            "transport_failure",
+          ]),
+        }),
+      ),
+    })
+    .superRefine((outcome, refinement) => {
+      if (
+        outcome.acknowledgement.status === "transport_failure" &&
+        outcome.acknowledgement.retryable !== true
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["acknowledgement", "retryable"],
+          message: "a durable native continuation transport failure must be retryable",
+        });
+      }
+    }),
+]);
+export type AgentNativeContextContinuationResult = z.infer<typeof AgentNativeContextContinuationResultSchema>;
+
+/** Runtime-only controls kept outside the digest-bound user turn. */
+export interface AgentNativeContextContinuationOptions {
+  turn: NativeContextContinuationTurn;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+/** Cross-check a successful native continuation against its retained session. */
+export function agentNativeContextContinuationResultMatchesRequest(
+  request: NativeContextContinuationRequest,
+  outcome: AgentNativeContextContinuationResult,
+): boolean {
+  const parsedRequest = NativeContextContinuationRequestSchema.safeParse(request);
+  const parsedOutcome = AgentNativeContextContinuationResultSchema.safeParse(outcome);
+  if (!parsedRequest.success || !parsedOutcome.success) return false;
+  const exactOutcome = parsedOutcome.data;
+  if (
+    exactOutcome.acknowledgement.status !== "accepted" &&
+    exactOutcome.acknowledgement.status !== "replayed"
+  ) return false;
+  if (!("result" in exactOutcome) || !("controlRef" in exactOutcome)) return false;
+  if (
+    !nativeContextContinuationAcknowledgementMatches(
+      parsedRequest.data,
+      exactOutcome.acknowledgement,
+    )
+  ) return false;
+  const current = exactOutcome.controlRef;
+  return (
+    current.provider === request.run.provider &&
+    current.environmentId === request.run.environmentId &&
+    current.sessionId === request.run.sessionId &&
+    (exactOutcome.result.sessionId === undefined ||
+      exactOutcome.result.sessionId === current.sessionId)
+  );
+}
+
+export interface AgentSessionRef {
+  id: string;
+  provider?: string;
+  controlRef?: AgentRunControlRef;
+  contextTransferReceipt?: ContextTransferReceipt;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentEnvironmentEvent {
+  type: string;
+  data: Record<string, unknown>;
+  id?: string;
+  normalized?: StreamEvent;
+  usage?: TokenUsage;
+  providerEvent?: unknown;
+}
+
+export interface AgentSession {
+  readonly id: string;
+  readonly controlRef?: AgentRunControlRef;
+  status(options?: { signal?: AbortSignal }): Promise<AgentSessionStatus | null>;
+  events(options?: {
+    /** Exclusive stable event id previously emitted by this session. */
+    since?: string;
+    /** Provider execution selected by the durable control reference, when required. */
+    executionId?: string;
+    signal?: AbortSignal;
+  }): AsyncIterable<AgentEnvironmentEvent>;
+  result(options?: { signal?: AbortSignal }): Promise<AgentTurnResult>;
+  prompt(input: AgentTurnInput): Promise<AgentTurnResult>;
+  respondToInteraction?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<InteractionAcknowledgement>;
+  contextBoundary?(options?: {
+    signal?: AbortSignal;
+  }): Promise<NativeContextBoundaryProof | null>;
+  continueNative?(
+    request: NativeContextContinuationRequest,
+    options: AgentNativeContextContinuationOptions,
+  ): Promise<AgentNativeContextContinuationResult>;
+  cancelRun?(
+    request: AgentRunCancellationRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentRunCancellationAcknowledgement>;
+  cancel(options?: { signal?: AbortSignal }): Promise<void>;
+}
+
+export interface AgentEnvironment {
+  readonly id: string;
+  readonly provider: string;
+  readonly name?: string;
+  status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus>;
+  stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent>;
+  dispatch?(input: AgentTurnInput): Promise<AgentSessionRef>;
+  session?(
+    id: string,
+    options?: { controlRef?: AgentRunControlRef; signal?: AbortSignal },
+  ): AgentSession;
+  respondToInteraction?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<InteractionAcknowledgement>;
+  read?(path: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<string>;
+  write?(
+    path: string,
+    content: string,
+    options?: { sessionId?: string; signal?: AbortSignal },
+  ): Promise<void>;
+  exec?(command: string, options?: ExecRequest): Promise<ExecResult>;
+  checkpoint?(options?: CheckpointRequest & { signal?: AbortSignal }): Promise<CheckpointRef>;
+  fork?(
+    checkpoint: CheckpointRef,
+    options?: ForkRequest & { signal?: AbortSignal },
+  ): Promise<AgentEnvironment>;
+  /** Durable, retry-safe checkpoint and environment-fork operations. */
+  readonly workspaceBranching?: AgentWorkspaceBranching;
+  placement?(options?: { signal?: AbortSignal }): Promise<PlacementInfo>;
+  refresh?(options?: { signal?: AbortSignal }): Promise<void>;
+  destroy?(options?: { signal?: AbortSignal }): Promise<void>;
+}
+
+export interface AgentEnvironmentCapabilities {
+  profile: AgentProfileCapabilities;
+  streaming: {
+    live: boolean;
+    replay: boolean;
+    detach: boolean;
+    turnIdempotency: boolean;
+  };
+  sessions: {
+    continue: boolean;
+    list: boolean;
+    messages: boolean;
+  };
+  /** Present only when retained-run identity and cancellation are complete. */
+  retainedControl?: {
+    exactRunIdentity: boolean;
+    resultIdentity: boolean;
+    eventIdentity: boolean;
+    cancellationIdempotency: boolean;
+  };
+  /** Present only when same-session continuation is atomic and retry-safe. */
+  nativeContinuation?: {
+    atomicBoundary: boolean;
+    requestIdempotency: boolean;
+  };
+  /** Absent when the provider cannot originate or answer interactions. */
+  interactions?: InteractionCapabilities;
+  workspace: {
+    read: boolean;
+    write: boolean;
+    exec: boolean;
+    git: boolean;
+    upload: boolean;
+    download: boolean;
+  };
+  branching: {
+    checkpoint: boolean;
+    fork: boolean;
+    /** True only when key + canonical request digest semantics are implemented. */
+    retrySafe?: boolean;
+    /** True only when operations can be recovered by idempotency key. */
+    lookup?: boolean;
+    /** True only when checkpoints and forked environments have confirmed cleanup. */
+    cleanup?: boolean;
+  };
+  placement: boolean;
+  usage: boolean;
+  confidential: boolean;
+  /** Present only when {@link AgentEnvironmentProvider.exactProcess} is implemented. */
+  exactProcess?: {
+    egress: readonly AgentExactProcessEgressMode[];
+  };
+}
+
+/** Strict runtime validator for provider capability negotiation. */
+export const AgentEnvironmentCapabilitiesSchema = z
+  .strictObject({
+    profile: AgentProfileCapabilitiesSchema,
+    streaming: z.strictObject({
+      live: z.boolean(),
+      replay: z.boolean(),
+      detach: z.boolean(),
+      turnIdempotency: z.boolean(),
+    }),
+    sessions: z.strictObject({
+      continue: z.boolean(),
+      list: z.boolean(),
+      messages: z.boolean(),
+    }),
+    retainedControl: z
+      .strictObject({
+        exactRunIdentity: z.boolean(),
+        resultIdentity: z.boolean(),
+        eventIdentity: z.boolean(),
+        cancellationIdempotency: z.boolean(),
+      })
+      .optional(),
+    nativeContinuation: z
+      .strictObject({
+        atomicBoundary: z.boolean(),
+        requestIdempotency: z.boolean(),
+      })
+      .optional(),
+    interactions: InteractionCapabilitiesSchema.optional(),
+    workspace: z.strictObject({
+      read: z.boolean(),
+      write: z.boolean(),
+      exec: z.boolean(),
+      git: z.boolean(),
+      upload: z.boolean(),
+      download: z.boolean(),
+    }),
+    branching: z.strictObject({
+      checkpoint: z.boolean(),
+      fork: z.boolean(),
+      retrySafe: z.boolean().optional(),
+      lookup: z.boolean().optional(),
+      cleanup: z.boolean().optional(),
+    }),
+    placement: z.boolean(),
+    usage: z.boolean(),
+    confidential: z.boolean(),
+    exactProcess: z
+      .strictObject({
+        egress: z
+          .array(z.enum(["blocked", "strict"]))
+          .min(1)
+          .max(CONTRACT_MAX_ARRAY_LENGTH),
+      })
+      .optional(),
+  })
+  .superRefine((capabilities, refinement) => {
+    if (
+      capabilities.retainedControl !== undefined &&
+      (!capabilities.retainedControl.exactRunIdentity ||
+        !capabilities.retainedControl.resultIdentity ||
+        !capabilities.retainedControl.eventIdentity ||
+        !capabilities.retainedControl.cancellationIdempotency ||
+        !capabilities.streaming.replay ||
+        !capabilities.streaming.detach ||
+        !capabilities.streaming.turnIdempotency ||
+        !capabilities.sessions.continue)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["retainedControl"],
+        message:
+          "retained control requires exact run, result, event, cancellation, replay, detach, turn, and session identity together",
+      });
+    }
+    if (
+      capabilities.nativeContinuation !== undefined &&
+      (!capabilities.nativeContinuation.atomicBoundary ||
+        !capabilities.nativeContinuation.requestIdempotency ||
+        !capabilities.sessions.continue)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["nativeContinuation"],
+        message:
+          "native continuation requires session continuation, atomic boundary admission, and request idempotency together",
+      });
+    }
+    const durableBranching = [
+      capabilities.branching.retrySafe ?? false,
+      capabilities.branching.lookup ?? false,
+      capabilities.branching.cleanup ?? false,
+    ];
+    if (
+      durableBranching.some(Boolean) &&
+      (!durableBranching.every(Boolean) ||
+        !capabilities.branching.checkpoint ||
+        !capabilities.branching.fork)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["branching"],
+        message:
+          "retry-safe branching requires checkpoint, fork, lookup, and cleanup together",
+      });
+    }
+    const egress = capabilities.exactProcess?.egress;
+    if (egress && new Set(egress).size !== egress.length) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["exactProcess", "egress"],
+        message: "exact process egress modes must be unique",
+      });
+    }
+    const extensions = capabilities.profile.extensions;
+    if (extensions && new Set(extensions).size !== extensions.length) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["profile", "extensions"],
+        message: "profile extension namespaces must be unique",
+      });
+    }
+  }) satisfies z.ZodType<AgentEnvironmentCapabilities>;
+
+export interface CreateAgentEnvironmentInput {
+  profile: AgentProfileRef;
+  /** Agent backend inside the provider, for example "opencode" or "codex". */
+  backend?: string;
+  workspace?: WorkspaceRequest;
+  resources?: ResourceRequest;
+  env?: Record<string, string>;
+  secrets?: string[] | Record<string, string>;
+  metadata?: Record<string, unknown>;
+  name?: string;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  providerOptions?: Record<string, unknown>;
+}
+
+export interface AgentEnvironmentProvider {
+  readonly name: string;
+  readonly exactProcess?: AgentExactProcessProvider;
+  capabilities():
+    | AgentEnvironmentCapabilities
+    | Promise<AgentEnvironmentCapabilities>;
+  validateProfile?(
+    profile: AgentProfileRef,
+  ): AgentProfileValidationResult | Promise<AgentProfileValidationResult>;
+  create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;
+  get?(id: string, options?: { signal?: AbortSignal }): Promise<AgentEnvironment | null>;
+  list?(query?: AgentEnvironmentQuery, options?: { signal?: AbortSignal }): Promise<AgentEnvironmentSummary[]>;
+}

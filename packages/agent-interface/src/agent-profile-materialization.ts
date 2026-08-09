@@ -1,11 +1,14 @@
 import type { AgentProfile } from "./agent-profile.js";
 
 /**
- * The 29 canonical AgentProfile leaves that can affect one execution.
+ * The 30 canonical AgentProfile leaves that can affect one execution.
  *
  * Compound parents such as `model`, `prompt`, and `resources` are deliberately
  * absent. A producer must report the exact requested leaf instead of claiming
- * a parent while silently dropping one of its children.
+ * a parent while silently dropping one of its children. `systemPrompt` and
+ * `appendSystemPrompt` are separate leaves for the same reason: a backend that
+ * can only add text must report the requested replacement as unsatisfied rather
+ * than acknowledge it.
  */
 export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "name",
@@ -13,6 +16,7 @@ export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "version",
   "tags",
   "systemPrompt",
+  "appendSystemPrompt",
   "instructions",
   "modelDefault",
   "modelSmall",
@@ -101,6 +105,11 @@ const AXIS_DESCRIPTORS = [
     axis: "systemPrompt",
     rootPath: "/prompt/systemPrompt",
     value: (profile) => profile.prompt?.systemPrompt,
+  },
+  {
+    axis: "appendSystemPrompt",
+    rootPath: "/prompt/appendSystemPrompt",
+    value: (profile) => profile.prompt?.appendSystemPrompt,
   },
   {
     axis: "instructions",

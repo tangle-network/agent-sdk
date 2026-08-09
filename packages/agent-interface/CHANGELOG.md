@@ -1,5 +1,104 @@
 # @tangle-network/agent-interface
 
+## 0.46.1
+
+### Patch Changes
+
+- 077635f: Add exact provider-turn interaction binding to `AgentExecutionInput` so runtimes and provider adapters share one typed identity contract.
+
+## 0.46.0
+
+### Minor Changes
+
+- b44d502: Expose exact, digest-bound run-control requests and acknowledgements for retry-safe steering, cancellation, status, and reconnect operations.
+
+  Split interaction, context transfer, workspace branching, provider conformance, and Tangle environment behavior into focused public modules while preserving the package-root API.
+
+  Harden provider inputs, replay identity, cleanup ownership, iterator cancellation, capability reporting, and packed-consumer checks.
+
+- d27deb9: Omit unset optional keys from merged and diffed profiles instead of writing them as `undefined`.
+
+  `mergeAgentProfiles` wrote every axis it resolved, so merging two profiles that mention neither `tools` nor `mcp` still produced `{ tools: undefined, mcp: undefined, … }` — eleven keys on a two-key merge. RFC 8785 canonicalization enumerates own keys, so that shape is not the same document as one omitting them: `canonicalCandidateJson` refuses it outright. `applyAgentProfileDiff` and `defineGitHubResource` blanked keys the same way and now delete them.
+
+  This changes published merge semantics, so it is a minor rather than a patch: an overlay entry holding `undefined` no longer erases the base value. `{ harness: 'codex' }` merged with `{ harness: undefined }` now keeps `codex`, matching the rule profile canonicalization already applies — an `undefined` entry reads as "not specified", and removal stays the `remove` channel's job.
+
+## 0.45.0
+
+### Minor Changes
+
+- d8020a5: Add `prime` (PrimeIntellect prime-agent, the RLM fork of the pi line) to the canonical harness enum, with its reasoning-effort set (`none…ultracode`, mapping to the fork's `--thinking off…max`) and system-prompt controls (`replace` + `append`). `prime` is router-backed: no provider lock. It is deliberately distinct from `pi` — the fork's wire protocol has diverged and its daemon rejects pi-line clients.
+
+## 0.44.0
+
+### Minor Changes
+
+- 3bbafd2: Separate replacing the harness's system prompt from adding to it.
+
+  `AgentProfilePrompt.systemPrompt` was documented as full replacement but reached most harnesses as an addition — `agent-provider-cli-bridge` pushes it as a leading `role: "system"` message on top of the harness's own prompt, and claude-code folds it into `--append-system-prompt`. Only harnesses with a real replacement control (`pi --system-prompt` with context files, skills, and templates off; gemini `.gemini/system.md`) delete the built-in prompt. One field carried two opposite meanings and nothing reported which one a caller got, so a profile written to remove the harness's instructions silently ran with them still in force.
+
+  Add `AgentProfilePrompt.appendSystemPrompt` for the additive intent, distinct from both `systemPrompt` (replacement) and `instructions` (the lower-privilege project-instruction surface). Setting replacement and addition together is legal and ordered — the addition composes on top of the replacement — because `mergeAgentProfiles` composes the two fields independently, and refusing the pair would let two valid profiles merge into an invalid one. Additive text now concatenates on merge rather than overwriting, so an overlay cannot silently delete what a base added.
+
+  Change `AgentProfileCapabilities.systemPrompt` from `boolean` to `{ replace: boolean; append: boolean }`, both required. A backend that can only add text declares `replace: false` and must refuse a profile carrying `systemPrompt` instead of appending it. The object is required rather than an added optional flag so every declaration site is a compile error and every capability document still carrying the bare boolean fails validation, rather than being read as "replacement supported" — which for every append-only backend is false.
+
+  Carry the split through the rest of the contract: `appendSystemPrompt` is the thirtieth canonical materialization leaf at `/prompt/appendSystemPrompt`, `AgentProfilePromptRemoval` can remove either intent alone, and `AgentCandidateProfilePlanMaterial` records the added prompt separately from the replacement so the same bytes under the two intents are two different plan identities.
+
+  Declare the measured bits at every provider, from the harness rather than from the wire. `harnessSystemPromptIntents(harness)` joins the harness capability layer as the single measured table: claude-code and pi own both intents, codex and gemini own replacement only, opencode owns addition only, and every other harness owns neither — including the ones whose prompt path is a `role: "system"` chat message, which is flattened into the user turn before the CLI sees it. `defaultCliBridgeCapabilities(harness?)` and `defaultTangleSandboxCapabilities(harness?)` now read that table; both adapters forward the profile to a layer that picks the harness, so an unnamed harness declares `{ replace: false, append: false }` rather than promising what it cannot check. Declaring from expressibility was the failure this replaces — a caller reading `replace: true` from the tangle adapter and running an opencode sandbox got a refusal. daytona, e2b, and computesdk materialize no profile prompt and keep `{ replace: false, append: false }`.
+
+  `harnessSystemPromptIntents` answers for a plan-forwarding executor, and now says so. Both callers lower a profile to files, env vars, and flags and hand the result to a launcher they do not own, so the harness alone decides what they can promise. One control in the table does not fit that shape: opencode's `agent.<name>.prompt` really does replace its built-in prompt, but it binds to the single agent whoever starts the server selects, which a plan cannot name — so `opencode` reads `replace: false` here while an executor that writes opencode's server config and picks the primary agent honors replacement and declares `replace: true` for itself. The table stays harness-keyed rather than widening: a `true` there would promise the intent to every plan-forwarding caller, and none of them can deliver it. An executor that owns a launcher control states that where it binds it.
+
+  Stop `agent-provider-cli-bridge` synthesizing a `role: "system"` message from `prompt.systemPrompt`. It lowered the replacement intent as an addition — the defect this release exists to remove — and, since the same request also carries `agent_profile`, the bridge rejected it outright for mixing system-role messages with a profile. Both intents now travel only on `agent_profile`, where the bridge binds each to the control its harness owns or refuses it.
+
+## 0.43.1
+
+### Patch Changes
+
+- 682814e: Offer codex `none` and pi `ultracode` in the reasoning-effort sets.
+
+  Both were measured against the pinned CLI binaries and both were reachable all along: the codex API enumerates `none` first in its own error, and `pi --thinking` accepts `max`, which canonical `ultracode` maps to. The picker hid them, so turning thinking off on codex and reaching pi's top rung were not selectable.
+
+## 0.43.0
+
+### Minor Changes
+
+- 7000e82: Define explicit retained-run capability proof and digest-bound, retry-safe cancellation requests and acknowledgements.
+
+## 0.42.1
+
+### Patch Changes
+
+- f681bb0: Add caller-defined maximum lengths to text and secret interaction fields and enforce them when validating answers.
+
+## 0.42.0
+
+### Minor Changes
+
+- cece8b3: Bind native same-session continuation requests to the exact new turn digest.
+  Add an optional provider capability and session operation that atomically verifies the boundary, durably admits one operation identifier and request digest, returns a runtime-validated result plus current control reference, replays that exact outcome after uncertain transport failures, and rejects changed input without dispatch.
+
+  Keep timeout and abort controls outside the digest-bound turn.
+  Extend portable-context conformance to prove exact turn binding, result and control-reference recovery, changed-turn conflict, and zero duplicate continuation effects.
+
+## 0.41.0
+
+### Minor Changes
+
+- 7011e7e: Add provider-neutral durable run references, strictly validated capabilities and replayable event envelopes, scope-bound interaction acknowledgements, request-bound portable context transfer with enforced token limits and provider-confirmed fresh sessions, retry-safe native continuation, and recoverable workspace branching contracts.
+  Keep the original SDK adapter interaction method source-compatible and add a separate durable command method.
+
+  Add reusable conformance checks for detached competing-run isolation, every interaction acknowledgement outcome, real over-limit planning, cross-request rejection, context receipts, retry conflicts, continuation boundaries, workspace operation recovery, dependency-ordered cleanup, absent disabled operations, and combined operation/cleanup failures.
+
+  Add exact session and immutable execution control references to detached and reconstructed Tangle sessions, bind result, replay, and cancel to that exact execution, validate capability and Sandbox result data, omit disabled methods, adapt inclusive Sandbox replay to exclusive cursors, reject unproven or mismatched receipts without advancing local state, and fail explicitly for unsupported context inputs.
+  Pack and test the Tangle provider together with the interface, testkit, and public Sandbox 0.17.0 dependency.
+
+- 32acb32: Add `forge` and `cursor` to `HarnessType` / `harnessTypeSchema`.
+
+  Both ship full provider adapters downstream (`sdk-provider-forge`,
+  `sdk-provider-cursor`), but were absent from the canonical enum, which forced
+  agent-dev-container and agent-app to maintain divergent copies of the harness
+  taxonomy. They are multi-provider CLI runners with no vendor lock, so they carry
+  no entry in the capability tables and resolve as router-backed — matching the
+  behavior downstream already relied on.
+
 ## 0.40.0
 
 ### Minor Changes

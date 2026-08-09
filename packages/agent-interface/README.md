@@ -5,6 +5,55 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+## Durable runs, interactions, and context
+
+`AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
+`RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
+Providers advertise `retainedControl` only when exact run, result, event, cancellation, replay, detach, turn, and session identity are all implemented together.
+`AgentSession.cancelRun()` accepts a canonical request digest bound to one operation and `AgentExactRunControlRef`, so a caller can safely repeat the same cancellation after losing the first acknowledgement.
+Its acknowledgement repeats the operation, digest, and run coordinates and distinguishes a known cancellation effect from conflict or unknown state.
+
+An environment advertises `interactions` only when it can originate and answer typed requests.
+`AgentEnvironmentCapabilitiesSchema` strictly validates the complete capability document at runtime, including all-or-nothing durable branching declarations.
+Optional provider methods must be absent when their capability is false so clients cannot expose an action the provider has denied.
+The capability names supported request kinds, answer field types, response scopes, secret answers, concurrency, replay, and response idempotency.
+`AgentEnvironment.respondToInteraction()` and `AgentSession.respondToInteraction()` bind each response to its run, environment, optional provider session, interaction, and caller operation identifier.
+Their acknowledgement distinguishes acceptance, exact prior resolution, conflicting prior resolution, expiry, cancellation, unknown interaction, unknown run, binding mismatch, and transport failure.
+Acknowledgements deliberately contain no answer value or answer hash because both can disclose low-entropy secret answers.
+Response data is accepted only after `validateInteractionResponse()` checks it against the exact outstanding request, rejects undeclared fields, and enforces the request's permission scopes.
+An omitted permission scope permits only a one-time response; session and persistent grants must be explicit.
+The legacy `SdkProviderAdapter.respondToInteraction(response)` remains source-compatible, while new adapters use `respondToInteractionCommand(command)` for exact binding and durable acknowledgement.
+
+Portable conversation transfer reuses `BackendMessage` and `InputPart` rather than defining another message format.
+Planning is represented separately from execution: a plan embeds the immutable source, lists every message and part decision, names the destination runner, contains the exact derived context, and carries a canonical digest.
+Every plan request has a canonical request digest, and every ready, over-limit, or unsupported result repeats the request identifier and digest.
+`portableContextPlanResultMatchesRequest()` verifies that the result belongs to the exact request, the returned source and destination match, and a ready plan stays within its requested token limit.
+Partial input or output always requires explicit user or policy acceptance, even when no individual message was transformed.
+`ContextTransferRequest` binds an operation identifier to that accepted plan, while `ContextTransferResult` distinguishes first admission, exact replay, changed-input conflict, and unknown transport outcome.
+`contextTransferResultMatchesRequest()` checks the operation identifier and request digest for every outcome before a caller accepts, retries, or reports it.
+Its successful receipt repeats the exact destination and carries the provider's session-creation operation and timestamp, identifying the one fresh provider session that admitted the context.
+`NativeContextBoundaryProof` is the separate path for same-session continuation and includes the exact run identity.
+`NativeContextContinuationRequest.turnDigest` binds the operation to the exact new JSON-stable user turn; timeout and abort controls live outside that turn under `AgentNativeContextContinuationOptions`.
+Continuation is valid only when the provider atomically proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.
+Providers advertise `nativeContinuation` only when both guarantees are implemented and expose `AgentSession.continueNative()` as the single durable operation.
+An accepted or replayed operation returns its original turn result and exact current control reference; `AgentNativeContextContinuationResultSchema` validates that shape and `agentNativeContextContinuationResultMatchesRequest()` checks its request and retained-session bindings.
+A changed request with the same operation identifier conflicts without dispatch.
+
+Providers that support recoverable workspace copies expose `workspaceBranching` and set `branching.retrySafe`, `branching.lookup`, and `branching.cleanup` together.
+Checkpoint and fork requests bind an idempotency key to a canonical request digest.
+Every returned resource repeats and validates that identity, lookups recover remote success after caller restart, changed-input key reuse returns a conflict, and cleanup binds its acknowledgement to the exact provider and target.
+A checkpoint with dependent forks returns `in_use` plus the blocking environment identifiers and remains recoverable until those forks are destroyed.
+The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
+
+All new wire values have exported Zod schemas on the package root.
+Omitting `interactions` and `nativeContinuation`, or leaving the three durable branching flags false, is the compatible declaration for existing providers.
+
+`profile.systemPrompt` declares two independent bits rather than one flag.
+`replace` means the provider deletes the harness's own system prompt and installs `prompt.systemPrompt`; `append` means it keeps that prompt and adds `prompt.appendSystemPrompt` to it.
+A provider that can only append must declare `replace: false` and refuse a profile carrying `systemPrompt`, because quietly appending a requested replacement leaves the instructions the caller asked to delete in force.
+
+
+
 ## Install
 
 ```bash
@@ -34,7 +83,8 @@ const provider: AgentEnvironmentProvider = {
   capabilities: () => ({
     profile: {
       namedProfiles: false,
-      systemPrompt: true,
+      // Most harnesses can only add to their built-in prompt, not delete it.
+      systemPrompt: { replace: false, append: true },
       instructions: true,
       tools: true,
       permissions: true,
