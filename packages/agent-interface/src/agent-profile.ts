@@ -586,9 +586,16 @@ function mergeOptionalArrays<T>(
 /**
  * Merge two public AgentProfile values.
  *
- * Overlay fields win on conflicts. Additive fields compose instead: array-like
- * instruction sets are concatenated, and `prompt.appendSystemPrompt` values are
- * joined base-first with a blank line between them.
+ * Overlay fields win on conflicts, but only where they carry a value: an
+ * `undefined` entry reads as "not specified" and keeps the base value, because
+ * removal is the `remove` channel's job on {@link AgentProfileDiff}. Keys that
+ * resolve to nothing are omitted rather than written as `undefined` — RFC 8785
+ * canonicalization enumerates own keys, so a present-but-undefined key is a
+ * different document from an absent one.
+ *
+ * Additive fields compose instead of overwriting: array-like instruction sets
+ * are concatenated, and `prompt.appendSystemPrompt` values are joined
+ * base-first with a blank line between them.
  */
 export function mergeAgentProfiles(
   base: AgentProfile | undefined,
