@@ -276,7 +276,7 @@
 
 ### Minor Changes
 
-- afe552d: Add optional `AgentProfile.harness` — a typed, executor-overridable preferred execution harness (`HarnessType`). Formalizes the `profile.harness` runtimes already read untyped; identity stays harness-agnostic (the leaderboard `harness × model` axis and per-worker supervisor routing still override it), and it becomes a first-class lever an improvement loop can optimize.
+- afe552d: Add optional `AgentProfile.harness` — a typed, executor-overridable preferred execution harness (`HarnessType`). Formalizes the `profile.harness` runtimes already read untyped; the authored preference participates in canonical profile identity while execution receipts separately bind any override, and it becomes a first-class lever an improvement loop can optimize.
 
 ## 0.19.0
 

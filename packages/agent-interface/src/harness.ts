@@ -3,13 +3,12 @@ import { z } from "zod";
 /**
  * The execution runner for an agent — WHICH runtime materializes and runs an `AgentProfile`.
  *
- * Harness is an EXECUTION concern, not part of profile IDENTITY: the same `AgentProfile`
- * (prompt/model/skills/tools/mcp/subagents) runs on any harness. A profile MAY carry an optional
- * `harness` PREFERENCE (`AgentProfile.harness`), but the caller/executor can always override it per
- * run — the leaderboard's `harness × model` axis sweeps one profile across every harness, and a
- * supervisor may pick a harness per spawned worker. This is the single shared enum every layer
- * references instead of keeping its own copy (session control, the profile materializer, the
- * cli-bridge backends, VB profile specs).
+ * This enum describes an EXECUTION concern. When an `AgentProfile` authors a `harness`
+ * preference, that field participates in its canonical identity like every other parsed profile
+ * field. A caller or executor may override the preference for one run, but the execution receipt
+ * preserves the authored identity, effective identity, and selected harness separately. This is
+ * the single shared enum every layer references instead of keeping its own copy (session control,
+ * the profile materializer, the cli-bridge backends, VB profile specs).
  *
  * `cli-base` is the router-backed mode — a plain multi-turn router call (a reviewer, a cheap judge,
  * a one-shot) with no full coding-agent harness. The rest are full agentic harnesses run in a

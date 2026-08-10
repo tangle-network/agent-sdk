@@ -91,4 +91,3 @@ export interface PlacementInfo {
   region?: string;
   providerMetadata?: Record<string, unknown>;
 }
-
