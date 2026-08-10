@@ -1,5 +1,18 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.5.0
+
+### Minor Changes
+
+- facff5c: Expose cli-bridge durable runs through `AgentEnvironment.dispatch()` and `AgentEnvironment.session()` with exact identity, cursor replay, usage-preserving results, continuation, and terminal-confirmed cancellation.
+
+### Patch Changes
+
+- facff5c: Keep the task message separate from the exact `AgentProfile`, and forward the profile's reasoning effort to cli-bridge.
+- Updated dependencies [facff5c]
+- Updated dependencies [facff5c]
+  - @tangle-network/agent-interface@0.47.0
+
 ## 0.4.3
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @tangle-network/agent-interface
 
+## 0.47.0
+
+### Minor Changes
+
+- facff5c: Export a model-facing JSON Schema generated from the canonical `AgentProfile` validator.
+
+### Patch Changes
+
+- facff5c: Document and test that authored harness and model-routing preferences participate in canonical profile identity while execution receipts separately bind overrides.
+
 ## 0.46.1
 
 ### Patch Changes
