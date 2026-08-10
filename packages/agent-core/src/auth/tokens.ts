@@ -276,6 +276,32 @@ export type SidecarCapability =
   | "raw_input";
 
 /**
+ * The accepted values of the `sst` claim. The exported union is derived from
+ * this list so the type a caller programs against and the set the verifier
+ * enforces cannot drift apart.
+ */
+const SIDECAR_SID_SCOPES = ["session", "project"] as const;
+
+/**
+ * What a sidecar token's `sid` claim holds, carried in the `sst` claim.
+ *
+ * `sid` is minted with two different meanings: for a session-runtime token it
+ * is a session id, and for a project-scoped read-only token it is a project
+ * ref. Nothing on the token distinguished them, so a consumer could not tell
+ * whether comparing `sid` against a session id in a request path was an
+ * authorization check or a guaranteed mismatch.
+ *
+ * A consumer must treat the claim's absence as "the meaning of `sid` is
+ * unknown, do not enforce a session comparison" — tokens minted before this
+ * claim existed carry no `sst`.
+ *
+ * Adding a value here is a breaking change for verifiers: `verifySidecarToken`
+ * rejects an `sst` it does not recognise, so every verifier must ship the new
+ * value before any issuer stamps it.
+ */
+export type SidecarSidScope = (typeof SIDECAR_SID_SCOPES)[number];
+
+/**
  * Generate an Ed25519 key pair for per-session JWT signing.
  * Private key stays in orchestrator memory. Public key is injected into
  * the sidecar container. Even if the sidecar is fully compromised,
@@ -314,6 +340,13 @@ export function issueSidecarAccessToken(
     cid: string;
     sid?: string;
     /**
+     * What `sid` holds. Stamp it whenever `sid` is set, so a consumer can tell
+     * a session-bound token from a project-bound one instead of guessing from
+     * the capability list. Omitting it leaves consumers unable to enforce a
+     * session comparison.
+     */
+    sst?: SidecarSidScope;
+    /**
      * Capability allowlist. When present, the token is restricted to
      * routes whose required capability is in this list, as enforced by the
      * sidecar-auth policy layer. Absent = full scope (legacy
@@ -328,6 +361,25 @@ export function issueSidecarAccessToken(
       "issueSidecarAccessToken requires an Ed25519 private key (PEM). " +
         "HMAC fallback has been removed — generate a key pair with generateSidecarKeyPair().",
     );
+  }
+
+  // Reject at mint time what no verifier accepts. Either mistake otherwise
+  // produces a token that fails everywhere it is presented, debugged inside a
+  // sidecar rather than in the issuer that made it. A caller reaching this
+  // function from JavaScript, or through a value typed `string`, gets no help
+  // from the parameter type.
+  if (payload.sst !== undefined) {
+    if (!SIDECAR_SID_SCOPES.includes(payload.sst)) {
+      throw new Error(
+        `issueSidecarAccessToken: sst must be one of ${SIDECAR_SID_SCOPES.join(", ")}.`,
+      );
+    }
+    // `sst` names what `sid` holds, so it is meaningless without one.
+    if (!payload.sid) {
+      throw new Error(
+        "issueSidecarAccessToken: sst describes the sid claim and cannot be set without a non-empty sid.",
+      );
+    }
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -363,6 +415,11 @@ export function verifySidecarToken(
   pid: string;
   cid: string;
   sid?: string;
+  /**
+   * What `sid` holds. Absent on tokens minted before the claim existed —
+   * treat that as "unknown", never as a licence to skip a check.
+   */
+  sst?: SidecarSidScope;
   typ: string;
   jti?: string;
   exp: number;
@@ -408,11 +465,46 @@ export function verifySidecarToken(
     if (typeof payload.sub !== "string" || payload.sub.length === 0)
       return null;
 
+    // `sst` decides whether a consumer runs an authorization check, so an
+    // unrecognised or unusable value must reject the token rather than pass
+    // through. Returning it would leave the consumer's `sst === "session"`
+    // test false and silently skip the check the issuer asked for.
+    if (payload.sst !== undefined) {
+      // `includes` compares by SameValueZero, so this rejects every non-string
+      // a JSON claim can hold as well as an unrecognised string.
+      if (!SIDECAR_SID_SCOPES.includes(payload.sst)) return null;
+      if (typeof payload.sid !== "string" || payload.sid.length === 0) {
+        return null;
+      }
+    }
+
     return payload;
   } catch {
     return null;
   }
 }
+
+/**
+ * Compile-time assertions that keep the `sst` claim narrow on both halves of
+ * the round trip. They are load-bearing: this package type-checks `src` only,
+ * so widening either field, or dropping the `as const` that derives
+ * `SidecarSidScope`, otherwise collapses the union to `string` and passes
+ * every gate here — leaving a consumer free to test `sst` against a value the
+ * verifier rejects.
+ */
+type AssertTrue<T extends true> = T;
+type _IssuerTakesNarrowSst = AssertTrue<
+  string extends NonNullable<Parameters<typeof issueSidecarAccessToken>[1]["sst"]>
+    ? false
+    : true
+>;
+type _VerifierReturnsNarrowSst = AssertTrue<
+  string extends NonNullable<
+    NonNullable<ReturnType<typeof verifySidecarToken>>["sst"]
+  >
+    ? false
+    : true
+>;
 
 function isDockerShortIdMatch(
   payloadCid: unknown,
