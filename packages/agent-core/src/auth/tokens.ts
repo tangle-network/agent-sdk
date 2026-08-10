@@ -295,6 +295,15 @@ const SIDECAR_SID_SCOPES = ["session", "project"] as const;
  * unknown, do not enforce a session comparison" — tokens minted before this
  * claim existed carry no `sst`.
  *
+ * A consumer must also treat any value other than `"session"` as "this is not
+ * a session token", and deny it on a session-addressed route. Reading the
+ * claim as `sst === "session" ? compare : allow` grants a project-scoped token
+ * the reach the comparison exists to remove.
+ *
+ * The verifier does not check that `sid` looks like what `sst` declares. That
+ * is a semantic judgement about ids this layer cannot make; it belongs to the
+ * consumer that knows the id namespaces.
+ *
  * Adding a value here is a breaking change for verifiers: `verifySidecarToken`
  * rejects an `sst` it does not recognise, so every verifier must ship the new
  * value before any issuer stamps it.
@@ -374,10 +383,13 @@ export function issueSidecarAccessToken(
         `issueSidecarAccessToken: sst must be one of ${SIDECAR_SID_SCOPES.join(", ")}.`,
       );
     }
-    // `sst` names what `sid` holds, so it is meaningless without one.
-    if (!payload.sid) {
+    // `sst` names what `sid` holds, so it is meaningless without one. A
+    // whitespace-only sid is the same mistake wearing a disguise: it passes a
+    // truthiness test, then a consumer enforces a session match against a
+    // degenerate value.
+    if (!payload.sid || payload.sid.trim().length === 0) {
       throw new Error(
-        "issueSidecarAccessToken: sst describes the sid claim and cannot be set without a non-empty sid.",
+        "issueSidecarAccessToken: sst describes the sid claim and cannot be set without a non-blank sid.",
       );
     }
   }
@@ -473,7 +485,9 @@ export function verifySidecarToken(
       // `includes` compares by SameValueZero, so this rejects every non-string
       // a JSON claim can hold as well as an unrecognised string.
       if (!SIDECAR_SID_SCOPES.includes(payload.sst)) return null;
-      if (typeof payload.sid !== "string" || payload.sid.length === 0) {
+      // Blank counts as absent. The trim applies only on this branch, so it
+      // cannot reject a token minted before the claim existed.
+      if (typeof payload.sid !== "string" || payload.sid.trim().length === 0) {
         return null;
       }
     }

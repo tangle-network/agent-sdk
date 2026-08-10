@@ -458,6 +458,39 @@ describe("Ed25519 Sidecar Token Auth", () => {
       ).toBeNull();
     });
 
+    it("rejects sst on a blank sid", () => {
+      // A whitespace-only sid passes a truthiness test, then a consumer
+      // enforces a session match against a degenerate value.
+      const token = signClaims({ ...baseClaims, sid: "   ", sst: "session" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects a null sst", () => {
+      const token = signClaims({ ...baseClaims, sst: null });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("does not check that sid looks like what sst declares", () => {
+      // The boundary, pinned so no future reader assumes this layer validates
+      // id semantics. Deciding that "session-xyz" is not a project ref needs
+      // knowledge of the id namespaces, which lives in the consumer.
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, sid: "session-xyz", sst: "project" },
+        5,
+      );
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId)?.sst,
+      ).toBe("project");
+    });
+
     it("refuses to mint an sst value no verifier accepts", () => {
       // The parameter type does not reach a JavaScript caller, or a value
       // typed `string`. Without this the issuer happily mints a token that
@@ -486,6 +519,19 @@ describe("Ed25519 Sidecar Token Auth", () => {
           5,
         ),
       ).toThrow(/sst/);
+    });
+
+    it.each([
+      ["empty", ""],
+      ["blank", "   "],
+    ])("refuses to mint sst on a %s sid", (_label, sid) => {
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          { ...payload, sid, sst: "session" },
+          5,
+        ),
+      ).toThrow(/non-blank sid/);
     });
   });
 });
