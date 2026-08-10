@@ -336,4 +336,202 @@ describe("Ed25519 Sidecar Token Auth", () => {
       expect(result?.cap).toEqual(["computer_use"]);
     });
   });
+
+  describe("sid scope claim (sst)", () => {
+    /**
+     * Re-sign an arbitrary claim set with the real private key. A tampered
+     * payload would otherwise fail the signature check first, which proves
+     * nothing about the claim validation under test.
+     */
+    function signClaims(claims: Record<string, unknown>): string {
+      const header = Buffer.from(
+        JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
+      ).toString("base64url");
+      const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
+      const data = `${header}.${body}`;
+      const signature = Buffer.from(
+        sign(null, Buffer.from(data), keyPair.privateKey),
+      ).toString("base64url");
+      return `${data}.${signature}`;
+    }
+
+    const baseClaims = {
+      ...payload,
+      typ: "sidecar",
+      jti: `${fullContainerId}:0:abcdef`,
+      iat: 0,
+      exp: 9999999999,
+    };
+
+    it("round-trips sst: session", () => {
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, sst: "session", cap: ["read", "workspace", "terminal"] },
+        5,
+      );
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result?.sst).toBe("session");
+      expect(result?.sid).toBe("session-xyz");
+    });
+
+    it("round-trips sst: project", () => {
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        {
+          ...payload,
+          sid: "sandbox-project-1",
+          sst: "project",
+          cap: ["read"],
+        },
+        5,
+      );
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result?.sst).toBe("project");
+      expect(result?.sid).toBe("sandbox-project-1");
+    });
+
+    it("verifies a token minted without sst and reports it absent", () => {
+      // Tokens issued before this claim existed must keep working; consumers
+      // read the absence as "the meaning of sid is unknown".
+      const token = issueSidecarAccessToken(keyPair.privateKey, payload, 5);
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.sst).toBeUndefined();
+    });
+
+    it("rejects an sst value it does not recognise", () => {
+      // Fail closed. Returning the unknown value would leave a consumer's
+      // `sst === "session"` test false, silently skipping the check the
+      // issuer meant to demand.
+      const token = signClaims({ ...baseClaims, sst: "batch" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects a non-string sst", () => {
+      const token = signClaims({ ...baseClaims, sst: 1 });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects sst without a sid for it to describe", () => {
+      const { sid: _sid, ...noSid } = baseClaims;
+      const token = signClaims({ ...noSid, sst: "session" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects sst on an empty sid", () => {
+      const token = signClaims({ ...baseClaims, sid: "", sst: "session" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects sst on a sid that is not a string", () => {
+      const token = signClaims({ ...baseClaims, sid: 12345, sst: "session" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects sst on a blank sid", () => {
+      // A whitespace-only sid passes a truthiness test, then a consumer
+      // enforces a session match against a degenerate value.
+      const token = signClaims({ ...baseClaims, sid: "   ", sst: "session" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects a null sst", () => {
+      const token = signClaims({ ...baseClaims, sst: null });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("does not check that sid looks like what sst declares", () => {
+      // The boundary, pinned so no future reader assumes this layer validates
+      // id semantics. Deciding that "session-xyz" is not a project ref needs
+      // knowledge of the id namespaces, which lives in the consumer.
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, sid: "session-xyz", sst: "project" },
+        5,
+      );
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId)?.sst,
+      ).toBe("project");
+    });
+
+    it("refuses to mint an sst value no verifier accepts", () => {
+      // The parameter type does not reach a JavaScript caller, or a value
+      // typed `string`. Without this the issuer happily mints a token that
+      // every verifier rejects.
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          { ...payload, sst: "batch" as unknown as "session" },
+          5,
+        ),
+      ).toThrow(/sst must be one of/);
+    });
+
+    it("refuses to mint sst without a sid", () => {
+      // Caught at issue time so the mistake surfaces in the orchestrator that
+      // made it, not as an unexplained 401 inside a sidecar.
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          {
+            sub: "user-123",
+            pid: "product-456",
+            cid: fullContainerId,
+            sst: "session",
+          },
+          5,
+        ),
+      ).toThrow(/sst/);
+    });
+
+    it.each([
+      ["empty", ""],
+      ["blank", "   "],
+    ])("refuses to mint sst on a %s sid", (_label, sid) => {
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          { ...payload, sid, sst: "session" },
+          5,
+        ),
+      ).toThrow(/non-blank sid/);
+    });
+  });
 });
