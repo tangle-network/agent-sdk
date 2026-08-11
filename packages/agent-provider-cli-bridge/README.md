@@ -23,6 +23,7 @@ const reference = await environment.dispatch({
   sessionId: 'research-session',
   executionId: 'research-turn-1',
 })
+await saveControlRef(reference.controlRef)
 const session = environment.session(reference.id)
 
 for await (const event of session.events({ since: '0' })) {
@@ -35,6 +36,11 @@ await session.prompt({
 })
 ```
 
+Persist the returned `controlRef` before treating dispatch as accepted.
+It contains the exact provider, environment, session, execution, run, and request digest needed after a process restart.
+Reconstruct the environment with `provider.get(controlRef.environmentId)`, then call `environment.session(controlRef.sessionId, { controlRef })`.
+The provider rejects any coordinate or digest mismatch instead of attaching to a different run.
+
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
 Execution fails before network use when none is present.
 
@@ -43,6 +49,8 @@ Passing the same `sessionId` on later turns continues the same CLI conversation.
 `dispatch()` starts a bridge-owned durable run and returns after detaching its HTTP reader.
 The returned `AgentSession` exposes status, cursor-based event replay, the terminal result, continuation, and cancellation.
 Cancellation returns only after cli-bridge confirms the run is terminal.
+Usage events and terminal result metadata include `modelRequests` only when the bridge measured an exact non-negative integer count.
+Missing, malformed, partial, or estimated request counts remain unknown.
 When `dispatch()` receives no `sessionId`, it creates one from that turn's stable run id and returns it.
 Replay and result reads fail loudly after cli-bridge's configured replay retention expires.
 Stopping a `session.events()` reader detaches only that replay observer.
