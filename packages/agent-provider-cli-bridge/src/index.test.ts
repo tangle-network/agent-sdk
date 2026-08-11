@@ -1,5 +1,10 @@
 import { createServer } from "node:http";
-import type { AgentProfile } from "@tangle-network/agent-interface";
+import { createHash } from "node:crypto";
+import {
+  agentRunCancellationRequestDigest,
+  type AgentExactRunControlRef,
+  type AgentProfile,
+} from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
@@ -92,6 +97,22 @@ describe("createCliBridgeProvider", () => {
       fetch: async (url, init) => {
         const target = String(url);
         if (init?.method === "GET") {
+          if (target.endsWith("/events")) {
+            const runId = decodeURIComponent(target.split("/").at(-2) ?? "");
+            statuses.set(runId, "done");
+            const headers = {
+              "content-type": "text/event-stream",
+              "x-run-id": runId,
+              "x-run-request-digest": testDigest(runId),
+            };
+            return new Response(
+              [
+                `id: 2\ndata: {"choices":[{"delta":{"content":"complete-${runId}"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
+                "data: [DONE]\n\n",
+              ].join(""),
+              { status: 200, headers },
+            );
+          }
           const runId = decodeURIComponent(target.split("/").at(-1)?.split("?")[0] ?? "");
           const status = statuses.get(runId) ?? "running";
           return runResponse(runId, status, status === "done");
@@ -103,7 +124,7 @@ describe("createCliBridgeProvider", () => {
         const headers = {
           "content-type": "text/event-stream",
           "x-run-id": runId,
-          "x-run-request-digest": `digest-${runId}`,
+          "x-run-request-digest": testDigest(runId),
         };
         if (body.stream === false) {
           return Response.json(
@@ -113,6 +134,7 @@ describe("createCliBridgeProvider", () => {
                 finish_reason: "stop",
               }],
               usage: {
+                model_requests: 2,
                 prompt_tokens: 11,
                 completion_tokens: 7,
                 total_tokens: 18,
@@ -123,7 +145,7 @@ describe("createCliBridgeProvider", () => {
             {
               headers: {
                 "x-run-id": runId,
-                "x-run-request-digest": `digest-${runId}`,
+                "x-run-request-digest": testDigest(runId),
               },
             },
           );
@@ -132,7 +154,7 @@ describe("createCliBridgeProvider", () => {
           statuses.set(runId, "done");
           return new Response(
             [
-              `id: 2\ndata: {"choices":[{"delta":{"content":"replayed-${runId}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
+              `id: 2\ndata: {"choices":[{"delta":{"content":"replayed-${runId}"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
               "data: [DONE]\n\n",
             ].join(""),
             { status: 200, headers },
@@ -141,7 +163,7 @@ describe("createCliBridgeProvider", () => {
         if (runId === "run-2") {
           statuses.set(runId, "done");
           return new Response(
-            `id: 1\ndata: {"choices":[{"delta":{"content":"continued"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"cost":0.01}}\n\ndata: [DONE]\n\n`,
+            `id: 1\ndata: {"choices":[{"delta":{"content":"continued"},"finish_reason":"stop"}],"usage":{"model_requests":1,"prompt_tokens":5,"completion_tokens":2,"cost":0.01}}\n\ndata: [DONE]\n\n`,
             { status: 200, headers },
           );
         }
@@ -171,9 +193,17 @@ describe("createCliBridgeProvider", () => {
     expect(reference).toEqual({
       id: "research-session",
       provider: "cli-bridge",
+      controlRef: {
+        runId: "run-1",
+        provider: "cli-bridge",
+        environmentId: expect.any(String),
+        sessionId: "research-session",
+        executionId: "run-1",
+        requestDigest: testDigest("run-1"),
+      },
       metadata: {
         runId: "run-1",
-        requestDigest: "digest-run-1",
+        requestDigest: testDigest("run-1"),
       },
     });
     expect(dispatchReaderDetached).toBe(true);
@@ -193,10 +223,12 @@ describe("createCliBridgeProvider", () => {
       reasoningTokens: 3,
       cost: 0.04,
     });
+    expect(replayed[0]?.data).toMatchObject({ modelRequests: 2 });
     expect(replayed.at(-1)).toMatchObject({
-      id: "2",
+      id: "2:2",
       data: {
         finalText: "complete-run-1",
+        modelRequests: 2,
         status: "completed",
       },
     });
@@ -213,8 +245,10 @@ describe("createCliBridgeProvider", () => {
       },
       metadata: {
         runId: "run-1",
+        executionId: "run-1",
         status: "done",
-        requestDigest: "digest-run-1",
+        requestDigest: testDigest("run-1"),
+        modelRequests: 2,
       },
     });
     await expect(session?.prompt({
@@ -230,7 +264,12 @@ describe("createCliBridgeProvider", () => {
         outputTokens: 2,
         cost: 0.01,
       },
-      metadata: { runId: "run-2", status: "done" },
+      metadata: {
+        runId: "run-2",
+        executionId: "run-2",
+        status: "done",
+        modelRequests: 1,
+      },
     });
     await expect(session?.prompt({
       prompt: "wrong conversation",
@@ -248,18 +287,6 @@ describe("createCliBridgeProvider", () => {
         messages: [{ role: "user", content: "initial task" }],
       }),
       expect.objectContaining({
-        run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
-      }),
-      expect.objectContaining({
-        run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
-      }),
-      expect.objectContaining({
         run_id: "run-2",
         session_id: "research-session",
         agent_profile: profile,
@@ -267,7 +294,7 @@ describe("createCliBridgeProvider", () => {
       }),
     ]);
     expect(requests.filter(({ body }) => body.stream !== false).map(({ cursor }) => cursor))
-      .toEqual([null, "1", "0", null]);
+      .toEqual([null, null]);
     for (const { body } of requests) {
       expect(body.messages).not.toEqual(
         expect.arrayContaining([{ role: "system", content: "Lead the research." }]),
@@ -277,6 +304,131 @@ describe("createCliBridgeProvider", () => {
       streaming: { detach: true, replay: true },
       sessions: { continue: true },
     });
+  });
+
+  it("reconstructs one retained run from exact coordinates in a new provider", async () => {
+    const runId = "restart-run";
+    const sessionId = "restart-session";
+    const environmentId = "restart-environment";
+    const requestDigest = testDigest(runId);
+    let status: "running" | "done" = "running";
+    let dispatches = 0;
+    let cancellations = 0;
+    const bridgeFetch: typeof fetch = async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/events")) {
+        status = "done";
+        return new Response(
+          [
+            'id: 1\ndata: {"choices":[{"delta":{"content":"survived "},"finish_reason":null}]}\n\n',
+            'id: 2\ndata: {"choices":[{"delta":{"content":"restart"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": runId,
+              "x-run-request-digest": requestDigest,
+            },
+          },
+        );
+      }
+      if (target.endsWith("/cancel")) {
+        cancellations += 1;
+        const request = JSON.parse(String(init?.body)) as {
+          operationId: string;
+          requestDigest: `sha256:${string}`;
+          run: AgentExactRunControlRef;
+        };
+        return Response.json({
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          run: request.run,
+          status: "accepted",
+          effect: "not_live",
+        });
+      }
+      if (init?.method === "GET") {
+        return runResponse(runId, status, status === "done");
+      }
+      dispatches += 1;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-run-id": runId,
+            "x-run-request-digest": requestDigest,
+          },
+        },
+      );
+    };
+    const starter = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi/model",
+      fetch: bridgeFetch,
+    });
+    const startedEnvironment = await starter.create({
+      profile: { name: "worker" },
+      idempotencyKey: environmentId,
+    });
+    const reference = await startedEnvironment.dispatch?.({
+      prompt: "keep working after restart",
+      sessionId,
+      turnId: "restart-turn",
+      executionId: runId,
+      detach: true,
+    });
+    const controlRef = reference?.controlRef as AgentExactRunControlRef;
+
+    const restarted = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi/model",
+      fetch: bridgeFetch,
+    });
+    const recoveredEnvironment = await restarted.get?.(environmentId);
+    const recovered = recoveredEnvironment?.session?.(sessionId, { controlRef });
+    await expect(recovered?.status()).resolves.toBe("running");
+    const events = [];
+    for await (const event of recovered!.events({ since: "0" })) events.push(event);
+    expect(events.map((event) => event.id)).toEqual(["1:0", "2:0", "2:1", "2:2"]);
+    await expect(recovered?.result()).resolves.toMatchObject({
+      text: "survived restart",
+      success: true,
+      sessionId,
+      metadata: {
+        runId,
+        executionId: runId,
+        requestDigest,
+      },
+    });
+    await recoveredEnvironment?.destroy?.();
+    expect(cancellations).toBe(0);
+
+    const cancellationMaterial = {
+      operationId: "restart-cancel",
+      run: controlRef,
+      reason: "proof complete",
+    };
+    const cancellationRequest = {
+      ...cancellationMaterial,
+      requestDigest: agentRunCancellationRequestDigest(cancellationMaterial),
+    };
+    const controlEnvironment = await restarted.get?.(environmentId);
+    const controlSession = controlEnvironment?.session?.(sessionId, { controlRef });
+    await expect(controlSession?.cancelRun?.(cancellationRequest)).resolves.toMatchObject({
+      operationId: "restart-cancel",
+      status: "accepted",
+      effect: "not_live",
+    });
+    expect(dispatches).toBe(1);
+    expect(cancellations).toBe(1);
   });
 
   it("waits for terminal proof when cancelling a dispatched session", async () => {
@@ -310,7 +462,7 @@ describe("createCliBridgeProvider", () => {
             headers: {
               "content-type": "text/event-stream",
               "x-run-id": "cancel-run",
-              "x-run-request-digest": "cancel-digest",
+              "x-run-request-digest": testDigest("cancel-run"),
             },
           },
         );
@@ -338,24 +490,35 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "runner/model",
-      fetch: async (_url, init) => {
+      fetch: async (url, init) => {
+        if (init?.method === "GET") {
+          const runId = decodeURIComponent(String(url).split("/").at(-2) ?? "");
+          return new Response(
+            'id: 1\ndata: {"choices":[{"delta":{"content":"wrong"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream",
+                "x-run-id": runId,
+                "x-run-request-digest": testDigest("changed-digest"),
+              },
+            },
+          );
+        }
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         const runId = String(body.run_id);
-        const replay = new Headers(init?.headers).has("last-event-id");
         return new Response(
-          replay
-            ? 'data: {"choices":[{"delta":{"content":"wrong"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
-            : new ReadableStream({
-                start(controller) {
-                  controller.enqueue(new TextEncoder().encode(": connected\n\n"));
-                },
-              }),
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+            },
+          }),
           {
             status: 200,
             headers: {
               "content-type": "text/event-stream",
               "x-run-id": runId,
-              "x-run-request-digest": replay ? "changed-digest" : "original-digest",
+              "x-run-request-digest": testDigest("original-digest"),
             },
           },
         );
@@ -393,7 +556,7 @@ describe("createCliBridgeProvider", () => {
         const headers = {
           "content-type": "text/event-stream",
           "x-run-id": runId,
-          "x-run-request-digest": `digest-${runId}`,
+          "x-run-request-digest": testDigest(runId),
         };
         if (runId === "concurrent-a") {
           return new Response(
@@ -455,7 +618,7 @@ describe("createCliBridgeProvider", () => {
           [
             ": connected\r\n\r\n",
             'data: {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\\"path\\":"}}]},"finish_reason":null}]}\r\n\r\n',
-            'data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call-1","function":{"arguments":"\\"README.md\\"}"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"cost":0.01}}\r\n\r\n',
+            'data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call-1","function":{"arguments":"\\"README.md\\"}"}}]},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"cost":0.01}}\r\n\r\n',
             "data: [DONE]\r\n\r\n",
           ].join(""),
           { status: 200, headers: { "content-type": "text/event-stream" } },
@@ -506,7 +669,7 @@ describe("createCliBridgeProvider", () => {
     });
     expect(events[2]).toEqual({
       type: "usage",
-      data: {},
+      data: { modelRequests: 2 },
       usage: {
         inputTokens: 2,
         outputTokens: 3,
@@ -519,9 +682,48 @@ describe("createCliBridgeProvider", () => {
     });
     expect(events.at(-1)).toEqual({
       type: "result",
-      data: { finalText: "hello", finishReason: "stop", status: "completed" },
+      data: {
+        finalText: "hello",
+        finishReason: "stop",
+        status: "completed",
+        modelRequests: 2,
+      },
     });
     expect(events.filter((event) => event.data.part && (event.data.part as { type?: string }).type === "tool")).toHaveLength(1);
+  });
+
+  it("keeps text after tool activity as a separate transcript paragraph", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi",
+      fetch: async () =>
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"content":"I will inspect it."},"finish_reason":null}]}\n\n',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"## Result"},"finish_reason":"stop"}]}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    const events = [];
+    for await (const event of environment.stream({ prompt: "inspect", sessionId: "s1" })) {
+      events.push(event);
+    }
+
+    expect(
+      events
+        .filter((event) => event.normalized?.type === "message.part.updated")
+        .map((event) => event.data.delta)
+        .filter((delta) => typeof delta === "string"),
+    ).toEqual(["I will inspect it.", "\n\n## Result"]);
+    expect(events.at(-1)).toMatchObject({
+      type: "result",
+      data: { finalText: "I will inspect it.\n\n## Result" },
+    });
   });
 
   it("throws after surfacing a bridge error", async () => {
@@ -850,7 +1052,7 @@ describe("createCliBridgeProvider", () => {
     })[Symbol.asyncIterator]();
 
     await expect(iterator.next()).resolves.toMatchObject({
-      value: { type: "message.part.updated", id: "1" },
+      value: { type: "message.part.updated", id: "1:0" },
     });
     await iterator.return?.();
 
@@ -1054,9 +1256,10 @@ describe("createCliBridgeProvider", () => {
     })) replayed.push(event);
 
     expect(replayCursor).toBe("1");
+    expect(replayed.map((event) => event.id)).toEqual(["2:0", "2:1"]);
     expect(replayed.at(-1)).toMatchObject({
       type: "result",
-      id: "2",
+      id: "2:1",
       data: { finalText: "partial complete" },
     });
     expect(aggregateCalls).toBe(1);
@@ -1100,6 +1303,10 @@ describe("createCliBridgeProvider", () => {
         finalText: "already complete",
         finishReason: "stop",
         status: "completed",
+        runId: "terminal-replay",
+        sessionId: "terminal-replay",
+        executionId: "terminal-replay",
+        cursor: "3",
       },
     }]);
     expect(aggregateCalls).toBe(1);
@@ -1282,7 +1489,12 @@ function runResponse(
   status: "running" | "done" | "error" | "cancelled",
   terminal: boolean,
 ): Response {
-  return new Response(JSON.stringify({ id, status, terminal }), {
+  return new Response(JSON.stringify({
+    id,
+    requestDigest: testDigest(id),
+    status,
+    terminal,
+  }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
@@ -1299,11 +1511,15 @@ function cancelResponse(
       cancelled: status === "cancelled",
       cancel_requested: true,
       terminal,
-      run: { id, status, terminal },
+      run: { id, requestDigest: testDigest(id), status, terminal },
     }),
     {
       status: responseStatus,
       headers: { "content-type": "application/json" },
     },
   );
+}
+
+function testDigest(value: string): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
