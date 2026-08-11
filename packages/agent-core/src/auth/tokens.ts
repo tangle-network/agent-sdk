@@ -291,14 +291,24 @@ const SIDECAR_SID_SCOPES = ["session", "project"] as const;
  * whether comparing `sid` against a session id in a request path was an
  * authorization check or a guaranteed mismatch.
  *
- * A consumer must treat the claim's absence as "the meaning of `sid` is
- * unknown, do not enforce a session comparison" — tokens minted before this
- * claim existed carry no `sst`.
+ * How a consumer reads the claim on a session-addressed route:
  *
- * A consumer must also treat any value other than `"session"` as "this is not
- * a session token", and deny it on a session-addressed route. Reading the
- * claim as `sst === "session" ? compare : allow` grants a project-scoped token
- * the reach the comparison exists to remove.
+ * - `"session"` — `sid` is a session id. Compare it against the session the
+ *   request names and deny a mismatch. This is the check the claim exists for.
+ * - `"project"` — `sid` is a project ref, so no session comparison is
+ *   possible. The route's own capability policy decides, unchanged: a
+ *   project-scoped read-only token legitimately reaches every session in its
+ *   project.
+ * - absent — the meaning of `sid` is unknown, so enforce no session
+ *   comparison. Tokens minted before this claim existed carry no `sst`.
+ * - a value this build does not recognise — deny. `verifySidecarToken`
+ *   rejects those already, so this is a second line for a consumer that
+ *   reads the claim from somewhere else.
+ *
+ * Do not collapse that to "anything but `"session"` is not a session token,
+ * so deny it on a session route". `"project"` is a legitimate scope there,
+ * and denying it 403s every read-only and terminal token on every session
+ * route — the behaviour that got the first version of this guard reverted.
  *
  * The verifier does not check that `sid` looks like what `sst` declares. That
  * is a semantic judgement about ids this layer cannot make; it belongs to the
