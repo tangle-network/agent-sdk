@@ -6,12 +6,21 @@ import type {
   PromptResult,
   SandboxEvent,
 } from "@tangle-network/sandbox";
-import type { InputPart } from "@tangle-network/agent-interface";
+import type {
+  AgentExactRunControlRef,
+  AgentRunCancellationAcknowledgement,
+  AgentRunCancellationRequest,
+  InputPart,
+} from "@tangle-network/agent-interface";
 import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentProvider,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
+
+export type TanglePromptOptions = PromptOptions & {
+  runControlRef?: AgentExactRunControlRef;
+};
 export interface TangleExactProcessOptions {
   teamId?: string;
 }
@@ -69,9 +78,9 @@ export interface SandboxInstanceLike {
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
-  streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
-  prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
-  dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
+  streamPrompt(message: string | InputPart[], options?: TanglePromptOptions): AsyncIterable<SandboxEvent>;
+  prompt?(message: string | InputPart[], options?: TanglePromptOptions): Promise<PromptResult>;
+  dispatchPrompt?(message: string | InputPart[], options?: TanglePromptOptions): Promise<unknown>;
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
   read?(path: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<string>;
   write?(path: string, content: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<unknown>;
@@ -113,8 +122,12 @@ export interface SandboxSessionLike {
     signal?: AbortSignal;
   }): AsyncIterable<SandboxEvent>;
   result(options?: { executionId?: string; signal?: AbortSignal }): Promise<PromptResult>;
-  prompt(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
+  prompt(message: string | InputPart[], options?: TanglePromptOptions): Promise<PromptResult>;
   interrupt(options?: { executionId?: string; signal?: AbortSignal }): Promise<{ cancelled: boolean }>;
+  cancelRun?(
+    request: AgentRunCancellationRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentRunCancellationAcknowledgement>;
 }
 
 export interface TangleProviderOptions {

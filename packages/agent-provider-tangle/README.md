@@ -13,8 +13,9 @@ const provider = createTangleProvider({
 
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
 The adapter validates its complete capability document and omits optional environment methods whose capabilities are disabled.
-Reconstruct an exact session with `environment.session(reference.id, { controlRef: reference.controlRef })`; replay cursors are exclusive at the agent interface even though the Sandbox stream is inclusive.
+Reconstruct an exact session with `environment.session(reference.id, { controlRef: reference.controlRef })`; replay cursors are exclusive at both the agent interface and Sandbox session stream.
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
+Retained control is advertised only when the Sandbox exposes dispatch, replay, exact results and events, turn idempotency, and `cancelRun`; native continuation remains absent.
 After `session.prompt()` admits another turn, that session object's `controlRef` advances only when Sandbox returns the requested execution ID; a mismatched receipt fails without advancing local state.
 Sandbox keeps execution identifiers optional for older or unproven service paths, so this adapter fails closed when a dispatch or prompt does not return one and never falls back to latest-session state.
 Sessions reconstructed without a control reference may start a new prompt, but result lookup, cancellation, and cursor replay fail before calling Sandbox because those operations could otherwise select the newest unrelated execution.

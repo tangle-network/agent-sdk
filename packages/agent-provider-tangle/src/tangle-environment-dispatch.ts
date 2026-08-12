@@ -1,15 +1,22 @@
-import { AgentTurnInputSchema } from "@tangle-network/agent-interface";
+import {
+  AgentExactRunControlRefSchema,
+  AgentTurnInputSchema,
+} from "@tangle-network/agent-interface";
 import type {
   AgentSessionRef,
   AgentTurnInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike } from "./tangle-types.js";
 import {
-  executionIdFromTurnInput,
   promptFromTurnInput,
   promptOptionsFromTurnInput,
 } from "./tangle-prompt.js";
-import { retainedSessionControlRef, sessionRefFromSandboxDispatch } from "./tangle-session-control.js";
+import {
+  retainedSessionControlRef,
+  sessionPromptExecutionId,
+  sessionPromptSessionId,
+  sessionRefFromSandboxDispatch,
+} from "./tangle-session-control.js";
 import { awaitWithSignal } from "./tangle-contract-safety.js";
 import {
   interruptAfterAbort,
@@ -24,23 +31,96 @@ export function dispatchEnvironmentRun(
   return async (input) => {
     AgentTurnInputSchema.parse(input);
     input.signal?.throwIfAborted();
-    const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
+    const callerControlRef =
+      input.controlRef === undefined
+        ? undefined
+        : AgentExactRunControlRefSchema.parse(input.controlRef);
+    if (callerControlRef !== undefined) {
+      if (
+        callerControlRef.provider !== provider ||
+        callerControlRef.environmentId !== environmentId
+      ) {
+        throw new Error("Tangle control reference does not match this environment");
+      }
+      if (
+        input.sessionId !== undefined &&
+        input.sessionId !== callerControlRef.sessionId
+      ) {
+        throw new Error("Tangle sessionId conflicts with the control reference");
+      }
+      if (
+        input.executionId !== undefined &&
+        input.executionId !== callerControlRef.executionId
+      ) {
+        throw new Error("Tangle executionId conflicts with the control reference");
+      }
+    }
+    const expectedSessionId =
+      input.sessionId ??
+      callerControlRef?.sessionId ??
+      sessionPromptSessionId(provider, environmentId, input.turnId);
+    if (expectedSessionId === undefined) {
+      throw new Error(
+        "Tangle detached dispatch requires an exact sessionId or turnId",
+      );
+    }
+    const exactInput = { ...input, sessionId: expectedSessionId };
+    const requestedExecutionId =
+      input.executionId ?? callerControlRef?.executionId;
+    const baseRequestDigest = sessionPromptRequestDigest(
+      exactInput,
+      provider,
+      environmentId,
+      expectedSessionId,
+    );
+    const expectedExecutionId =
+      requestedExecutionId ?? sessionPromptExecutionId(baseRequestDigest);
+    const requestDigest = sessionPromptRequestDigest(
+      exactInput,
+      provider,
+      environmentId,
+      expectedSessionId,
+      { executionId: expectedExecutionId },
+    );
+    if (callerControlRef !== undefined) {
+      if (callerControlRef.requestDigest !== requestDigest) {
+        throw new Error(
+          "Tangle prompt request digest conflicts with the control reference",
+        );
+      }
+    }
+    const runControlRef = retainedSessionControlRef(
+      expectedSessionId,
+      expectedExecutionId,
+      provider,
+      environmentId,
+      requestDigest,
+      callerControlRef?.runId,
+    );
+    const dispatchInput = {
+      ...exactInput,
+      executionId: expectedExecutionId,
+      controlRef: runControlRef,
+    };
     const promise = box.dispatchPrompt?.(
-      promptFromTurnInput(input),
-      promptOptionsFromTurnInput(input, { provider, environmentId }),
+      promptFromTurnInput(dispatchInput),
+      promptOptionsFromTurnInput(dispatchInput, { provider, environmentId }),
     );
     let dispatched: unknown;
     try {
       dispatched = await awaitWithSignal(promise, input.signal);
     } catch (error) {
-      if (input.signal?.aborted && promise) {
+      if (input.signal?.aborted && input.detach !== true && promise) {
         void promise
           .then((late) => {
             const lateRef = sessionRefFromSandboxDispatch(
               late,
               provider,
               environmentId,
-              executionIdFromTurnInput(input),
+              expectedExecutionId,
+              requestDigest,
+              expectedSessionId,
+              callerControlRef,
             );
             return interruptAfterAbort(box, lateRef);
           })
@@ -54,9 +134,10 @@ export function dispatchEnvironmentRun(
         dispatched,
         provider,
         environmentId,
-        executionIdFromTurnInput(input),
-        undefined,
+        expectedExecutionId,
+        requestDigest,
         expectedSessionId,
+        callerControlRef,
       );
     } catch (error) {
       try {
@@ -77,34 +158,12 @@ export function dispatchEnvironmentRun(
       }
       throw error;
     }
-    const executionId = reference.controlRef?.executionId;
-    const requestDigest =
-      executionId === undefined
-        ? undefined
-        : sessionPromptRequestDigest(
-            input,
-            provider,
-            environmentId,
-            reference.id,
-            executionId,
-          );
-    const boundReference =
-      executionId === undefined || requestDigest === undefined
-        ? reference
-        : {
-            ...reference,
-            controlRef: retainedSessionControlRef(
-              reference.id,
-              executionId,
-              provider,
-              environmentId,
-              requestDigest,
-            ),
-          };
-    if (input.signal?.aborted) {
+    const boundReference = reference;
+    if (input.signal?.aborted && input.detach !== true) {
       await interruptAfterAbort(box, boundReference);
       input.signal.throwIfAborted();
     }
+    input.signal?.throwIfAborted();
     return boundReference;
   };
 }

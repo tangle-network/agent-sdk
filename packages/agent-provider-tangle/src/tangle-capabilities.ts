@@ -3,7 +3,11 @@ import type {
   HarnessType,
 } from "@tangle-network/agent-interface";
 import { harnessSystemPromptIntents } from "@tangle-network/agent-interface";
-import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+import type {
+  SandboxClientLike,
+  SandboxInstanceLike,
+  SandboxSessionLike,
+} from "./tangle-types.js";
 
 /**
  * The full capability document this adapter supports when the Sandbox client
@@ -41,6 +45,7 @@ export function defaultTangleSandboxCapabilities(
     streaming: { live: true, replay: true, detach: true, turnIdempotency: true },
     // A Sandbox session id is not a Braid context-boundary proof. Native
     // continuation stays unavailable until this adapter can verify one.
+    // Retained control stays opt-in until a concrete session exposes cancelRun.
     sessions: { continue: false, list: false, messages: false },
     workspace: { read: true, write: true, exec: true, git: false, upload: true, download: true },
     branching: { checkpoint: false, fork: false },
@@ -63,12 +68,25 @@ export interface SandboxCapabilitySupport {
   fork: boolean;
   placement: boolean;
   destroy: boolean;
+  cancelRun: boolean;
 }
+
+const CAPABILITY_PROBE_SESSION_ID = "__tangle-capability-probe__";
 
 export function sandboxCapabilitySupport(
   box: SandboxInstanceLike,
   client: SandboxClientLike,
 ): SandboxCapabilitySupport {
+  let session: SandboxSessionLike | undefined;
+  if (typeof box.session === "function") {
+    try {
+      // Sandbox session handles are lazy. Inspecting one does not call the
+      // service, and keeps retained-control claims tied to the actual handle.
+      session = box.session(CAPABILITY_PROBE_SESSION_ID);
+    } catch {
+      // A client that cannot produce a session handle cannot prove retained control.
+    }
+  }
   return {
     dispatchPrompt: typeof box.dispatchPrompt === "function",
     session: typeof box.session === "function",
@@ -79,6 +97,7 @@ export function sandboxCapabilitySupport(
     fork: typeof box.fork === "function",
     placement: typeof client.describePlacement === "function",
     destroy: typeof box.delete === "function",
+    cancelRun: typeof session?.cancelRun === "function",
   };
 }
 
@@ -88,11 +107,14 @@ export function sandboxCapabilitySupport(
  * A client without placement metadata cannot satisfy placement(), and this
  * adapter has no durable branching, interaction, or native-continuation
  * implementation regardless of an overly broad configured document.
+ * Per-sandbox retained-run claims are narrowed later, after a concrete
+ * session handle proves that cancelRun is available.
  */
 export function capabilitiesForClient(
   declared: AgentEnvironmentCapabilities,
   client: SandboxClientLike,
 ): AgentEnvironmentCapabilities {
+  const canReconstructRetainedEnvironment = typeof client.get === "function";
   const narrowed = {
     ...declared,
     streaming: {
@@ -101,7 +123,13 @@ export function capabilitiesForClient(
       detach: declared.streaming.detach,
       turnIdempotency: declared.streaming.turnIdempotency,
     },
-    sessions: { ...declared.sessions, continue: false, list: false, messages: false },
+    sessions: {
+      ...declared.sessions,
+      continue:
+        declared.sessions.continue && canReconstructRetainedEnvironment,
+      list: false,
+      messages: false,
+    },
     workspace: { ...declared.workspace, git: false },
     usage: false,
     branching: {
@@ -116,7 +144,7 @@ export function capabilitiesForClient(
       declared.placement && typeof client.describePlacement === "function",
   };
   delete narrowed.interactions;
-  delete narrowed.retainedControl;
+  if (!canReconstructRetainedEnvironment) delete narrowed.retainedControl;
   delete narrowed.nativeContinuation;
   return narrowed;
 }
@@ -132,9 +160,17 @@ export function capabilitiesForSandbox(
   support: SandboxCapabilitySupport,
 ): AgentEnvironmentCapabilities {
   const narrowed = { ...declared };
+  const supportsRetainedControl =
+    declared.sessions.continue &&
+    declared.streaming.detach &&
+    declared.streaming.replay &&
+    declared.streaming.turnIdempotency &&
+    support.dispatchPrompt &&
+    support.session &&
+    support.cancelRun;
   delete narrowed.interactions;
-  delete narrowed.retainedControl;
   delete narrowed.nativeContinuation;
+  if (!supportsRetainedControl) delete narrowed.retainedControl;
   return {
     ...narrowed,
     streaming: {
@@ -145,7 +181,7 @@ export function capabilitiesForSandbox(
     },
     sessions: {
       ...declared.sessions,
-      continue: false,
+      continue: declared.sessions.continue && supportsRetainedControl,
       list: false,
       messages: false,
     },

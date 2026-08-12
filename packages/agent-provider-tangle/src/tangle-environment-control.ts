@@ -13,13 +13,16 @@ export function sessionPromptRequestDigest(
   provider: string,
   environmentId: string,
   sessionId: string,
-  executionId: string,
+  options: { executionId?: string; nonce?: string } = {},
 ): `sha256:${string}` {
   return canonicalCandidateDigest({
     provider,
     environmentId,
     sessionId,
-    executionId,
+    ...(options.executionId === undefined
+      ? {}
+      : { executionId: options.executionId }),
+    ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
     ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
     ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
     ...(input.parts === undefined ? {} : { parts: input.parts }),
@@ -47,6 +50,10 @@ export async function interruptAfterAbort(
   box: SandboxInstanceLike,
   reference: AgentSessionRef,
 ): Promise<void> {
+  const metadata = reference.metadata;
+  // A duplicate dispatch receipt identifies work owned by another caller.
+  // Only a receipt that proves this call admitted new work may be interrupted.
+  if (metadata?.dispatched !== true || metadata.alreadyExisted === true) return;
   const sessionId = reference.id;
   const executionId = reference.controlRef?.executionId;
   if (!box.session || executionId === undefined) return;
