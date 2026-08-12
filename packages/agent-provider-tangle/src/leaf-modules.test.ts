@@ -22,7 +22,7 @@ import {
   sandboxOptionsFromCreateInput,
 } from "./tangle-create-options.js";
 import {
-  checkpointIdFromResult,
+  executionBoundSessionStatus,
   nonEmptyString,
   placementInfoFromLoopPlacement,
   sessionStatusFromUnknown,
@@ -141,9 +141,10 @@ describe("Tangle split leaf modules", () => {
     expect(() => assertBoundedJson("x".repeat(16_385))).toThrow();
     expect(nonEmptyString("bounded")).toBe("bounded");
     expect(nonEmptyString(" ")).toBeUndefined();
-    expect(checkpointIdFromResult({ checkpointId: "checkpoint-1" })).toBe("checkpoint-1");
     expect(statusFromUnknown("completed")).toBe("stopped");
+    expect(statusFromUnknown("queued")).toBe("pending");
     expect(sessionStatusFromUnknown("cancelled")).toBe("cancelled");
+    expect(sessionStatusFromUnknown("queued")).toBe("pending");
     expect(
       placementInfoFromLoopPlacement({ kind: "sandbox", sandboxId: "sbx-1" }, { id: "sbx-1", async *streamPrompt() {} }),
     ).toEqual({ kind: "sandbox", sandboxId: "sbx-1" });
@@ -162,51 +163,40 @@ describe("Tangle split leaf modules", () => {
       minimalClient,
     );
     expect(support.read).toBe(true);
+    expect(support.reconstruct).toBe(false);
     expect(capabilitiesForClient(capabilities, minimalClient).placement).toBe(false);
-    expect(capabilities.sessions.continue).toBe(false);
+    // The default document declares retained-control intent; every narrowing
+    // pass strips it until deployment facts prove it.
+    expect(capabilities.sessions.continue).toBe(true);
+    expect(capabilities.retainedControl).toBeDefined();
     expect(capabilitiesForSandbox(capabilities, support).workspace.read).toBe(true);
-    const retainedDeclared = {
-      ...capabilities,
-      sessions: { ...capabilities.sessions, continue: true },
-      retainedControl: {
-        exactRunIdentity: true,
-        resultIdentity: true,
-        eventIdentity: true,
-        cancellationIdempotency: true,
-      },
-    };
     const retainedSupport = {
       ...support,
+      reconstruct: true,
       dispatchPrompt: true,
       session: true,
       cancelRun: true,
     };
     expect(
-      capabilitiesForClient(retainedDeclared, minimalClient),
+      capabilitiesForClient(capabilities, minimalClient),
     ).toMatchObject({ sessions: { continue: false } });
     expect(
-      capabilitiesForClient(retainedDeclared, minimalClient),
+      capabilitiesForClient(capabilities, minimalClient),
     ).not.toHaveProperty("retainedControl");
     expect(
-      capabilitiesForSandbox(retainedDeclared, retainedSupport),
+      capabilitiesForSandbox(capabilities, retainedSupport),
     ).toMatchObject({
       sessions: { continue: true },
-      retainedControl: retainedDeclared.retainedControl,
+      retainedControl: capabilities.retainedControl,
     });
-    expect(
-      capabilitiesForSandbox(retainedDeclared, {
+    for (const clearedFact of ["cancelRun", "reconstruct"] as const) {
+      const narrowed = capabilitiesForSandbox(capabilities, {
         ...retainedSupport,
-        cancelRun: false,
-      }),
-    ).toMatchObject({
-      sessions: { continue: false },
-    });
-    expect(
-      capabilitiesForSandbox(retainedDeclared, {
-        ...retainedSupport,
-        cancelRun: false,
-      }),
-    ).not.toHaveProperty("retainedControl");
+        [clearedFact]: false,
+      });
+      expect(narrowed).toMatchObject({ sessions: { continue: false } });
+      expect(narrowed).not.toHaveProperty("retainedControl");
+    }
     const overDeclaredBranching = {
       ...capabilities,
       branching: {
@@ -224,11 +214,7 @@ describe("Tangle split leaf modules", () => {
       lookup: false,
       cleanup: false,
     });
-    expect(capabilitiesForSandbox(overDeclaredBranching, {
-      ...support,
-      checkpoint: true,
-      fork: true,
-    }).branching).toMatchObject({
+    expect(capabilitiesForSandbox(overDeclaredBranching, retainedSupport).branching).toMatchObject({
       checkpoint: false,
       fork: false,
       retrySafe: false,
@@ -237,6 +223,106 @@ describe("Tangle split leaf modules", () => {
     });
     expect(() => assertOptionKeys({ unsupported: true }, [], "leaf options")).toThrow();
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
+  });
+
+  it("attributes session status to an exact execution only with binding evidence", () => {
+    const executionId = "execution-bound";
+    // The live execution owns the current state.
+    expect(
+      executionBoundSessionStatus(
+        { status: "running", activeExecutionId: executionId },
+        executionId,
+      ),
+    ).toBe("running");
+    // A different live execution proves nothing about the bound run.
+    expect(
+      executionBoundSessionStatus(
+        { status: "running", activeExecutionId: "execution-other" },
+        executionId,
+      ),
+    ).toBe("unknown");
+    // With nothing live, the newest execution owns the terminal state.
+    expect(
+      executionBoundSessionStatus(
+        { status: "completed", latestExecutionId: executionId },
+        executionId,
+      ),
+    ).toBe("completed");
+    expect(
+      executionBoundSessionStatus(
+        { status: "completed", latestExecutionId: "execution-other" },
+        executionId,
+      ),
+    ).toBe("unknown");
+    // The admitted-run reference binds only when no newer execution is named.
+    expect(
+      executionBoundSessionStatus(
+        { status: "cancelled", runControlRef: { executionId } },
+        executionId,
+      ),
+    ).toBe("cancelled");
+    expect(
+      executionBoundSessionStatus(
+        {
+          status: "completed",
+          latestExecutionId: "execution-other",
+          runControlRef: { executionId },
+        },
+        executionId,
+      ),
+    ).toBe("unknown");
+    // A failure that names the bound execution is exact evidence on its own,
+    // even when a contradictory payload also marks this execution live.
+    expect(
+      executionBoundSessionStatus(
+        {
+          status: "failed",
+          latestExecutionId: "execution-other",
+          failureReason: { message: "boom", executionId },
+        },
+        executionId,
+      ),
+    ).toBe("failed");
+    expect(
+      executionBoundSessionStatus(
+        {
+          status: "failed",
+          activeExecutionId: "execution-other",
+          failureReason: { message: "boom", executionId },
+        },
+        executionId,
+      ),
+    ).toBe("failed");
+    // A failure attributed to another execution never leaks to the bound run,
+    // even when the payload also marks the bound run live.
+    expect(
+      executionBoundSessionStatus(
+        {
+          status: "failed",
+          activeExecutionId: executionId,
+          failureReason: { message: "boom", executionId: "execution-other" },
+        },
+        executionId,
+      ),
+    ).toBe("unknown");
+    // An unattributed failure follows the generic liveness binding.
+    expect(
+      executionBoundSessionStatus(
+        { status: "failed", activeExecutionId: executionId },
+        executionId,
+      ),
+    ).toBe("failed");
+    // A queued execution is pending work, distinct from an unbindable payload.
+    expect(
+      executionBoundSessionStatus(
+        { status: "queued", activeExecutionId: executionId },
+        executionId,
+      ),
+    ).toBe("pending");
+    // No identity fields at all: the payload cannot be bound.
+    expect(
+      executionBoundSessionStatus({ status: "completed" }, executionId),
+    ).toBe("unknown");
   });
 
   it("binds direct event, result, prompt, and session leaves to exact identity", async () => {

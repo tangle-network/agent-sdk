@@ -33,7 +33,7 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.19.4");
+    expect(manifest.version).toBe("0.21.1");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
@@ -57,9 +57,47 @@ describe("packed Tangle exact-session control", () => {
 
     expect(typeof publicInstance.snapshot).toBe("function");
     expect(typeof publicInstance.branch).toBe("function");
+    expect(typeof publicInstance.session("surface-probe").cancelRun).toBe(
+      "function",
+    );
     expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
+  });
+
+  it("claims retained control for an SDK-backed client with reconstruction", async () => {
+    const sdkBackedClient = {
+      fetch: async (): Promise<Response> => {
+        throw new Error("capability probe must not make a network request");
+      },
+      create: async (): Promise<SandboxInstanceLike> => {
+        throw new Error("capabilities never create a sandbox");
+      },
+      get: async () => null,
+    };
+    const claiming = createTangleProvider({ client: sdkBackedClient });
+    await expect(claiming.capabilities()).resolves.toMatchObject({
+      sessions: { continue: true },
+      retainedControl: {
+        exactRunIdentity: true,
+        resultIdentity: true,
+        eventIdentity: true,
+        cancellationIdempotency: true,
+      },
+    });
+
+    // A client without the SDK probe surface cannot prove cancelRun.
+    const unproven = createTangleProvider({
+      client: {
+        create: async (): Promise<SandboxInstanceLike> => {
+          throw new Error("capabilities never create a sandbox");
+        },
+        get: async () => null,
+      },
+    });
+    const narrowed = await unproven.capabilities();
+    expect(narrowed.sessions.continue).toBe(false);
+    expect(narrowed).not.toHaveProperty("retainedControl");
   });
 
   it("binds result replay and cancellation to the dispatch receipt", async () => {

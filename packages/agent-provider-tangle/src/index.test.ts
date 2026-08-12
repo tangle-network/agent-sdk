@@ -175,8 +175,6 @@ describe("createTangleProvider", () => {
       read: async () => "",
       write: async () => ({ path: "ignored", written: true }),
       exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-      checkpoint: async () => ({ checkpointId: "checkpoint-disabled" }),
-      fork: async () => box,
     };
     const baseline = defaultTangleSandboxCapabilities();
     const provider = createTangleProvider({
@@ -391,8 +389,6 @@ describe("createTangleProvider", () => {
         return { path, written: true };
       },
       exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
-      checkpoint: async () => ({ checkpointId: "checkpoint-1" }),
-      fork: async () => box,
       delete: async () => {},
     };
     const client: SandboxClientLike = {
@@ -791,8 +787,6 @@ describe("createTangleProvider", () => {
           },
         } as SandboxEvent;
       },
-      checkpoint: async () => ({ checkpointId: "checkpoint-control" }),
-      fork: async () => box,
     };
     const provider = createTangleProvider({
       client: { create: async () => box },
