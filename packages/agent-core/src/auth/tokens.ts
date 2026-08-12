@@ -256,6 +256,21 @@ function jwtHeaderEddsa(): string {
 }
 
 /**
+ * The accepted values of the `cap` claim. The exported union is derived from
+ * this list so the type a caller programs against and the set the verifier
+ * enforces cannot drift apart.
+ */
+const SIDECAR_CAPABILITIES = [
+  "computer_use",
+  "read",
+  "debug",
+  "terminal",
+  "workspace",
+  "control",
+  "raw_input",
+] as const;
+
+/**
  * Capability strings carried in a sidecar token's `cap` claim. This is the
  * shared vocabulary the crypto layer stamps into the JWT (issueSidecarAccessToken)
  * and reads back out (verifySidecarToken). The route→capability authorization
@@ -263,17 +278,42 @@ function jwtHeaderEddsa(): string {
  * Tokens with a `cap` claim are strictly limited to those capabilities; tokens
  * without a `cap` claim are full-scope (legacy orchestrator-internal use).
  *
- * Adding a new capability: extend this union, then update the enforcement
- * policy (route maps + authorization check) in the sidecar-auth package.
+ * `cap` is the claim that decides authorization, so both halves of the round
+ * trip check it: the issuer throws and the verifier rejects unless the claim is
+ * an array whose every entry is listed above. An empty array is valid and means
+ * "scoped to no capability" — consumers read that as deny-everything, which is
+ * the fail-closed direction. What must never happen is a malformed value
+ * reaching a consumer as an *absent* claim, since absent means full scope.
+ *
+ * Adding a new capability: extend `SIDECAR_CAPABILITIES` above, then update the
+ * enforcement policy (route maps + authorization check) in the sidecar-auth
+ * package. That is a breaking change for verifiers — `verifySidecarToken`
+ * rejects a capability it does not recognise, so every verifier must ship the
+ * new value before any issuer stamps it. Sidecars are baked container images
+ * that outlive an orchestrator roll, so "ship" means deployed, not merged.
  */
-export type SidecarCapability =
-  | "computer_use"
-  | "read"
-  | "debug"
-  | "terminal"
-  | "workspace"
-  | "control"
-  | "raw_input";
+export type SidecarCapability = (typeof SIDECAR_CAPABILITIES)[number];
+
+/**
+ * Whether `value` is a usable `cap` claim. Shared by the issuer and the
+ * verifier so one definition decides what the claim may hold.
+ *
+ * `includes` compares by SameValueZero against a `readonly unknown[]` view, so
+ * this rejects every non-string a JSON claim can hold (`null`, `42`, a nested
+ * object) as well as an unrecognised string. A non-array — including the
+ * `cap: "read"` case, where a consumer's `cap.includes("read")` degrades into a
+ * substring test that passes the read gate — fails the `Array.isArray` guard.
+ */
+function isSidecarCapabilityList(
+  value: unknown,
+): value is SidecarCapability[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) =>
+      (SIDECAR_CAPABILITIES as readonly unknown[]).includes(entry),
+    )
+  );
+}
 
 /**
  * The accepted values of the `sst` claim. The exported union is derived from
@@ -369,7 +409,8 @@ export function issueSidecarAccessToken(
      * Capability allowlist. When present, the token is restricted to
      * routes whose required capability is in this list, as enforced by the
      * sidecar-auth policy layer. Absent = full scope (legacy
-     * orchestrator-internal tokens).
+     * orchestrator-internal tokens), so pass a list or omit the key — never a
+     * placeholder like `null`, which reads as full scope one layer down.
      */
     cap?: SidecarCapability[];
   },
@@ -387,6 +428,11 @@ export function issueSidecarAccessToken(
   // sidecar rather than in the issuer that made it. A caller reaching this
   // function from JavaScript, or through a value typed `string`, gets no help
   // from the parameter type.
+  if (payload.cap !== undefined && !isSidecarCapabilityList(payload.cap)) {
+    throw new Error(
+      `issueSidecarAccessToken: cap must be an array whose entries are one of ${SIDECAR_CAPABILITIES.join(", ")}. Omit the claim entirely for a full-scope token.`,
+    );
+  }
   if (payload.sst !== undefined) {
     if (!SIDECAR_SID_SCOPES.includes(payload.sst)) {
       throw new Error(
@@ -445,6 +491,13 @@ export function verifySidecarToken(
   typ: string;
   jti?: string;
   exp: number;
+  /**
+   * Capability allowlist. Guaranteed to be an array of recognised
+   * capabilities when present — a token carrying anything else is rejected, so
+   * a consumer may call array methods on it without a shape check of its own.
+   * Absent means full scope, so never substitute a placeholder for a missing
+   * claim on the way to a policy check.
+   */
   cap?: SidecarCapability[];
 } | null {
   try {
@@ -502,6 +555,19 @@ export function verifySidecarToken(
       }
     }
 
+    // `cap` is the claim authorization is decided on, so a value a consumer
+    // cannot evaluate must reject the token rather than pass through. Returning
+    // it hands the consumer a claim whose `includes` either throws out of the
+    // auth middleware (a 500 where a 403 was meant) or, for a bare string,
+    // silently becomes a substring test that satisfies the gate it names.
+    //
+    // Rejecting is the loud direction and the one every other claim here takes.
+    // Coercing to `[]` would also deny, but quietly; coercing to *absent* is
+    // the one option that must never be chosen, since absent means full scope.
+    if (payload.cap !== undefined && !isSidecarCapabilityList(payload.cap)) {
+      return null;
+    }
+
     return payload;
   } catch {
     return null;
@@ -509,12 +575,12 @@ export function verifySidecarToken(
 }
 
 /**
- * Compile-time assertions that keep the `sst` claim narrow on both halves of
- * the round trip. They are load-bearing: this package type-checks `src` only,
- * so widening either field, or dropping the `as const` that derives
- * `SidecarSidScope`, otherwise collapses the union to `string` and passes
- * every gate here — leaving a consumer free to test `sst` against a value the
- * verifier rejects.
+ * Compile-time assertions that keep the `sst` and `cap` claims narrow on both
+ * halves of the round trip. They are load-bearing: this package type-checks
+ * `src` only, so widening either field, or dropping the `as const` that derives
+ * `SidecarSidScope` / `SidecarCapability`, otherwise collapses the union to
+ * `string` and passes every gate here — leaving a consumer free to test the
+ * claim against a value the verifier rejects.
  */
 type AssertTrue<T extends true> = T;
 type _IssuerTakesNarrowSst = AssertTrue<
@@ -526,6 +592,20 @@ type _VerifierReturnsNarrowSst = AssertTrue<
   string extends NonNullable<
     NonNullable<ReturnType<typeof verifySidecarToken>>["sst"]
   >
+    ? false
+    : true
+>;
+type _IssuerTakesNarrowCap = AssertTrue<
+  string extends NonNullable<
+    Parameters<typeof issueSidecarAccessToken>[1]["cap"]
+  >[number]
+    ? false
+    : true
+>;
+type _VerifierReturnsNarrowCap = AssertTrue<
+  string extends NonNullable<
+    NonNullable<ReturnType<typeof verifySidecarToken>>["cap"]
+  >[number]
     ? false
     : true
 >;

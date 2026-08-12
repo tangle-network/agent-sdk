@@ -17,6 +17,31 @@ describe("Ed25519 Sidecar Token Auth", () => {
     sid: "session-xyz",
   };
 
+  /**
+   * Re-sign an arbitrary claim set with the real private key. A tampered
+   * payload would otherwise fail the signature check first, which proves
+   * nothing about the claim validation under test.
+   */
+  function signClaims(claims: Record<string, unknown>): string {
+    const header = Buffer.from(
+      JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
+    ).toString("base64url");
+    const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const data = `${header}.${body}`;
+    const signature = Buffer.from(
+      sign(null, Buffer.from(data), keyPair.privateKey),
+    ).toString("base64url");
+    return `${data}.${signature}`;
+  }
+
+  const baseClaims = {
+    ...payload,
+    typ: "sidecar",
+    jti: `${fullContainerId}:0:abcdef`,
+    iat: 0,
+    exp: 9999999999,
+  };
+
   describe("generateSidecarKeyPair", () => {
     it("produces PEM-encoded Ed25519 keys", () => {
       const kp = generateSidecarKeyPair();
@@ -335,34 +360,166 @@ describe("Ed25519 Sidecar Token Auth", () => {
       );
       expect(result?.cap).toEqual(["computer_use"]);
     });
+
+    it("round-trips every capability in the vocabulary", () => {
+      // Pins the accepted set. A capability dropped from it stops verifying,
+      // and a sidecar running this build rejects every token carrying one.
+      const all = [
+        "computer_use",
+        "read",
+        "debug",
+        "terminal",
+        "workspace",
+        "control",
+        "raw_input",
+      ] as const;
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, cap: [...all] },
+        5,
+      );
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId)?.cap,
+      ).toEqual([...all]);
+    });
+
+    it("verifies a token minted without cap and reports it absent", () => {
+      // Absent means full scope. Tokens minted before capabilities existed
+      // must keep verifying, so the check may only run on the present branch.
+      const token = issueSidecarAccessToken(keyPair.privateKey, payload, 5);
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.cap).toBeUndefined();
+    });
+
+    it("round-trips an empty cap as an empty array, not as absent", () => {
+      // `cap: []` is a deliberate "scoped to no capability" assertion that a
+      // consumer reads as deny-everything. Collapsing it to absent would
+      // promote the token to full scope — the one outcome that must not happen.
+      const token = issueSidecarAccessToken(
+        keyPair.privateKey,
+        { ...payload, cap: [] },
+        5,
+      );
+      const result = verifySidecarToken(
+        token,
+        keyPair.publicKey,
+        fullContainerId,
+      );
+
+      expect(result?.cap).toEqual([]);
+      expect(result?.cap).not.toBeUndefined();
+    });
+
+    it("rejects a cap that is a bare string", () => {
+      // The case that actually bypassed a gate: a consumer's
+      // `cap.includes("read")` degrades into a substring test on a string, so
+      // `cap: "read"` satisfied the read gate and `cap: "terminal"` would have
+      // satisfied the terminal gate. An array is required for that check to
+      // mean what it reads as.
+      const token = signClaims({ ...baseClaims, cap: "read" });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["a number", 42],
+      ["null", null],
+      ["an object", {}],
+      ["an array holding null", [null]],
+      ["an array holding a number", [7]],
+      ["an array holding an array", [["read"]]],
+    ])("rejects a cap that is %s", (_label, cap) => {
+      // Each of these reached the sidecar's authorization policy and threw a
+      // TypeError out of the auth middleware — a 500 where the honest answer
+      // is "this token is malformed".
+      const token = signClaims({ ...baseClaims, cap });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects a capability it does not recognise", () => {
+      const token = signClaims({ ...baseClaims, cap: ["totally_made_up"] });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("rejects the whole token when one entry is unrecognised", () => {
+      // Not "filter the bad entry and carry on". Silently narrowing to
+      // ["read"] would hide an issuer bug behind a token that half works.
+      const token = signClaims({
+        ...baseClaims,
+        cap: ["read", "totally_made_up"],
+      });
+
+      expect(
+        verifySidecarToken(token, keyPair.publicKey, fullContainerId),
+      ).toBeNull();
+    });
+
+    it("refuses to mint a cap that is not an array", () => {
+      // The parameter type does not reach a JavaScript caller. Without this
+      // the issuer mints a token that every verifier now rejects, debugged
+      // inside a sidecar rather than in the orchestrator that made it.
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          {
+            ...payload,
+            cap: "read" as unknown as ["read"],
+          },
+          5,
+        ),
+      ).toThrow(/cap must be an array/);
+    });
+
+    it("refuses to mint a capability no verifier accepts", () => {
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          {
+            ...payload,
+            cap: ["totally_made_up"] as unknown as ["read"],
+          },
+          5,
+        ),
+      ).toThrow(/cap must be an array/);
+    });
+
+    it("refuses to mint a null cap", () => {
+      // `null` is the dangerous placeholder: the sidecar's auth middleware
+      // writes `cap ?? null` onto its request context, so `null` already reads
+      // as "master" one layer down.
+      expect(() =>
+        issueSidecarAccessToken(
+          keyPair.privateKey,
+          { ...payload, cap: null as unknown as ["read"] },
+          5,
+        ),
+      ).toThrow(/cap must be an array/);
+    });
+
+    it("mints an empty cap without complaint", () => {
+      // Empty is valid and fails closed; only malformed values are rejected.
+      expect(() =>
+        issueSidecarAccessToken(keyPair.privateKey, { ...payload, cap: [] }, 5),
+      ).not.toThrow();
+    });
   });
 
   describe("sid scope claim (sst)", () => {
-    /**
-     * Re-sign an arbitrary claim set with the real private key. A tampered
-     * payload would otherwise fail the signature check first, which proves
-     * nothing about the claim validation under test.
-     */
-    function signClaims(claims: Record<string, unknown>): string {
-      const header = Buffer.from(
-        JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
-      ).toString("base64url");
-      const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
-      const data = `${header}.${body}`;
-      const signature = Buffer.from(
-        sign(null, Buffer.from(data), keyPair.privateKey),
-      ).toString("base64url");
-      return `${data}.${signature}`;
-    }
-
-    const baseClaims = {
-      ...payload,
-      typ: "sidecar",
-      jti: `${fullContainerId}:0:abcdef`,
-      iat: 0,
-      exp: 9999999999,
-    };
-
     it("round-trips sst: session", () => {
       const token = issueSidecarAccessToken(
         keyPair.privateKey,
