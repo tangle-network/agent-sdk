@@ -726,6 +726,34 @@ describe("createCliBridgeProvider", () => {
     });
   });
 
+  it("preserves the served model and system fingerprint", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex",
+      fetch: async () =>
+        new Response(
+          [
+            'data: {"model":"codex@fp-1","system_fingerprint":"fp-1","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+    for await (const event of environment.stream({ prompt: "go" })) events.push(event);
+
+    expect(events.at(-1)).toMatchObject({
+      type: "result",
+      data: {
+        model: "codex@fp-1",
+        system_fingerprint: "fp-1",
+      },
+    });
+  });
+
   it("throws after surfacing a bridge error", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",

@@ -18,6 +18,7 @@ import { requestHeaders, trimSlash } from "./transport.js";
 import {
   modelRequestsFromOpenAi,
   parseSse,
+  responseIdentityFromOpenAi,
   safeJson,
   toolCallsFromDelta,
   usageFromOpenAi,
@@ -80,6 +81,8 @@ export async function* streamCliBridgeTurn(
   let sawUsage = false;
   let observedModelRequests = 0;
   let modelRequestsKnown = false;
+  let servedModel: string | undefined;
+  let systemFingerprint: string | undefined;
   let textBoundaryPending = false;
   let terminalCursor: string | undefined;
   let sawProtocolEnd = false;
@@ -102,6 +105,15 @@ export async function* streamCliBridgeTurn(
     }
     const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
     const delta = choice?.delta;
+    const responseIdentity = responseIdentityFromOpenAi(parsed);
+    if (responseIdentity?.model !== undefined) servedModel = responseIdentity.model;
+    if (responseIdentity?.system_fingerprint !== undefined) {
+      systemFingerprint = responseIdentity.system_fingerprint;
+    }
+    const identityData = {
+      ...(servedModel === undefined ? {} : { model: servedModel }),
+      ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
+    };
     const toolCallDeltas = toolCallsFromDelta(delta);
     const rawChunk = delta && typeof delta.content === "string" ? delta.content : "";
     const chunk =
@@ -125,7 +137,10 @@ export async function* streamCliBridgeTurn(
       }
       frameEvents.push({
         type: "usage",
-        data: nextModelRequests === undefined ? {} : { modelRequests: nextModelRequests },
+        data: {
+          ...identityData,
+          ...(nextModelRequests === undefined ? {} : { modelRequests: nextModelRequests }),
+        },
         ...(nextUsage ? { usage: nextUsage } : {}),
       });
     }
@@ -145,7 +160,7 @@ export async function* streamCliBridgeTurn(
       };
       frameEvents.push({
         type: "message.part.updated",
-        data: { part, delta: chunk },
+        data: { ...identityData, part, delta: chunk },
         normalized,
       });
     }
@@ -206,6 +221,7 @@ export async function* streamCliBridgeTurn(
             finalText: text,
             finishReason: choice.finish_reason,
             status: "completed",
+            ...identityData,
             ...(modelRequestsKnown ? { modelRequests: observedModelRequests } : {}),
           },
         });
@@ -243,6 +259,10 @@ export async function* streamCliBridgeTurn(
         finalText: result.text,
         finishReason: result.finishReason,
         status: "completed",
+        ...(result.model === undefined ? {} : { model: result.model }),
+        ...(result.system_fingerprint === undefined
+          ? {}
+          : { system_fingerprint: result.system_fingerprint }),
         runId,
         sessionId,
         ...(turn.executionId === undefined ? {} : { executionId: turn.executionId }),
@@ -268,6 +288,8 @@ async function readFullCliBridgeResult(
   finishReason: string;
   usage?: TokenUsage;
   modelRequests?: number;
+  model?: string;
+  system_fingerprint?: string;
 }> {
   const body = safeJson(requestBody);
   if (!body) throw new Error("cli-bridge replay request is not valid JSON");
@@ -304,10 +326,15 @@ async function readFullCliBridgeResult(
   }
   const usage = usageFromOpenAi(parsed?.usage);
   const modelRequests = modelRequestsFromOpenAi(parsed?.usage);
+  const responseIdentity = responseIdentityFromOpenAi(parsed);
   return {
     text: message.content,
     finishReason: choice.finish_reason,
     ...(usage ? { usage } : {}),
     ...(modelRequests === undefined ? {} : { modelRequests }),
+    ...(responseIdentity?.model === undefined ? {} : { model: responseIdentity.model }),
+    ...(responseIdentity?.system_fingerprint === undefined
+      ? {}
+      : { system_fingerprint: responseIdentity.system_fingerprint }),
   };
 }

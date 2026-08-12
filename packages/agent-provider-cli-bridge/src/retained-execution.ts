@@ -268,6 +268,8 @@ export async function collectCliBridgeTurnResult(
   let observedModelRequests = 0;
   let modelRequestsKnown = false;
   let terminalModelRequests: number | undefined;
+  let servedModel: string | undefined;
+  let systemFingerprint: string | undefined;
   let streamError: unknown;
   try {
     for await (const event of source) {
@@ -279,6 +281,12 @@ export async function collectCliBridgeTurnResult(
         text += event.data.delta;
       }
       usage = addTokenUsage(usage, event.usage);
+      const eventModel = event.data.model;
+      const eventFingerprint = event.data.system_fingerprint;
+      if (typeof eventModel === "string" && eventModel.length > 0) servedModel = eventModel;
+      if (typeof eventFingerprint === "string" && eventFingerprint.length > 0) {
+        systemFingerprint = eventFingerprint;
+      }
       const modelRequests = modelRequestCount(event.data.modelRequests);
       if (modelRequests !== undefined) {
         if (event.type === "result") {
@@ -325,6 +333,8 @@ export async function collectCliBridgeTurnResult(
         : modelRequestsKnown
           ? { modelRequests: observedModelRequests }
           : {}),
+      ...(servedModel === undefined ? {} : { model: servedModel }),
+      ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
     },
     events,
   };
