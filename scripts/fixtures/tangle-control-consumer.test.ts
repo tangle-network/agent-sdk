@@ -33,7 +33,7 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.17.0");
+    expect(manifest.version).toBe("0.19.4");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
@@ -69,8 +69,7 @@ describe("packed Tangle exact-session control", () => {
     const session: SandboxSessionLike = {
       id: "session-1",
       status: async () => ({ status: "completed" }),
-      async *events(options) {
-        eventSelector(options);
+      async *events() {
         yield {
           id: "event-1",
           type: "status",
@@ -111,10 +110,35 @@ describe("packed Tangle exact-session control", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sandbox-1",
-      async *streamPrompt() {},
-      dispatchPrompt: async () => ({
-        sessionId: session.id,
-        executionId: "execution-1",
+      async *streamPrompt(_message, options) {
+        eventSelector(options);
+        const events = [
+          {
+            id: "event-1",
+            type: "status",
+            data: {
+              status: "processing",
+              executionId: "execution-1",
+              sessionId: "session-1",
+            },
+          },
+          {
+            id: "event-2",
+            type: "result",
+            data: {
+              finalText: "ok",
+              executionId: "execution-1",
+              sessionId: "session-1",
+            },
+          },
+        ] as SandboxEvent[];
+        const start = options?.lastEventId === "event-1" ? 1 : 0;
+        for (const event of events.slice(start)) yield event;
+      },
+      dispatchPrompt: async (_prompt, options) => ({
+        sessionId: options?.sessionId ?? session.id,
+        executionId: options?.executionId ?? "execution-1",
+        runControlRef: options?.runControlRef,
         status: "running",
         alreadyExisted: false,
         dispatched: true,
@@ -128,6 +152,8 @@ describe("packed Tangle exact-session control", () => {
     const dispatched = await environment.dispatch!({
       prompt: "run",
       turnId: "turn-1",
+      sessionId: session.id,
+      executionId: "execution-1",
       detach: true,
     });
     expect(dispatched.controlRef).toMatchObject({
@@ -173,8 +199,8 @@ describe("packed Tangle exact-session control", () => {
     const box: SandboxInstanceLike = {
       id: "sandbox-unproven",
       async *streamPrompt() {},
-      dispatchPrompt: async () => ({
-        sessionId: session.id,
+      dispatchPrompt: async (_prompt, options) => ({
+        sessionId: options?.sessionId ?? session.id,
         status: "running",
         alreadyExisted: false,
         dispatched: true,
@@ -187,7 +213,11 @@ describe("packed Tangle exact-session control", () => {
     const environment = await provider.create({ profile: { name: "packed" } });
 
     await expect(
-      environment.dispatch!({ prompt: "run", turnId: "turn-unproven" }),
+      environment.dispatch!({
+        prompt: "run",
+        turnId: "turn-unproven",
+        sessionId: session.id,
+      }),
     ).rejects.toThrow(/no exact execution id/);
     await expect(
       environment.session!(session.id).prompt({

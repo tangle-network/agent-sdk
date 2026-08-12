@@ -1,12 +1,14 @@
 import type {
-  PromptOptions,
   PromptResult,
 } from "@tangle-network/sandbox";
 import type {
   AgentTurnInput,
   AgentTurnResult,
 } from "@tangle-network/agent-interface/environment-provider";
-import type { InputPart } from "@tangle-network/agent-interface";
+import type {
+  AgentExactRunControlRef,
+  InputPart,
+} from "@tangle-network/agent-interface";
 import {
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
@@ -15,6 +17,7 @@ import {
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
 import { assertBoundedJson } from "./tangle-contract-safety.js";
+import type { TanglePromptOptions } from "./tangle-types.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
   AgentTurnInputSchema.parse(input);
@@ -33,7 +36,7 @@ export function promptOptionsFromTurnInput(
     environmentId: string;
     sessionId?: string;
   },
-): PromptOptions {
+): TanglePromptOptions {
   if (input.contextTransfer !== undefined) {
     throw new Error(
       "Tangle provider does not yet support portable context transfer",
@@ -63,11 +66,6 @@ export function promptOptionsFromTurnInput(
         "Tangle control reference requires exact sessionId and executionId",
       );
     }
-    if (controlRef.runId !== controlRef.executionId) {
-      throw new Error(
-        "Tangle control reference requires runId to equal executionId",
-      );
-    }
     if (
       input.sessionId !== undefined &&
       input.sessionId !== controlRef.sessionId
@@ -95,6 +93,7 @@ export function promptOptionsFromTurnInput(
     ...(input.context ? { context: input.context } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     ...(executionId ? { executionId } : {}),
+    ...(controlRef ? { runControlRef: controlRef } : {}),
     ...(input.lastEventId ? { lastEventId: input.lastEventId } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.detach !== undefined ? { detach: input.detach } : {}),
@@ -192,8 +191,25 @@ export function agentTurnResultFromPromptRecord(
     contextTransferRequested?: boolean;
     contextTransferRequest?: import("@tangle-network/agent-interface").ContextTransferRequest;
     sessionId?: string;
+    controlRef?: AgentExactRunControlRef;
   } = {},
 ): AgentTurnResult {
+  const controlRef = options.controlRef
+    ? AgentExactRunControlRefSchema.parse(options.controlRef)
+    : undefined;
+  if (
+    controlRef !== undefined &&
+    options.sessionId !== undefined &&
+    controlRef.sessionId !== options.sessionId
+  ) {
+    throw new Error("Tangle prompt result sessionId conflicts with its control reference");
+  }
+  if (
+    controlRef !== undefined &&
+    record.executionId !== controlRef.executionId
+  ) {
+    throw new Error("Tangle prompt result did not confirm its exact executionId");
+  }
   const text =
     typeof record.response === "string"
       ? record.response
@@ -244,6 +260,13 @@ export function agentTurnResultFromPromptRecord(
     // "the agent is asking you something" indistinguishable from "the turn
     // failed", while the sandbox stayed alive waiting for an answer.
     metadata: {
+      ...(controlRef
+        ? {
+            runId: controlRef.runId,
+            executionId: controlRef.executionId,
+            requestDigest: controlRef.requestDigest,
+          }
+        : {}),
       status: record.status,
       awaitingInteraction: awaiting,
       terminal: !awaiting,

@@ -94,7 +94,8 @@
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
-    "@tangle-network/sandbox": "0.17.0",
+    "@tangle-network/agent-runtime": "0.132.6",
+    "@tangle-network/sandbox": "0.19.4",
     "@types/node": "catalog:",
     "typescript": "^6.0.3",
     "vitest": "catalog:"

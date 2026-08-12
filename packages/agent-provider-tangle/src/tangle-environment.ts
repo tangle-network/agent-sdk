@@ -1,5 +1,8 @@
 import { AgentTurnInputSchema } from "@tangle-network/agent-interface";
-import type { AgentRunControlRef } from "@tangle-network/agent-interface";
+import type {
+  AgentExactRunControlRef,
+  AgentRunControlRef,
+} from "@tangle-network/agent-interface";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -68,6 +71,26 @@ export function sandboxInstanceAsEnvironment(
   }
   const support = sandboxCapabilitySupport(box, client);
   const capabilities = capabilitiesForSandbox(declaredCapabilities, support);
+  const dispatch =
+    capabilities.streaming.detach && box.dispatchPrompt
+      ? dispatchEnvironmentRun(box, providerName, environmentId)
+      : undefined;
+  const exactExecutionEvents = (options: {
+    sessionId: string;
+    executionId: string;
+    since?: string;
+    signal?: AbortSignal;
+    controlRef?: AgentExactRunControlRef;
+  }) =>
+    box.streamPrompt("", {
+      sessionId: options.sessionId,
+      executionId: options.executionId,
+      // The execution replay endpoint owns stable event IDs. A missing cursor
+      // starts at the beginning so the caller can journal a complete run.
+      lastEventId: options.since ?? "0",
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
+    });
   return {
     id: environmentId,
     provider: providerName,
@@ -101,6 +124,9 @@ export function sandboxInstanceAsEnvironment(
           const converted = environmentEventFromSandboxEvent(next.value, {
             executionId: expectedExecutionId,
             sessionId: expectedSessionId,
+            ...(expectedExecutionId !== undefined || expectedSessionId !== undefined
+              ? { streamBound: true }
+              : {}),
           });
           input.signal?.throwIfAborted();
           yield converted;
@@ -108,6 +134,7 @@ export function sandboxInstanceAsEnvironment(
       } catch (error) {
         if (
           input.signal?.aborted &&
+          input.detach !== true &&
           expectedSessionId !== undefined &&
           expectedExecutionId !== undefined
         ) {
@@ -125,9 +152,7 @@ export function sandboxInstanceAsEnvironment(
       }
       input.signal?.throwIfAborted();
     },
-    ...(capabilities.streaming.detach && box.dispatchPrompt
-      ? { dispatch: dispatchEnvironmentRun(box, providerName, environmentId) }
-      : {}),
+    ...(dispatch ? { dispatch } : {}),
     ...((capabilities.sessions.continue || capabilities.streaming.replay || capabilities.streaming.detach) &&
     box.session
       ? {
@@ -145,12 +170,23 @@ export function sandboxInstanceAsEnvironment(
             if (session.id !== id) {
               throw new Error("sandbox session(id) returned an unrelated session");
             }
-            return sandboxSessionAsAgentSession(
+            const agentSession = sandboxSessionAsAgentSession(
               session,
               resolveRetainedSessionControlRef(options?.controlRef, id, providerName, environmentId),
               providerName,
               environmentId,
+              dispatch,
+              exactExecutionEvents,
             );
+            if (
+              capabilities.sessions.continue &&
+              typeof agentSession.cancelRun !== "function"
+            ) {
+              throw new Error(
+                "Tangle retained session support requires SandboxSession.cancelRun",
+              );
+            }
+            return agentSession;
           },
         }
       : {}),

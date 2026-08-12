@@ -165,12 +165,48 @@ describe("Tangle split leaf modules", () => {
     expect(capabilitiesForClient(capabilities, minimalClient).placement).toBe(false);
     expect(capabilities.sessions.continue).toBe(false);
     expect(capabilitiesForSandbox(capabilities, support).workspace.read).toBe(true);
+    const retainedDeclared = {
+      ...capabilities,
+      sessions: { ...capabilities.sessions, continue: true },
+      retainedControl: {
+        exactRunIdentity: true,
+        resultIdentity: true,
+        eventIdentity: true,
+        cancellationIdempotency: true,
+      },
+    };
+    const retainedSupport = {
+      ...support,
+      dispatchPrompt: true,
+      session: true,
+      cancelRun: true,
+    };
     expect(
-      capabilitiesForSandbox(
-        { ...capabilities, sessions: { ...capabilities.sessions, continue: true } },
-        { ...support, session: true },
-      ).sessions.continue,
-    ).toBe(false);
+      capabilitiesForClient(retainedDeclared, minimalClient),
+    ).toMatchObject({ sessions: { continue: false } });
+    expect(
+      capabilitiesForClient(retainedDeclared, minimalClient),
+    ).not.toHaveProperty("retainedControl");
+    expect(
+      capabilitiesForSandbox(retainedDeclared, retainedSupport),
+    ).toMatchObject({
+      sessions: { continue: true },
+      retainedControl: retainedDeclared.retainedControl,
+    });
+    expect(
+      capabilitiesForSandbox(retainedDeclared, {
+        ...retainedSupport,
+        cancelRun: false,
+      }),
+    ).toMatchObject({
+      sessions: { continue: false },
+    });
+    expect(
+      capabilitiesForSandbox(retainedDeclared, {
+        ...retainedSupport,
+        cancelRun: false,
+      }),
+    ).not.toHaveProperty("retainedControl");
     const overDeclaredBranching = {
       ...capabilities,
       branching: {
@@ -209,6 +245,22 @@ describe("Tangle split leaf modules", () => {
       { executionId: "execution-1", sessionId: "session-1" },
     );
     expect(event.id).toBe("event-1");
+    expect(event.normalized).toEqual({
+      type: "status",
+      status: "processing",
+    });
+    expect(() => environmentEventFromSandboxEvent(
+      {
+        type: "status",
+        data: {
+          executionId: "execution-1",
+          sessionId: "session-1",
+          status: "processing",
+          normalized: { type: "warning", code: "bad", message: "bad" },
+        },
+      } as never,
+      { executionId: "execution-1", sessionId: "session-1" },
+    )).toThrow(/normalized event type/);
     expect(() => environmentEventFromSandboxEvent(
       { type: "status", data: { executionId: "wrong", sessionId: "session-1" } } as never,
       { executionId: "execution-1", sessionId: "session-1" },
@@ -217,22 +269,48 @@ describe("Tangle split leaf modules", () => {
     expect(execResultFromSandboxExecResult({ exitCode: 0, stdout: "ok", stderr: "" } as never)).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
     expect(validatedSandboxPromptResult(promptResult())).toMatchObject({ success: true, status: "success" });
     expect(agentTurnResultFromPromptRecord(validatedSandboxPromptResult(promptResult()), { sessionId: "session-1" })).toMatchObject({ text: "done", success: true });
-    expect(executionIdFromTurnInput({ controlRef: { runId: "execution-1", provider: "tangle-sandbox", environmentId: "sbx-1", sessionId: "session-1", executionId: "execution-1", requestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })).toBe("execution-1");
-    expect(promptFromTurnInput({ prompt: "hello" })).toBe("hello");
-    expect(promptOptionsFromTurnInput({ prompt: "hello", sessionId: "session-1", executionId: "execution-1" }, { provider: "tangle-sandbox", environmentId: "sbx-1", sessionId: "session-1" })).toMatchObject({ executionId: "execution-1", sessionId: "session-1" });
-    const dispatchRef = sessionRefFromSandboxDispatch({ sessionId: "session-1", executionId: "execution-1" }, "tangle-sandbox", "sbx-1", "execution-1");
-    expect(dispatchRef.controlRef).toMatchObject({ sessionId: "session-1", executionId: "execution-1" });
-    expect(() => sessionRefFromSandboxDispatch(
-      { sessionId: "other-session", executionId: "execution-1" },
+    const semanticInput = { prompt: "hello", turnId: "turn-1" } as never;
+    const baseRequestDigest = sessionPromptRequestDigest(
+      semanticInput,
       "tangle-sandbox",
       "sbx-1",
-      "execution-1",
-      undefined,
+      "session-1",
+    );
+    const executionId = sessionPromptExecutionId(baseRequestDigest);
+    const requestDigest = sessionPromptRequestDigest(
+      semanticInput,
+      "tangle-sandbox",
+      "sbx-1",
+      "session-1",
+      { executionId },
+    );
+    const controlRef = retainedSessionControlRef(
+      "session-1",
+      executionId,
+      "tangle-sandbox",
+      "sbx-1",
+      requestDigest,
+    );
+    expect(executionIdFromTurnInput({ controlRef })).toBe(executionId);
+    expect(promptFromTurnInput({ prompt: "hello" })).toBe("hello");
+    expect(promptOptionsFromTurnInput({ prompt: "hello", sessionId: "session-1", executionId }, { provider: "tangle-sandbox", environmentId: "sbx-1", sessionId: "session-1" })).toMatchObject({ executionId, sessionId: "session-1" });
+    const dispatchRef = sessionRefFromSandboxDispatch({
+      sessionId: "session-1",
+      executionId,
+      runControlRef: controlRef,
+    }, "tangle-sandbox", "sbx-1", executionId, requestDigest, "session-1");
+    expect(dispatchRef.controlRef).toMatchObject({ sessionId: "session-1", executionId, requestDigest });
+    expect(() => sessionRefFromSandboxDispatch(
+      { sessionId: "other-session", executionId },
+      "tangle-sandbox",
+      "sbx-1",
+      executionId,
+      requestDigest,
       "session-1",
     )).toThrow(/different from the requested session/);
-    const retained = retainedSessionControlRef("session-1", "execution-1", "tangle-sandbox", "sbx-1", dispatchRef.controlRef?.requestDigest);
+    const retained = retainedSessionControlRef("session-1", executionId, "tangle-sandbox", "sbx-1", dispatchRef.controlRef?.requestDigest);
     expect(sameRunControlRef(retained, dispatchRef.controlRef!)).toBe(true);
-    expect(sessionPromptExecutionId("tangle-sandbox", "sbx-1", "session-1", "turn-1")).toBe(sessionPromptExecutionId("tangle-sandbox", "sbx-1", "session-1", "turn-1"));
+    expect(sessionPromptExecutionId(baseRequestDigest)).toBe(executionId);
     expect(() => boundedIdentifier(" bad", "id")).toThrow();
     await expect(awaitWithSignal(Promise.resolve("ok"))).resolves.toBe("ok");
   });
@@ -507,7 +585,15 @@ describe("Tangle split leaf modules", () => {
   it("binds direct environment control helpers to exact replay data", () => {
     const input = { prompt: "resume", turnId: "turn-1" } as never;
     expect(hasReplayPayload(input)).toBe(true);
-    expect(sessionPromptRequestDigest(input, "tangle-sandbox", "env-1", "session-1", "execution-1")).toMatch(/^sha256:/);
+    expect(
+      sessionPromptRequestDigest(
+        input,
+        "tangle-sandbox",
+        "env-1",
+        "session-1",
+        { executionId: "execution-1" },
+      ),
+    ).toMatch(/^sha256:/);
   });
 
   it("cleans failed provider creation and rejects unrelated provider options", async () => {

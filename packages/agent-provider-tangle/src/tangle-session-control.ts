@@ -1,9 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   AgentExactRunControlRefSchema,
   canonicalCandidateDigest,
 } from "@tangle-network/agent-interface";
-import type { AgentRunControlRef } from "@tangle-network/agent-interface";
+import type {
+  AgentExactRunControlRef,
+  AgentRunControlRef,
+} from "@tangle-network/agent-interface";
 import type { AgentSessionRef } from "@tangle-network/agent-interface/environment-provider";
 import { nonEmptyString } from "./tangle-environment-values.js";
 import {
@@ -18,6 +21,7 @@ export function sessionRefFromSandboxDispatch(
   expectedExecutionId: string | undefined,
   requestDigest: `sha256:${string}` | undefined = undefined,
   expectedSessionId: string | undefined = undefined,
+  callerControlRef: AgentExactRunControlRef | undefined = undefined,
 ): AgentSessionRef {
   const record =
     dispatched && typeof dispatched === "object" && !Array.isArray(dispatched)
@@ -58,17 +62,31 @@ export function sessionRefFromSandboxDispatch(
   if (record.dispatched !== undefined && typeof record.dispatched !== "boolean") {
     throw new Error("sandbox dispatch returned an invalid dispatched flag");
   }
+  const accepted =
+    record.runControlRef === undefined
+      ? callerControlRef === undefined
+        ? undefined
+        : AgentExactRunControlRefSchema.safeParse(callerControlRef)
+      : AgentExactRunControlRefSchema.safeParse(record.runControlRef);
+  if (accepted === undefined || !accepted.success) {
+    throw new Error(
+      "sandbox dispatch did not return the exact run control reference",
+    );
+  }
+  if (
+    accepted.data.provider !== providerName ||
+    accepted.data.environmentId !== environmentId ||
+    accepted.data.sessionId !== id ||
+    accepted.data.executionId !== executionId ||
+    (requestDigest !== undefined && accepted.data.requestDigest !== requestDigest)
+  ) {
+    throw new Error("sandbox dispatch returned an exact control reference for another run");
+  }
+  const controlRef = Object.freeze(accepted.data);
   return {
     id,
     provider: providerName,
-    controlRef: retainedSessionControlRef(
-      id,
-      executionId,
-      providerName,
-      environmentId,
-      requestDigest ??
-        canonicalCandidateDigest({ provider: providerName, environmentId, id, executionId }),
-    ),
+    controlRef,
     metadata: {
       ...(record.status ? { status: record.status } : {}),
       ...(record.alreadyExisted !== undefined ? { alreadyExisted: record.alreadyExisted } : {}),
@@ -83,9 +101,10 @@ export function retainedSessionControlRef(
   provider: string,
   environmentId: string,
   requestDigest?: `sha256:${string}`,
-): AgentRunControlRef {
-  return AgentExactRunControlRefSchema.parse({
-    runId: executionId,
+  runId = executionId,
+): AgentExactRunControlRef {
+  return Object.freeze(AgentExactRunControlRefSchema.parse({
+    runId,
     provider,
     environmentId,
     sessionId,
@@ -93,20 +112,25 @@ export function retainedSessionControlRef(
     requestDigest:
       requestDigest ??
       canonicalCandidateDigest({ provider, environmentId, sessionId, executionId }),
-  });
+  }));
 }
 
 export function sessionPromptExecutionId(
+  requestDigest: `sha256:${string}`,
+): string {
+  return `session-turn-${requestDigest.slice("sha256:".length)}`;
+}
+
+export function sessionPromptSessionId(
   provider: string,
   environmentId: string,
-  sessionId: string,
   turnId: string | undefined,
-): string {
-  if (turnId === undefined) return randomUUID();
+): string | undefined {
+  if (turnId === undefined) return undefined;
   const digest = createHash("sha256")
-    .update(`${provider}\0${environmentId}\0${sessionId}\0${turnId}`)
+    .update(`${provider}\0${environmentId}\0${turnId}`)
     .digest("hex");
-  return `session-turn-${digest}`;
+  return `session-${digest}`;
 }
 
 export function sameRunControlRef(
@@ -128,7 +152,7 @@ export function resolveRetainedSessionControlRef(
   sessionId: string,
   provider: string,
   environmentId: string,
-): AgentRunControlRef | undefined {
+): AgentExactRunControlRef | undefined {
   if (candidate === undefined) return undefined;
   const controlRef = AgentExactRunControlRefSchema.parse(candidate);
   if (
@@ -138,12 +162,12 @@ export function resolveRetainedSessionControlRef(
   ) {
     throw new Error("Tangle control reference does not match this session");
   }
-  if (
-    controlRef.runId !== controlRef.executionId
-  ) {
-    throw new Error(
-      "Tangle session control reference requires runId to equal executionId",
-    );
-  }
-  return controlRef;
+  return retainedSessionControlRef(
+    sessionId,
+    controlRef.executionId,
+    provider,
+    environmentId,
+    controlRef.requestDigest,
+    controlRef.runId,
+  );
 }

@@ -16,6 +16,11 @@ import {
   type SandboxSessionLike,
 } from "./index.js";
 import { tokenUsageFromData } from "./tangle-result-values.js";
+import {
+  controlRefForTurn,
+  executionIdForTurn,
+  TANGLE_PROVIDER,
+} from "./retained-control-test-helpers.js";
 
 const EXACT_IMAGE = `example/image@sha256:${"1".repeat(64)}`;
 const EXACT_RESOURCES = { cpu: 1, memoryMb: 512, diskMb: 1024 } as const;
@@ -260,14 +265,21 @@ describe("createTangleProvider", () => {
   });
 
   it("preserves an awaiting interaction as non-terminal session state", async () => {
+    const environmentId = "sbx-awaiting";
+    const sessionId = "session-awaiting";
+    const controlRef = controlRefForTurn(
+      { prompt: "awaiting question", turnId: "awaiting-turn" },
+      environmentId,
+      sessionId,
+    );
     const sandboxSession: SandboxSessionLike = {
-      id: "session-awaiting",
+      id: sessionId,
       status: async () => ({ status: "awaiting_question" }),
       async *events() {},
       result: async () => ({
         success: false,
         status: "awaiting_question",
-        executionId: "execution-awaiting",
+        executionId: controlRef.executionId,
         response: "What should I do?",
         durationMs: 1,
       }),
@@ -277,7 +289,7 @@ describe("createTangleProvider", () => {
       interrupt: async () => ({ cancelled: true }),
     };
     const box: SandboxInstanceLike = {
-      id: "sbx-awaiting",
+      id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
     };
@@ -286,14 +298,7 @@ describe("createTangleProvider", () => {
     });
     const environment = await provider.create({ profile: { name: "worker" } });
     const session = environment.session!(sandboxSession.id, {
-      controlRef: {
-        runId: "execution-awaiting",
-        provider: "tangle-sandbox",
-        environmentId: box.id,
-        sessionId: sandboxSession.id,
-        executionId: "execution-awaiting",
-        requestDigest: TEST_REQUEST_DIGEST,
-      },
+      controlRef,
     });
 
     await expect(session.result()).resolves.toMatchObject({
@@ -357,7 +362,8 @@ describe("createTangleProvider", () => {
       },
       dispatchPrompt: async (_prompt, options) => ({
         sessionId: (options as { sessionId?: string } | undefined)?.sessionId ?? "sess-1",
-        executionId: "execution-1",
+        executionId: options?.executionId,
+        runControlRef: options?.runControlRef,
         status: "running",
         alreadyExisted: true,
       }),
@@ -365,16 +371,16 @@ describe("createTangleProvider", () => {
         id,
         status: async () => ({ status: "completed" }),
         async *events() {},
-        result: async () => ({
+        result: async (options) => ({
           success: true,
           status: "success",
-          executionId: "execution-1",
+          executionId: options?.executionId,
           durationMs: 1,
         }),
-        prompt: async () => ({
+        prompt: async (_message, options) => ({
           success: true,
           status: "success",
-          executionId: "execution-1",
+          executionId: options?.executionId,
           durationMs: 1,
         }),
         interrupt: async () => ({ cancelled: true }),
@@ -465,9 +471,10 @@ describe("createTangleProvider", () => {
     const box: SandboxInstanceLike = {
       id: "sbx-session",
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
-      dispatchPrompt: async () => ({
-        sessionId: "session-1",
-        executionId: "execution-1",
+      dispatchPrompt: async (_prompt, options) => ({
+        sessionId: options?.sessionId ?? "session-1",
+        executionId: options?.executionId,
+        runControlRef: options?.runControlRef,
       }),
       session: (id) => ({
         id,
@@ -490,23 +497,28 @@ describe("createTangleProvider", () => {
     });
 
     const environment = await provider.create({ profile: { name: "worker" } });
-    const dispatched = await environment.dispatch?.({ prompt: "continue" });
+    const dispatched = await environment.dispatch?.({
+      prompt: "continue",
+      sessionId: "session-1",
+    });
     const session = environment.session?.("session-1", {
       controlRef: dispatched?.controlRef,
     });
     expect(session).toBeDefined();
-    expect(dispatched?.controlRef).toEqual({
-      runId: "execution-1",
-      provider: "tangle-sandbox",
+    expect(dispatched?.controlRef).toMatchObject({
+      runId: expect.stringMatching(/^session-turn-[a-f0-9]{64}$/),
+      provider: TANGLE_PROVIDER,
       environmentId: "sbx-session",
       sessionId: "session-1",
-      executionId: "execution-1",
-      requestDigest: expect.any(String),
+      executionId: expect.stringMatching(/^session-turn-[a-f0-9]{64}$/),
+      requestDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
     });
     expect(session?.controlRef).toEqual(dispatched?.controlRef);
     await session?.cancel();
 
-    expect(interrupt).toHaveBeenCalledWith({ executionId: "execution-1" });
+    expect(interrupt).toHaveBeenCalledWith({
+      executionId: dispatched?.controlRef?.executionId,
+    });
   });
 
   it("advances a retained session to the exact execution started by prompt", async () => {
@@ -553,15 +565,13 @@ describe("createTangleProvider", () => {
       client: { create: async () => box },
     });
     const environment = await provider.create({ profile: { name: "worker" } });
+    const initialControlRef = controlRefForTurn(
+      { prompt: "initial turn", turnId: "initial-turn" },
+      box.id,
+      sandboxSession.id,
+    );
     const session = environment.session!(sandboxSession.id, {
-      controlRef: {
-        runId: "execution-1",
-        provider: "tangle-sandbox",
-        environmentId: box.id,
-        sessionId: sandboxSession.id,
-        executionId: "execution-1",
-        requestDigest: TEST_REQUEST_DIGEST,
-      },
+      controlRef: initialControlRef,
     });
 
     await expect(session.prompt({ prompt: 123 } as never)).rejects.toThrow();
@@ -658,7 +668,9 @@ describe("createTangleProvider", () => {
     const box: SandboxInstanceLike = {
       id: "sbx-delayed-execution",
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
-      dispatchPrompt: async () => ({ sessionId: "session-delayed" }),
+      dispatchPrompt: async (_prompt, options) => ({
+        sessionId: options?.sessionId,
+      }),
       session: (id) => ({
         id,
         status: async () => ({
@@ -683,17 +695,28 @@ describe("createTangleProvider", () => {
     const environment = await provider.create({ profile: { name: "worker" } });
 
     await expect(
-      environment.dispatch?.({ prompt: "continue", detach: true }),
+      environment.dispatch?.({
+        prompt: "continue",
+        turnId: "delayed-turn",
+        detach: true,
+      }),
     ).rejects.toThrow(/no exact execution id/);
     expect(statusCalls).toBe(0);
   });
 
   it("rejects a dispatch receipt for a different requested execution", async () => {
+    const sessionId = "session-wrong-execution";
+    const turnId = "requested-turn";
+    const requestedExecutionId = executionIdForTurn(
+      { prompt: "continue", sessionId, turnId },
+      "sbx-wrong-execution",
+      sessionId,
+    );
     const box: SandboxInstanceLike = {
       id: "sbx-wrong-execution",
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
-      dispatchPrompt: async () => ({
-        sessionId: "session-wrong-execution",
+      dispatchPrompt: async (_prompt, options) => ({
+        sessionId: options?.sessionId,
         executionId: "execution-from-server",
       }),
     };
@@ -705,12 +728,14 @@ describe("createTangleProvider", () => {
     await expect(
       environment.dispatch?.({
         prompt: "continue",
-        executionId: "execution-requested",
+        sessionId,
+        turnId,
+        executionId: requestedExecutionId,
       }),
     ).rejects.toThrow(/different from the requested run/);
   });
 
-  it("rejects and interrupts a newly dispatched different session", async () => {
+  it("rejects an unbound dispatch receipt without interrupting unknown work", async () => {
     const interrupt = vi.fn(async () => ({ cancelled: true }));
     const box: SandboxInstanceLike = {
       id: "sbx-wrong-session",
@@ -746,7 +771,7 @@ describe("createTangleProvider", () => {
         sessionId: "requested-session",
       }),
     ).rejects.toThrow(/different from the requested session/);
-    expect(interrupt).toHaveBeenCalledWith({ executionId: "execution-from-server" });
+    expect(interrupt).not.toHaveBeenCalled();
   });
 
   it("maps exact control references and rejects unsupported context inputs", async () => {
@@ -815,8 +840,9 @@ describe("createTangleProvider", () => {
     expect(streamCalls).toBe(1);
   });
 
-  it("requires exact replay and turns inclusive Sandbox replay exclusive", async () => {
+  it("requires exact replay and follows the Sandbox exclusive cursor", async () => {
     let capturedOptions: Record<string, unknown> | undefined;
+    let replayExecutionId: string | undefined;
     const upstreamEvents = [
       {
         id: "event-1",
@@ -824,7 +850,7 @@ describe("createTangleProvider", () => {
         data: {
           status: "processing",
           sessionId: "session-1",
-          executionId: "execution-2",
+          executionId: undefined,
         },
       },
       {
@@ -833,7 +859,7 @@ describe("createTangleProvider", () => {
         data: {
           finalText: "ok",
           sessionId: "session-1",
-          executionId: "execution-2",
+          executionId: undefined,
         },
       },
     ] as SandboxEvent[];
@@ -845,7 +871,8 @@ describe("createTangleProvider", () => {
       }),
       async *events(options) {
         capturedOptions = options as Record<string, unknown> | undefined;
-        for (const event of upstreamEvents) yield event;
+        const start = options?.since === "event-1" ? 1 : 0;
+        for (const event of upstreamEvents.slice(start)) yield event;
       },
       result: async () => ({
         success: true,
@@ -863,11 +890,22 @@ describe("createTangleProvider", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sbx-replay",
-      async *streamPrompt(): AsyncIterable<SandboxEvent> {},
-      dispatchPrompt: async () => ({
-        sessionId: sandboxSession.id,
-        executionId: "execution-2",
-      }),
+      async *streamPrompt(_message, options) {
+        capturedOptions = options as Record<string, unknown> | undefined;
+        const start = options?.lastEventId === "event-1" ? 1 : 0;
+        for (const event of upstreamEvents.slice(start)) yield event;
+      },
+      dispatchPrompt: async (_prompt, options) => {
+        replayExecutionId = options?.executionId;
+        for (const event of upstreamEvents) {
+          (event.data as Record<string, unknown>).executionId = replayExecutionId;
+        }
+        return {
+          sessionId: options?.sessionId,
+          executionId: replayExecutionId,
+          runControlRef: options?.runControlRef,
+        };
+      },
       session: () => sandboxSession,
     };
     const provider = createTangleProvider({
@@ -876,6 +914,8 @@ describe("createTangleProvider", () => {
     const environment = await provider.create({ profile: { name: "worker" } });
     const reference = await environment.dispatch?.({
       prompt: "second turn",
+      sessionId: sandboxSession.id,
+      turnId: "second-turn",
       detach: true,
     });
     await expect(
@@ -890,13 +930,13 @@ describe("createTangleProvider", () => {
 
     const replay = await collect(session!.events({ since: "event-1" }));
     expect(reference?.controlRef).toMatchObject({
-      runId: "execution-2",
-      executionId: "execution-2",
+      runId: expect.stringMatching(/^session-turn-[a-f0-9]{64}$/),
+      executionId: replayExecutionId,
       sessionId: "session-1",
     });
     expect(capturedOptions).toMatchObject({
-      since: "event-1",
-      executionId: "execution-2",
+      lastEventId: "event-1",
+      executionId: replayExecutionId,
     });
     expect(replay.map((event) => event.id)).toEqual(["event-2"]);
     await expect(
@@ -908,12 +948,13 @@ describe("createTangleProvider", () => {
       ),
     ).rejects.toThrow(/executionId conflicts with the control reference/);
     expect(capturedOptions).toMatchObject({
-      since: "event-1",
-      executionId: "execution-2",
+      lastEventId: "event-1",
+      executionId: replayExecutionId,
     });
   });
 
   it("rejects unstable event identities on an exact retained session", async () => {
+    let executionId: string | undefined;
     const sandboxSession: SandboxSessionLike = {
       id: "session-unstable-events",
       status: async () => ({ status: "running" }),
@@ -923,38 +964,54 @@ describe("createTangleProvider", () => {
           data: {
             status: "processing",
             sessionId: "session-unstable-events",
-            executionId: "execution-stable",
+            executionId,
           },
         } as SandboxEvent;
       },
       result: async () => ({
         success: true,
         status: "success",
-        executionId: "execution-stable",
+        executionId,
         durationMs: 1,
       }),
       prompt: async () => ({
         success: true,
         status: "success",
-        executionId: "execution-stable",
+        executionId,
         durationMs: 1,
       }),
       interrupt: async () => ({ cancelled: true }),
     };
     const box: SandboxInstanceLike = {
       id: "sbx-unstable-events",
-      async *streamPrompt() {},
-      dispatchPrompt: async () => ({
-        sessionId: sandboxSession.id,
-        executionId: "execution-stable",
-      }),
+      async *streamPrompt() {
+        yield {
+          type: "status",
+          data: {
+            status: "processing",
+            sessionId: "session-unstable-events",
+            executionId,
+          },
+        } as SandboxEvent;
+      },
+      dispatchPrompt: async (_prompt, options) => {
+        executionId = options?.executionId;
+        return {
+          sessionId: options?.sessionId,
+          executionId,
+          runControlRef: options?.runControlRef,
+        };
+      },
       session: () => sandboxSession,
     };
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
     const environment = await provider.create({ profile: { name: "worker" } });
-    const dispatched = await environment.dispatch!({ prompt: "run" });
+    const dispatched = await environment.dispatch!({
+      prompt: "run",
+      sessionId: sandboxSession.id,
+    });
 
     await expect(
       collect(
@@ -996,21 +1053,28 @@ describe("createTangleProvider", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sbx-competing-event",
-      async *streamPrompt() {},
+      async *streamPrompt() {
+        yield {
+          id: "event-competing",
+          type: "result",
+          data: {
+            executionId: "execution-competing",
+            sessionId: "session-competing-event",
+            finalText: "wrong",
+          },
+        } as SandboxEvent;
+      },
       session: () => sandboxSession,
     };
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
     const environment = await provider.create({ profile: { name: "worker" } });
-    const controlRef = {
-      runId: "execution-exact",
-      provider: "tangle-sandbox",
-      environmentId: box.id,
-      sessionId: sandboxSession.id,
-      executionId: "execution-exact",
-      requestDigest: TEST_REQUEST_DIGEST,
-    };
+    const controlRef = controlRefForTurn(
+      { prompt: "competing event", turnId: "competing-turn" },
+      box.id,
+      sandboxSession.id,
+    );
 
     await expect(
       collect(
@@ -1064,14 +1128,21 @@ describe("createTangleProvider", () => {
   });
 
   it("rejects inconsistent and malformed Sandbox prompt results", async () => {
+    const environmentId = "sbx-strict-result";
+    const sessionId = "session-strict-result";
+    const strictControlRef = controlRefForTurn(
+      { prompt: "strict result", turnId: "strict-turn" },
+      environmentId,
+      sessionId,
+    );
     let result = {
       success: true,
       status: "failed",
-      executionId: "execution-strict",
+      executionId: strictControlRef.executionId,
       durationMs: 1,
     } as never;
     const sandboxSession: SandboxSessionLike = {
-      id: "session-strict-result",
+      id: sessionId,
       status: async () => ({ status: "completed" }),
       async *events() {},
       result: async () => result,
@@ -1079,7 +1150,7 @@ describe("createTangleProvider", () => {
       interrupt: async () => ({ cancelled: true }),
     };
     const box: SandboxInstanceLike = {
-      id: "sbx-strict-result",
+      id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
     };
@@ -1088,28 +1159,21 @@ describe("createTangleProvider", () => {
     });
     const environment = await provider.create({ profile: { name: "worker" } });
     const exact = environment.session!(sandboxSession.id, {
-      controlRef: {
-        runId: "execution-strict",
-        provider: "tangle-sandbox",
-        environmentId: box.id,
-        sessionId: sandboxSession.id,
-        executionId: "execution-strict",
-        requestDigest: TEST_REQUEST_DIGEST,
-      },
+      controlRef: strictControlRef,
     });
 
     await expect(exact.result()).rejects.toThrow(/success flag conflicts/);
     result = {
       success: true,
       status: "success",
-      executionId: "execution-strict",
+      executionId: strictControlRef.executionId,
       durationMs: -1,
     } as never;
     await expect(exact.result()).rejects.toThrow(/invalid duration/);
     result = {
       success: true,
       status: "success",
-      executionId: "execution-strict",
+      executionId: strictControlRef.executionId,
       durationMs: 1,
       usage: { inputTokens: -1, outputTokens: 2 },
     } as never;
@@ -1117,6 +1181,13 @@ describe("createTangleProvider", () => {
   });
 
   it("rejects an unsolicited context transfer receipt", async () => {
+    const environmentId = "sbx-receipt";
+    const sessionId = "session-new";
+    const receiptControlRef = controlRefForTurn(
+      { prompt: "receipt result", turnId: "receipt-turn" },
+      environmentId,
+      sessionId,
+    );
     const receipt = {
       status: "accepted" as const,
       operationId: "transfer-1",
@@ -1134,13 +1205,13 @@ describe("createTangleProvider", () => {
       admittedAt: "2026-08-01T20:01:01.000Z",
     };
     const sandboxSession: SandboxSessionLike = {
-      id: "session-new",
+      id: sessionId,
       status: async () => ({ status: "completed" }),
       async *events() {},
       result: async () => ({
         success: true,
         status: "success",
-        executionId: "execution-receipt",
+        executionId: receiptControlRef.executionId,
         response: "ok",
         durationMs: 1,
         contextTransferReceipt: receipt,
@@ -1154,7 +1225,7 @@ describe("createTangleProvider", () => {
       interrupt: async () => ({ cancelled: true }),
     };
     const box: SandboxInstanceLike = {
-      id: "sbx-receipt",
+      id: environmentId,
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
       session: () => sandboxSession,
     };
@@ -1164,14 +1235,7 @@ describe("createTangleProvider", () => {
     const environment = await provider.create({ profile: { name: "worker" } });
 
     const exactSession = environment.session!(sandboxSession.id, {
-      controlRef: {
-        runId: "execution-receipt",
-        provider: "tangle-sandbox",
-        environmentId: box.id,
-        sessionId: sandboxSession.id,
-        executionId: "execution-receipt",
-        requestDigest: TEST_REQUEST_DIGEST,
-      },
+      controlRef: receiptControlRef,
     });
 
     await expect(exactSession.result()).rejects.toThrow(
@@ -1181,7 +1245,7 @@ describe("createTangleProvider", () => {
     sandboxSession.result = async () => ({
       success: true,
       status: "success",
-      executionId: "execution-receipt",
+      executionId: receiptControlRef.executionId,
       response: "undefined receipt",
       durationMs: 1,
       contextTransferReceipt: undefined,
@@ -1202,7 +1266,7 @@ describe("createTangleProvider", () => {
     sandboxSession.result = async () => ({
       success: true,
       status: "success",
-      executionId: "execution-receipt",
+      executionId: receiptControlRef.executionId,
       response: "invalid receipt",
       durationMs: 1,
       contextTransferReceipt: { status: "accepted" },
