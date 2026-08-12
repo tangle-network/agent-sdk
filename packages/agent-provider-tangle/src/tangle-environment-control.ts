@@ -54,15 +54,9 @@ export async function interruptAfterAbort(
   // A duplicate dispatch receipt identifies work owned by another caller.
   // Only a receipt that proves this call admitted new work may be interrupted.
   if (metadata?.dispatched !== true || metadata.alreadyExisted === true) return;
-  const sessionId = reference.id;
   const executionId = reference.controlRef?.executionId;
   if (!box.session || executionId === undefined) return;
-  try {
-    await box.session(sessionId)?.interrupt({ executionId });
-  } catch {
-    // The original abort remains the caller-visible outcome; the provider has
-    // no stronger cleanup primitive when the late dispatch result is lost.
-  }
+  await interruptExecutionAfterAbort(box, reference.id, executionId);
 }
 
 export async function interruptExecutionAfterAbort(

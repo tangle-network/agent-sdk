@@ -1,4 +1,5 @@
 import type {
+  PromptOptions,
   PromptResult,
 } from "@tangle-network/sandbox";
 import type {
@@ -17,7 +18,6 @@ import {
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
 import { assertBoundedJson } from "./tangle-contract-safety.js";
-import type { TanglePromptOptions } from "./tangle-types.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
   AgentTurnInputSchema.parse(input);
@@ -36,7 +36,7 @@ export function promptOptionsFromTurnInput(
     environmentId: string;
     sessionId?: string;
   },
-): TanglePromptOptions {
+): PromptOptions {
   if (input.contextTransfer !== undefined) {
     throw new Error(
       "Tangle provider does not yet support portable context transfer",

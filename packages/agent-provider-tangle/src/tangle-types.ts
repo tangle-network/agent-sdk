@@ -7,7 +7,6 @@ import type {
   SandboxEvent,
 } from "@tangle-network/sandbox";
 import type {
-  AgentExactRunControlRef,
   AgentRunCancellationAcknowledgement,
   AgentRunCancellationRequest,
   InputPart,
@@ -18,9 +17,6 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 
-export type TanglePromptOptions = PromptOptions & {
-  runControlRef?: AgentExactRunControlRef;
-};
 export interface TangleExactProcessOptions {
   teamId?: string;
 }
@@ -30,6 +26,19 @@ export interface SandboxClientLike {
     options?: CreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<SandboxInstanceLike>;
+  /**
+   * SDK HttpClient transport, present on `Sandbox` and `TangleSandboxClient`.
+   * Retained control requires it: the provider mints a lazy probe instance
+   * over this surface to read the linked SDK's method surface before any
+   * sandbox exists. An object-spread wrapper (`{ ...client }`) drops class
+   * prototype methods including this one, so such a wrapper never claims
+   * retained control; pass the SDK client itself or delegate its methods.
+   */
+  fetch?(
+    path: string,
+    options?: RequestInit,
+    fetchOptions?: { timeoutMs?: number },
+  ): Promise<Response>;
   get?(id: string, requestOptions?: { signal?: AbortSignal }): Promise<SandboxInstanceLike | null>;
   list?(options?: {
     scope?: string;
@@ -78,9 +87,9 @@ export interface SandboxInstanceLike {
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
-  streamPrompt(message: string | InputPart[], options?: TanglePromptOptions): AsyncIterable<SandboxEvent>;
-  prompt?(message: string | InputPart[], options?: TanglePromptOptions): Promise<PromptResult>;
-  dispatchPrompt?(message: string | InputPart[], options?: TanglePromptOptions): Promise<unknown>;
+  streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
+  prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
+  dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
   read?(path: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<string>;
   write?(path: string, content: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<unknown>;
@@ -107,8 +116,6 @@ export interface SandboxInstanceLike {
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
-  checkpoint?(options?: { signal?: AbortSignal } & Record<string, unknown>): Promise<unknown>;
-  fork?(checkpointId: string, options?: { signal?: AbortSignal } & Record<string, unknown>): Promise<SandboxInstanceLike>;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<void>;
 }
@@ -122,7 +129,7 @@ export interface SandboxSessionLike {
     signal?: AbortSignal;
   }): AsyncIterable<SandboxEvent>;
   result(options?: { executionId?: string; signal?: AbortSignal }): Promise<PromptResult>;
-  prompt(message: string | InputPart[], options?: TanglePromptOptions): Promise<PromptResult>;
+  prompt(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
   interrupt(options?: { executionId?: string; signal?: AbortSignal }): Promise<{ cancelled: boolean }>;
   cancelRun?(
     request: AgentRunCancellationRequest,

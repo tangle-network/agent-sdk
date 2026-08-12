@@ -1,8 +1,5 @@
 import type {
-  CheckpointRef,
-  CheckpointRequest,
   ExecRequest,
-  ForkRequest,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   assertBoundedJson,
@@ -52,30 +49,4 @@ export function assertExecOptions(options: ExecRequest | undefined): void {
   ) {
     throw new Error("Tangle exec timeoutMs must be a positive safe integer");
   }
-}
-
-export function assertCheckpointOptions(
-  options: (CheckpointRequest & { signal?: AbortSignal }) | undefined,
-): void {
-  assertOptionKeys(options, ["name", "metadata", "signal"], "Tangle checkpoint");
-  if (options?.name !== undefined) boundedString(options.name, "Tangle checkpoint name");
-  if (options?.metadata !== undefined) assertRecord(options.metadata, "Tangle checkpoint metadata");
-}
-
-export function assertCheckpointRef(checkpoint: CheckpointRef): void {
-  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
-    throw new Error("Tangle fork checkpoint must be an object");
-  }
-  assertOptionKeys(checkpoint, ["id", "provider", "metadata"], "Tangle fork checkpoint");
-  boundedIdentifier(checkpoint.id, "Tangle checkpoint id");
-  if (checkpoint.provider !== undefined) boundedIdentifier(checkpoint.provider, "Tangle checkpoint provider");
-  if (checkpoint.metadata !== undefined) assertRecord(checkpoint.metadata, "Tangle checkpoint metadata");
-}
-
-export function assertForkOptions(
-  options: (ForkRequest & { signal?: AbortSignal }) | undefined,
-): void {
-  assertOptionKeys(options, ["name", "metadata", "signal"], "Tangle fork");
-  if (options?.name !== undefined) boundedString(options.name, "Tangle fork name");
-  if (options?.metadata !== undefined) assertRecord(options.metadata, "Tangle fork metadata");
 }

@@ -4,6 +4,7 @@ import {
   reconnectRetainedRun,
   startRetainedRun,
 } from "@tangle-network/agent-runtime/kernel";
+import { Sandbox } from "@tangle-network/sandbox";
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import {
   agentRunCancellationRequestDigest,
@@ -12,7 +13,7 @@ import {
 } from "@tangle-network/agent-interface";
 import {
   createTangleProvider,
-  defaultTangleSandboxCapabilities,
+  type SandboxClientLike,
   type SandboxInstanceLike,
   type SandboxSessionLike,
 } from "./index.js";
@@ -44,7 +45,282 @@ function echoedExecution(options: PromptOptions | undefined) {
   return options?.executionId;
 }
 
+/**
+ * Give a fake client the SDK HttpClient surface so the provider-level probe
+ * can establish deployment facts from the installed SDK's instance and
+ * session classes. The thrown fetch proves the probe never calls the network.
+ */
+function sdkShapedClient<T extends SandboxClientLike>(client: T) {
+  return {
+    ...client,
+    fetch: async (): Promise<Response> => {
+      throw new Error("capability probe must not call the network");
+    },
+  };
+}
+
 describe("Tangle retained control", () => {
+  it("claims retained control from probed deployment facts", async () => {
+    // A client with the SDK HttpClient surface lets the probe prove that its
+    // sandboxes carry dispatchPrompt, session, and cancelRun. With get for
+    // reconstruction, the provider claims the full retained-control block.
+    const provider = createTangleProvider({
+      client: sdkShapedClient({
+        create: async (): Promise<SandboxInstanceLike> => {
+          throw new Error("capabilities never create a sandbox");
+        },
+        get: async () => null,
+      }),
+    });
+    await expect(provider.capabilities()).resolves.toMatchObject({
+      sessions: { continue: true },
+      retainedControl: {
+        exactRunIdentity: true,
+        resultIdentity: true,
+        eventIdentity: true,
+        cancellationIdempotency: true,
+      },
+    });
+
+    // The published SDK client itself passes the same probe.
+    const realClient = new Sandbox({
+      apiKey: "test-key",
+      baseUrl: "http://127.0.0.1:1",
+    });
+    const realProvider = createTangleProvider({ client: realClient });
+    await expect(realProvider.capabilities()).resolves.toMatchObject({
+      sessions: { continue: true },
+      retainedControl: { cancellationIdempotency: true },
+    });
+
+    // Without get the run cannot be reconstructed, so nothing is claimed.
+    const withoutReconstruction = createTangleProvider({
+      client: sdkShapedClient({
+        create: async (): Promise<SandboxInstanceLike> => {
+          throw new Error("capabilities never create a sandbox");
+        },
+      }),
+    });
+    const narrowed = await withoutReconstruction.capabilities();
+    expect(narrowed.sessions.continue).toBe(false);
+    expect(narrowed).not.toHaveProperty("retainedControl");
+  });
+
+  it("grants per-sandbox retained control from measured facts under a wrapper client", async () => {
+    // A wrapper without the SDK fetch surface denies the PROVIDER-level
+    // claim, but the concrete box proves every fact, so the sandbox stage
+    // must still grant retained control on the production create path.
+    const sessionId = "session-wrapper-grant";
+    const capableSession = (id: string): SandboxSessionLike => ({
+      id,
+      status: async () => ({ status: "running" }),
+      async *events() {},
+      result: async (options) => ({
+        success: true,
+        status: "success",
+        executionId: echoedExecution(options),
+        durationMs: 1,
+      }),
+      prompt: async (_message, options) => ({
+        success: true,
+        status: "success",
+        executionId: echoedExecution(options),
+        durationMs: 1,
+      }),
+      interrupt: async () => ({ cancelled: true }),
+      cancelRun: async (request) => ({
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        run: request.run,
+        status: "accepted",
+        effect: "not_live",
+      }),
+    });
+    const box: SandboxInstanceLike = {
+      id: "sbx-wrapper-grant",
+      async *streamPrompt() {},
+      dispatchPrompt: async (_message, options) => ({
+        sessionId: options?.sessionId ?? sessionId,
+        executionId: options?.executionId,
+        runControlRef: options?.runControlRef,
+        status: "running",
+        alreadyExisted: false,
+        dispatched: true,
+      }),
+      session: (id) => capableSession(id),
+    };
+    const provider = createTangleProvider({
+      client: {
+        create: async () => box,
+        get: async (id) => (id === box.id ? box : null),
+      },
+    });
+
+    const providerDocument = await provider.capabilities();
+    expect(providerDocument.sessions.continue).toBe(false);
+    expect(providerDocument).not.toHaveProperty("retainedControl");
+
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const controlRef = controlRefForTurn(
+      { prompt: "wrapper grant", turnId: "wrapper-grant-turn" },
+      box.id,
+      sessionId,
+    );
+    const session = environment.session!(sessionId, { controlRef });
+    expect(typeof session.cancelRun).toBe("function");
+    const material = {
+      operationId: "wrapper-grant-cancel",
+      run: controlRef,
+    };
+    await expect(
+      session.cancelRun!({
+        ...material,
+        requestDigest: agentRunCancellationRequestDigest(material),
+      }),
+    ).resolves.toMatchObject({ status: "accepted", run: controlRef });
+  });
+
+  it("rejects a concrete session that cannot honor granted retained control", async () => {
+    // Retained control is granted from the probe session's fact set. A box
+    // whose real sessions diverge from that surface must fail loud at
+    // session construction — this also proves sessions.continue reached the
+    // sandbox stage as true despite the fail-closed provider document.
+    const probeSession = (id: string): SandboxSessionLike => ({
+      id,
+      status: async () => ({ status: "running" }),
+      async *events() {},
+      result: async () => {
+        throw new Error("not called");
+      },
+      prompt: async () => {
+        throw new Error("not called");
+      },
+      interrupt: async () => ({ cancelled: true }),
+      cancelRun: async (request) => ({
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        run: request.run,
+        status: "accepted",
+        effect: "not_live",
+      }),
+    });
+    const box: SandboxInstanceLike = {
+      id: "sbx-divergent-session",
+      async *streamPrompt() {},
+      dispatchPrompt: async () => {
+        throw new Error("not called");
+      },
+      session: (id) => {
+        const session = probeSession(id);
+        if (id === "__tangle-capability-probe__") return session;
+        const { cancelRun: _cancelRun, ...withoutCancelRun } = session;
+        return withoutCancelRun as SandboxSessionLike;
+      },
+    };
+    const provider = createTangleProvider({
+      client: {
+        create: async () => box,
+        get: async (id) => (id === box.id ? box : null),
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    expect(() => environment.session!("session-divergent")).toThrow(
+      /requires SandboxSession\.cancelRun/,
+    );
+  });
+
+  it("rejects retained dispatch before create when cancelRun is unproven", async () => {
+    const create = vi.fn(async (): Promise<SandboxInstanceLike> => ({
+      id: "sbx-unproven-claim",
+      async *streamPrompt() {},
+    }));
+    // A client without the SDK probe surface cannot prove cancelRun, even
+    // with get present: the pre-0.19.6 over-claim fails closed here.
+    const provider = createTangleProvider({
+      client: { create, get: async () => null },
+    });
+    const capabilities = await provider.capabilities();
+    expect(capabilities.sessions.continue).toBe(false);
+    expect(capabilities).not.toHaveProperty("retainedControl");
+
+    await expect(
+      startRetainedRun({
+        provider,
+        environment: {
+          profile: { name: "worker" },
+          idempotencyKey: "unproven-environment",
+        },
+        turn: { prompt: "never dispatched", turnId: "unproven-turn" },
+      }),
+    ).rejects.toThrow(/cannot control a retry-safe retained run/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute another execution's state to the exact control ref", async () => {
+    const sessionId = "session-status-binding";
+    let statusPayload: Record<string, unknown> = { status: "running" };
+    const sandboxSession: SandboxSessionLike = {
+      id: sessionId,
+      status: async () => statusPayload,
+      async *events() {},
+      result: async (options) => ({
+        success: true,
+        status: "success",
+        executionId: echoedExecution(options),
+        durationMs: 1,
+      }),
+      prompt: async (_message, options) => ({
+        success: true,
+        status: "success",
+        executionId: echoedExecution(options),
+        durationMs: 1,
+      }),
+      interrupt: async () => ({ cancelled: true }),
+    };
+    const box: SandboxInstanceLike = {
+      id: "sbx-status-binding",
+      async *streamPrompt() {},
+      session: () => sandboxSession,
+    };
+    const provider = createTangleProvider({
+      client: { create: async () => box },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const controlRef = controlRefForTurn(
+      { prompt: "bind status", turnId: "status-binding-turn" },
+      box.id,
+      sessionId,
+    );
+    const exact = environment.session!(sessionId, { controlRef });
+    const unbound = environment.session!(sessionId);
+
+    // A newer execution owns the session-wide state; the exact session must
+    // not present that state as this run's status.
+    statusPayload = {
+      status: "completed",
+      latestExecutionId: "execution-from-another-caller",
+    };
+    await expect(exact.status()).resolves.toBe("unknown");
+    await expect(unbound.status()).resolves.toBe("completed");
+
+    statusPayload = {
+      status: "completed",
+      latestExecutionId: controlRef.executionId,
+    };
+    await expect(exact.status()).resolves.toBe("completed");
+
+    statusPayload = {
+      status: "running",
+      activeExecutionId: controlRef.executionId,
+    };
+    await expect(exact.status()).resolves.toBe("running");
+
+    // A payload with no execution identity cannot be bound to the exact run.
+    statusPayload = { status: "completed" };
+    await expect(exact.status()).resolves.toBe("unknown");
+  });
+
   it("honors Runtime-owned execution identity and binds it into the request", async () => {
     const sessionId = "runtime-contract-session";
     const executionId = "runtime-contract-execution";
@@ -124,22 +400,11 @@ describe("Tangle retained control", () => {
       },
       session: () => sandboxSession,
     };
-    const baseline = defaultTangleSandboxCapabilities();
     const provider = createTangleProvider({
-      client: {
+      client: sdkShapedClient({
         create: async () => box,
         get: async (id) => (id === box.id ? box : null),
-      },
-      capabilities: {
-        ...baseline,
-        sessions: { ...baseline.sessions, continue: true },
-        retainedControl: {
-          exactRunIdentity: true,
-          resultIdentity: true,
-          eventIdentity: true,
-          cancellationIdempotency: true,
-        },
-      },
+      }),
     });
 
     const run = await startRetainedRun({
@@ -187,20 +452,10 @@ describe("Tangle retained control", () => {
     });
 
     const freshProvider = createTangleProvider({
-      client: {
+      client: sdkShapedClient({
         create: async () => box,
         get: async (id) => (id === box.id ? box : null),
-      },
-      capabilities: {
-        ...baseline,
-        sessions: { ...baseline.sessions, continue: true },
-        retainedControl: {
-          exactRunIdentity: true,
-          resultIdentity: true,
-          eventIdentity: true,
-          cancellationIdempotency: true,
-        },
-      },
+      }),
     });
     const recovered = await reconnectRetainedRun({
       provider: freshProvider,
@@ -966,22 +1221,11 @@ describe("Tangle retained control", () => {
       },
       session: () => sandboxSession,
     };
-    const baseline = defaultTangleSandboxCapabilities();
     const provider = createTangleProvider({
-      client: {
+      client: sdkShapedClient({
         create: async () => box,
         get: async (id) => (id === box.id ? box : null),
-      },
-      capabilities: {
-        ...baseline,
-        sessions: { ...baseline.sessions, continue: true },
-        retainedControl: {
-          exactRunIdentity: true,
-          resultIdentity: true,
-          eventIdentity: true,
-          cancellationIdempotency: true,
-        },
-      },
+      }),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
     const reference = await environment.dispatch!({
@@ -1113,22 +1357,11 @@ describe("Tangle retained control", () => {
       },
       session: () => sandboxSession,
     };
-    const baseline = defaultTangleSandboxCapabilities();
     const provider = createTangleProvider({
-      client: {
+      client: sdkShapedClient({
         create: async () => box,
         get: async (id) => (id === box.id ? box : null),
-      },
-      capabilities: {
-        ...baseline,
-        sessions: { ...baseline.sessions, continue: true },
-        retainedControl: {
-          exactRunIdentity: true,
-          resultIdentity: true,
-          eventIdentity: true,
-          cancellationIdempotency: true,
-        },
-      },
+      }),
     });
 
     await expect(

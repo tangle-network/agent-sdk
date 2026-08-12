@@ -38,7 +38,10 @@ import {
   sameRunControlRef,
   sessionPromptExecutionId,
 } from "./tangle-session-control.js";
-import { sessionStatusFromUnknown } from "./tangle-environment-values.js";
+import {
+  executionBoundSessionStatus,
+  sessionStatusFromUnknown,
+} from "./tangle-environment-values.js";
 import {
   awaitWithSignal,
   boundedIdentifier,
@@ -125,6 +128,12 @@ export function sandboxSessionAsAgentSession(
       const status = await awaitWithSignal(session.status(options), options?.signal);
       options?.signal?.throwIfAborted();
       if (!status) return null;
+      const expectedExecutionId = activeControlRef?.executionId;
+      // Sandbox reports session-wide status. With an exact control reference,
+      // the answer is only valid when the payload binds to that execution.
+      if (expectedExecutionId !== undefined) {
+        return executionBoundSessionStatus(status, expectedExecutionId);
+      }
       return sessionStatusFromUnknown((status as { status?: unknown }).status);
     },
     async *events(options?: { since?: string; executionId?: string; signal?: AbortSignal }): AsyncIterable<AgentEnvironmentEvent> {

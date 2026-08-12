@@ -38,7 +38,7 @@ export function createTangleProvider(
         providerName,
       })
     : undefined;
-  const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> => {
+  const resolveDeclaredCapabilities = async (): Promise<AgentEnvironmentCapabilities> => {
     const configured = options.capabilities
       ? typeof options.capabilities === "function"
         ? await options.capabilities()
@@ -49,16 +49,23 @@ export function createTangleProvider(
         "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
       );
     }
-    const withExactProcess = exactProcess
+    return exactProcess
       ? {
           ...configured,
           exactProcess: { egress: ["blocked", "strict"] as const },
         }
       : configured;
-    return AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForClient(withExactProcess, options.client),
-    );
   };
+  // Provider-boundary document: client-stage facts only. It also validates
+  // the configured document, so create() and get() call it before any effect.
+  const narrowedProviderCapabilities = (
+    declared: AgentEnvironmentCapabilities,
+  ): AgentEnvironmentCapabilities =>
+    AgentEnvironmentCapabilitiesSchema.parse(
+      capabilitiesForClient(declared, options.client),
+    );
+  const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
+    narrowedProviderCapabilities(await resolveDeclaredCapabilities());
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
@@ -71,7 +78,11 @@ export function createTangleProvider(
       if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
         throw new Error("Tangle create providerOptions are not supported");
       }
-      const capabilities = await resolveCapabilities();
+      // The sandbox stage narrows from the declared document, not the
+      // provider-boundary one: the client stage cannot observe box-scoped
+      // facts, so measured instance facts must decide them per sandbox.
+      const declaredCapabilities = await resolveDeclaredCapabilities();
+      narrowedProviderCapabilities(declaredCapabilities);
       const createOptions =
         options.mapCreateInput?.(input) ??
         sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
@@ -109,7 +120,7 @@ export function createTangleProvider(
           box,
           providerName,
           options.client,
-          capabilities,
+          declaredCapabilities,
         );
         input.signal?.throwIfAborted();
         return environment;
@@ -133,18 +144,18 @@ export function createTangleProvider(
           async get(id: string, operation?: { signal?: AbortSignal }): Promise<AgentEnvironment | null> {
             assertProviderOperationOptions(operation, "Tangle get");
             boundedIdentifier(id, "Tangle environment id");
+            const declaredCapabilities = await resolveDeclaredCapabilities();
+            narrowedProviderCapabilities(declaredCapabilities);
             operation?.signal?.throwIfAborted();
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
-            return box
-              ? sandboxInstanceAsEnvironment(
-                  box,
-                  providerName,
-                  options.client,
-                  await resolveCapabilities(),
-                )
-              : null;
+            return sandboxInstanceAsEnvironment(
+              box,
+              providerName,
+              options.client,
+              declaredCapabilities,
+            );
           },
         }
       : {}),

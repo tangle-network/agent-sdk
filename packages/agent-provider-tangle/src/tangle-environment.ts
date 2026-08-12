@@ -10,11 +10,8 @@ import type {
   AgentEnvironmentStatus,
   AgentSession,
   AgentTurnInput,
-  CheckpointRef,
-  CheckpointRequest,
   ExecRequest,
   ExecResult,
-  ForkRequest,
   PlacementInfo,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
@@ -29,24 +26,19 @@ import {
 } from "./tangle-prompt.js";
 import { resolveRetainedSessionControlRef } from "./tangle-session-control.js";
 import {
-  checkpointIdFromResult,
   placementInfoFromLoopPlacement,
   statusFromUnknown,
 } from "./tangle-environment-values.js";
 import { execResultFromSandboxExecResult } from "./tangle-result-values.js";
 import { capabilitiesForSandbox, sandboxCapabilitySupport } from "./tangle-capabilities.js";
 import {
-  attachCleanupHandle,
   awaitWithSignal,
   assertBoundedJson,
   boundedIdentifier,
   boundedString,
 } from "./tangle-contract-safety.js";
 import {
-  assertCheckpointOptions,
-  assertCheckpointRef,
   assertExecOptions,
-  assertForkOptions,
   assertOptionKeys,
 } from "./tangle-environment-validation.js";
 import {
@@ -178,6 +170,10 @@ export function sandboxInstanceAsEnvironment(
               dispatch,
               exactExecutionEvents,
             );
+            // sessions.continue was granted from a probe-session fact; this
+            // backstop holds every concrete session to that fact, so a client
+            // whose sessions diverge from its probe surface fails loud here
+            // instead of failing at the first cancellation.
             if (
               capabilities.sessions.continue &&
               typeof agentSession.cancelRun !== "function"
@@ -225,56 +221,6 @@ export function sandboxInstanceAsEnvironment(
             const result = await awaitWithSignal(box.exec?.(command, options as never), options?.signal);
             options?.signal?.throwIfAborted();
             return execResultFromSandboxExecResult(result);
-          },
-        }
-      : {}),
-    ...(capabilities.branching.checkpoint && box.checkpoint
-      ? {
-          async checkpoint(options?: CheckpointRequest & { signal?: AbortSignal }): Promise<CheckpointRef> {
-            assertCheckpointOptions(options);
-            options?.signal?.throwIfAborted();
-            const result = await awaitWithSignal(box.checkpoint?.(options as never), options?.signal);
-            options?.signal?.throwIfAborted();
-            return { id: checkpointIdFromResult(result), provider: providerName };
-          },
-        }
-      : {}),
-    ...(capabilities.branching.fork && box.fork
-      ? {
-          async fork(checkpoint: CheckpointRef, options?: ForkRequest & { signal?: AbortSignal }): Promise<AgentEnvironment> {
-            assertCheckpointRef(checkpoint);
-            assertForkOptions(options);
-            if (checkpoint.provider !== undefined && checkpoint.provider !== providerName) {
-              throw new Error("Tangle fork checkpoint belongs to another provider");
-            }
-            boundedIdentifier(checkpoint.id, "Tangle checkpoint id");
-            options?.signal?.throwIfAborted();
-            const forked = await awaitWithSignal(box.fork?.(checkpoint.id, options as never), options?.signal);
-            if (!forked) throw new Error("sandbox fork returned no environment");
-            try {
-              options?.signal?.throwIfAborted();
-              if (boundedIdentifier(forked.id, "Tangle fork environment id") === environmentId) {
-                throw new Error("Tangle fork returned the source environment");
-              }
-              return sandboxInstanceAsEnvironment(forked, providerName, client, capabilities);
-            } catch (error) {
-              if (!forked.delete) {
-                const baseError = error instanceof Error ? error : new Error(String(error));
-                attachCleanupHandle(baseError, forked);
-                throw baseError;
-              }
-              try {
-                await forked.delete();
-              } catch (cleanupError) {
-                const combined = new AggregateError(
-                  [error, cleanupError],
-                  "Tangle fork validation and cleanup both failed",
-                );
-                attachCleanupHandle(combined, forked, cleanupError);
-                throw combined;
-              }
-              throw error;
-            }
           },
         }
       : {}),
