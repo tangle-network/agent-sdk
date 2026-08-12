@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.6.3
+
+### Patch Changes
+
+- 2c93c67: Add retry-safe retained-run cancellation, exact result identity metadata, and capability checks for Sandbox sessions.
+
 ## 0.6.2
 
 ### Patch Changes
