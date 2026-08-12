@@ -199,6 +199,22 @@ export function modelRequestsFromOpenAi(value: unknown): number | undefined {
   return modelRequestCount((value as Record<string, unknown>).model_requests);
 }
 
+/** Preserve the provider identity that cli-bridge returns on each completion frame. */
+export function responseIdentityFromOpenAi(value: unknown): {
+  model?: string;
+  system_fingerprint?: string;
+} | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const model = nonEmptyString(record.model);
+  const systemFingerprint = nonEmptyString(record.system_fingerprint);
+  if (model === undefined && systemFingerprint === undefined) return undefined;
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
+  };
+}
+
 export function modelRequestCount(value: unknown): number | undefined {
   return nonNegativeSafeInteger(value);
 }
@@ -213,6 +229,10 @@ function finiteNonNegativeNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function cliBridgeRunId(
