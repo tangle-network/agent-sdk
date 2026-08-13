@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentCandidateExecutionLimitsSchema,
   agentCandidateExecutionPlanMaterialSchema,
   agentCandidateProfileActivationSchema,
   agentCandidateProfilePlanMaterialSchema,
@@ -86,6 +87,7 @@ function planFixture() {
       maxModelCalls: 12,
       maxInputTokens: 100_000,
       maxOutputTokens: 20_000,
+      maxTotalTokens: 120_000,
       maxCostUsd: 5,
     },
     container: {
@@ -136,6 +138,25 @@ function planFixture() {
 }
 
 describe("agentCandidateExecutionPlanMaterialSchema", () => {
+  it("accepts the exact aggregate token field and rejects invalid or unknown fields", () => {
+    const limits = planFixture().limits;
+    expect(agentCandidateExecutionLimitsSchema.safeParse(limits).success).toBe(true);
+    for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(
+        agentCandidateExecutionLimitsSchema.safeParse({
+          ...limits,
+          maxTotalTokens: value,
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      agentCandidateExecutionLimitsSchema.safeParse({
+        ...limits,
+        maxAggregateTokens: 120_000,
+      }).success,
+    ).toBe(false);
+  });
+
   it("binds native activation paths and modes to the canonical profile plan", () => {
     const profilePlan = {
       kind: "agent-profile-workspace-plan" as const,

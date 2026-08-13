@@ -64,6 +64,7 @@ export const agentCandidateModelSettlementCallSchema = z
     startedAtMs: positiveTimestampSchema,
     endedAtMs: positiveTimestampSchema,
     inputTokens: safeCountSchema,
+    accountedInputTokens: safeCountSchema,
     outputTokens: safeCountSchema,
     cachedInputTokens: safeCountSchema,
     reasoningTokens: safeCountSchema,
@@ -94,6 +95,7 @@ const modelSettlementMaterialShape = {
   preparationId: boundedIdentifierSchema,
   grantDigest: sha256DigestSchema,
   closed: z.literal(true),
+  usageWithinLimits: z.boolean(),
   resolved: agentCandidateResolvedModelSchema,
   usage: agentCandidateFixedSpendSchema,
 };
@@ -157,9 +159,15 @@ function refineModelSettlementMaterial(
         message: "settled call model must match the resolved single model",
       });
     }
+    if (call.accountedInputTokens < call.inputTokens) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calls", index, "accountedInputTokens"],
+        message: "accounted input tokens cannot be less than reported input tokens",
+      });
+    }
 
     for (const field of [
-      "inputTokens",
       "outputTokens",
       "cachedInputTokens",
       "reasoningTokens",
@@ -175,6 +183,16 @@ function refineModelSettlementMaterial(
       } else {
         totals[field] = sum;
       }
+    }
+    const accountedInputTotal = totals.inputTokens + call.accountedInputTokens;
+    if (!Number.isSafeInteger(accountedInputTotal)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calls", index, "accountedInputTokens"],
+        message: "model settlement accounted input total exceeds safe integer range",
+      });
+    } else {
+      totals.inputTokens = accountedInputTotal;
     }
   }
 

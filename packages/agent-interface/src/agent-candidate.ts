@@ -510,6 +510,8 @@ export interface AgentCandidateExecutionLimits {
   maxModelCalls: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  /** Optional aggregate cap over accounted input and output tokens. */
+  maxTotalTokens?: number;
   /** Total agent plus grading spend for one complete arm. */
   maxCostUsd: number;
 }
@@ -1092,6 +1094,8 @@ export interface AgentCandidateModelSettlementCall {
   startedAtMs: number;
   endedAtMs: number;
   inputTokens: number;
+  /** Input plus cache units charged against the frozen input cap. */
+  accountedInputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
   reasoningTokens: number;
@@ -1106,8 +1110,11 @@ export interface AgentCandidateModelSettlementMaterial {
   preparationId: string;
   grantDigest: Sha256Digest;
   closed: true;
+  /** Router's terminal check over the frozen model limits. */
+  usageWithinLimits: boolean;
   resolved: AgentCandidateResolvedModel;
   calls: AgentCandidateModelSettlementCall[];
+  /** `inputTokens` is the sum of each call's accounted input tokens. */
   usage: AgentCandidateFixedSpend;
 }
 

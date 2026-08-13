@@ -10,6 +10,7 @@ const limits = {
   maxModelCalls: 2,
   maxInputTokens: 10,
   maxOutputTokens: 8,
+  maxTotalTokens: 18,
   maxCostUsd: 0.000000005,
 };
 
@@ -41,6 +42,7 @@ const overLimitCases: [string, ObservationOverride][] = [
   ["modelCalls", { usage: { modelCalls: 3 } }],
   ["inputTokens", { usage: { inputTokens: 11 } }],
   ["outputTokens", { usage: { outputTokens: 9 } }],
+  ["totalTokens", { usage: { inputTokens: 10, outputTokens: 9 } }],
   ["costUsd", { usage: { costUsdNanos: 6 } }],
 ];
 
@@ -67,6 +69,21 @@ describe("execution limits", () => {
         { ...current, usage: { ...current.usage, costUsdNanos: 15 } },
       ),
     ).toThrow("costUsd");
+  });
+
+  it("rejects an aggregate overflow even when each token channel fits", () => {
+    const current = observation();
+    expect(() =>
+      assertAgentExecutionWithinLimits(
+        { ...limits, maxTotalTokens: 17 },
+        current,
+      ),
+    ).toThrow("totalTokens");
+  });
+
+  it("does not require an aggregate limit for older limit records", () => {
+    const { maxTotalTokens: _maxTotalTokens, ...legacyLimits } = limits;
+    expect(() => assertAgentExecutionWithinLimits(legacyLimits, observation())).not.toThrow();
   });
 
   it.each(overLimitCases)(

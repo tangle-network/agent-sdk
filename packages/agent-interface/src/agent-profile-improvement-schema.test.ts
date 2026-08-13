@@ -66,6 +66,7 @@ const limits = {
   maxModelCalls: 2,
   maxInputTokens: 1_000,
   maxOutputTokens: 1_000,
+  maxTotalTokens: 2_000,
   maxCostUsd: 1,
 };
 

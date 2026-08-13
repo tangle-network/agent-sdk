@@ -122,6 +122,7 @@ Providers must omit the capability unless every property is enforced on their re
 `AgentCandidateBundle` is the portable output of an improvement run: a recursively strict profile, an explicit disabled/no-op/changed code result, a shell-free launch, optional knowledge, isolated memory, ancestry, and spend.
 Execution either pins a candidate-selected container in the bundle or delegates container selection to the benchmark evaluator.
 For evaluator-owned task images, the protected runtime creates a separate plan for every candidate/task pair and binds the exact result shape (workspace change or bounded typed output), UTF-8 instruction bytes, selected OCI index, manifest, platform, task workspace, model, launch, counted attempt, retry policy, and tool-step limit before execution.
+Execution limits may also carry `maxTotalTokens`, which bounds the accounted `inputTokens + outputTokens` total for one arm.
 Instruction delivery is closed to one final argv element, exact stdin bytes followed by EOF, or a fixed file path exposed through `TANGLE_CANDIDATE_TASK_PATH`.
 That plan also binds the profile target workspace and every mounted path; benchmark adapters must restore or exclude task-targeted profile paths before capturing the submitted solution patch.
 Resources are embedded, addressed through closed S3/IPFS locators, or pinned to a full GitHub commit plus content digest.
@@ -130,6 +131,9 @@ These provenance fields are part of the candidate digest; changing or omitting a
 Candidate-authored process configuration is explicitly public; model authorization is evaluator-mediated and secret values never belong in the bundle.
 Because prompts and inline files are arbitrary text, producers must also run their normal secret scanner before persistence.
 Candidate bundles reject unregistered backend extensions instead of accepting an untyped behavior or credential channel.
+
+Each terminal model settlement carries the raw and accounted input tokens for every router call, plus the router's `usageWithinLimits` result.
+The settlement usage input total equals accounted input tokens, so aggregate limits cannot be recomputed from raw provider input alone.
 
 `agentCandidateBundleSchema.parse()` proves only that the wire shape is valid.
 Before execution, an integrity verifier must omit only the top-level `digest`, canonicalize the rest with RFC 8785, hash the UTF-8 bytes to lowercase `sha256:<hex>`, verify every artifact, apply any Git patch to the declared base tree, and emit an `AgentCandidateMaterializationReceipt`.

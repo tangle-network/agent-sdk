@@ -265,6 +265,7 @@ export const agentCandidateExecutionLimitsSchema = z
     maxModelCalls: z.number().int().nonnegative(),
     maxInputTokens: z.number().int().nonnegative(),
     maxOutputTokens: z.number().int().nonnegative(),
+    maxTotalTokens: z.number().int().nonnegative().safe().optional(),
     maxCostUsd: z.number().finite().nonnegative(),
   })
   .strict() satisfies z.ZodType<AgentCandidateExecutionLimits>;
