@@ -156,9 +156,18 @@ export function sandboxCapabilitySupport(
  * Read the deployed sidecar's capability document, when both this SDK and the
  * deployment can produce one.
  *
- * A box that predates `capabilities()` and a deployment that answers `null`
- * both leave the document unknown. The single caller treats unknown exactly
- * like a disclosed `false`: no interaction claim.
+ * Four outcomes leave the document unknown: a box that predates
+ * `capabilities()`, a deployment that answers `null`, a document that omits the
+ * flag, and a read that fails. The single caller treats unknown exactly like a
+ * disclosed `false`: no interaction claim. A failed read never propagates,
+ * because this read happens after the sandbox exists and its caller destroys
+ * the sandbox it cannot describe; a capability nobody claims costs one
+ * unavailable method, while a failed create costs the whole environment.
+ * The failure is reported on the process's warning channel so a deployment
+ * that never answers is visible instead of silently unclaimed.
+ *
+ * An abort is not a read failure: it is the caller withdrawing the operation,
+ * so it propagates unchanged.
  */
 export async function sandboxDeploymentCapabilities(
   box: SandboxInstanceLike,
@@ -166,7 +175,17 @@ export async function sandboxDeploymentCapabilities(
 ): Promise<SandboxRuntimeCapabilityDocument | null> {
   if (typeof box.capabilities !== "function") return null;
   options?.signal?.throwIfAborted();
-  return (await box.capabilities()) ?? null;
+  try {
+    return (await box.capabilities()) ?? null;
+  } catch (error) {
+    if (options?.signal?.aborted) throw error;
+    console.warn(
+      `Tangle capability discovery failed for sandbox ${box.id}; the deployment stays unknown and claims nothing: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
 }
 
 type SandboxHttpClient = ConstructorParameters<typeof SandboxInstance>[0];

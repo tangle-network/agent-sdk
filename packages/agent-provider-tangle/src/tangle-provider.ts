@@ -15,6 +15,7 @@ import {
   sandboxDeploymentCapabilities,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
+import { TangleInteractionLedgerRegistry } from "./tangle-interaction-ledger.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import type {
@@ -35,6 +36,11 @@ export function createTangleProvider(
 ): AgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
   boundedIdentifier(providerName, "Tangle provider name");
+  // Interaction records belong to the sandbox, not to one environment object.
+  // `get()` rebuilds the object for a sandbox that already exists, and the
+  // rebuilt object must answer a retry of a command the earlier object
+  // delivered instead of delivering it a second time.
+  const interactionLedgers = new TangleInteractionLedgerRegistry();
   const exactProcess = options.exactProcess
     ? createTangleExactProcessProvider({
         client: options.client,
@@ -144,6 +150,7 @@ export function createTangleProvider(
           options.client,
           declaredCapabilities,
           deployment,
+          interactionLedgers,
         );
         input.signal?.throwIfAborted();
         return environment;
@@ -185,6 +192,7 @@ export function createTangleProvider(
               options.client,
               declaredCapabilities,
               deployment,
+              interactionLedgers,
             );
           },
         }

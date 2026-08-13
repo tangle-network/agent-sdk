@@ -207,7 +207,14 @@ export function sandboxSessionAsAgentSession(
           if (converted.id === undefined) throw new Error("Tangle session event arrived without a stable id");
           if (seenEventIds.has(converted.id)) continue;
           seenEventIds.add(converted.id);
-          interactions?.observe(session.id, converted);
+          // The run this stream is bound to is the only run coordinate an ask
+          // without its own binding, a plan, can be checked against.
+          interactions?.observe(session.id, converted, {
+            ...(activeControlRef?.runId === undefined
+              ? {}
+              : { runId: activeControlRef.runId }),
+            ...(executionId === undefined ? {} : { executionId }),
+          });
           options?.signal?.throwIfAborted();
           yield converted;
         }

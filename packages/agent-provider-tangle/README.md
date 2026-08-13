@@ -21,6 +21,7 @@ Session status with an exact control reference reports a state only when the pay
 The provider claims `retainedControl` only from probed facts.
 A lazy instance handle minted from the linked Sandbox SDK over the client's `fetch` transport must prove `dispatchPrompt`, `session`, and `cancelRun`, and the client must expose `get` for reconstruction; the probe sends no request and creates no resource.
 The probe measures the linked SDK's method surface, not the connected service; retained-control claims still rest on that measurement alone.
+Service-side truth for retained control needs the sidecar capability endpoint and is a follow-up; only the `interactions` claim reads that endpoint today.
 A client that cannot prove those facts gets no claim, so the runtime rejects retained dispatch before any sandbox is created.
 Each concrete sandbox narrows the declared document independently against its own measured method surface, so a capable sandbox keeps retained control even when the provider-level claim failed closed.
 
@@ -31,8 +32,9 @@ A parked run raises an ask: a question, a permission request, or a plan.
 
 The adapter advertises `interactions` only when the deployment proves it.
 It reads the deployed sidecar's `GET /capabilities` document through `box.capabilities()` and claims the capability only when `interactions.responseDedupe` is `true`.
-An SDK without `box.capabilities()`, a document that omits the flag, and a `null` document all leave the deployment unknown.
+Four outcomes leave the deployment unknown: an SDK without `box.capabilities()`, a document that omits the flag, a `null` document, and a read that fails.
 The adapter withholds the claim and omits both methods for each of these, because an undisclosed deployment cannot prove a retry-safe response.
+A failed read is reported on the process's warning channel and never fails `create()`: the read happens after the sandbox exists, and an unclaimed capability costs one unavailable method while a failed create costs the whole environment.
 The provider-level document never claims `interactions`: the capability document is served per sandbox, and the provider boundary has no sandbox to read.
 
 Each kind maps onto one Sandbox method: a question to `session.answer()`, a permission to `session.respondToPermission()`, and a plan to `session.approvePlan()` or `session.rejectPlan()`.
@@ -43,20 +45,39 @@ Three limits come from the Sandbox transport and appear in the claimed document.
 `concurrentRequests` is false, because `session.answer()` resolves the session's outstanding question and cannot select among several.
 `responseScopes` names `interaction` alone, because the permission route carries the `allow_once` grant; the adapter refuses a broader grant instead of delivering it narrowed.
 
+`session.answer()` carries no interaction id, so an answer reaches whichever question the runtime lists first.
+The adapter therefore delivers an answer only when the bound ask is the session's single unresolved question, and refuses with `binding_mismatch` while another question is also unresolved.
+
+A plan arrives as `plan.submitted` and carries no binding of its own.
+Two coordinates can still prove its run: the exact run of the stream that carried the ask, and the run the answering session is bound to.
+With neither, the adapter cannot tell this run from a foreign one, so it refuses the response instead of deciding the plan on an unchecked binding.
+Observe plan asks on a run-bound stream — `environment.stream()` with an `executionId` or a `controlRef`, or `session.events()` on a session with a control reference — to keep plans answerable.
+
+A resolution record belongs to the sandbox, not to one environment object: the provider holds one ledger per environment id, so an environment rebuilt with `provider.get()` answers a retry of a command the earlier object delivered instead of delivering it again.
+Beyond the provider object the record is gone, and a retry then reaches the Sandbox route, whose durable resolution ledger the `interactions` claim requires, so the agent still receives one answer.
+The runtime's verdict on that retry reaches the caller for a question: an answered question is no longer outstanding, so the SDK refuses it and the adapter reports `unknown_interaction` rather than a second `accepted`.
+The permission route reports its replay in a response body that `session.respondToPermission()` discards, so a retried permission answer the sidecar replayed is reported `accepted`; the answer the ask holds is still exactly this one.
+
 Each outcome maps onto one acknowledgement status.
 
 | Outcome | Status |
 | --- | --- |
-| Sandbox method resolved | `accepted` |
-| Same operation id and command digest, already delivered | the stored acknowledgement |
-| New operation id, same response, already delivered | `already_resolved_same` |
-| Different response for a resolved ask, or route `409 already_resolved_different` | `already_resolved_different` |
+| Sandbox method resolved the bound ask | `accepted` |
+| Same operation id and command digest, already delivered by this provider | the stored acknowledgement |
+| New operation id, same response, already delivered by this provider | `already_resolved_same` |
+| Different response for an ask this provider resolved, or route `409 already_resolved_different` | `already_resolved_different` |
 | Stale or foreign binding, or route `409 binding_mismatch` | `binding_mismatch` |
-| Binding names another run | `unknown_run` |
-| Unobserved ask, or route `410` or `404` | `unknown_interaction` |
+| Another question is unresolved, so `session.answer()` cannot select the bound ask | `binding_mismatch` |
+| Plan observed on a stream bound to no exact run | `binding_mismatch` |
+| Binding names another run than the ask was raised on | `unknown_run` |
+| Unobserved ask, no outstanding question on the session, or route `410` or `404` | `unknown_interaction` |
 | Ask withdrawn by `interaction.cancel` | `cancelled` |
 | Answer spec rejected the response, or route `400` | `invalid_response` |
-| Transport cannot carry the answer, or route `5xx` or `501` | `transport_failure` |
+| Route `408`, `429`, `5xx`, or an SDK network error | `transport_failure`, `retryable: true` |
+| Transport cannot carry the answer, route `501`, an unattributed `409`, or any rejection carrying no status | `transport_failure`, `retryable: false` |
+
+`retryable` is claimed only from a shape that proves the request never reached the route or that the route asked for a retry.
+A rejection this adapter cannot attribute is reported as terminal, because retrying an unattributed failure can land a stale answer on a later ask.
 
 Pass the SDK client itself when retained control matters.
 An object-spread wrapper (`{ ...client }`) drops class prototype methods, including `fetch`, so the provider treats the wrapper as a non-SDK client and claims no retained control.

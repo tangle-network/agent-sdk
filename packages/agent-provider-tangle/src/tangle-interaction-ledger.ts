@@ -1,21 +1,30 @@
 import {
+  InteractionKind,
   InteractionRequestSchema,
   type InteractionAcknowledgement,
   type InteractionRequest,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 
+/** Run coordinates the stream that carried an ask was bound to. */
+export interface ObservedRun {
+  runId?: string;
+  executionId?: string;
+}
+
 /**
  * An outstanding ask this environment observed on a session stream.
  *
  * `request` is present only when the ask arrived as an `interaction` event,
  * which is the sole source of a verifiable binding and answer spec. A plan
- * arrives as `plan.submitted` and carries neither, so a plan response is
- * checked against the coordinates the adapter itself knows.
+ * arrives as `plan.submitted` and carries neither, so `run` holds the exact
+ * coordinates of the stream that carried it, and a plan response is checked
+ * against those.
  */
 export interface ObservedInteraction {
   kind: string;
   request?: InteractionRequest;
+  run?: ObservedRun;
   cancelled: boolean;
 }
 
@@ -27,6 +36,7 @@ export interface RecordedInteractionResolution {
   acknowledgement: InteractionAcknowledgement;
 }
 
+const MAX_TRACKED_ENVIRONMENTS = 256;
 const MAX_TRACKED_SESSIONS = 256;
 const MAX_TRACKED_INTERACTIONS_PER_SESSION = 1_024;
 
@@ -53,6 +63,16 @@ function nonEmptyId(value: unknown): string | undefined {
     : undefined;
 }
 
+function observedRun(run: ObservedRun | undefined): ObservedRun | undefined {
+  const runId = nonEmptyId(run?.runId);
+  const executionId = nonEmptyId(run?.executionId);
+  if (runId === undefined && executionId === undefined) return undefined;
+  return {
+    ...(runId === undefined ? {} : { runId }),
+    ...(executionId === undefined ? {} : { executionId }),
+  };
+}
+
 /**
  * Per-environment record of the asks its sessions raised and the answers this
  * adapter already delivered.
@@ -62,15 +82,27 @@ function nonEmptyId(value: unknown): string | undefined {
  * Sandbox method that resolves it. An unobserved id is therefore reported as
  * `unknown_interaction` instead of guessed at.
  *
- * The maps are bounded and evict oldest-first. Evicting a resolution costs
- * this adapter its local replay answer only: the sidecar's durable resolution
- * ledger still answers the retry, so the response is never delivered twice.
+ * The maps are bounded and evict oldest-first. An evicted resolution costs this
+ * adapter the local replay answer for that interaction: the retry then reaches
+ * the Sandbox route, whose durable ledger the `interactions` claim requires, so
+ * the agent still receives one answer — but this adapter can no longer prove
+ * which side resolved the ask, and it reports the runtime's own verdict.
  */
 export class TangleInteractionLedger {
   private readonly sessions = new Map<string, SessionInteractions>();
 
-  /** Record an ask, or its withdrawal, from one converted session event. */
-  observe(sessionId: string, event: AgentEnvironmentEvent): void {
+  /**
+   * Record an ask, or its withdrawal, from one converted session event.
+   *
+   * `run` names the exact run the carrying stream is bound to. It is the only
+   * run coordinate available for a `plan.submitted` ask, which carries no
+   * binding of its own.
+   */
+  observe(
+    sessionId: string,
+    event: AgentEnvironmentEvent,
+    run?: ObservedRun,
+  ): void {
     if (event.type === "interaction") {
       const parsed = InteractionRequestSchema.safeParse(
         eventPayload(event).request,
@@ -99,7 +131,12 @@ export class TangleInteractionLedger {
       if (!plan || typeof plan !== "object" || Array.isArray(plan)) return;
       const id = nonEmptyId((plan as { id?: unknown }).id);
       if (id === undefined) return;
-      this.entry(sessionId).observed.set(id, { kind: "plan", cancelled: false });
+      const carried = observedRun(run);
+      this.entry(sessionId).observed.set(id, {
+        kind: InteractionKind.Plan,
+        ...(carried ? { run: carried } : {}),
+        cancelled: false,
+      });
       this.bound(sessionId);
     }
   }
@@ -109,6 +146,26 @@ export class TangleInteractionLedger {
     interactionId: string,
   ): ObservedInteraction | undefined {
     return this.sessions.get(sessionId)?.observed.get(interactionId);
+  }
+
+  /**
+   * Ids of the asks of one kind this adapter observed on a session and has
+   * neither resolved nor seen withdrawn.
+   *
+   * `SandboxSession.answer()` carries no interaction id, so the caller uses
+   * this set to prove which ask an untargeted delivery lands on.
+   */
+  unresolved(sessionId: string, kind: string): string[] {
+    const entry = this.sessions.get(sessionId);
+    if (entry === undefined) return [];
+    const ids: string[] = [];
+    for (const [id, observed] of entry.observed) {
+      if (observed.kind !== kind) continue;
+      if (observed.cancelled) continue;
+      if (entry.resolutions.has(id)) continue;
+      ids.push(id);
+    }
+    return ids;
   }
 
   resolution(
@@ -143,5 +200,27 @@ export class TangleInteractionLedger {
   private bound(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
     if (entry) evictOldest(entry.observed, MAX_TRACKED_INTERACTIONS_PER_SESSION);
+  }
+}
+
+/**
+ * One ledger per environment id, held by the provider that mints the
+ * environments.
+ *
+ * `provider.get()` rebuilds the environment object for a sandbox that already
+ * exists. The rebuilt object answers response commands the earlier object
+ * delivered, so the resolution record must outlive the object: a per-object
+ * ledger would report a second delivery as a fresh `accepted`.
+ */
+export class TangleInteractionLedgerRegistry {
+  private readonly ledgers = new Map<string, TangleInteractionLedger>();
+
+  ledgerFor(environmentId: string): TangleInteractionLedger {
+    const existing = this.ledgers.get(environmentId);
+    if (existing) return existing;
+    const created = new TangleInteractionLedger();
+    this.ledgers.set(environmentId, created);
+    evictOldest(this.ledgers, MAX_TRACKED_ENVIRONMENTS);
+    return created;
   }
 }

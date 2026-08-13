@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
   type AgentEnvironment,
@@ -42,6 +42,7 @@ interface SessionCalls {
   permissions: Array<{ id: string; response: "allow" | "deny" }>;
   approvals: Array<string | undefined>;
   rejections: Array<{ feedback: string; planId?: string }>;
+  deletes: number;
 }
 
 interface Harness {
@@ -53,6 +54,8 @@ interface Harness {
 function createHarness(options?: {
   deployment?: SandboxRuntimeCapabilityDocument | null;
   omitCapabilities?: boolean;
+  capabilitiesError?: unknown;
+  deletable?: boolean;
   answer?: (answers: Record<string, string[]>) => Promise<void>;
   respondToPermission?: (
     id: string,
@@ -64,6 +67,7 @@ function createHarness(options?: {
     permissions: [],
     approvals: [],
     rejections: [],
+    deletes: 0,
   };
   const events: SandboxEvent[] = [];
   const session: SandboxSessionLike = {
@@ -114,16 +118,30 @@ function createHarness(options?: {
       for (const event of events) yield event;
     },
     session: () => session,
+    ...(options?.deletable
+      ? {
+          delete: async () => {
+            calls.deletes += 1;
+          },
+        }
+      : {}),
     ...(options?.omitCapabilities
       ? {}
       : {
-          capabilities: async () =>
-            options === undefined || options.deployment === undefined
+          capabilities: async () => {
+            if (options?.capabilitiesError !== undefined) {
+              throw options.capabilitiesError;
+            }
+            return options === undefined || options.deployment === undefined
               ? PROVING_DEPLOYMENT
-              : options.deployment,
+              : options.deployment;
+          },
         }),
   };
-  const client: SandboxClientLike = { create: async () => box };
+  const client: SandboxClientLike = {
+    create: async () => box,
+    get: async (id: string) => (id === ENVIRONMENT_ID ? box : null),
+  };
   return { provider: createTangleProvider({ client }), calls, events };
 }
 
@@ -206,18 +224,39 @@ function responseCommand(input: {
 
 const EMPTY_DIGEST: InteractionRequest["requestDigest"] = `sha256:${"0".repeat(64)}`;
 
-async function environmentWithAsk(
-  harness: Harness,
-  asks: SandboxEvent[],
-): Promise<AgentEnvironment> {
-  const environment = await harness.provider.create({ profile: { name: "worker" } });
-  harness.events.push(...asks);
+/** The exact run a plan ask must be observed on to be answerable. */
+const EXACT_CONTROL_REF = {
+  runId: RUN_ID,
+  provider: PROVIDER,
+  environmentId: ENVIRONMENT_ID,
+  sessionId: SESSION_ID,
+  executionId: EXECUTION_ID,
+  requestDigest: EMPTY_DIGEST,
+};
+
+async function observeAsks(
+  environment: AgentEnvironment,
+  options?: { boundToRun?: boolean },
+): Promise<void> {
   for await (const _event of environment.stream({
     prompt: "start",
     sessionId: SESSION_ID,
+    ...(options?.boundToRun
+      ? { executionId: EXECUTION_ID, controlRef: EXACT_CONTROL_REF }
+      : {}),
   })) {
     // Draining the stream is how the adapter observes an outstanding ask.
   }
+}
+
+async function environmentWithAsk(
+  harness: Harness,
+  asks: SandboxEvent[],
+  options?: { boundToRun?: boolean },
+): Promise<AgentEnvironment> {
+  const environment = await harness.provider.create({ profile: { name: "worker" } });
+  harness.events.push(...asks);
+  await observeAsks(environment, options);
   return environment;
 }
 
@@ -375,9 +414,11 @@ describe("tangle interaction responses", () => {
 
   it("approves and rejects a plan through the plan decision methods", async () => {
     const approved = createHarness();
-    const approvedEnvironment = await environmentWithAsk(approved, [
-      planEvent("plan-approve"),
-    ]);
+    const approvedEnvironment = await environmentWithAsk(
+      approved,
+      [planEvent("plan-approve")],
+      { boundToRun: true },
+    );
     const approval = await approvedEnvironment.respondToInteraction?.(
       responseCommand({
         operationId: "op-plan-approve",
@@ -389,9 +430,11 @@ describe("tangle interaction responses", () => {
     expect(approved.calls.approvals).toEqual(["plan-approve"]);
 
     const rejected = createHarness();
-    const rejectedEnvironment = await environmentWithAsk(rejected, [
-      planEvent("plan-reject"),
-    ]);
+    const rejectedEnvironment = await environmentWithAsk(
+      rejected,
+      [planEvent("plan-reject")],
+      { boundToRun: true },
+    );
     const rejection = await rejectedEnvironment.respondToInteraction?.(
       responseCommand({
         operationId: "op-plan-reject",
@@ -619,15 +662,15 @@ describe("tangle interaction responses", () => {
       failure: Record<string, unknown>;
       status: string;
       message?: RegExp;
+      retryable?: boolean;
     }> = [
       {
         failure: {
           status: 409,
           currentState: "already_resolved_different",
-          existingResponseDigest: `sha256:${"a".repeat(64)}`,
         },
         status: "already_resolved_different",
-        message: /existing sha256:a{64}/,
+        message: /route refused/,
       },
       {
         failure: { status: 409, currentState: "binding_mismatch" },
@@ -636,7 +679,21 @@ describe("tangle interaction responses", () => {
       { failure: { status: 410 }, status: "unknown_interaction" },
       { failure: { status: 404 }, status: "unknown_interaction" },
       { failure: { status: 400 }, status: "invalid_response" },
-      { failure: { status: 503 }, status: "transport_failure" },
+      {
+        failure: { status: 503 },
+        status: "transport_failure",
+        retryable: true,
+      },
+      {
+        failure: { status: 408, code: "TIMEOUT" },
+        status: "transport_failure",
+        retryable: true,
+      },
+      {
+        failure: { code: "NETWORK_ERROR" },
+        status: "transport_failure",
+        retryable: true,
+      },
     ];
 
     for (const outcome of outcomes) {
@@ -663,6 +720,9 @@ describe("tangle interaction responses", () => {
       );
       expect(acknowledgement?.status).toBe(outcome.status);
       if (outcome.message) expect(acknowledgement?.message).toMatch(outcome.message);
+      if (outcome.retryable !== undefined) {
+        expect(acknowledgement?.retryable).toBe(outcome.retryable);
+      }
       // A refused delivery must not become a local resolution record.
       const retried = await environment.respondToInteraction?.(
         responseCommand({
@@ -699,6 +759,226 @@ describe("tangle interaction responses", () => {
 
     expect(acknowledgement?.status).toBe("accepted");
     expect(harness.calls.answers).toEqual([{ answer: ["yes"] }]);
+  });
+
+  it("refuses a question answer it cannot aim at the bound ask", async () => {
+    const harness = createHarness();
+    const older = interactionRequest({
+      id: "ask-older",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const newer = interactionRequest({
+      id: "ask-newer",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const environment = await environmentWithAsk(harness, [
+      interactionEvent(older),
+      interactionEvent(newer),
+    ]);
+
+    const acknowledgement = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-newer",
+        interactionId: newer.id,
+        requestDigest: newer.requestDigest,
+        response: { id: newer.id, outcome: "accepted", data: { answer: "newer" } },
+      }),
+    );
+
+    expect(acknowledgement?.status).toBe("binding_mismatch");
+    expect(acknowledgement?.message).toMatch(/ask-older/);
+    // The Sandbox question route answers whichever question the session lists
+    // first, so an unaimed delivery would answer the older ask.
+    expect(harness.calls.answers).toEqual([]);
+  });
+
+  it("answers the sole remaining question once the other ask is withdrawn", async () => {
+    const harness = createHarness();
+    const older = interactionRequest({
+      id: "ask-withdrawn",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const newer = interactionRequest({
+      id: "ask-remaining",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const environment = await environmentWithAsk(harness, [
+      interactionEvent(older),
+      interactionEvent(newer),
+      {
+        type: "interaction.cancel",
+        id: "event-cancel-older",
+        data: { id: older.id, reason: "run ended" },
+      } as unknown as SandboxEvent,
+    ]);
+
+    const acknowledgement = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-remaining",
+        interactionId: newer.id,
+        requestDigest: newer.requestDigest,
+        response: {
+          id: newer.id,
+          outcome: "accepted",
+          data: { answer: "remaining" },
+        },
+      }),
+    );
+
+    expect(acknowledgement?.status).toBe("accepted");
+    expect(harness.calls.answers).toEqual([{ answer: ["remaining"] }]);
+  });
+
+  it("answers a retry through a rebuilt environment without delivering twice", async () => {
+    const harness = createHarness();
+    const request = interactionRequest({
+      id: "ask-rebuilt",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const environment = await environmentWithAsk(harness, [
+      interactionEvent(request),
+    ]);
+    const response: InteractionResponse = {
+      id: request.id,
+      outcome: "accepted",
+      data: { answer: "yes" },
+    };
+    const command = responseCommand({
+      operationId: "op-rebuilt",
+      interactionId: request.id,
+      requestDigest: request.requestDigest,
+      response,
+    });
+    const first = await environment.respondToInteraction?.(command);
+
+    const rebuilt = await harness.provider.get?.(ENVIRONMENT_ID);
+    expect(rebuilt).not.toBeNull();
+    // The rebuilt object reads the same ask from the session stream again.
+    await observeAsks(rebuilt as AgentEnvironment);
+    const replayed = await rebuilt?.respondToInteraction?.(command);
+    const sameAnswer = await rebuilt?.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-rebuilt-second",
+        interactionId: request.id,
+        requestDigest: request.requestDigest,
+        response,
+      }),
+    );
+
+    expect(first?.status).toBe("accepted");
+    expect(replayed).toEqual(first);
+    expect(sameAnswer?.status).toBe("already_resolved_same");
+    expect(harness.calls.answers).toHaveLength(1);
+  });
+
+  it("refuses a plan response bound to a foreign run", async () => {
+    const harness = createHarness();
+    const environment = await environmentWithAsk(
+      harness,
+      [planEvent("plan-foreign")],
+      { boundToRun: true },
+    );
+
+    const foreignRun = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-plan-foreign-run",
+        interactionId: "plan-foreign",
+        binding: { runId: "run-somebody-else" },
+        response: { id: "plan-foreign", outcome: "accepted" },
+      }),
+    );
+    const foreignExecution = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-plan-foreign-execution",
+        interactionId: "plan-foreign",
+        binding: { executionId: "execution-other" },
+        response: { id: "plan-foreign", outcome: "accepted" },
+      }),
+    );
+
+    expect(foreignRun?.status).toBe("unknown_run");
+    expect(foreignExecution?.status).toBe("binding_mismatch");
+    expect(harness.calls.approvals).toEqual([]);
+  });
+
+  it("refuses a plan observed on a stream bound to no exact run", async () => {
+    const harness = createHarness();
+    const environment = await environmentWithAsk(harness, [
+      planEvent("plan-unbound"),
+    ]);
+
+    const acknowledgement = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-plan-unbound",
+        interactionId: "plan-unbound",
+        response: { id: "plan-unbound", outcome: "accepted" },
+      }),
+    );
+
+    expect(acknowledgement?.status).toBe("binding_mismatch");
+    expect(acknowledgement?.message).toMatch(/bound to no exact run/);
+    expect(harness.calls.approvals).toEqual([]);
+  });
+
+  it("reports the runtime's missing outstanding question as unknown", async () => {
+    const harness = createHarness({
+      answer: async () => {
+        throw new Error("No outstanding question to answer for this session");
+      },
+    });
+    const request = interactionRequest({
+      id: "ask-gone",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const environment = await environmentWithAsk(harness, [
+      interactionEvent(request),
+    ]);
+
+    const acknowledgement = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-gone",
+        interactionId: request.id,
+        requestDigest: request.requestDigest,
+        response: { id: request.id, outcome: "accepted", data: { answer: "yes" } },
+      }),
+    );
+
+    expect(acknowledgement?.status).toBe("unknown_interaction");
+    expect(acknowledgement?.retryable).toBeUndefined();
+  });
+
+  it("never calls a rejection without a status retryable", async () => {
+    const harness = createHarness({
+      answer: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    const request = interactionRequest({
+      id: "ask-unattributed",
+      kind: "question",
+      fields: [{ type: "text", name: "answer", label: "Answer", required: true }],
+    });
+    const environment = await environmentWithAsk(harness, [
+      interactionEvent(request),
+    ]);
+
+    const acknowledgement = await environment.respondToInteraction?.(
+      responseCommand({
+        operationId: "op-unattributed",
+        interactionId: request.id,
+        requestDigest: request.requestDigest,
+        response: { id: request.id, outcome: "accepted", data: { answer: "yes" } },
+      }),
+    );
+
+    expect(acknowledgement?.status).toBe("transport_failure");
+    expect(acknowledgement?.retryable).toBe(false);
   });
 });
 
@@ -764,6 +1044,29 @@ describe("tangle interaction capability gating", () => {
     });
     const environment = await harness.provider.create({ profile: { name: "worker" } });
     expect(environment.respondToInteraction).toBeUndefined();
+  });
+
+  it("keeps the created sandbox when capability discovery fails", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const harness = createHarness({
+        capabilitiesError: Object.assign(new Error("capabilities unavailable"), {
+          status: 503,
+        }),
+        deletable: true,
+      });
+      const environment = await harness.provider.create({
+        profile: { name: "worker" },
+      });
+
+      expect(environment.id).toBe(ENVIRONMENT_ID);
+      expect(environment.respondToInteraction).toBeUndefined();
+      expect(harness.calls.deletes).toBe(0);
+      expect(warned).toHaveBeenCalledTimes(1);
+      expect(String(warned.mock.calls[0]?.[0])).toContain(ENVIRONMENT_ID);
+    } finally {
+      warned.mockRestore();
+    }
   });
 
   it("withholds the capability when the SDK predates capability discovery", async () => {

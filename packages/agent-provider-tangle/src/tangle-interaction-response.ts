@@ -28,6 +28,17 @@ const PLAN_FEEDBACK_FIELD = "feedback";
 /** The Sandbox grant this adapter's transport can carry without downgrading it. */
 const CARRIED_PERMISSION_GRANT = "allow_once";
 
+/**
+ * The Sandbox SDK's refusal when a session holds no outstanding question.
+ * `SandboxSession.answer()` resolves the session's outstanding question, so it
+ * fails with this exact message once the ask left the outstanding set.
+ */
+const NO_OUTSTANDING_QUESTION_MESSAGE =
+  "No outstanding question to answer for this session";
+
+/** The SDK error code that proves the request never reached the route. */
+const SDK_NETWORK_ERROR_CODE = "NETWORK_ERROR";
+
 export interface TangleInteractionResponderOptions {
   session: SandboxSessionLike;
   sessionId: string;
@@ -44,6 +55,12 @@ export type TangleInteractionResponder = (
 ) => Promise<InteractionAcknowledgement>;
 
 type AcknowledgementExtras = { message?: string; retryable?: boolean };
+
+/** One refused command: the canonical status and the reason for it. */
+interface Refusal {
+  status: InteractionAcknowledgementStatus;
+  extras: AcknowledgementExtras;
+}
 
 /** Canonical digest of the response material, matching the sidecar's ledger key. */
 function responseMaterialDigest(response: InteractionResponse): string {
@@ -64,10 +81,9 @@ function errorConflictState(error: unknown): string | undefined {
   return typeof state === "string" ? state : undefined;
 }
 
-function errorExistingDigest(error: unknown): string | undefined {
-  const digest = (error as { existingResponseDigest?: unknown } | null)
-    ?.existingResponseDigest;
-  return typeof digest === "string" && digest.length > 0 ? digest : undefined;
+function errorCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -80,25 +96,25 @@ function errorMessage(error: unknown): string {
  *
  * The interaction route's outcomes are the source; the SDK's error classes
  * carry the HTTP status and, for a 409, the sidecar's own conflict state.
- * A status this adapter cannot attribute becomes `transport_failure`, never
- * a fabricated success or a guessed conflict.
+ * `retryable` is claimed only from a shape that proves the request did not
+ * reach the route or that the route asked for a retry: a transport error code,
+ * a timeout, a rate limit, or a 5xx. Every other rejection, including one that
+ * carries no status at all, is reported as terminal, because a retry of an
+ * unattributed failure can land an answer on a later ask.
  */
-function statusFromSandboxError(error: unknown): {
-  status: InteractionAcknowledgementStatus;
-  extras: AcknowledgementExtras;
-} {
+function statusFromSandboxError(error: unknown): Refusal {
   const message = errorMessage(error);
   const code = errorStatusCode(error);
+  if (message.includes(NO_OUTSTANDING_QUESTION_MESSAGE)) {
+    // The runtime holds no outstanding question, so this ask left the
+    // outstanding set: answered, withdrawn, or expired. Which of those is not
+    // disclosed, so the adapter reports the ask as gone and claims no delivery.
+    return { status: "unknown_interaction", extras: { message } };
+  }
   if (code === 409) {
     const state = errorConflictState(error);
     if (state === "already_resolved_different") {
-      const existing = errorExistingDigest(error);
-      return {
-        status: "already_resolved_different",
-        extras: {
-          message: existing ? `${message} (existing ${existing})` : message,
-        },
-      };
+      return { status: "already_resolved_different", extras: { message } };
     }
     if (state === "binding_mismatch") {
       return { status: "binding_mismatch", extras: { message } };
@@ -117,13 +133,12 @@ function statusFromSandboxError(error: unknown): {
   if (code === 501) {
     return { status: "transport_failure", extras: { message, retryable: false } };
   }
-  // A missing status is a transport-level failure (network, abort mid-flight);
-  // a 5xx is the runtime failing to complete a well-formed request. Both are
-  // safe to retry: the sidecar's durable ledger refuses a second delivery.
-  return {
-    status: "transport_failure",
-    extras: { message, retryable: code === undefined || code >= 500 },
-  };
+  const retryable =
+    code === 408 ||
+    code === 429 ||
+    (code !== undefined && code >= 500) ||
+    (code === undefined && errorCode(error) === SDK_NETWORK_ERROR_CODE);
+  return { status: "transport_failure", extras: { message, retryable } };
 }
 
 /** Values the Sandbox question route accepts, keyed by answer field name. */
@@ -164,14 +179,27 @@ function planFeedbackOfResponse(response: InteractionResponse): string | undefin
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function transportRefusal(message: string): Refusal {
+  return { status: "transport_failure", extras: { message, retryable: false } };
+}
+
 /**
  * Answer outstanding interactions on one retained Sandbox session.
  *
  * Every answer is checked against the ask this adapter observed before any
- * request leaves the process: an unobserved id, a stale binding, or a response
- * the ask's answer spec rejects is refused locally with the canonical status.
+ * request leaves the process: an unobserved id, a stale binding, a response the
+ * ask's answer spec rejects, or a delivery this adapter cannot aim at the bound
+ * ask is refused locally with the canonical status.
+ *
  * The adapter's own resolution record answers a retry of a command it already
- * delivered, so a lost acknowledgement never re-delivers an answer.
+ * delivered. The record lives in the provider's ledger for the environment, so
+ * it survives rebuilding the environment object with `provider.get()`. Beyond
+ * the provider object the record is gone and the retry reaches the Sandbox
+ * route, whose durable ledger the `interactions` claim requires: the agent
+ * still receives one answer. A question then carries the runtime's own verdict
+ * back, because an answered question is no longer outstanding and the SDK
+ * refuses it. A permission does not: the route reports its replay in a body the
+ * SDK discards, so that retry is acknowledged `accepted`.
  */
 export function tangleInteractionResponder(
   options: TangleInteractionResponderOptions,
@@ -196,133 +224,169 @@ export function tangleInteractionResponder(
   const bindingVerdict = (
     command: InteractionResponseCommand,
     observed: ObservedInteraction,
-  ): InteractionAcknowledgementStatus | undefined => {
+  ): Refusal | undefined => {
     const binding = command.binding;
+    const stale: AcknowledgementExtras = {
+      message: `response command binding is stale for interaction ${binding.interactionId}`,
+    };
     if (binding.provider !== provider || binding.environmentId !== environmentId) {
-      return "binding_mismatch";
+      return { status: "binding_mismatch", extras: stale };
     }
-    if (binding.sessionId !== sessionId) return "binding_mismatch";
+    if (binding.sessionId !== sessionId) {
+      return { status: "binding_mismatch", extras: stale };
+    }
     if (observed.request) {
       const expected = bindingOfObservedRequest(observed.request);
-      if (binding.runId !== expected.runId) return "unknown_run";
+      if (binding.runId !== expected.runId) {
+        return { status: "unknown_run", extras: stale };
+      }
       if (
         binding.executionId !== expected.executionId ||
         binding.interactionId !== expected.interactionId ||
         binding.requestDigest !== expected.requestDigest
       ) {
-        return "binding_mismatch";
+        return { status: "binding_mismatch", extras: stale };
       }
       return undefined;
     }
-    // A plan carries no request binding. Hold it to the run this session is
-    // bound to, which is the only exact coordinate the adapter can prove.
-    const run = options.controlRef?.();
-    if (run === undefined) return undefined;
-    if (run.runId !== undefined && binding.runId !== run.runId) return "unknown_run";
-    if (binding.executionId !== run.executionId) return "binding_mismatch";
+    // A plan carries no request binding. Two coordinates can still prove its
+    // run: the stream that carried the ask, and the run this session is bound
+    // to. With neither, the adapter cannot tell this run from a foreign one,
+    // so the response is refused instead of delivered on an unchecked binding.
+    const carried = observed.run;
+    const sessionRun = options.controlRef?.();
+    const provenRunId = carried?.runId ?? sessionRun?.runId;
+    const provenExecutionId = carried?.executionId ?? sessionRun?.executionId;
+    if (provenRunId !== undefined && binding.runId !== provenRunId) {
+      return { status: "unknown_run", extras: stale };
+    }
+    if (provenExecutionId === undefined) {
+      return {
+        status: "binding_mismatch",
+        extras: {
+          message: `interaction ${binding.interactionId} was observed on a stream bound to no exact run, so its binding cannot be checked`,
+        },
+      };
+    }
+    if (binding.executionId !== provenExecutionId) {
+      return { status: "binding_mismatch", extras: stale };
+    }
     return undefined;
+  };
+
+  /**
+   * Prove that an untargeted question delivery lands on the bound ask.
+   *
+   * `SandboxSession.answer()` carries no interaction id: the SDK resolves the
+   * session's outstanding question. This adapter therefore delivers only when
+   * the ask it was asked to answer is the session's single unresolved
+   * question, which is the transport limit the capability document declares as
+   * `concurrentRequests: false`.
+   */
+  const questionTargetRefusal = (interactionId: string): Refusal | undefined => {
+    const unresolved = ledger.unresolved(sessionId, InteractionKind.Question);
+    if (unresolved.length === 1 && unresolved[0] === interactionId) {
+      return undefined;
+    }
+    const others = unresolved.filter((id) => id !== interactionId);
+    return {
+      status: "binding_mismatch",
+      extras: {
+        message:
+          others.length > 0
+            ? `Tangle sessions answer the session's outstanding question and cannot select interaction ${interactionId} while ${others.join(", ")} is also unresolved`
+            : `interaction ${interactionId} is not the session's outstanding question`,
+      },
+    };
   };
 
   const deliver = async (
     command: InteractionResponseCommand,
     observed: ObservedInteraction,
     signal?: AbortSignal,
-  ): Promise<InteractionAcknowledgementStatus | AcknowledgementExtras> => {
+  ): Promise<Refusal | undefined> => {
     const interactionId = command.binding.interactionId;
     const response = command.response;
     if (observed.kind === InteractionKind.Question) {
       if (response.outcome !== "accepted") {
-        return {
-          message: `Tangle sessions answer a question; they cannot submit a ${response.outcome} question resolution`,
-          retryable: false,
-        };
+        return transportRefusal(
+          `Tangle sessions answer a question; they cannot submit a ${response.outcome} question resolution`,
+        );
       }
       const answers = questionAnswersFromResponse(response);
       if (answers === undefined) {
-        return {
-          message: "Tangle sessions cannot carry a secret answer to a question",
-          retryable: false,
-        };
+        return transportRefusal(
+          "Tangle sessions cannot carry a secret answer to a question",
+        );
       }
       if (!session.answer) {
-        return {
-          message: "Tangle sandbox session cannot answer questions",
-          retryable: false,
-        };
+        return transportRefusal("Tangle sandbox session cannot answer questions");
       }
+      const untargetable = questionTargetRefusal(interactionId);
+      if (untargetable) return untargetable;
       await awaitWithSignal(session.answer(answers), signal);
-      return "accepted";
+      return undefined;
     }
 
     if (observed.kind === InteractionKind.Permission) {
       if (!session.respondToPermission) {
-        return {
-          message: "Tangle sandbox session cannot resolve permissions",
-          retryable: false,
-        };
+        return transportRefusal("Tangle sandbox session cannot resolve permissions");
       }
       if (response.outcome !== "accepted") {
         await awaitWithSignal(
           session.respondToPermission(interactionId, { response: "deny" }),
           signal,
         );
-        return "accepted";
+        return undefined;
       }
       const grant = permissionGrantOfResponse(response);
       if (grant === undefined) {
-        return {
-          message: 'permission response must select exactly one "grant" value',
-          retryable: false,
-        };
+        return transportRefusal(
+          'permission response must select exactly one "grant" value',
+        );
       }
       if (grant === "deny") {
         await awaitWithSignal(
           session.respondToPermission(interactionId, { response: "deny" }),
           signal,
         );
-        return "accepted";
+        return undefined;
       }
       if (grant !== CARRIED_PERMISSION_GRANT) {
         // Sending "allow" would narrow a session or persistent grant to a
         // single use, which answers a different question than the one asked.
-        return {
-          message: `Tangle sessions carry the "${CARRIED_PERMISSION_GRANT}" grant only; "${grant}" cannot be delivered`,
-          retryable: false,
-        };
+        return transportRefusal(
+          `Tangle sessions carry the "${CARRIED_PERMISSION_GRANT}" grant only; "${grant}" cannot be delivered`,
+        );
       }
       await awaitWithSignal(
         session.respondToPermission(interactionId, { response: "allow" }),
         signal,
       );
-      return "accepted";
+      return undefined;
     }
 
     if (observed.kind === InteractionKind.Plan) {
       if (!session.approvePlan || !session.rejectPlan) {
-        return {
-          message: "Tangle sandbox session cannot decide plans",
-          retryable: false,
-        };
+        return transportRefusal("Tangle sandbox session cannot decide plans");
       }
       if (response.outcome === "accepted") {
         await awaitWithSignal(session.approvePlan(interactionId), signal);
-        return "accepted";
+        return undefined;
       }
       const feedback = planFeedbackOfResponse(response);
       if (feedback === undefined) {
-        return {
-          message: `a ${response.outcome} plan resolution requires "${PLAN_FEEDBACK_FIELD}" text`,
-          retryable: false,
-        };
+        return transportRefusal(
+          `a ${response.outcome} plan resolution requires "${PLAN_FEEDBACK_FIELD}" text`,
+        );
       }
       await awaitWithSignal(session.rejectPlan(feedback, interactionId), signal);
-      return "accepted";
+      return undefined;
     }
 
-    return {
-      message: `Tangle sessions cannot resolve a "${observed.kind}" interaction`,
-      retryable: false,
-    };
+    return transportRefusal(
+      `Tangle sessions cannot resolve a "${observed.kind}" interaction`,
+    );
   };
 
   return async (
@@ -360,9 +424,7 @@ export function tangleInteractionResponder(
     }
     const mismatch = bindingVerdict(exactCommand, observed);
     if (mismatch !== undefined) {
-      return acknowledge(exactCommand, mismatch, {
-        message: `response command binding is stale for interaction ${interactionId}`,
-      });
+      return acknowledge(exactCommand, mismatch.status, mismatch.extras);
     }
     if (observed.cancelled) {
       return acknowledge(exactCommand, "cancelled", {
@@ -381,22 +443,24 @@ export function tangleInteractionResponder(
       }
     }
 
-    let outcome: InteractionAcknowledgementStatus | AcknowledgementExtras;
+    let refusal: Refusal | undefined;
     try {
-      outcome = await deliver(exactCommand, observed, operation?.signal);
+      refusal = await deliver(exactCommand, observed, operation?.signal);
     } catch (error) {
       if (operation?.signal?.aborted) throw error;
       const mapped = statusFromSandboxError(error);
       return acknowledge(exactCommand, mapped.status, mapped.extras);
     }
-    if (typeof outcome !== "string") {
-      return acknowledge(exactCommand, "transport_failure", outcome);
+    // A refused delivery never becomes a resolution record: nothing was sent,
+    // so a later command for the same ask must reach the same checks again.
+    if (refusal !== undefined) {
+      return acknowledge(exactCommand, refusal.status, refusal.extras);
     }
     operation?.signal?.throwIfAborted();
-    // The Sandbox methods report resolution without a body, so a fresh
-    // resolution and the sidecar's replay of an identical stored one are the
-    // same observation. Both mean the ask now holds exactly this answer.
-    const acknowledgement = acknowledge(exactCommand, outcome);
+    // The Sandbox method reported the ask resolved without a body. The checks
+    // above prove the ask was outstanding for this adapter, so this operation
+    // is the one that resolved it.
+    const acknowledgement = acknowledge(exactCommand, "accepted");
     ledger.record(sessionId, interactionId, {
       operationId: exactCommand.operationId,
       commandDigest: exactCommand.commandDigest,

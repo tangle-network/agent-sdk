@@ -27,7 +27,7 @@ import {
   environmentEventFromSandboxEvent,
   sandboxEventIdentity,
 } from "./tangle-events.js";
-import { TangleInteractionLedger } from "./tangle-interaction-ledger.js";
+import { TangleInteractionLedgerRegistry } from "./tangle-interaction-ledger.js";
 import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import {
   executionIdFromTurnInput,
@@ -63,6 +63,7 @@ export function sandboxInstanceAsEnvironment(
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
   deployment?: SandboxRuntimeCapabilityDocument | null,
+  ledgers: TangleInteractionLedgerRegistry = new TangleInteractionLedgerRegistry(),
 ): AgentEnvironment {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
@@ -74,12 +75,14 @@ export function sandboxInstanceAsEnvironment(
   }
   const support = sandboxCapabilitySupport(box, client, deployment);
   const capabilities = capabilitiesForSandbox(declaredCapabilities, support);
-  // One record per environment: a session raises the ask on its own stream and
-  // the answer may arrive on the environment, so both surfaces read one ledger.
-  // Absent unless the deployment backs interaction responses, so an
-  // environment that cannot answer never accumulates asks it cannot use.
+  // One record per environment id, held by the provider: a session raises the
+  // ask on its own stream and the answer may arrive on the environment, so both
+  // surfaces read one ledger, and an environment rebuilt by `provider.get()`
+  // keeps the resolutions the earlier object recorded. Absent unless the
+  // deployment backs interaction responses, so an environment that cannot
+  // answer never accumulates asks it cannot use.
   const interactions = capabilities.interactions
-    ? new TangleInteractionLedger()
+    ? ledgers.ledgerFor(environmentId)
     : undefined;
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
@@ -141,7 +144,16 @@ export function sandboxInstanceAsEnvironment(
           const streamSessionId =
             expectedSessionId ?? sandboxEventIdentity(next.value).sessionId;
           if (streamSessionId !== undefined) {
-            interactions?.observe(streamSessionId, converted);
+            // The run this stream is bound to is the only run coordinate an
+            // ask without its own binding, a plan, can be checked against.
+            interactions?.observe(streamSessionId, converted, {
+              ...(input.controlRef?.runId === undefined
+                ? {}
+                : { runId: input.controlRef.runId }),
+              ...(expectedExecutionId === undefined
+                ? {}
+                : { executionId: expectedExecutionId }),
+            });
           }
           input.signal?.throwIfAborted();
           yield converted;
