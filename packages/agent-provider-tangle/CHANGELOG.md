@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.7.3
+
+### Patch Changes
+
+- b4b9f3d: Accept harness-native session identifiers on execution-bound session update events.
+  Normalize absent optional Sandbox result fields before strict JSON validation.
+
 ## 0.7.2
 
 ### Patch Changes
