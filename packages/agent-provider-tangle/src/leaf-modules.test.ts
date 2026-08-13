@@ -496,6 +496,108 @@ describe("Tangle split leaf modules", () => {
     await expect(awaitWithSignal(Promise.resolve("ok"))).resolves.toBe("ok");
   });
 
+  it("separates the native session id from the runtime session id by field position", () => {
+    const bound = {
+      executionId: "execution-1",
+      sessionId: "runtime-session-1",
+      streamBound: true,
+    };
+
+    // The production frame: the run/stream lane copies the backend adapter's
+    // own session id into `data.sessionId`, so an execution-bound stream reads
+    // a harness-native value there and must treat it as content.
+    const nativeRunFrame = environmentEventFromSandboxEvent(
+      {
+        type: "session.updated",
+        id: "event-native",
+        data: {
+          sessionId: "ses_opencode_native",
+          sessionID: "ses_opencode_native",
+          title: "Native harness session",
+          time: { created: 1, updated: 2 },
+        },
+      } as never,
+      bound,
+    );
+    expect(nativeRunFrame.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "ses_opencode_native",
+      title: "Native harness session",
+      time: { created: 1, updated: 2 },
+    });
+    expect((nativeRunFrame.data as { sessionId?: string }).sessionId).toBe(
+      "ses_opencode_native",
+    );
+
+    // The /agents/events envelope position holds the runtime session id, so it
+    // reaches the normalized event instead of being dropped.
+    const envelope = environmentEventFromSandboxEvent(
+      {
+        type: "session.updated",
+        id: "event-envelope",
+        data: {
+          properties: {
+            info: {
+              id: "runtime-session-1",
+              sessionID: "runtime-session-1",
+              title: "Runtime session",
+              time: { created: 3, updated: 4 },
+            },
+          },
+        },
+      } as never,
+      bound,
+    );
+    expect(envelope.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "runtime-session-1",
+      title: "Runtime session",
+      time: { created: 3, updated: 4 },
+    });
+
+    // Same position, foreign runtime session: the envelope stays identity
+    // bearing, so an execution-bound stream still refuses it.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-foreign-envelope",
+          data: {
+            properties: {
+              info: { id: "other-session", sessionID: "other-session" },
+            },
+          },
+        } as never,
+        bound,
+      ),
+    ).toThrow(/sessionId/);
+
+    // The run-frame allowance belongs to execution-bound streams only.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-unbound",
+          data: { sessionId: "ses_opencode_native" },
+        } as never,
+        { sessionId: "runtime-session-1" },
+      ),
+    ).toThrow(/sessionId/);
+
+    // It belongs to `session.updated` only: every other frame keeps its
+    // runtime identity check in the same position.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "status",
+          id: "event-status",
+          data: { sessionId: "other-session", status: "running" },
+        } as never,
+        bound,
+      ),
+    ).toThrow(/sessionId/);
+  });
+
   it("honors pre-abort and mid-flight abort on environment methods", async () => {
     const readPending = deferred<string>();
     const execPending = deferred<unknown>();

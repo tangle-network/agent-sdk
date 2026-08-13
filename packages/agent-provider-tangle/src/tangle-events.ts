@@ -25,22 +25,30 @@ export function isSandboxConnectionMarker(event: SandboxEvent): boolean {
   );
 }
 
-/** Read identity from both run frames and /agents/events session envelopes. */
-export function sandboxEventIdentity(event: SandboxEvent): {
-  executionId?: string;
-  sessionId?: string;
+/**
+ * Which field position carried a frame's session id.
+ *
+ * `run-frame` is `data.sessionId`/`data.sessionID`. The run/stream lane copies
+ * that value straight from the backend adapter, so on `session.updated` it is
+ * the harness-native session id (Claude, Codex, OpenCode) rather than the
+ * runtime session id.
+ *
+ * `session-envelope` is the `properties`/`properties.info` position of an
+ * /agents/events frame. The sidecar writes the runtime session id there for
+ * every frame type, so that position stays identity-bearing.
+ */
+export type SandboxSessionIdSource = "run-frame" | "session-envelope";
+
+/** Unwrap the `properties`/`properties.info` nesting of a session-bus frame. */
+function sessionEnvelope(data: EventRecord): {
+  properties?: EventRecord;
+  info?: EventRecord;
 } {
-  const record = event as unknown as EventRecord;
-  const data = record.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return {};
-  }
-  const dataRecord = data as EventRecord;
   const properties =
-    dataRecord.properties &&
-    typeof dataRecord.properties === "object" &&
-    !Array.isArray(dataRecord.properties)
-      ? (dataRecord.properties as EventRecord)
+    data.properties &&
+    typeof data.properties === "object" &&
+    !Array.isArray(data.properties)
+      ? (data.properties as EventRecord)
       : undefined;
   const info =
     properties?.info &&
@@ -48,20 +56,58 @@ export function sandboxEventIdentity(event: SandboxEvent): {
     !Array.isArray(properties.info)
       ? (properties.info as EventRecord)
       : undefined;
+  return { properties, info };
+}
+
+/** Read identity from both run frames and /agents/events session envelopes. */
+export function sandboxEventIdentity(event: SandboxEvent): {
+  executionId?: string;
+  sessionId?: string;
+  sessionIdSource?: SandboxSessionIdSource;
+} {
+  const record = event as unknown as EventRecord;
+  const data = record.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return {};
+  }
+  const dataRecord = data as EventRecord;
+  const { properties, info } = sessionEnvelope(dataRecord);
+  const runFrameSessionId = dataRecord.sessionId ?? dataRecord.sessionID;
+  const envelopeSessionId =
+    properties?.sessionId ??
+    properties?.sessionID ??
+    info?.sessionId ??
+    info?.sessionID;
+  const sessionId = optionalNonEmptyString(
+    runFrameSessionId ?? envelopeSessionId,
+    "Tangle Sandbox event sessionId",
+  );
   return {
     executionId: optionalNonEmptyString(
       dataRecord.executionId ?? properties?.executionId ?? info?.executionId,
       "Tangle Sandbox event executionId",
     ),
-    sessionId: optionalNonEmptyString(
-      dataRecord.sessionId ??
-        dataRecord.sessionID ??
-        properties?.sessionId ??
-        properties?.sessionID ??
-        info?.sessionId ??
-        info?.sessionID,
-      "Tangle Sandbox event sessionId",
-    ),
+    sessionId,
+    ...(sessionId === undefined
+      ? {}
+      : {
+          sessionIdSource:
+            (runFrameSessionId ?? undefined) !== undefined
+              ? ("run-frame" as const)
+              : ("session-envelope" as const),
+        }),
+  };
+}
+
+/** Read the `title`/`time` content of a `session.updated` frame in either shape. */
+function sessionUpdateContent(data: EventRecord): {
+  title?: unknown;
+  time?: unknown;
+} {
+  const { info } = sessionEnvelope(data);
+  return {
+    title: data.title ?? info?.title,
+    time: data.time ?? info?.time,
   };
 }
 
@@ -107,16 +153,21 @@ export function environmentEventFromSandboxEvent(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
     );
   }
-  // An exact run stream is already selected by the runtime execution id.
-  // On that stream, session.updated carries the harness-native session id
-  // (for example an OpenCode session), not the runtime session id. Keep that
-  // value as event content while lifecycle frames remain identity-checked.
+  // An exact run stream is already selected by the runtime execution id. On
+  // that stream, a `session.updated` run frame carries the harness-native
+  // session id (for example an OpenCode session), not the runtime session id,
+  // so that value is content. Every other frame, and the session-envelope
+  // position of `session.updated` itself, still carries the runtime session id
+  // and stays identity-checked.
   const identity = sandboxEventIdentity(event);
   const eventExecutionId = identity.executionId;
-  const eventSessionId =
-    expected.streamBound === true && record.type === "session.updated"
-      ? undefined
-      : identity.sessionId;
+  const carriesNativeSessionId =
+    expected.streamBound === true &&
+    record.type === "session.updated" &&
+    identity.sessionIdSource === "run-frame";
+  const eventSessionId = carriesNativeSessionId
+    ? undefined
+    : identity.sessionId;
   if (
     expected.executionId !== undefined &&
     ((eventExecutionId === undefined && expected.streamBound !== true) ||
@@ -134,7 +185,13 @@ export function environmentEventFromSandboxEvent(
     throw new Error("Tangle exact session event identified a different sessionId");
   }
   const usage = tokenUsageFromData(data);
-  const normalized = normalizeSandboxEvent(record.type, data);
+  // The session id reaches the normalized event whichever position carried it,
+  // including the native id an execution-bound stream just accepted as content.
+  const normalized = normalizeSandboxEvent(
+    record.type,
+    data,
+    identity.sessionId,
+  );
   return {
     type: record.type,
     data,
@@ -150,6 +207,7 @@ export function environmentEventFromSandboxEvent(
 function normalizeSandboxEvent(
   type: string,
   data: Record<string, unknown>,
+  sessionId: string | undefined,
 ): StreamEvent | undefined {
   const supplied = data.normalized;
   if (supplied !== undefined) {
@@ -212,13 +270,15 @@ function normalizeSandboxEvent(
         code: data.code,
         message: data.message,
       });
-    case "session.updated":
+    case "session.updated": {
+      const content = sessionUpdateContent(data);
       return parseCanonical({
         type,
-        sessionId: data.sessionId ?? data.sessionID,
-        ...(typeof data.title === "string" ? { title: data.title } : {}),
-        ...(data.time !== undefined ? { time: data.time } : {}),
+        sessionId,
+        ...(typeof content.title === "string" ? { title: content.title } : {}),
+        ...(content.time !== undefined ? { time: content.time } : {}),
       });
+    }
     case "interaction":
       return parseCanonical({ type, request: data.request });
     case "interaction.cancel":

@@ -943,6 +943,19 @@ describe("Tangle retained control", () => {
         },
       },
       {
+        id: "event-envelope-session",
+        type: "session.updated",
+        data: {
+          properties: {
+            info: {
+              id: "session-replay",
+              sessionID: "session-replay",
+              title: "Runtime session",
+            },
+          },
+        },
+      },
+      {
         id: "event-2",
         type: "result",
         data: {
@@ -974,7 +987,12 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.since === "event-1"
-            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
+            ? [
+                upstreamEvents[1]!,
+                upstreamEvents[2]!,
+                upstreamEvents[3]!,
+                upstreamEvents[3]!,
+              ]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1012,7 +1030,12 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.lastEventId === "event-1"
-            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
+            ? [
+                upstreamEvents[1]!,
+                upstreamEvents[2]!,
+                upstreamEvents[3]!,
+                upstreamEvents[3]!,
+              ]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1049,12 +1072,21 @@ describe("Tangle retained control", () => {
     const replay = await collect(session.events({ since: "event-1" }));
     expect(replay.map((event) => event.id)).toEqual([
       "event-native-session",
+      "event-envelope-session",
       "event-2",
     ]);
+    // The run frame's harness-native id is content and survives replay.
     expect(replay[0]?.normalized).toEqual({
       type: "session.updated",
       sessionId: "opencode-native-session",
       title: "Native harness session",
+    });
+    // The session-envelope position holds the runtime session id and reaches
+    // the normalized event rather than being dropped.
+    expect(replay[1]?.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "session-replay",
+      title: "Runtime session",
     });
     expect(capturedOptions).toMatchObject({
       lastEventId: "event-1",
@@ -1069,6 +1101,83 @@ describe("Tangle retained control", () => {
         expect.objectContaining({ id: "event-2" }),
       ]),
     );
+  });
+
+  it("refuses a foreign runtime session id on the retained replay stream", async () => {
+    const environmentId = "sbx-foreign-session";
+    const sessionId = "session-foreign";
+    const controlRef = controlRefForTurn(
+      { prompt: "replay this run", turnId: "foreign-turn" },
+      environmentId,
+      sessionId,
+    );
+    const foreignFrames: Record<string, SandboxEvent[]> = {
+      // The session-envelope position carries the runtime session id, so a
+      // foreign value there is another session's frame on this stream.
+      envelope: [
+        {
+          id: "event-foreign-envelope",
+          type: "session.updated",
+          data: {
+            properties: {
+              info: { id: "other-session", sessionID: "other-session" },
+            },
+          },
+        } as unknown as SandboxEvent,
+      ],
+      // A lifecycle frame keeps its runtime identity check in every position.
+      lifecycle: [
+        {
+          id: "event-foreign-lifecycle",
+          type: "status",
+          data: {
+            status: "processing",
+            sessionId: "other-session",
+            executionId: controlRef.executionId,
+          },
+        } as unknown as SandboxEvent,
+      ],
+      // A connection marker names the session its stream was opened for.
+      marker: [
+        {
+          id: "connection-marker",
+          type: "connection.established",
+          data: {
+            type: "connection.established",
+            properties: {
+              sessionId: "other-session",
+              executionId: controlRef.executionId,
+              timestamp: 1,
+            },
+          },
+        } as unknown as SandboxEvent,
+      ],
+    };
+
+    for (const [shape, frames] of Object.entries(foreignFrames)) {
+      const sandboxSession: SandboxSessionLike = {
+        ...retainedSessionHandle(sessionId),
+        async *events() {
+          for (const frame of frames) yield frame;
+        },
+      };
+      const box: SandboxInstanceLike = retainedDeployment({
+        id: environmentId,
+        async *streamPrompt() {
+          for (const frame of frames) yield frame;
+        },
+        session: () => sandboxSession,
+      });
+      const provider = createTangleProvider({
+        client: { create: async () => box },
+      });
+      const environment = await provider.create({ profile: { name: "worker" } });
+      const session = environment.session!(sessionId, { controlRef });
+      await expect(
+        collect(session.events()),
+        `foreign ${shape} frame must not pass identity binding`,
+      ).rejects.toThrow(/sessionId/);
+    }
   });
 
   it("keeps the provider-owned control reference after external mutation", async () => {
