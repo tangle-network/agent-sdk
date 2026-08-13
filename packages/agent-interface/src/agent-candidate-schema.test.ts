@@ -352,6 +352,7 @@ describe("candidate receipts", () => {
       maxModelCalls: 12,
       maxInputTokens: 100_000,
       maxOutputTokens: 20_000,
+      maxTotalTokens: 120_000,
       maxCostUsd: 5,
     },
     container: {

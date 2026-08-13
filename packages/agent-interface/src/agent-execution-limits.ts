@@ -110,6 +110,16 @@ function executionLimitViolations(
       actual: observation.usage.outputTokens,
       maximum: limits.maxOutputTokens,
     },
+    ...(limits.maxTotalTokens === undefined
+      ? []
+      : [
+          {
+            path: ["usage", "totalTokens"] as (string | number)[],
+            label: "totalTokens",
+            actual: observation.usage.inputTokens + observation.usage.outputTokens,
+            maximum: limits.maxTotalTokens,
+          },
+        ]),
     {
       path: ["usage", "costUsdNanos"],
       label: "costUsd",

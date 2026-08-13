@@ -118,6 +118,7 @@ function materializationReceipt(
       maxModelCalls: 10,
       maxInputTokens: 100_000,
       maxOutputTokens: 20_000,
+      maxTotalTokens: 120_000,
       maxCostUsd: 5,
     },
     container: {
@@ -210,10 +211,11 @@ function runReceipt(options: {
   const modelSettlementMaterial = {
     kind: "agent-candidate-model-settlement-material" as const,
     executionPlanDigest,
-    preparationId: "candidate-preparation.abc123",
-    grantDigest: candidateSha("4"),
-    closed: true as const,
-    resolved: resolvedModel,
+        preparationId: "candidate-preparation.abc123",
+        grantDigest: candidateSha("4"),
+        closed: true as const,
+        usageWithinLimits: true,
+        resolved: resolvedModel,
     calls: [
       {
         callId: "call-1",
@@ -224,6 +226,7 @@ function runReceipt(options: {
         startedAtMs: 1_010,
         endedAtMs: 1_030,
         inputTokens: 10,
+        accountedInputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 3,
         reasoningTokens: 2,
@@ -239,6 +242,7 @@ function runReceipt(options: {
         startedAtMs: 1_040,
         endedAtMs: 1_060,
         inputTokens: 20,
+        accountedInputTokens: 20,
         outputTokens: 7,
         cachedInputTokens: 4,
         reasoningTokens: 3,
@@ -475,6 +479,7 @@ describe("candidate outcome contracts", () => {
         maxModelCalls: 10,
         maxInputTokens: 100_000,
         maxOutputTokens: 20_000,
+        maxTotalTokens: 120_000,
         maxCostUsd: 5,
       },
       digest: candidateSha("0"),
@@ -734,6 +739,33 @@ describe("candidate outcome contracts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: ["receipt", "modelSettlement", "material", "usage", "inputTokens"],
+        }),
+      ]),
+    );
+    const overAggregateLimit = candidateExecutionEvidenceSchema.safeParse({
+      ...firstCandidate,
+      materializationReceipt: {
+        ...firstCandidate.materializationReceipt,
+        executionPlan: {
+          ...firstCandidate.materializationReceipt.executionPlan,
+          material: {
+            ...firstCandidate.materializationReceipt.executionPlan.material,
+            limits: {
+              ...firstCandidate.materializationReceipt.executionPlan.material.limits,
+              maxTotalTokens: 41,
+            },
+          },
+        },
+      },
+    });
+    expect(overAggregateLimit.success).toBe(false);
+    if (overAggregateLimit.success) {
+      throw new Error("expected an aggregate execution limit violation");
+    }
+    expect(overAggregateLimit.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["receipt", "modelSettlement", "material", "usage", "totalTokens"],
         }),
       ]),
     );
@@ -1311,6 +1343,16 @@ describe("candidate outcome contracts", () => {
   it("requires router provenance in every model settlement", () => {
     const current = runReceipt().modelSettlement.material;
     expect(agentCandidateModelSettlementMaterialSchema.parse(current)).toEqual(current);
+    expect(
+      agentCandidateModelSettlementMaterialSchema.parse({
+        ...current,
+        usageWithinLimits: false,
+      }).usageWithinLimits,
+    ).toBe(false);
+    const { usageWithinLimits: _usageWithinLimits, ...withoutUsageWithinLimits } = current;
+    expect(() =>
+      agentCandidateModelSettlementMaterialSchema.parse(withoutUsageWithinLimits),
+    ).toThrow();
     expect(() =>
       agentCandidateModelSettlementMaterialSchema.parse({
         ...current,
@@ -1327,6 +1369,31 @@ describe("candidate outcome contracts", () => {
 
   it("requires safe fixed-point usage and exact per-call aggregates", () => {
     const receipt = runReceipt();
+    const material = receipt.modelSettlement.material;
+    expect(
+      agentCandidateModelSettlementMaterialSchema.parse({
+        ...material,
+        calls: [
+          { ...material.calls[0], accountedInputTokens: 35 },
+          material.calls[1],
+        ],
+        usage: { ...material.usage, inputTokens: 55 },
+      }).usage.inputTokens,
+    ).toBe(55);
+    const { accountedInputTokens: _accountedInputTokens, ...withoutAccountedInputTokens } =
+      material.calls[0];
+    expect(() =>
+      agentCandidateModelSettlementCallSchema.parse(withoutAccountedInputTokens),
+    ).toThrow();
+    expect(() =>
+      agentCandidateModelSettlementMaterialSchema.parse({
+        ...material,
+        calls: [
+          { ...material.calls[0], accountedInputTokens: 9 },
+          material.calls[1],
+        ],
+      }),
+    ).toThrow(/cannot be less/);
     expect(() =>
       agentCandidateFixedSpendSchema.parse({
         ...receipt.modelSettlement.material.usage,
