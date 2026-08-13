@@ -102,6 +102,16 @@ import {
   workspaceForkResultMatchesRequest,
 } from "./workspace-fork.js";
 import { wireDigest as workspaceWireDigest } from "./workspace-branching-shared.js";
+import {
+  AgentEnvironmentObservationSchema,
+  SafeEndpointSchema,
+  observationContainsCredential,
+} from "./environment-observation.js";
+import {
+  TerminalAttachResultSchema,
+  TerminalSessionRefSchema,
+  terminalSessionUsable,
+} from "./environment-terminal.js";
 
 const digest = (letter: string) => `sha256:${letter.repeat(64)}` as `sha256:${string}`;
 
@@ -476,6 +486,46 @@ describe("interface split leaf modules", () => {
       usage: false,
       confidential: false,
     })).toMatchObject({ placement: true });
+  });
+
+  it("validates the observation and interactive-terminal leaf contracts", () => {
+    const observation = AgentEnvironmentObservationSchema.parse({
+      subject: { provider: "provider-a", environmentId: "environment-source" },
+      capturedAt: "2026-08-01T20:00:00.000Z",
+      endpoint: {
+        state: "known",
+        value: { scheme: "https", host: "environment-source.example.com", port: 8080 },
+        provenance: { origin: "measured", observedAt: "2026-08-01T20:00:00.000Z" },
+      },
+      computeBilling: { state: "unavailable", reason: "provider does not report cost" },
+    });
+    expect(observation.subject.provider).toBe("provider-a");
+    expect(observationContainsCredential(observation)).toBe(false);
+    expect(SafeEndpointSchema.safeParse({ host: "user:pass@host" }).success).toBe(false);
+    const ref = TerminalSessionRefSchema.parse({
+      terminalSessionId: "terminal-1",
+      parentExecutionId: "execution-source",
+      name: "shell",
+      shell: "/bin/bash",
+      cwd: "/workspace",
+      cols: 80,
+      rows: 24,
+      createdAt: "2026-08-01T20:00:00.000Z",
+      lastActivityAt: "2026-08-01T20:00:00.000Z",
+      expiresAt: "2026-08-01T21:00:00.000Z",
+      isRunning: true,
+      attachCount: 0,
+    });
+    expect(terminalSessionUsable(ref, "2026-08-01T20:30:00.000Z")).toBe(true);
+    expect(TerminalSessionRefSchema.safeParse({ ...ref, pid: 42 }).success).toBe(false);
+    expect(
+      TerminalAttachResultSchema.parse({
+        status: "attached",
+        mode: "attach",
+        ref,
+        attachCount: 1,
+      }).status,
+    ).toBe("attached");
   });
 
   it("binds checkpoint, fork, cleanup, and provider attestation exactly", () => {
