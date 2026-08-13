@@ -13,8 +13,8 @@ catalogs:
       specifier: 0.21.10
       version: 0.21.10
     undici:
-      specifier: 7.28.0
-      version: 7.28.0
+      specifier: 7.29.0
+      version: 7.29.0
     vitest:
       specifier: ^4.1.5
       version: 4.1.9
@@ -87,7 +87,7 @@ importers:
         version: link:../agent-interface
       undici:
         specifier: 'catalog:'
-        version: 7.28.0
+        version: 7.29.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -2148,6 +2148,10 @@ packages:
 
   undici@7.28.0:
     resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
+    engines: {node: '>=20.18.1'}
+
+  undici@7.29.0:
+    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
   universalify@0.1.2:
@@ -4445,6 +4449,8 @@ snapshots:
   undici-types@7.19.2: {}
 
   undici@7.28.0: {}
+
+  undici@7.29.0: {}
 
   universalify@0.1.2: {}
 
