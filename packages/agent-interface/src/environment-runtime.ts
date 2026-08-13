@@ -12,6 +12,8 @@ import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, bo
 import { InputPartSchema } from "./portable-context-shared.js";
 import type { AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
+import type { AgentEnvironmentObservation } from "./environment-observation.js";
+import type { AgentTerminalSession, TerminalAttachRequest, TerminalAttachResult } from "./environment-terminal.js";
 
 export interface AgentTurnInput {
   prompt?: string;
@@ -257,6 +259,18 @@ export interface AgentEnvironment {
   /** Durable, retry-safe checkpoint and environment-fork operations. */
   readonly workspaceBranching?: AgentWorkspaceBranching;
   placement?(options?: { signal?: AbortSignal }): Promise<PlacementInfo>;
+  /** Normalized, freshness-tagged observation of this environment. */
+  observe?(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentObservation>;
+  /** Open or reattach an interactive terminal under a parent execution. */
+  attachTerminal?(
+    request: TerminalAttachRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<TerminalAttachResult>;
+  /** Accessor for a live interactive terminal handle. */
+  terminal?(
+    terminalSessionId: string,
+    options?: { signal?: AbortSignal },
+  ): AgentTerminalSession;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   destroy?(options?: { signal?: AbortSignal }): Promise<void>;
 }
@@ -312,6 +326,25 @@ export interface AgentEnvironmentCapabilities {
   /** Present only when {@link AgentEnvironmentProvider.exactProcess} is implemented. */
   exactProcess?: {
     egress: readonly AgentExactProcessEgressMode[];
+  };
+  /** Per-surface flags for the normalized environment observation. */
+  observation?: {
+    identity: boolean;
+    lifecycle: boolean;
+    endpoint: boolean;
+    placement: boolean;
+    resources: boolean;
+    resourceUse: boolean;
+    modelUsage: boolean;
+    computeBilling: boolean;
+    accountUsage: boolean;
+  };
+  /** Present only when the provider serves an interactive terminal. */
+  interactiveTerminal?: {
+    attach: boolean;
+    input: boolean;
+    resize: boolean;
+    reattach: boolean;
   };
 }
 
@@ -371,6 +404,27 @@ export const AgentEnvironmentCapabilitiesSchema = z
           .max(CONTRACT_MAX_ARRAY_LENGTH),
       })
       .optional(),
+    observation: z
+      .strictObject({
+        identity: z.boolean(),
+        lifecycle: z.boolean(),
+        endpoint: z.boolean(),
+        placement: z.boolean(),
+        resources: z.boolean(),
+        resourceUse: z.boolean(),
+        modelUsage: z.boolean(),
+        computeBilling: z.boolean(),
+        accountUsage: z.boolean(),
+      })
+      .optional(),
+    interactiveTerminal: z
+      .strictObject({
+        attach: z.boolean(),
+        input: z.boolean(),
+        resize: z.boolean(),
+        reattach: z.boolean(),
+      })
+      .optional(),
   })
   .superRefine((capabilities, refinement) => {
     if (
@@ -428,6 +482,19 @@ export const AgentEnvironmentCapabilitiesSchema = z
         code: "custom",
         path: ["exactProcess", "egress"],
         message: "exact process egress modes must be unique",
+      });
+    }
+    const terminal = capabilities.interactiveTerminal;
+    if (
+      terminal !== undefined &&
+      (terminal.input || terminal.resize || terminal.reattach) &&
+      !terminal.attach
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["interactiveTerminal"],
+        message:
+          "interactive terminal input, resize, and reattach each require attach",
       });
     }
     const extensions = capabilities.profile.extensions;

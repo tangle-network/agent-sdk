@@ -49,6 +49,23 @@ const capabilities = {
   usage: true,
   confidential: false,
   exactProcess: { egress: ["blocked", "strict"] as const },
+  observation: {
+    identity: true,
+    lifecycle: true,
+    endpoint: true,
+    placement: true,
+    resources: true,
+    resourceUse: true,
+    modelUsage: true,
+    computeBilling: true,
+    accountUsage: true,
+  },
+  interactiveTerminal: {
+    attach: true,
+    input: true,
+    resize: true,
+    reattach: true,
+  },
 };
 
 describe("AgentEnvironmentCapabilitiesSchema", () => {
@@ -158,6 +175,61 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         retainedControl,
       }),
     ).toThrow(/retained control requires exact run/);
+  });
+
+  it("accepts observation surfaces declared independently", () => {
+    for (const observation of [
+      {
+        identity: false,
+        lifecycle: false,
+        endpoint: true,
+        placement: false,
+        resources: false,
+        resourceUse: false,
+        modelUsage: false,
+        computeBilling: false,
+        accountUsage: false,
+      },
+      {
+        identity: true,
+        lifecycle: true,
+        endpoint: false,
+        placement: true,
+        resources: true,
+        resourceUse: false,
+        modelUsage: true,
+        computeBilling: false,
+        accountUsage: true,
+      },
+    ]) {
+      const document = { ...capabilities, observation };
+      expect(AgentEnvironmentCapabilitiesSchema.parse(document)).toEqual(document);
+    }
+  });
+
+  it("requires interactive terminal input, resize, and reattach to imply attach", () => {
+    for (const interactiveTerminal of [
+      { attach: false, input: true, resize: false, reattach: false },
+      { attach: false, input: false, resize: true, reattach: false },
+      { attach: false, input: false, resize: false, reattach: true },
+    ]) {
+      expect(() =>
+        AgentEnvironmentCapabilitiesSchema.parse({
+          ...capabilities,
+          interactiveTerminal,
+        }),
+      ).toThrow(/input, resize, and reattach each require attach/);
+    }
+    const attachOnly = {
+      ...capabilities,
+      interactiveTerminal: {
+        attach: true,
+        input: false,
+        resize: false,
+        reattach: false,
+      },
+    };
+    expect(AgentEnvironmentCapabilitiesSchema.parse(attachOnly)).toEqual(attachOnly);
   });
 
   it("rejects duplicate open capability values", () => {
