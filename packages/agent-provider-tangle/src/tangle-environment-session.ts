@@ -18,9 +18,13 @@ import type {
   AgentRunCancellationAcknowledgement,
   AgentRunCancellationRequest,
   AgentRunControlRef,
+  InteractionAcknowledgement,
+  InteractionResponseCommand,
 } from "@tangle-network/agent-interface";
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import type { SandboxSessionLike } from "./tangle-types.js";
+import type { TangleInteractionLedger } from "./tangle-interaction-ledger.js";
+import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import {
   environmentEventFromSandboxEvent,
   isSandboxConnectionMarker,
@@ -68,6 +72,7 @@ export function sandboxSessionAsAgentSession(
   environmentId: string,
   dispatch?: (input: AgentTurnInput) => Promise<AgentSessionRef>,
   exactExecutionEvents?: ExactExecutionEventStream,
+  interactions?: TangleInteractionLedger,
 ): AgentSession {
   let activeControlRef: AgentExactRunControlRef | undefined = controlRef
     ? resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId)
@@ -202,6 +207,7 @@ export function sandboxSessionAsAgentSession(
           if (converted.id === undefined) throw new Error("Tangle session event arrived without a stable id");
           if (seenEventIds.has(converted.id)) continue;
           seenEventIds.add(converted.id);
+          interactions?.observe(session.id, converted);
           options?.signal?.throwIfAborted();
           yield converted;
         }
@@ -450,5 +456,22 @@ export function sandboxSessionAsAgentSession(
       if (result.cancelled !== true) throw new Error("Tangle sandbox did not confirm cancellation");
     },
     ...(cancelRun ? { cancelRun } : {}),
+    ...(interactions
+      ? {
+          respondToInteraction(
+            command: InteractionResponseCommand,
+            operation?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            return tangleInteractionResponder({
+              session,
+              sessionId: session.id,
+              provider,
+              environmentId,
+              ledger: interactions,
+              controlRef: () => activeControlRef,
+            })(command, operation);
+          },
+        }
+      : {}),
   };
 }

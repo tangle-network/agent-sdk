@@ -21,6 +21,23 @@ export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
+/**
+ * The part of the deployed sidecar's `GET /capabilities` document this adapter
+ * reads. Declared structurally so any Sandbox SDK new enough to expose
+ * `SandboxInstance.capabilities()` satisfies it.
+ *
+ * A missing flag states that the deployed image does not disclose the fact,
+ * never that the fact is false, so nothing here is ever read as a denial —
+ * only `true` grants a claim.
+ */
+export interface SandboxRuntimeCapabilityDocument {
+  schema?: number;
+  interactions?: {
+    /** The interaction-response route records resolutions durably. */
+    responseDedupe?: boolean;
+  };
+}
+
 export interface SandboxClientLike {
   create(
     options?: CreateSandboxOptions,
@@ -116,6 +133,13 @@ export interface SandboxInstanceLike {
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
+  /**
+   * Capability facts compiled into the deployed sidecar image. `null` reports
+   * a deployment that cannot disclose a document this SDK reads; an absent
+   * method reports an SDK that predates capability discovery. Both leave the
+   * deployment unknown, and unknown never becomes a claim.
+   */
+  capabilities?(): Promise<SandboxRuntimeCapabilityDocument | null>;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<void>;
 }
@@ -135,6 +159,15 @@ export interface SandboxSessionLike {
     request: AgentRunCancellationRequest,
     options?: { signal?: AbortSignal },
   ): Promise<AgentRunCancellationAcknowledgement>;
+  /** Resolve the session's outstanding `question`, keyed by answer field name. */
+  answer?(answers: Record<string, string[]>): Promise<void>;
+  /** Resolve one outstanding `permission`; the id is the interaction id. */
+  respondToPermission?(
+    permissionID: string,
+    options: { response: "allow" | "deny" },
+  ): Promise<void>;
+  approvePlan?(planId?: string): Promise<unknown>;
+  rejectPlan?(feedback: string, planId?: string): Promise<unknown>;
 }
 
 export interface TangleProviderOptions {

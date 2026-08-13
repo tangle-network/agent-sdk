@@ -7,6 +7,7 @@ import { SandboxInstance } from "@tangle-network/sandbox";
 import type {
   SandboxClientLike,
   SandboxInstanceLike,
+  SandboxRuntimeCapabilityDocument,
   SandboxSessionLike,
 } from "./tangle-types.js";
 
@@ -58,6 +59,24 @@ export function defaultTangleSandboxCapabilities(
       eventIdentity: true,
       cancellationIdempotency: true,
     },
+    // Answering interactions is declared here and stripped by narrowing unless
+    // the deployed sidecar discloses a durable interaction-response ledger.
+    // The three limits are transport facts, not policy:
+    //  - `secretAnswers` false: the Sandbox question route carries strings,
+    //    so a one-use secret handle has no form it accepts.
+    //  - `concurrentRequests` false: `session.answer()` resolves the session's
+    //    outstanding question, so it cannot select among several at once.
+    //  - `responseScopes` names `interaction` alone: the permission route
+    //    carries `allow_once`, and a broader grant would arrive narrowed.
+    interactions: {
+      kinds: ["question", "permission", "plan"],
+      answerFieldTypes: ["text", "number", "boolean", "select"],
+      responseScopes: ["interaction"],
+      secretAnswers: false,
+      concurrentRequests: false,
+      replay: true,
+      responseIdempotency: true,
+    },
     workspace: { read: true, write: true, exec: true, git: false, upload: true, download: true },
     // Sandbox exposes snapshot/branch, not the checkpoint/fork contract, and
     // durable branching needs retry, lookup, conflict, and cleanup together.
@@ -86,6 +105,14 @@ export interface SandboxCapabilitySupport {
   placement: boolean;
   destroy: boolean;
   cancelRun: boolean;
+  /** The session handle exposes every method that resolves an interaction. */
+  interactionResponse: boolean;
+  /**
+   * The deployed sidecar disclosed a durable interaction-response ledger.
+   * Absent or `null` capability discovery leaves this false, because an
+   * undisclosed deployment cannot back a retry-safe response.
+   */
+  interactionResponseDedupe: boolean;
 }
 
 // One reserved id names both probe handles; neither ever reaches the service.
@@ -94,6 +121,7 @@ const CAPABILITY_PROBE_ID = "__tangle-capability-probe__";
 export function sandboxCapabilitySupport(
   box: SandboxInstanceLike,
   client: SandboxClientLike,
+  deployment?: SandboxRuntimeCapabilityDocument | null,
 ): SandboxCapabilitySupport {
   let session: SandboxSessionLike | undefined;
   if (typeof box.session === "function") {
@@ -115,7 +143,30 @@ export function sandboxCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: typeof box.delete === "function",
     cancelRun: typeof session?.cancelRun === "function",
+    interactionResponse:
+      typeof session?.answer === "function" &&
+      typeof session.respondToPermission === "function" &&
+      typeof session.approvePlan === "function" &&
+      typeof session.rejectPlan === "function",
+    interactionResponseDedupe: deployment?.interactions?.responseDedupe === true,
   };
+}
+
+/**
+ * Read the deployed sidecar's capability document, when both this SDK and the
+ * deployment can produce one.
+ *
+ * A box that predates `capabilities()` and a deployment that answers `null`
+ * both leave the document unknown. The single caller treats unknown exactly
+ * like a disclosed `false`: no interaction claim.
+ */
+export async function sandboxDeploymentCapabilities(
+  box: SandboxInstanceLike,
+  options?: { signal?: AbortSignal },
+): Promise<SandboxRuntimeCapabilityDocument | null> {
+  if (typeof box.capabilities !== "function") return null;
+  options?.signal?.throwIfAborted();
+  return (await box.capabilities()) ?? null;
 }
 
 type SandboxHttpClient = ConstructorParameters<typeof SandboxInstance>[0];
@@ -154,6 +205,10 @@ function linkedSdkProbeInstance(
  * so the provider must not claim it. Box-scoped workspace and streaming
  * facts stay at the declared upper bound when no handle can be minted —
  * each concrete sandbox re-narrows them in `capabilitiesForSandbox`.
+ *
+ * Interactions are never claimed at this stage. The deployment document that
+ * proves a durable response ledger is served per sandbox, and this stage has
+ * no sandbox to read it from.
  */
 export function clientCapabilitySupport(
   client: SandboxClientLike,
@@ -170,6 +225,8 @@ export function clientCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: true,
     cancelRun: false,
+    interactionResponse: false,
+    interactionResponseDedupe: false,
   };
 }
 
@@ -233,9 +290,15 @@ export function narrowedTangleCapabilities(
     placement: support.placement ? declared.placement : false,
     usage: false,
   };
-  delete narrowed.interactions;
   delete narrowed.nativeContinuation;
   if (!supportsRetainedControl) delete narrowed.retainedControl;
+  // Answering an interaction needs both halves: a session handle that exposes
+  // the resolving methods, and a deployment that discloses the durable
+  // response ledger those methods retry against. An undisclosed deployment is
+  // unknown, and the caller must read an unclaimed capability as unavailable.
+  if (!support.interactionResponse || !support.interactionResponseDedupe) {
+    delete narrowed.interactions;
+  }
   return narrowed;
 }
 
@@ -251,7 +314,10 @@ export function capabilitiesForClient(
   return narrowedTangleCapabilities(declared, clientCapabilitySupport(client));
 }
 
-/** Narrow a declared capability document to what this Sandbox instance backs. */
+/**
+ * Narrow a declared capability document to what this Sandbox instance backs.
+ * `support` carries the deployment facts read by `sandboxCapabilitySupport`.
+ */
 export function capabilitiesForSandbox(
   declared: AgentEnvironmentCapabilities,
   support: SandboxCapabilitySupport,

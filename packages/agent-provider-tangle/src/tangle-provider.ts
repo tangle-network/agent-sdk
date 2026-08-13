@@ -12,11 +12,15 @@ import {
 import {
   capabilitiesForClient,
   defaultTangleSandboxCapabilities,
+  sandboxDeploymentCapabilities,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
-import type { TangleProviderOptions } from "./tangle-types.js";
+import type {
+  SandboxInstanceLike,
+  TangleProviderOptions,
+} from "./tangle-types.js";
 import {
   assertBoundedJson,
   attachCleanupHandle,
@@ -66,6 +70,18 @@ export function createTangleProvider(
     );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
     narrowedProviderCapabilities(await resolveDeclaredCapabilities());
+  // The deployed sidecar serves its capability document per sandbox, so the
+  // read happens once the box exists. Skipped when the declared document asks
+  // for no deployment-gated capability, which keeps every other create free
+  // of the round-trip.
+  const readDeployment = async (
+    box: SandboxInstanceLike,
+    declared: AgentEnvironmentCapabilities,
+    signal?: AbortSignal,
+  ) =>
+    declared.interactions === undefined
+      ? null
+      : sandboxDeploymentCapabilities(box, signal ? { signal } : undefined);
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
@@ -116,11 +132,18 @@ export function createTangleProvider(
       }
       try {
         input.signal?.throwIfAborted();
+        const deployment = await readDeployment(
+          box,
+          declaredCapabilities,
+          input.signal,
+        );
+        input.signal?.throwIfAborted();
         const environment = sandboxInstanceAsEnvironment(
           box,
           providerName,
           options.client,
           declaredCapabilities,
+          deployment,
         );
         input.signal?.throwIfAborted();
         return environment;
@@ -150,11 +173,18 @@ export function createTangleProvider(
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
+            const deployment = await readDeployment(
+              box,
+              declaredCapabilities,
+              operation?.signal,
+            );
+            operation?.signal?.throwIfAborted();
             return sandboxInstanceAsEnvironment(
               box,
               providerName,
               options.client,
               declaredCapabilities,
+              deployment,
             );
           },
         }

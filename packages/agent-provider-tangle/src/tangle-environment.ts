@@ -15,10 +15,20 @@ import type {
   PlacementInfo,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
+  InteractionAcknowledgement,
+  InteractionResponseCommand,
+} from "@tangle-network/agent-interface";
+import type {
   SandboxClientLike,
   SandboxInstanceLike,
+  SandboxRuntimeCapabilityDocument,
 } from "./tangle-types.js";
-import { environmentEventFromSandboxEvent } from "./tangle-events.js";
+import {
+  environmentEventFromSandboxEvent,
+  sandboxEventIdentity,
+} from "./tangle-events.js";
+import { TangleInteractionLedger } from "./tangle-interaction-ledger.js";
+import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import {
   executionIdFromTurnInput,
   promptFromTurnInput,
@@ -52,6 +62,7 @@ export function sandboxInstanceAsEnvironment(
   providerName: string,
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
+  deployment?: SandboxRuntimeCapabilityDocument | null,
 ): AgentEnvironment {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
@@ -61,8 +72,15 @@ export function sandboxInstanceAsEnvironment(
     }
     assertBoundedJson(box.metadata);
   }
-  const support = sandboxCapabilitySupport(box, client);
+  const support = sandboxCapabilitySupport(box, client, deployment);
   const capabilities = capabilitiesForSandbox(declaredCapabilities, support);
+  // One record per environment: a session raises the ask on its own stream and
+  // the answer may arrive on the environment, so both surfaces read one ledger.
+  // Absent unless the deployment backs interaction responses, so an
+  // environment that cannot answer never accumulates asks it cannot use.
+  const interactions = capabilities.interactions
+    ? new TangleInteractionLedger()
+    : undefined;
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
@@ -120,6 +138,11 @@ export function sandboxInstanceAsEnvironment(
               ? { streamBound: true }
               : {}),
           });
+          const streamSessionId =
+            expectedSessionId ?? sandboxEventIdentity(next.value).sessionId;
+          if (streamSessionId !== undefined) {
+            interactions?.observe(streamSessionId, converted);
+          }
           input.signal?.throwIfAborted();
           yield converted;
         }
@@ -169,6 +192,7 @@ export function sandboxInstanceAsEnvironment(
               environmentId,
               dispatch,
               exactExecutionEvents,
+              interactions,
             );
             // sessions.continue was granted from a probe-session fact; this
             // backstop holds every concrete session to that fact, so a client
@@ -183,6 +207,35 @@ export function sandboxInstanceAsEnvironment(
               );
             }
             return agentSession;
+          },
+        }
+      : {}),
+    ...(interactions && box.session
+      ? {
+          async respondToInteraction(
+            command: InteractionResponseCommand,
+            operation?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            assertOptionKeys(operation, ["signal"], "Tangle interaction response");
+            operation?.signal?.throwIfAborted();
+            const sessionId = boundedIdentifier(
+              command?.binding?.sessionId,
+              "Tangle interaction session id",
+            );
+            const session = box.session?.(
+              sessionId,
+              operation?.signal ? { signal: operation.signal } : undefined,
+            );
+            if (!session || session.id !== sessionId) {
+              throw new Error("sandbox session(id) returned an unrelated session");
+            }
+            return tangleInteractionResponder({
+              session,
+              sessionId,
+              provider: providerName,
+              environmentId,
+              ledger: interactions,
+            })(command, operation);
           },
         }
       : {}),

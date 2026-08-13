@@ -20,9 +20,43 @@ Session status with an exact control reference reports a state only when the pay
 
 The provider claims `retainedControl` only from probed facts.
 A lazy instance handle minted from the linked Sandbox SDK over the client's `fetch` transport must prove `dispatchPrompt`, `session`, and `cancelRun`, and the client must expose `get` for reconstruction; the probe sends no request and creates no resource.
-The probe measures the linked SDK's method surface, not the connected service; service-side truth needs the sidecar capability endpoint and is a follow-up.
+The probe measures the linked SDK's method surface, not the connected service; retained-control claims still rest on that measurement alone.
 A client that cannot prove those facts gets no claim, so the runtime rejects retained dispatch before any sandbox is created.
 Each concrete sandbox narrows the declared document independently against its own measured method surface, so a capable sandbox keeps retained control even when the provider-level claim failed closed.
+
+## Interaction responses
+
+A parked run raises an ask: a question, a permission request, or a plan.
+`environment.respondToInteraction(command)` and `session.respondToInteraction(command)` answer one ask with the canonical `InteractionResponseCommand`.
+
+The adapter advertises `interactions` only when the deployment proves it.
+It reads the deployed sidecar's `GET /capabilities` document through `box.capabilities()` and claims the capability only when `interactions.responseDedupe` is `true`.
+An SDK without `box.capabilities()`, a document that omits the flag, and a `null` document all leave the deployment unknown.
+The adapter withholds the claim and omits both methods for each of these, because an undisclosed deployment cannot prove a retry-safe response.
+The provider-level document never claims `interactions`: the capability document is served per sandbox, and the provider boundary has no sandbox to read.
+
+Each kind maps onto one Sandbox method: a question to `session.answer()`, a permission to `session.respondToPermission()`, and a plan to `session.approvePlan()` or `session.rejectPlan()`.
+The adapter answers an ask only after it observed the ask on a stream, because the command names an interaction id but not its kind.
+It checks the answer against the ask's binding and answer spec before any request leaves the process.
+Three limits come from the Sandbox transport and appear in the claimed document.
+`secretAnswers` is false, because the question route carries strings and cannot carry a one-use secret handle.
+`concurrentRequests` is false, because `session.answer()` resolves the session's outstanding question and cannot select among several.
+`responseScopes` names `interaction` alone, because the permission route carries the `allow_once` grant; the adapter refuses a broader grant instead of delivering it narrowed.
+
+Each outcome maps onto one acknowledgement status.
+
+| Outcome | Status |
+| --- | --- |
+| Sandbox method resolved | `accepted` |
+| Same operation id and command digest, already delivered | the stored acknowledgement |
+| New operation id, same response, already delivered | `already_resolved_same` |
+| Different response for a resolved ask, or route `409 already_resolved_different` | `already_resolved_different` |
+| Stale or foreign binding, or route `409 binding_mismatch` | `binding_mismatch` |
+| Binding names another run | `unknown_run` |
+| Unobserved ask, or route `410` or `404` | `unknown_interaction` |
+| Ask withdrawn by `interaction.cancel` | `cancelled` |
+| Answer spec rejected the response, or route `400` | `invalid_response` |
+| Transport cannot carry the answer, or route `5xx` or `501` | `transport_failure` |
 
 Pass the SDK client itself when retained control matters.
 An object-spread wrapper (`{ ...client }`) drops class prototype methods, including `fetch`, so the provider treats the wrapper as a non-SDK client and claims no retained control.
