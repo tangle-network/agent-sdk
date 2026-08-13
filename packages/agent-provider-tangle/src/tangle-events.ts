@@ -107,8 +107,16 @@ export function environmentEventFromSandboxEvent(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
     );
   }
-  const { executionId: eventExecutionId, sessionId: eventSessionId } =
-    sandboxEventIdentity(event);
+  // An exact run stream is already selected by the runtime execution id.
+  // On that stream, session.updated carries the harness-native session id
+  // (for example an OpenCode session), not the runtime session id. Keep that
+  // value as event content while lifecycle frames remain identity-checked.
+  const identity = sandboxEventIdentity(event);
+  const eventExecutionId = identity.executionId;
+  const eventSessionId =
+    expected.streamBound === true && record.type === "session.updated"
+      ? undefined
+      : identity.sessionId;
   if (
     expected.executionId !== undefined &&
     ((eventExecutionId === undefined && expected.streamBound !== true) ||

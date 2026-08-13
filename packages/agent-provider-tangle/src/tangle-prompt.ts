@@ -114,21 +114,44 @@ type ValidatedSandboxPromptResult = Record<string, unknown> & {
   executionId?: string;
 };
 
+const SANDBOX_OPTIONAL_RESULT_FIELDS = new Set([
+  "executionId",
+  "response",
+  "error",
+  "errorCode",
+  "toolInvocations",
+  "approval",
+  "question",
+  "plan",
+  "traceId",
+  "usage",
+  "costUsd",
+]);
+
 export function validatedSandboxPromptResult(
   result: PromptResult,
 ): ValidatedSandboxPromptResult {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("Tangle prompt returned no result object");
   }
-  const record = result as unknown as Record<string, unknown>;
+  const source = result as unknown as Record<string, unknown>;
   if (
-    Object.hasOwn(record, "contextTransferReceipt") &&
-    record.contextTransferReceipt === undefined
+    Object.hasOwn(source, "contextTransferReceipt") &&
+    source.contextTransferReceipt === undefined
   ) {
     throw new Error(
       "Tangle prompt result returned a context receipt for a turn that requested no transfer",
     );
   }
+  // The Sandbox SDK materializes absent optional response fields as
+  // `undefined`. They were absent on the JSON wire and must stay absent in the
+  // provider-neutral result before the strict JSON check runs.
+  const record = Object.fromEntries(
+    Object.entries(source).filter(
+      ([field, value]) =>
+        value !== undefined || !SANDBOX_OPTIONAL_RESULT_FIELDS.has(field),
+    ),
+  );
   assertBoundedJson(record);
   if (typeof record.success !== "boolean") {
     throw new Error("Tangle prompt result omitted its success status");
