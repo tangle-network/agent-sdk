@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-cli-bridge",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "AgentEnvironmentProvider adapter for cli-bridge /v1/chat/completions",
   "type": "module",
   "license": "MIT",
@@ -62,7 +62,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.50.0",
+    "@tangle-network/agent-interface": "0.51.0",
     "undici": "catalog:"
   },
   "devDependencies": {
