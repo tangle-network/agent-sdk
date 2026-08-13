@@ -346,6 +346,10 @@ describe("createTangleProvider", () => {
       id: "sbx-1",
       name: "sandbox-one",
       status: "running",
+      metadata: {
+        retainedIdempotencyKey: "environment-key",
+        labels: { tenant: "acme" },
+      },
       async *streamPrompt(prompt: string): AsyncIterable<SandboxEvent> {
         yield {
           type: "result",
@@ -399,6 +403,9 @@ describe("createTangleProvider", () => {
         createRequestOptions = requestOptions;
         return box;
       },
+      async get(id) {
+        return id === box.id ? box : null;
+      },
       describePlacement: () => ({ kind: "sibling", sandboxId: "sbx-1" }),
     };
     const provider = createTangleProvider({ client });
@@ -421,6 +428,21 @@ describe("createTangleProvider", () => {
       backend: { type: "codex", profile: { name: "worker" } },
     });
     expect(createRequestOptions?.signal).toBe(controller.signal);
+    const environment = await provider.create({ profile: { name: "worker" } });
+    expect(environment.metadata).toEqual({
+      retainedIdempotencyKey: "environment-key",
+      labels: { tenant: "acme" },
+    });
+    expect(Object.isFrozen(environment.metadata)).toBe(true);
+    expect(Object.isFrozen(environment.metadata?.labels)).toBe(true);
+    (box.metadata?.labels as { tenant: string }).tenant = "changed-at-source";
+    expect(environment.metadata?.labels).toEqual({ tenant: "acme" });
+
+    const reconstructed = await provider.get?.("sbx-1");
+    expect(reconstructed?.metadata?.labels).toEqual({ tenant: "changed-at-source" });
+    expect(Object.isFrozen(reconstructed?.metadata?.labels)).toBe(true);
+    (box.metadata?.labels as { tenant: string }).tenant = "changed-after-reconstruction";
+    expect(reconstructed?.metadata?.labels).toEqual({ tenant: "changed-at-source" });
   });
 
   it("rejects malformed Sandbox events and exec results", async () => {

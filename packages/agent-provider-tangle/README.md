@@ -15,6 +15,8 @@ const provider = createTangleProvider({
 
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
 The adapter validates its complete capability document and omits optional environment methods whose capabilities are disabled.
+Created and reconstructed environments expose a recursively frozen Sandbox metadata snapshot for constant-time annotation checks.
+Sandbox metadata can include caller-authored values and does not authenticate its author.
 Reconstruct an exact session with `environment.session(reference.id, { controlRef: reference.controlRef })`; replay cursors are exclusive at both the agent interface and Sandbox session stream.
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
