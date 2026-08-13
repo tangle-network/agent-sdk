@@ -9,7 +9,10 @@ import {
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
 import { deploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
-import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
+import {
+  RETAINED_DEPLOYMENT_DOCUMENT,
+  retainedDeployment,
+} from "./retained-control-test-helpers.js";
 import {
   assertBoundedJson,
   awaitWithSignal,
@@ -438,7 +441,7 @@ describe("Tangle split leaf modules", () => {
       prompt: async () => promptResult(),
       interrupt: async () => interruptPending.promise,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-1",
       status: "running",
       async *streamPrompt() {},
@@ -446,7 +449,7 @@ describe("Tangle split leaf modules", () => {
       read: async () => readPending.promise,
       exec: async () => execPending.promise as never,
       refresh: async () => refreshPending.promise,
-    };
+    });
     const environment = await sandboxInstanceAsEnvironment(box, "tangle-sandbox", minimalClient, capabilities);
     const alreadyAborted = new AbortController();
     alreadyAborted.abort();
@@ -486,11 +489,11 @@ describe("Tangle split leaf modules", () => {
       prompt: async () => promptResult(),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "replay-environment",
       async *streamPrompt() {},
       session: () => session,
-    };
+    });
     const environment = await sandboxInstanceAsEnvironment(
       box,
       "tangle-sandbox",

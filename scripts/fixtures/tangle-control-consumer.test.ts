@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SandboxInstance,
   type SandboxEvent,
+  type SandboxRuntimeCapabilities,
   type TangleSandboxClient,
 } from "@tangle-network/sandbox";
 import {
@@ -21,8 +22,13 @@ function acceptPublicTangleClient(client: TangleSandboxClient): SandboxClientLik
 
 void acceptPublicTangleClient;
 
-/** A deployment that reports the complete retained-control flag set. */
-const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilityDocument = {
+/**
+ * The wire body of `GET /capabilities` for a deployment that reports the
+ * complete retained-control flag set. It carries the SDK's type because the
+ * SDK parses it: a v1 document that omits a declared group is malformed, so
+ * this body must stay complete even where the adapter reads only part of it.
+ */
+const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilities = {
   schema: 1,
   agentInterface: "0.49.0",
   sidecarVersion: "1.0.0-packed",
@@ -32,6 +38,8 @@ const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilityDocument = {
   runs: { executionScopedStatus: true, eventReplay: true },
   interactions: {},
 };
+const DEPLOYMENT_CAPABILITIES_AS_READ: SandboxRuntimeCapabilityDocument =
+  DEPLOYMENT_CAPABILITIES;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -95,6 +103,18 @@ describe("packed Tangle exact-session control", () => {
     expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
+
+    // The environment-scoped document reaches a packed consumer, and the
+    // operations it exposes match it. This deployment backs exact dispatch
+    // and event replay, while the client offers no `get`, so the run cannot
+    // be reconstructed and retained control stays unclaimed.
+    expect(environment.capabilities).toMatchObject({
+      streaming: { detach: true, replay: true, turnIdempotency: true },
+      sessions: { continue: false },
+    });
+    expect(environment.capabilities).not.toHaveProperty("retainedControl");
+    expect(typeof environment.dispatch).toBe("function");
+    expect(typeof environment.session).toBe("function");
   });
 
   it("claims retained control for an SDK-backed client with reconstruction", async () => {
@@ -181,7 +201,7 @@ describe("packed Tangle exact-session control", () => {
     const box: SandboxInstanceLike = {
       id: "sandbox-1",
       status: "running",
-      capabilities: async () => DEPLOYMENT_CAPABILITIES,
+      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
       async *streamPrompt(_message, options) {
         eventSelector(options);
         const events = [
@@ -271,7 +291,7 @@ describe("packed Tangle exact-session control", () => {
     const box: SandboxInstanceLike = {
       id: "sandbox-unproven",
       status: "running",
-      capabilities: async () => DEPLOYMENT_CAPABILITIES,
+      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
       async *streamPrompt() {},
       dispatchPrompt: async (_prompt, options) => ({
         sessionId: options?.sessionId ?? session.id,

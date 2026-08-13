@@ -233,6 +233,19 @@ export interface AgentEnvironment {
   readonly id: string;
   readonly provider: string;
   readonly name?: string;
+  /**
+   * The capability document for THIS environment, and the document a caller
+   * reads to decide which operation to offer against it.
+   *
+   * A capability the connected deployment decides is environment-scoped: one
+   * provider reaches deployments of different ages, so
+   * {@link AgentEnvironmentProvider.capabilities} can only state what holds
+   * before an environment exists. A provider that measures a capability per
+   * environment publishes the measured answer here, and the operations this
+   * environment exposes match it exactly. Absent when the provider document
+   * already describes every environment it creates.
+   */
+  readonly capabilities?: AgentEnvironmentCapabilities;
   status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus>;
   stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent>;
   dispatch?(input: AgentTurnInput): Promise<AgentSessionRef>;

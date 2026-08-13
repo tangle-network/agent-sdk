@@ -24,6 +24,7 @@ import {
   controlRefForTurn,
   executionIdForTurn,
   retainedDeployment,
+  retainedSessionHandle,
   sessionPromptSessionId,
   TANGLE_PROVIDER as PROVIDER,
 } from "./retained-control-test-helpers.js";
@@ -112,31 +113,6 @@ describe("Tangle retained control", () => {
     // claim, but the concrete box proves every fact, so the sandbox stage
     // must still grant retained control on the production create path.
     const sessionId = "session-wrapper-grant";
-    const capableSession = (id: string): SandboxSessionLike => ({
-      id,
-      status: async () => ({ status: "running" }),
-      async *events() {},
-      result: async (options) => ({
-        success: true,
-        status: "success",
-        executionId: echoedExecution(options),
-        durationMs: 1,
-      }),
-      prompt: async (_message, options) => ({
-        success: true,
-        status: "success",
-        executionId: echoedExecution(options),
-        durationMs: 1,
-      }),
-      interrupt: async () => ({ cancelled: true }),
-      cancelRun: async (request) => ({
-        operationId: request.operationId,
-        requestDigest: request.requestDigest,
-        run: request.run,
-        status: "accepted",
-        effect: "not_live",
-      }),
-    });
     const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-wrapper-grant",
       async *streamPrompt() {},
@@ -148,7 +124,7 @@ describe("Tangle retained control", () => {
         alreadyExisted: false,
         dispatched: true,
       }),
-      session: (id) => capableSession(id),
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: {
@@ -279,11 +255,11 @@ describe("Tangle retained control", () => {
       }),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-status-binding",
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -503,6 +479,7 @@ describe("Tangle retained control", () => {
         alreadyExisted: true,
         dispatched: false,
       }),
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: { create: async () => box },
@@ -542,6 +519,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: { create: async () => box },
@@ -629,6 +607,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: { create: async () => box },
@@ -688,6 +667,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: { create: async () => box },
@@ -1104,11 +1084,11 @@ describe("Tangle retained control", () => {
       }),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1154,11 +1134,11 @@ describe("Tangle retained control", () => {
       },
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });

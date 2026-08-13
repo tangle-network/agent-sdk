@@ -1,16 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SandboxRuntimeCapabilities } from "@tangle-network/sandbox";
+import type { SandboxEvent, SandboxRuntimeCapabilities } from "@tangle-network/sandbox";
+import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
 import { agentRunCancellationRequestDigest } from "@tangle-network/agent-interface";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
-import type { PromptOptions } from "@tangle-network/sandbox";
 import {
   createTangleProvider,
+  type SandboxClientLike,
   type SandboxInstanceLike,
   type SandboxRuntimeCapabilityDocument,
-  type SandboxSessionLike,
 } from "./index.js";
-import { deploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
-import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
+import {
+  deploymentCapabilitySupport,
+  UNPROVEN_DEPLOYMENT,
+} from "./tangle-deployment-capabilities.js";
+import {
+  RETAINED_DEPLOYMENT_DOCUMENT,
+  retainedSessionHandle,
+} from "./retained-control-test-helpers.js";
 
 /**
  * The published SDK document is the wire fact this adapter reads. Assigning
@@ -29,38 +35,6 @@ const PUBLISHED_DOCUMENT: SandboxRuntimeCapabilities = {
 };
 const PUBLISHED_DOCUMENT_AS_READ: SandboxRuntimeCapabilityDocument =
   PUBLISHED_DOCUMENT;
-
-function echoedExecution(options: PromptOptions | undefined) {
-  return options?.executionId;
-}
-
-function capableSession(id: string): SandboxSessionLike {
-  return {
-    id,
-    status: async () => ({ status: "running" }),
-    async *events() {},
-    result: async (options) => ({
-      success: true,
-      status: "success",
-      executionId: echoedExecution(options),
-      durationMs: 1,
-    }),
-    prompt: async (_message, options) => ({
-      success: true,
-      status: "success",
-      executionId: echoedExecution(options),
-      durationMs: 1,
-    }),
-    interrupt: async () => ({ cancelled: true }),
-    cancelRun: async (request) => ({
-      operationId: request.operationId,
-      requestDigest: request.requestDigest,
-      run: request.run,
-      status: "accepted",
-      effect: "not_live",
-    }),
-  };
-}
 
 /**
  * One capable sandbox behind one deployment. Every local method retained
@@ -85,7 +59,7 @@ function deployedProvider(options: {
       alreadyExisted: false,
       dispatched: true,
     }),
-    session: (id) => capableSession(id),
+    session: retainedSessionHandle,
     delete: deleted,
     ...(options.capabilities ? { capabilities: options.capabilities } : {}),
   };
@@ -96,6 +70,60 @@ function deployedProvider(options: {
     },
   });
   return { provider, box, sessionId, deleted };
+}
+
+/**
+ * One SDK-backed client, so the client stage mints the linked SDK probe and
+ * measures its complete method surface. The sandbox carries every workspace
+ * and session method that surface promises, which leaves the deployment
+ * document as the single variable between the two capability stages.
+ */
+function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
+  const files = new Map<string, string>();
+  const sessionId = "session-sdk-backed";
+  const box: SandboxInstanceLike = {
+    id: "sbx-sdk-backed",
+    status: "running",
+    async *streamPrompt(_message, promptOptions): AsyncIterable<SandboxEvent> {
+      yield {
+        type: "result",
+        data: {
+          finalText: "ok",
+          sessionId: promptOptions?.sessionId ?? sessionId,
+          ...(promptOptions?.executionId
+            ? { executionId: promptOptions.executionId }
+            : {}),
+        },
+      } as SandboxEvent;
+    },
+    dispatchPrompt: async (_message, promptOptions) => ({
+      sessionId: promptOptions?.sessionId ?? sessionId,
+      executionId: promptOptions?.executionId,
+      runControlRef: promptOptions?.runControlRef,
+      status: "running",
+      alreadyExisted: false,
+      dispatched: true,
+    }),
+    session: retainedSessionHandle,
+    read: async (path) => files.get(path) ?? "",
+    write: async (path, content) => {
+      files.set(path, content);
+      return { path, written: true };
+    },
+    exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
+    capabilities: async () => document,
+    delete: async () => undefined,
+  };
+  const client: SandboxClientLike = {
+    create: async () => box,
+    get: async (id) => (id === box.id ? box : null),
+    // The SDK transport the client stage mints its probe over. The probe is
+    // lazy, so a request here means it stopped being lazy.
+    fetch: async () => {
+      throw new Error("the capability probe must not send a request");
+    },
+  };
+  return { provider: createTangleProvider({ client }), box, sessionId };
 }
 
 describe("Tangle deployment capability discovery", () => {
@@ -128,29 +156,34 @@ describe("Tangle deployment capability discovery", () => {
 
   it("claims nothing when the deployment cannot disclose a document", async () => {
     // A deployment predating capability discovery, or one serving a schema
-    // this SDK cannot read, arrives as null. Unknown is not a claim.
-    const { provider, sessionId } = deployedProvider({
-      capabilities: async () => null,
-    });
+    // this SDK cannot read, arrives as null. Unknown is not a claim, and the
+    // session surface goes with it: result identity, cursor replay, and
+    // canonical cancellation all rest on facts this deployment never reported.
+    const { provider } = deployedProvider({ capabilities: async () => null });
     const environment = await provider.create({ profile: { name: "worker" } });
 
     expect(environment.dispatch).toBeUndefined();
-    expect(environment.session!(sessionId).cancelRun).toBeUndefined();
+    expect(environment.session).toBeUndefined();
+    expect(environment.capabilities).toMatchObject({
+      streaming: { detach: false, replay: false, turnIdempotency: false },
+      sessions: { continue: false },
+    });
+    expect(environment.capabilities).not.toHaveProperty("retainedControl");
   });
 
   it("claims nothing when the linked SDK predates capability discovery", async () => {
     // No `capabilities` method at all: the adapter cannot read deployment
     // truth, so it must not fall back to its own method surface.
-    const { provider, sessionId } = deployedProvider({});
+    const { provider } = deployedProvider({});
     const environment = await provider.create({ profile: { name: "worker" } });
 
     expect(environment.dispatch).toBeUndefined();
-    expect(environment.session!(sessionId).cancelRun).toBeUndefined();
+    expect(environment.session).toBeUndefined();
   });
 
   it("claims nothing when the sandbox is not running to answer", async () => {
     const capabilities = vi.fn(async () => PUBLISHED_DOCUMENT_AS_READ);
-    const { provider, sessionId } = deployedProvider({
+    const { provider } = deployedProvider({
       capabilities,
       status: "stopped",
     });
@@ -158,66 +191,188 @@ describe("Tangle deployment capability discovery", () => {
 
     expect(capabilities).not.toHaveBeenCalled();
     expect(environment!.dispatch).toBeUndefined();
-    expect(environment!.session!(sessionId).cancelRun).toBeUndefined();
+    expect(environment!.session).toBeUndefined();
   });
 
-  it("drops cancellation but keeps dispatch when only the cancel flags are unreported", async () => {
-    // Absence is unknown, so a document that never mentions idempotent
-    // cancellation cannot carry retained control. Exact dispatch is a
-    // separate flag and survives on its own evidence.
-    const { provider, sessionId } = deployedProvider({
-      capabilities: async () => ({
-        ...RETAINED_DEPLOYMENT_DOCUMENT,
-        cancel: { canonicalRunCancellation: true, digestBound: true },
-      }),
-    });
-    const environment = await provider.create({ profile: { name: "worker" } });
+  it("drops every claim its single missing flag backs", async () => {
+    // One flag at a time, dropped from a complete document. Each row states
+    // what survives without that flag, so a claim that outlives the flag it
+    // rests on fails here instead of reaching a caller.
+    const cases = [
+      {
+        flag: "dispatch.runControlRef",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          dispatch: { executionIdOnAdmission: true },
+        },
+        detach: false,
+        replay: true,
+      },
+      {
+        flag: "dispatch.executionIdOnAdmission",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          dispatch: { runControlRef: true },
+        },
+        detach: false,
+        replay: true,
+      },
+      {
+        flag: "cancel.canonicalRunCancellation",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          cancel: { digestBound: true, idempotent: true },
+        },
+        detach: true,
+        replay: true,
+      },
+      {
+        flag: "cancel.digestBound",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          cancel: { canonicalRunCancellation: true, idempotent: true },
+        },
+        detach: true,
+        replay: true,
+      },
+      {
+        flag: "cancel.idempotent",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          cancel: { canonicalRunCancellation: true, digestBound: true },
+        },
+        detach: true,
+        replay: true,
+      },
+      {
+        flag: "runs.eventReplay",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          runs: { executionScopedStatus: true },
+        },
+        detach: true,
+        replay: false,
+      },
+      {
+        flag: "runs.executionScopedStatus",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          runs: { eventReplay: true },
+        },
+        detach: true,
+        replay: true,
+      },
+    ] as const;
 
-    expect(typeof environment.dispatch).toBe("function");
-    expect(environment.session!(sessionId).cancelRun).toBeUndefined();
+    for (const testCase of cases) {
+      const { provider, sessionId } = deployedProvider({
+        capabilities: async () => testCase.document,
+      });
+      const environment = await provider.create({ profile: { name: "worker" } });
+      const claimed = environment.capabilities!;
+
+      expect({
+        flag: testCase.flag,
+        detach: claimed.streaming.detach,
+        replay: claimed.streaming.replay,
+        continued: claimed.sessions.continue,
+      }).toEqual({
+        flag: testCase.flag,
+        detach: testCase.detach,
+        replay: testCase.replay,
+        continued: false,
+      });
+      expect(claimed).not.toHaveProperty("retainedControl");
+      expect(environment.session!(sessionId).cancelRun).toBeUndefined();
+    }
   });
 
-  it("drops dispatch when the deployment does not accept an exact run reference", async () => {
-    const { provider, sessionId } = deployedProvider({
-      capabilities: async () => ({
-        ...RETAINED_DEPLOYMENT_DOCUMENT,
-        dispatch: { executionIdOnAdmission: true },
-      }),
-    });
-    const environment = await provider.create({ profile: { name: "worker" } });
+  it("claims nothing and keeps the sandbox when capability discovery fails", async () => {
+    // Discovery runs against a sandbox a cold provision has already paid for.
+    // A failed read is not evidence about the deployment, so the adapter
+    // claims nothing, reports the failure, and keeps the sandbox.
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { provider, deleted } = deployedProvider({
+        capabilities: async () => {
+          throw new Error("Capability discovery returned a non-object document");
+        },
+      });
 
-    expect(environment.dispatch).toBeUndefined();
-    expect(environment.session!(sessionId).cancelRun).toBeUndefined();
+      const environment = await provider.create({ profile: { name: "worker" } });
+
+      expect(deleted).not.toHaveBeenCalled();
+      expect(environment.dispatch).toBeUndefined();
+      expect(environment.session).toBeUndefined();
+      expect(warned).toHaveBeenCalledWith(
+        expect.stringContaining("Tangle capability discovery failed"),
+        expect.any(Error),
+      );
+    } finally {
+      warned.mockRestore();
+    }
   });
 
-  it("fails loud and deletes the sandbox when capability discovery breaks", async () => {
+  it("propagates the caller's own abort instead of claiming nothing", async () => {
+    const controller = new AbortController();
     const { provider, deleted } = deployedProvider({
-      capabilities: async () => {
-        throw new Error("Capability discovery returned a non-object document");
+      capabilities: () => {
+        controller.abort(new Error("caller cancelled"));
+        // A read still in flight when the caller aborts: the abort decides.
+        return new Promise(() => undefined);
       },
     });
 
     await expect(
-      provider.create({ profile: { name: "worker" } }),
-    ).rejects.toThrow(/Capability discovery returned/);
+      provider.create({ profile: { name: "worker" }, signal: controller.signal }),
+    ).rejects.toThrow(/caller cancelled/);
     expect(deleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("pairs the client-stage document against the sandbox surface it produces", async () => {
+    // The client-stage document is the only capability document a consumer
+    // reads, so it must describe the environment this provider builds. An
+    // SDK-backed client measures the linked SDK's full method surface, which
+    // leaves the deployment document as the single variable: run the repo's
+    // conformance suite over both answers a deployment can give.
+    for (const document of [null, RETAINED_DEPLOYMENT_DOCUMENT]) {
+      const { provider } = sdkBackedProvider(document);
+      await expect(
+        runAgentEnvironmentProviderConformance({
+          name: "tangle-deployment",
+          createProvider: () => provider,
+        }),
+      ).resolves.toMatchObject({ provider: "tangle-sandbox" });
+    }
+  });
+
+  it("keeps the published environment document beyond a caller's reach", async () => {
+    // The document and the exposed operations are decided together. A caller
+    // that could write a flag would describe a surface this environment has
+    // no method for, which is the disagreement the document exists to close.
+    const { provider } = sdkBackedProvider(null);
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const published = environment.capabilities as {
+      streaming: { detach: boolean };
+    };
+
+    expect(() => {
+      published.streaming.detach = true;
+    }).toThrow(TypeError);
+    expect(environment.capabilities!.streaming.detach).toBe(false);
+    expect(environment.dispatch).toBeUndefined();
   });
 
   it("reads every flag as unknown until the document sets it", () => {
     expect(deploymentCapabilitySupport(PUBLISHED_DOCUMENT_AS_READ)).toEqual({
-      measured: true,
-      exactRunControlRef: true,
+      exactDispatch: true,
       canonicalCancellation: true,
+      eventReplay: true,
+      executionScopedStatus: true,
     });
-    expect(deploymentCapabilitySupport(null)).toEqual({
-      measured: true,
-      exactRunControlRef: false,
-      canonicalCancellation: false,
-    });
-    expect(deploymentCapabilitySupport({ schema: 1 })).toEqual({
-      measured: true,
-      exactRunControlRef: false,
-      canonicalCancellation: false,
-    });
+    expect(deploymentCapabilitySupport(null)).toEqual(UNPROVEN_DEPLOYMENT);
+    expect(deploymentCapabilitySupport({ schema: 1 })).toEqual(
+      UNPROVEN_DEPLOYMENT,
+    );
   });
 });

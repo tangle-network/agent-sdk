@@ -7,6 +7,7 @@ import {
 import type {
   SandboxInstanceLike,
   SandboxRuntimeCapabilityDocument,
+  SandboxSessionLike,
 } from "./tangle-types.js";
 
 export const TANGLE_PROVIDER = "tangle-sandbox";
@@ -24,7 +25,6 @@ export const RETAINED_DEPLOYMENT_DOCUMENT: SandboxRuntimeCapabilityDocument = {
   dispatch: { runControlRef: true, executionIdOnAdmission: true },
   cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
   runs: { executionScopedStatus: true, eventReplay: true },
-  interactions: {},
 };
 
 /**
@@ -40,6 +40,39 @@ export function retainedDeployment(
     ...box,
     status: box.status ?? "running",
     capabilities: async () => document,
+  };
+}
+
+/**
+ * The session surface a sandbox behind a retained deployment carries. A
+ * fixture that dispatches needs one: a detached run is reachable only through
+ * a session handle, so the adapter claims no detach without it.
+ */
+export function retainedSessionHandle(id: string): SandboxSessionLike {
+  return {
+    id,
+    status: async () => ({ status: "running" }),
+    async *events() {},
+    result: async (options) => ({
+      success: true,
+      status: "success",
+      executionId: options?.executionId,
+      durationMs: 1,
+    }),
+    prompt: async (_message, options) => ({
+      success: true,
+      status: "success",
+      executionId: options?.executionId,
+      durationMs: 1,
+    }),
+    interrupt: async () => ({ cancelled: true }),
+    cancelRun: async (request) => ({
+      operationId: request.operationId,
+      requestDigest: request.requestDigest,
+      run: request.run,
+      status: "accepted",
+      effect: "not_live",
+    }),
   };
 }
 

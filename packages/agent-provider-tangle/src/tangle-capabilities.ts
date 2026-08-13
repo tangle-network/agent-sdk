@@ -10,9 +10,8 @@ import type {
   SandboxSessionLike,
 } from "./tangle-types.js";
 import {
-  deploymentBacksExactDispatch,
+  ADAPTER_CEILING_DEPLOYMENT,
   deploymentBacksRetainedControl,
-  UNMEASURED_DEPLOYMENT,
 } from "./tangle-deployment-capabilities.js";
 import type { DeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 
@@ -157,15 +156,13 @@ function linkedSdkProbeInstance(
 }
 
 /**
- * Establish client-stage facts before any sandbox exists. Two sources:
- * the client's own members (get, describePlacement) and, for an SDK-backed
- * client, the linked SDK surface via `linkedSdkProbeInstance`. No deployment
- * is reachable at this stage, so these facts are the adapter's upper bound.
- * Retained control still fails closed: without a probe handle nothing proves
- * `cancelRun`, so the provider must not claim it. Box-scoped workspace and
- * streaming facts stay at the declared upper bound when no handle can be
- * minted — each concrete sandbox re-narrows them in `capabilitiesForSandbox`,
- * where the deployment's own document decides retained control.
+ * Establish client-stage facts before any sandbox exists. Two sources: the
+ * client's own members (get, describePlacement) and, for an SDK-backed client,
+ * the linked SDK surface via `linkedSdkProbeInstance`. These facts bound what
+ * the adapter can execute; the deployment that decides whether an execution is
+ * honored is unreachable at this stage. Box-scoped workspace facts stay at the
+ * declared upper bound when no handle can be minted, and each concrete sandbox
+ * re-measures them in `capabilitiesForSandbox`.
  */
 export function clientCapabilitySupport(
   client: SandboxClientLike,
@@ -191,9 +188,10 @@ export function clientCapabilitySupport(
  * Two independent fact sets must agree. The adapter surface must be able to
  * execute it: exact dispatch, a session handle, canonical cancellation, and
  * environment reconstruction by id. The connected deployment must honor it:
- * a deployment that reports no exact run reference or no canonical
- * cancellation refuses the claim even when every local method exists,
- * because a method this process can call is not a run the service retains.
+ * exact dispatch, canonical cancellation, event replay, and execution-scoped
+ * status together. A deployment that leaves any of the four unreported refuses
+ * the claim even when every local method exists, because a method this process
+ * can call is not a run the service retains.
  */
 export function tangleRetainedControlSupported(
   declared: AgentEnvironmentCapabilities,
@@ -217,10 +215,14 @@ export function tangleRetainedControlSupported(
  * Narrow a declared capability document to established facts.
  *
  * Braid derives product actions from these flags, so an over-claimed flag is
- * an offered action that throws at the moment the user selects it. Detached
- * dispatch carries the caller's exact `runControlRef` and refuses a receipt
- * that does not echo it, so `streaming.detach` needs the deployment to accept
- * that reference — one flag, narrower than the complete retained-control set.
+ * an offered action that throws at the moment the user selects it. Each flag
+ * takes the narrowest fact set it rests on. Detached dispatch carries the
+ * caller's exact `runControlRef` and refuses a receipt that does not echo the
+ * execution back, and it is only reachable through a session handle, so
+ * `streaming.detach` needs exact dispatch from the deployment plus both local
+ * methods. Cursor replay needs the deployment's own event replay, and turn
+ * idempotency needs the deployment to honor the exact reference that
+ * identifies a repeated turn.
  */
 export function narrowedTangleCapabilities(
   declared: AgentEnvironmentCapabilities,
@@ -233,7 +235,7 @@ export function narrowedTangleCapabilities(
     deployment,
   );
   const supportsDetach =
-    support.dispatchPrompt && deploymentBacksExactDispatch(deployment);
+    support.dispatchPrompt && support.session && deployment.exactDispatch;
   // A cleared fact forces false; a held fact passes the declared value
   // through unchanged, so a malformed declaration still reaches the schema
   // at the provider boundary instead of being laundered into a boolean.
@@ -242,8 +244,11 @@ export function narrowedTangleCapabilities(
     streaming: {
       ...declared.streaming,
       detach: supportsDetach ? declared.streaming.detach : false,
-      replay: support.session ? declared.streaming.replay : false,
-      turnIdempotency: support.session
+      replay:
+        support.session && deployment.eventReplay
+          ? declared.streaming.replay
+          : false,
+      turnIdempotency: deployment.exactDispatch
         ? declared.streaming.turnIdempotency
         : false,
     },
@@ -281,11 +286,15 @@ export function narrowedTangleCapabilities(
 
 /**
  * Narrow provider-level claims to facts the client can prove before any
- * sandbox exists. `clientCapabilitySupport` documents which facts stay at
- * the declared upper bound when the client offers no probe surface. The
- * deployment is `unmeasured` here by construction: this stage holds no
- * sandbox, so there is nothing to ask. Each concrete sandbox re-narrows
- * against its own deployment, and can only come back equal or narrower.
+ * sandbox exists.
+ *
+ * This document answers "what can this provider do against a deployment that
+ * backs it", which is the question a caller selects a provider on. No sandbox
+ * exists here, so the deployment input is the adapter's ceiling and this
+ * document is a bound, never a statement about one environment. Each concrete
+ * sandbox reads its own deployment in `capabilitiesForSandbox` and publishes
+ * the answer as `AgentEnvironment.capabilities`, which is the document a
+ * caller reads to decide which operation to offer against that environment.
  */
 export function capabilitiesForClient(
   declared: AgentEnvironmentCapabilities,
@@ -294,8 +303,21 @@ export function capabilitiesForClient(
   return narrowedTangleCapabilities(
     declared,
     clientCapabilitySupport(client),
-    UNMEASURED_DEPLOYMENT,
+    ADAPTER_CEILING_DEPLOYMENT,
   );
+}
+
+/**
+ * Freeze a capability document before an environment publishes it.
+ *
+ * The document and the operations an environment exposes are decided together
+ * and must stay equal, so the copy a caller holds cannot be writable: a
+ * mutated flag would describe a surface this environment does not have.
+ */
+export function frozenCapabilityDocument<T>(document: T): T {
+  if (document === null || typeof document !== "object") return document;
+  for (const value of Object.values(document)) frozenCapabilityDocument(value);
+  return Object.freeze(document);
 }
 
 /**

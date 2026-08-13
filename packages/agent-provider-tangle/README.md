@@ -19,22 +19,45 @@ Reconstruct an exact session with `environment.session(reference.id, { controlRe
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
 
-Capabilities are derived in two stages, and each stage claims only what it can establish.
+## Two capability documents
 
-The client stage runs before any sandbox exists, so it can only measure the adapter surface.
+Capabilities are derived in two stages, and the two stages answer different questions.
+
+`provider.capabilities()` answers "what can this provider do against a deployment that backs it".
+It runs before any sandbox exists, so it measures the adapter surface alone and states the adapter's ceiling for everything a deployment decides.
 A lazy instance handle minted from the linked Sandbox SDK over the client's `fetch` transport must prove `dispatchPrompt`, `session`, and `cancelRun`, and the client must expose `get` for reconstruction; the probe sends no request and creates no resource.
-That handle measures the linked SDK's method surface, which is an upper bound and never a statement about the connected service.
-A client that cannot prove those facts gets no claim, so the runtime rejects retained dispatch before any sandbox is created.
+That handle measures the linked SDK's method surface, never the connected service.
+A client that cannot prove those facts gets no retained-control claim, so the runtime rejects retained dispatch before any sandbox is created.
 
-The sandbox stage reads deployment truth.
-Composing an environment calls `box.capabilities()` once and derives the retained-control claim from that document, not from the linked SDK.
-`retainedControl` needs `dispatch.runControlRef` together with `cancel.canonicalRunCancellation`, `cancel.digestBound`, and `cancel.idempotent`; `streaming.detach` needs `dispatch.runControlRef` alone, because detached dispatch carries the caller's exact reference and refuses a receipt that does not echo it.
+`environment.capabilities` answers "what can this environment do", and it is the document to read before offering an operation.
+Composing an environment calls `box.capabilities()` once and derives every deployment-decided claim from that document.
+The operations an environment exposes match its own document exactly: a claim the document does not carry has no method behind it.
+One provider reaches deployments of different ages, which is why the environment carries its own document rather than inheriting the provider's.
+
+Each deployment flag this adapter reads gates the claims it backs, and no flag is read that gates nothing:
+
+| Deployment flag | Claims it gates |
+| --- | --- |
+| `dispatch.runControlRef` | `streaming.detach`, `streaming.turnIdempotency`, `retainedControl` |
+| `dispatch.executionIdOnAdmission` | `streaming.detach`, `streaming.turnIdempotency`, `retainedControl` |
+| `cancel.canonicalRunCancellation` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
+| `cancel.digestBound` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
+| `cancel.idempotent` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
+| `runs.eventReplay` | `streaming.replay`, `retainedControl` |
+| `runs.executionScopedStatus` | `retainedControl`, `sessions.continue` |
+
+Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
+`retainedControl` needs every flag in the table, because the capability schema refuses a partial block and each identity rests on its own flag.
 A missing flag means unknown, and unknown is never a claim.
-The adapter surface stays the ceiling: a deployment claim can only narrow what the client can execute, never widen it.
 
-Four inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), and a document that leaves any required flag unset.
-In each case the environment omits `dispatch` and its sessions omit `cancelRun`, so a caller never selects an action the deployment will reject.
-A malformed document is different: capability discovery throws, `create()` deletes the sandbox it just made, and the error propagates.
+Five inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), a document that leaves any required flag unset, and a capability read that fails.
+In each case the environment omits `dispatch` and `session`, so a caller never selects an action the deployment will reject.
+A failed read claims nothing rather than failing `create()`: discovery runs against a sandbox a cold provision has already paid for, and a transport failure is not evidence about the deployment.
+The failure is reported on the warning channel.
+
+The document is measured once, when the environment is composed.
+A sandbox that is not yet running cannot answer, so an environment composed during provisioning claims nothing and keeps claiming nothing — the exposed operations and the document are composed together, and a caller may already hold either one.
+Compose the environment again through `provider.get(id)` once the sandbox is running.
 
 Pass the SDK client itself when retained control matters.
 An object-spread wrapper (`{ ...client }`) drops class prototype methods, including `fetch`, so the provider treats the wrapper as a non-SDK client and claims no retained control.

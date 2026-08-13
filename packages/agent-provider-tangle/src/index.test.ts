@@ -20,6 +20,7 @@ import {
   controlRefForTurn,
   executionIdForTurn,
   retainedDeployment,
+  retainedSessionHandle,
   TANGLE_PROVIDER,
 } from "./retained-control-test-helpers.js";
 
@@ -287,11 +288,11 @@ describe("createTangleProvider", () => {
       },
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -553,11 +554,11 @@ describe("createTangleProvider", () => {
       },
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-session-advance",
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -640,11 +641,11 @@ describe("createTangleProvider", () => {
       },
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-turn-identity",
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -716,6 +717,7 @@ describe("createTangleProvider", () => {
         sessionId: options?.sessionId,
         executionId: "execution-from-server",
       }),
+      session: retainedSessionHandle,
     });
     const provider = createTangleProvider({
       client: { create: async () => box },
@@ -1046,7 +1048,7 @@ describe("createTangleProvider", () => {
       }),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-competing-event",
       async *streamPrompt() {
         yield {
@@ -1060,7 +1062,7 @@ describe("createTangleProvider", () => {
         } as SandboxEvent;
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1101,11 +1103,11 @@ describe("createTangleProvider", () => {
       }),
       interrupt,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-unbound",
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1144,11 +1146,11 @@ describe("createTangleProvider", () => {
       prompt: async () => result,
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: environmentId,
       async *streamPrompt() {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1219,11 +1221,11 @@ describe("createTangleProvider", () => {
       }),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: environmentId,
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });

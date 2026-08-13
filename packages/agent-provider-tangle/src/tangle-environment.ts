@@ -1,4 +1,5 @@
 import { AgentTurnInputSchema } from "@tangle-network/agent-interface";
+import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentExactRunControlRef,
   AgentRunControlRef,
@@ -32,8 +33,8 @@ import {
 import { execResultFromSandboxExecResult } from "./tangle-result-values.js";
 import {
   capabilitiesForSandbox,
+  frozenCapabilityDocument,
   sandboxCapabilitySupport,
-  tangleRetainedControlSupported,
 } from "./tangle-capabilities.js";
 import { readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
@@ -59,7 +60,15 @@ import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
  * `GET /capabilities` against the sandbox decides retained control, and the
  * environment then exposes exactly the operations both the adapter surface
  * and the deployment back. A deployment that cannot disclose a readable
- * document yields no retained-control surface at all.
+ * document yields no retained-control surface at all. The environment
+ * publishes the resulting document on `capabilities`, so a caller reads the
+ * answer for this sandbox rather than the provider's pre-sandbox claim.
+ *
+ * The document is measured once, here. A sandbox that is not yet running
+ * cannot answer, so an environment composed during provisioning claims
+ * nothing and keeps claiming nothing: the exposed operations and the document
+ * are composed together and a caller may already hold either one. Compose the
+ * environment again through `provider.get(id)` once the sandbox is running.
  */
 export async function sandboxInstanceAsEnvironment(
   box: SandboxInstanceLike,
@@ -78,16 +87,14 @@ export async function sandboxInstanceAsEnvironment(
   }
   const support = sandboxCapabilitySupport(box, client);
   const deployment = await readDeploymentCapabilitySupport(box, operation);
-  const capabilities = capabilitiesForSandbox(
-    declaredCapabilities,
-    support,
-    deployment,
+  const capabilities = frozenCapabilityDocument(
+    AgentEnvironmentCapabilitiesSchema.parse(
+      capabilitiesForSandbox(declaredCapabilities, support, deployment),
+    ),
   );
-  const retainedControl = tangleRetainedControlSupported(
-    declaredCapabilities,
-    support,
-    deployment,
-  );
+  // The published document is the single source for what this environment
+  // offers, so the session surface reads its grant from there.
+  const retainedControl = capabilities.retainedControl !== undefined;
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
@@ -112,6 +119,7 @@ export async function sandboxInstanceAsEnvironment(
     id: environmentId,
     provider: providerName,
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
+    capabilities,
     async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
       assertOptionKeys(options, ["signal"], "Tangle environment status");
       await awaitWithSignal(box.refresh?.(options), options?.signal);

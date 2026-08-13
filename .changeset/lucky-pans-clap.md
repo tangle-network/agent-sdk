@@ -2,10 +2,15 @@
 "@tangle-network/agent-provider-tangle": minor
 ---
 
-Derive retained control from deployment capability discovery.
+Derive retained control from deployment capability discovery, and publish the result on the environment.
 
-Composing an environment now calls `box.capabilities()` once and takes the retained-control claim from that document instead of from the linked Sandbox SDK's method surface.
-`retainedControl` needs `dispatch.runControlRef` with `cancel.canonicalRunCancellation`, `cancel.digestBound`, and `cancel.idempotent`; `streaming.detach` needs `dispatch.runControlRef`.
-An SDK older than 0.22.0, a sandbox that is not running, a `null` document, or a missing flag claims nothing: the environment omits `dispatch` and its sessions omit `cancelRun`.
-A malformed document throws and `create()` deletes the sandbox.
-The client stage keeps its adapter-surface probe as an upper bound, because no deployment exists to ask before a sandbox is created.
+Composing an environment now calls `box.capabilities()` once and takes every deployment-decided claim from that document instead of from the linked Sandbox SDK's method surface.
+The narrowed document is published as `environment.capabilities`, which is the document to read before offering an operation: the operations an environment exposes match it exactly, while `provider.capabilities()` states the adapter's ceiling before any sandbox exists.
+
+Every flag the capability document carries now gates the claims it backs.
+`streaming.detach` and `streaming.turnIdempotency` need `dispatch.runControlRef` with `dispatch.executionIdOnAdmission`; `streaming.replay` needs `runs.eventReplay`; `retainedControl` needs those plus `cancel.canonicalRunCancellation`, `cancel.digestBound`, `cancel.idempotent`, and `runs.executionScopedStatus`.
+Detached dispatch also needs a session handle, because a detached run is reachable only through one.
+
+Five inputs claim nothing: an SDK older than 0.22.0, a sandbox that is not running, a `null` document, a document that leaves a required flag unset, and a capability read that fails.
+Such environments omit `dispatch` and `session`.
+A failed read no longer fails `create()` and no longer deletes the sandbox a cold provision has already paid for; it claims nothing and reports the failure on the warning channel.
