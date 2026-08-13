@@ -1,5 +1,16 @@
 # @tangle-network/agent-interface
 
+## 0.49.0
+
+### Minor Changes
+
+- a47e59e: Add an optional `maxTotalTokens` execution limit for the accounted input and output token total.
+  Terminal model settlements now carry required accounted input tokens per call and the router's `usageWithinLimits` result.
+  The strict schemas reject missing or malformed accounting fields.
+- d93bac3: Add an optional normalized environment observation surface and an optional provider-neutral interactive-terminal contract.
+  Each observation carries a required freshness discriminator, so a missing value never reads as a measured zero, and the endpoint type holds no credential field.
+  All additions are optional and additive; a provider that declares neither surface still validates.
+
 ## 0.48.0
 
 ### Minor Changes
