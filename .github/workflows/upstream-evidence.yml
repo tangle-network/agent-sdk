@@ -1,0 +1,277 @@
+# Braid upstream-evidence checks.
+#
+# Braid reads GitHub API metadata only. For each required UP-id it needs a
+# check-run named exactly the UP-id, a run head_sha equal to the release tag
+# commit, and an uploaded artifact whose name carries the UP-id with a sha256
+# digest. The changesets "Version Packages" merge is a push to main whose commit
+# is the tag commit, so this workflow triggers on that push. A tag push cannot
+# trigger a workflow, so this workflow must not key on tags.
+#
+# Two operator decisions unblock the gated jobs. Both stay off until an operator
+# sets the repository variable UPSTREAM_LIVE_EVIDENCE to "true".
+#   1. Live cli-bridge (UP-05..08): stand up a bridge server that implements the
+#      bridge wire protocol. Expose its address as the repository variable
+#      CLI_BRIDGE_TEST_SERVER. The shipped cli-bridge tests mock the transport in
+#      process, so the live check needs a packed cli-bridge cohort pointed at the
+#      real server.
+#   2. Live Tangle roundtrip (UP-09): provide the operator secrets
+#      TANGLE_CI_SANDBOX_KEY, TANGLE_CI_SANDBOX_URL, and
+#      TANGLE_CI_SANDBOX_SERVICE_ID. The public Sandbox client is chain-backed, so
+#      the operator inputs map to a private key, an RPC url, and a service id.
+#
+# A skipped job never reports success, so Braid never counts it. Do not add these
+# checks to branch protection; a skip must not block a merge.
+
+name: Upstream Evidence
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  UP-01:
+    name: UP-01
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-01
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-01-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-02:
+    name: UP-02
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-02
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-02-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-11:
+    name: UP-11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-11
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-11-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-12:
+    name: UP-12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-12-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-13:
+    name: UP-13
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-13
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-13-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-14:
+    name: UP-14
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-14-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  # Gated: live cli-bridge conformance. See operator decision 1 at the top.
+  UP-05:
+    name: UP-05
+    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-05
+        env:
+          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-05-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-06:
+    name: UP-06
+    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-06
+        env:
+          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-06-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-07:
+    name: UP-07
+    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-07
+        env:
+          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-07-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  UP-08:
+    name: UP-08
+    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-08
+        env:
+          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-08-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  # Gated: live Tangle sandbox roundtrip. See operator decision 2 at the top.
+  UP-09:
+    name: UP-09
+    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs UP-09
+        env:
+          TANGLE_CI_SANDBOX_KEY: ${{ secrets.TANGLE_CI_SANDBOX_KEY }}
+          TANGLE_CI_SANDBOX_URL: ${{ secrets.TANGLE_CI_SANDBOX_URL }}
+          TANGLE_CI_SANDBOX_SERVICE_ID: ${{ secrets.TANGLE_CI_SANDBOX_SERVICE_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UP-09-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
