@@ -9,15 +9,21 @@ import type {
   SandboxInstanceLike,
   SandboxSessionLike,
 } from "./tangle-types.js";
+import {
+  deploymentBacksExactDispatch,
+  deploymentBacksRetainedControl,
+  UNMEASURED_DEPLOYMENT,
+} from "./tangle-deployment-capabilities.js";
+import type { DeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 
 /**
  * The full capability document this adapter supports when the Sandbox client
  * implements every optional method.
  *
- * This is an upper bound, not a claim. `capabilitiesForClient()` and
- * `capabilitiesForSandbox()` narrow it to what the deployment actually
- * exposes, because a capability the client cannot back becomes an action the
- * caller selects and finds missing.
+ * This is an upper bound, not a claim. `capabilitiesForClient()` narrows it
+ * to the adapter surface, and `capabilitiesForSandbox()` narrows it again to
+ * what the deployment behind one sandbox reports, because a capability
+ * nothing backs becomes an action the caller selects and finds missing.
  */
 export function defaultTangleSandboxCapabilities(
   harness?: HarnessType,
@@ -47,10 +53,11 @@ export function defaultTangleSandboxCapabilities(
     streaming: { live: true, replay: true, detach: true, turnIdempotency: true },
     // Retained control is declared as intent here and stripped by narrowing
     // wherever the facts cannot prove dispatchPrompt, session, cancelRun,
-    // and environment reconstruction by id. The four sub-flags are
-    // all-or-nothing by design: this adapter implements the identities
+    // and environment reconstruction by id, or wherever the deployment does
+    // not report the run-control and cancellation flags. The four sub-flags
+    // are all-or-nothing by design: this adapter implements the identities
     // together over one Sandbox surface, and the capability schema refuses
-    // a partial block, so they stand or fall on the same probed fact set.
+    // a partial block, so they stand or fall on the same fact set.
     sessions: { continue: true, list: false, messages: false },
     retainedControl: {
       exactRunIdentity: true,
@@ -71,9 +78,11 @@ export function defaultTangleSandboxCapabilities(
 }
 
 /**
- * Deployment facts that gate declared capabilities. Every fact defaults to
- * false when it cannot be established; a false fact clears the matching
- * declared capability.
+ * Adapter-surface facts that gate declared capabilities: which methods this
+ * process can actually call. Every fact defaults to false when it cannot be
+ * established; a false fact clears the matching declared capability. These
+ * facts bound the claim from above — what the connected deployment honors is
+ * a separate fact, carried by `DeploymentCapabilitySupport`.
  */
 export interface SandboxCapabilitySupport {
   /** The provider can rebuild an environment by id (`client.get`). */
@@ -123,13 +132,14 @@ type SandboxHttpClient = ConstructorParameters<typeof SandboxInstance>[0];
 /**
  * Mint a lazy instance handle from the sandbox SDK linked into this process.
  * The handle measures the LINKED SDK's instance and session method surface —
- * an adapter-capability fact, not deployment truth. It is valid exactly when
- * the client is SDK-backed (carries the SDK `fetch` transport), because the
+ * an adapter-surface fact and therefore an upper bound, never a claim that
+ * the connected service honors those methods. It is valid exactly when the
+ * client is SDK-backed (carries the SDK `fetch` transport), because the
  * sandboxes such a client returns are instances of these same classes.
- * Deployment truth (what the connected service honors) needs the sidecar
- * capability endpoint and is a follow-up. The handle and its probe session
- * never leave the process: construction and `session(id)` are lazy in the
- * SDK, so no request is sent and no billable resource is created.
+ * Deployment truth arrives per-sandbox, from `box.capabilities()`, and can
+ * only narrow this bound. The handle and its probe session never leave the
+ * process: construction and `session(id)` are lazy in the SDK, so no request
+ * is sent and no billable resource is created.
  */
 function linkedSdkProbeInstance(
   client: SandboxClientLike,
@@ -149,11 +159,13 @@ function linkedSdkProbeInstance(
 /**
  * Establish client-stage facts before any sandbox exists. Two sources:
  * the client's own members (get, describePlacement) and, for an SDK-backed
- * client, the linked SDK surface via `linkedSdkProbeInstance`. Retained
- * control fails closed: without a probe handle nothing proves `cancelRun`,
- * so the provider must not claim it. Box-scoped workspace and streaming
- * facts stay at the declared upper bound when no handle can be minted —
- * each concrete sandbox re-narrows them in `capabilitiesForSandbox`.
+ * client, the linked SDK surface via `linkedSdkProbeInstance`. No deployment
+ * is reachable at this stage, so these facts are the adapter's upper bound.
+ * Retained control still fails closed: without a probe handle nothing proves
+ * `cancelRun`, so the provider must not claim it. Box-scoped workspace and
+ * streaming facts stay at the declared upper bound when no handle can be
+ * minted — each concrete sandbox re-narrows them in `capabilitiesForSandbox`,
+ * where the deployment's own document decides retained control.
  */
 export function clientCapabilitySupport(
   client: SandboxClientLike,
@@ -174,18 +186,22 @@ export function clientCapabilitySupport(
 }
 
 /**
- * Narrow a declared capability document to established facts.
+ * Decide whether retained control may be claimed.
  *
- * Braid derives product actions from these flags, so an over-claimed flag is
- * an offered action that throws at the moment the user selects it. Retained
- * control requires the complete fact set: exact dispatch, a session handle,
- * canonical cancellation, and environment reconstruction by id.
+ * Two independent fact sets must agree. The adapter surface must be able to
+ * execute it: exact dispatch, a session handle, canonical cancellation, and
+ * environment reconstruction by id. The connected deployment must honor it:
+ * a deployment that reports no exact run reference or no canonical
+ * cancellation refuses the claim even when every local method exists,
+ * because a method this process can call is not a run the service retains.
  */
-export function narrowedTangleCapabilities(
+export function tangleRetainedControlSupported(
   declared: AgentEnvironmentCapabilities,
   support: SandboxCapabilitySupport,
-): AgentEnvironmentCapabilities {
-  const supportsRetainedControl =
+  deployment: DeploymentCapabilitySupport,
+): boolean {
+  return (
+    deploymentBacksRetainedControl(deployment) &&
     declared.sessions.continue === true &&
     declared.streaming.detach === true &&
     declared.streaming.replay === true &&
@@ -193,7 +209,31 @@ export function narrowedTangleCapabilities(
     support.reconstruct &&
     support.dispatchPrompt &&
     support.session &&
-    support.cancelRun;
+    support.cancelRun
+  );
+}
+
+/**
+ * Narrow a declared capability document to established facts.
+ *
+ * Braid derives product actions from these flags, so an over-claimed flag is
+ * an offered action that throws at the moment the user selects it. Detached
+ * dispatch carries the caller's exact `runControlRef` and refuses a receipt
+ * that does not echo it, so `streaming.detach` needs the deployment to accept
+ * that reference — one flag, narrower than the complete retained-control set.
+ */
+export function narrowedTangleCapabilities(
+  declared: AgentEnvironmentCapabilities,
+  support: SandboxCapabilitySupport,
+  deployment: DeploymentCapabilitySupport,
+): AgentEnvironmentCapabilities {
+  const supportsRetainedControl = tangleRetainedControlSupported(
+    declared,
+    support,
+    deployment,
+  );
+  const supportsDetach =
+    support.dispatchPrompt && deploymentBacksExactDispatch(deployment);
   // A cleared fact forces false; a held fact passes the declared value
   // through unchanged, so a malformed declaration still reaches the schema
   // at the provider boundary instead of being laundered into a boolean.
@@ -201,7 +241,7 @@ export function narrowedTangleCapabilities(
     ...declared,
     streaming: {
       ...declared.streaming,
-      detach: support.dispatchPrompt ? declared.streaming.detach : false,
+      detach: supportsDetach ? declared.streaming.detach : false,
       replay: support.session ? declared.streaming.replay : false,
       turnIdempotency: support.session
         ? declared.streaming.turnIdempotency
@@ -242,19 +282,30 @@ export function narrowedTangleCapabilities(
 /**
  * Narrow provider-level claims to facts the client can prove before any
  * sandbox exists. `clientCapabilitySupport` documents which facts stay at
- * the declared upper bound when the client offers no probe surface.
+ * the declared upper bound when the client offers no probe surface. The
+ * deployment is `unmeasured` here by construction: this stage holds no
+ * sandbox, so there is nothing to ask. Each concrete sandbox re-narrows
+ * against its own deployment, and can only come back equal or narrower.
  */
 export function capabilitiesForClient(
   declared: AgentEnvironmentCapabilities,
   client: SandboxClientLike,
 ): AgentEnvironmentCapabilities {
-  return narrowedTangleCapabilities(declared, clientCapabilitySupport(client));
+  return narrowedTangleCapabilities(
+    declared,
+    clientCapabilitySupport(client),
+    UNMEASURED_DEPLOYMENT,
+  );
 }
 
-/** Narrow a declared capability document to what this Sandbox instance backs. */
+/**
+ * Narrow a declared capability document to what this Sandbox instance backs
+ * and what the deployment behind it reports.
+ */
 export function capabilitiesForSandbox(
   declared: AgentEnvironmentCapabilities,
   support: SandboxCapabilitySupport,
+  deployment: DeploymentCapabilitySupport,
 ): AgentEnvironmentCapabilities {
-  return narrowedTangleCapabilities(declared, support);
+  return narrowedTangleCapabilities(declared, support, deployment);
 }

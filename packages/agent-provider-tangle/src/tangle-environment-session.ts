@@ -61,19 +61,26 @@ type ExactExecutionEventStream = (options: {
   controlRef?: AgentExactRunControlRef;
 }) => AsyncIterable<SandboxEvent>;
 
+/**
+ * @param retainedControl Whether the environment's narrowed capability
+ * document grants retained control. Canonical cancellation is offered only
+ * under that grant: a `cancelRun` method the deployment does not honor is an
+ * action the caller selects and finds rejected on the wire.
+ */
 export function sandboxSessionAsAgentSession(
   session: SandboxSessionLike,
   controlRef: AgentRunControlRef | undefined,
   provider: string,
   environmentId: string,
-  dispatch?: (input: AgentTurnInput) => Promise<AgentSessionRef>,
-  exactExecutionEvents?: ExactExecutionEventStream,
+  dispatch: ((input: AgentTurnInput) => Promise<AgentSessionRef>) | undefined,
+  exactExecutionEvents: ExactExecutionEventStream | undefined,
+  retainedControl: boolean,
 ): AgentSession {
   let activeControlRef: AgentExactRunControlRef | undefined = controlRef
     ? resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId)
     : undefined;
   let promptInFlight = false;
-  const cancelRunMethod = session.cancelRun;
+  const cancelRunMethod = retainedControl ? session.cancelRun : undefined;
   const cancelRun = typeof cancelRunMethod === "function"
     ? async (
         request: AgentRunCancellationRequest,

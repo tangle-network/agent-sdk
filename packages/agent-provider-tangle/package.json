@@ -45,6 +45,8 @@
     "dist/tangle-exact-process-validation.js",
     "dist/tangle-capabilities.d.ts",
     "dist/tangle-capabilities.js",
+    "dist/tangle-deployment-capabilities.d.ts",
+    "dist/tangle-deployment-capabilities.js",
     "dist/tangle-create-options.d.ts",
     "dist/tangle-create-options.js",
     "dist/tangle-environment-values.d.ts",
@@ -96,7 +98,7 @@
     "@tangle-network/agent-eval": "0.145.3",
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.132.13",
-    "@tangle-network/sandbox": "0.21.1",
+    "@tangle-network/sandbox": "0.22.0",
     "@types/node": "catalog:",
     "typescript": "^6.0.3",
     "vitest": "catalog:"

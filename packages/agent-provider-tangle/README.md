@@ -1,7 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.19.6 <1.0.0`; retained-run cancellation (`session.cancelRun`) first shipped in 0.19.6, and this package is developed and tested against 0.21.1.
+The peer range is `>=0.19.6 <1.0.0`; retained-run cancellation (`session.cancelRun`) first shipped in 0.19.6, and this package is developed and tested against 0.22.0.
+The floor stays at 0.19.6 although deployment capability discovery (`box.capabilities()`) needs 0.22.0: the adapter feature-detects that method, so a consumer on an older SDK keeps working and claims no retained control instead of failing to load.
 
 ```ts
 import { Sandbox } from '@tangle-network/sandbox'
@@ -18,11 +19,22 @@ Reconstruct an exact session with `environment.session(reference.id, { controlRe
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
 
-The provider claims `retainedControl` only from probed facts.
+Capabilities are derived in two stages, and each stage claims only what it can establish.
+
+The client stage runs before any sandbox exists, so it can only measure the adapter surface.
 A lazy instance handle minted from the linked Sandbox SDK over the client's `fetch` transport must prove `dispatchPrompt`, `session`, and `cancelRun`, and the client must expose `get` for reconstruction; the probe sends no request and creates no resource.
-The probe measures the linked SDK's method surface, not the connected service; service-side truth needs the sidecar capability endpoint and is a follow-up.
+That handle measures the linked SDK's method surface, which is an upper bound and never a statement about the connected service.
 A client that cannot prove those facts gets no claim, so the runtime rejects retained dispatch before any sandbox is created.
-Each concrete sandbox narrows the declared document independently against its own measured method surface, so a capable sandbox keeps retained control even when the provider-level claim failed closed.
+
+The sandbox stage reads deployment truth.
+Composing an environment calls `box.capabilities()` once and derives the retained-control claim from that document, not from the linked SDK.
+`retainedControl` needs `dispatch.runControlRef` together with `cancel.canonicalRunCancellation`, `cancel.digestBound`, and `cancel.idempotent`; `streaming.detach` needs `dispatch.runControlRef` alone, because detached dispatch carries the caller's exact reference and refuses a receipt that does not echo it.
+A missing flag means unknown, and unknown is never a claim.
+The adapter surface stays the ceiling: a deployment claim can only narrow what the client can execute, never widen it.
+
+Four inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), and a document that leaves any required flag unset.
+In each case the environment omits `dispatch` and its sessions omit `cancelRun`, so a caller never selects an action the deployment will reject.
+A malformed document is different: capability discovery throws, `create()` deletes the sandbox it just made, and the error propagates.
 
 Pass the SDK client itself when retained control matters.
 An object-spread wrapper (`{ ...client }`) drops class prototype methods, including `fetch`, so the provider treats the wrapper as a non-SDK client and claims no retained control.

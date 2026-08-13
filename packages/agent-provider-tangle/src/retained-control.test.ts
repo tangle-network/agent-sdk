@@ -23,6 +23,7 @@ import { retainedSessionControlRef } from "./tangle-session-control.js";
 import {
   controlRefForTurn,
   executionIdForTurn,
+  retainedDeployment,
   sessionPromptSessionId,
   TANGLE_PROVIDER as PROVIDER,
 } from "./retained-control-test-helpers.js";
@@ -136,7 +137,7 @@ describe("Tangle retained control", () => {
         effect: "not_live",
       }),
     });
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-wrapper-grant",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => ({
@@ -148,7 +149,7 @@ describe("Tangle retained control", () => {
         dispatched: true,
       }),
       session: (id) => capableSession(id),
-    };
+    });
     const provider = createTangleProvider({
       client: {
         create: async () => box,
@@ -204,7 +205,7 @@ describe("Tangle retained control", () => {
         effect: "not_live",
       }),
     });
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-divergent-session",
       async *streamPrompt() {},
       dispatchPrompt: async () => {
@@ -216,7 +217,7 @@ describe("Tangle retained control", () => {
         const { cancelRun: _cancelRun, ...withoutCancelRun } = session;
         return withoutCancelRun as SandboxSessionLike;
       },
-    };
+    });
     const provider = createTangleProvider({
       client: {
         create: async () => box,
@@ -374,7 +375,7 @@ describe("Tangle retained control", () => {
         effect: "not_live",
       }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-runtime-contract",
       async *streamPrompt(_message, options) {
         replayCalls.push({ ...(options ?? {}) });
@@ -399,7 +400,7 @@ describe("Tangle retained control", () => {
         };
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: sdkShapedClient({
         create: async () => box,
@@ -492,7 +493,7 @@ describe("Tangle retained control", () => {
       turnId: "missing-echo-turn",
       detach: true,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-missing-echo",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => ({
@@ -502,7 +503,7 @@ describe("Tangle retained control", () => {
         alreadyExisted: true,
         dispatched: false,
       }),
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -521,7 +522,7 @@ describe("Tangle retained control", () => {
   it("keeps explicit identity stable and lets changed input reach conflict binding", async () => {
     const executionId = "caller-owned-execution";
     const requestDigests = new Map<string, string>();
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-explicit-identity",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => {
@@ -541,7 +542,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -616,7 +617,7 @@ describe("Tangle retained control", () => {
 
   it("derives one session for a turn and a new execution for changed input", async () => {
     const dispatches: PromptOptions[] = [];
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-derived-identity",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => {
@@ -628,7 +629,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -675,7 +676,7 @@ describe("Tangle retained control", () => {
 
   it("rejects a changed request when the sandbox reports the old execution", async () => {
     let firstExecutionId: string | undefined;
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-stale-dispatch-receipt",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => {
@@ -687,7 +688,7 @@ describe("Tangle retained control", () => {
           status: "running",
         };
       },
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -720,7 +721,7 @@ describe("Tangle retained control", () => {
     const dispatchCalled = deferred<void>();
     const dispatchResult = deferred<unknown>();
     const interrupt = vi.fn(async () => ({ cancelled: true }));
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-detached-abort",
       async *streamPrompt() {
         streamEntered.resolve(undefined);
@@ -742,7 +743,7 @@ describe("Tangle retained control", () => {
         },
         interrupt,
       }),
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -808,7 +809,7 @@ describe("Tangle retained control", () => {
       },
       interrupt,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-duplicate-dispatch",
       async *streamPrompt() {},
       dispatchPrompt: async () => {
@@ -816,7 +817,7 @@ describe("Tangle retained control", () => {
         return dispatchResult.promise;
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -873,7 +874,7 @@ describe("Tangle retained control", () => {
       },
       interrupt,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-direct-detach",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => {
@@ -889,7 +890,7 @@ describe("Tangle retained control", () => {
         };
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1004,7 +1005,7 @@ describe("Tangle retained control", () => {
       }),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-replay",
       async *streamPrompt(_message, options) {
         capturedOptions = options as Record<string, unknown>;
@@ -1041,7 +1042,7 @@ describe("Tangle retained control", () => {
         };
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: { create: async () => box },
     });
@@ -1207,7 +1208,7 @@ describe("Tangle retained control", () => {
       interrupt: async () => ({ cancelled: true }),
       cancelRun,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-cancel",
       async *streamPrompt() {},
       dispatchPrompt: async (_message, options) => {
@@ -1220,7 +1221,7 @@ describe("Tangle retained control", () => {
         };
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: sdkShapedClient({
         create: async () => box,
@@ -1316,7 +1317,7 @@ describe("Tangle retained control", () => {
         effect: "not_live",
       }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "conformance-environment",
       async *streamPrompt(_message, options) {
         if (options?.executionId !== executionId) {
@@ -1356,7 +1357,7 @@ describe("Tangle retained control", () => {
         };
       },
       session: () => sandboxSession,
-    };
+    });
     const provider = createTangleProvider({
       client: sdkShapedClient({
         create: async () => box,

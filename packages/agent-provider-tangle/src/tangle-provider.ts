@@ -116,11 +116,12 @@ export function createTangleProvider(
       }
       try {
         input.signal?.throwIfAborted();
-        const environment = sandboxInstanceAsEnvironment(
+        const environment = await sandboxInstanceAsEnvironment(
           box,
           providerName,
           options.client,
           declaredCapabilities,
+          input.signal ? { signal: input.signal } : undefined,
         );
         input.signal?.throwIfAborted();
         return environment;
@@ -150,11 +151,12 @@ export function createTangleProvider(
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
-            return sandboxInstanceAsEnvironment(
+            return await sandboxInstanceAsEnvironment(
               box,
               providerName,
               options.client,
               declaredCapabilities,
+              operation?.signal ? { signal: operation.signal } : undefined,
             );
           },
         }

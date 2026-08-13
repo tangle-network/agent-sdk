@@ -30,7 +30,12 @@ import {
   statusFromUnknown,
 } from "./tangle-environment-values.js";
 import { execResultFromSandboxExecResult } from "./tangle-result-values.js";
-import { capabilitiesForSandbox, sandboxCapabilitySupport } from "./tangle-capabilities.js";
+import {
+  capabilitiesForSandbox,
+  sandboxCapabilitySupport,
+  tangleRetainedControlSupported,
+} from "./tangle-capabilities.js";
+import { readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
   assertBoundedJson,
@@ -47,12 +52,22 @@ import {
 import { dispatchEnvironmentRun } from "./tangle-environment-dispatch.js";
 import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
 
-export function sandboxInstanceAsEnvironment(
+/**
+ * Compose one concrete sandbox into an environment.
+ *
+ * This is the only stage that can read deployment truth, so it does: one
+ * `GET /capabilities` against the sandbox decides retained control, and the
+ * environment then exposes exactly the operations both the adapter surface
+ * and the deployment back. A deployment that cannot disclose a readable
+ * document yields no retained-control surface at all.
+ */
+export async function sandboxInstanceAsEnvironment(
   box: SandboxInstanceLike,
   providerName: string,
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
-): AgentEnvironment {
+  operation?: { signal?: AbortSignal },
+): Promise<AgentEnvironment> {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
   if (box.metadata !== undefined) {
@@ -62,7 +77,17 @@ export function sandboxInstanceAsEnvironment(
     assertBoundedJson(box.metadata);
   }
   const support = sandboxCapabilitySupport(box, client);
-  const capabilities = capabilitiesForSandbox(declaredCapabilities, support);
+  const deployment = await readDeploymentCapabilitySupport(box, operation);
+  const capabilities = capabilitiesForSandbox(
+    declaredCapabilities,
+    support,
+    deployment,
+  );
+  const retainedControl = tangleRetainedControlSupported(
+    declaredCapabilities,
+    support,
+    deployment,
+  );
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
@@ -169,11 +194,13 @@ export function sandboxInstanceAsEnvironment(
               environmentId,
               dispatch,
               exactExecutionEvents,
+              retainedControl,
             );
-            // sessions.continue was granted from a probe-session fact; this
-            // backstop holds every concrete session to that fact, so a client
-            // whose sessions diverge from its probe surface fails loud here
-            // instead of failing at the first cancellation.
+            // sessions.continue was granted from the probe session and the
+            // deployment document together; this backstop holds every
+            // concrete session to that grant, so a client whose sessions
+            // diverge from its probe surface fails loud here instead of
+            // failing at the first cancellation.
             if (
               capabilities.sessions.continue &&
               typeof agentSession.cancelRun !== "function"

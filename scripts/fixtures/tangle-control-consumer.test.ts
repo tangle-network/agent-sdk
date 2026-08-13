@@ -11,6 +11,7 @@ import {
   createTangleProvider,
   type SandboxClientLike,
   type SandboxInstanceLike,
+  type SandboxRuntimeCapabilityDocument,
   type SandboxSessionLike,
 } from "@tangle-network/agent-provider-tangle";
 
@@ -19,6 +20,25 @@ function acceptPublicTangleClient(client: TangleSandboxClient): SandboxClientLik
 }
 
 void acceptPublicTangleClient;
+
+/** A deployment that reports the complete retained-control flag set. */
+const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilityDocument = {
+  schema: 1,
+  agentInterface: "0.49.0",
+  sidecarVersion: "1.0.0-packed",
+  image: `example/sidecar@sha256:${"c".repeat(64)}`,
+  dispatch: { runControlRef: true, executionIdOnAdmission: true },
+  cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
+  runs: { executionScopedStatus: true, eventReplay: true },
+  interactions: {},
+};
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   const output: T[] = [];
@@ -33,21 +53,33 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.21.1");
+    expect(manifest.version).toBe("0.22.0");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
+    // Composing an environment reads deployment truth, so the transport
+    // answers the sandbox lookup and capability discovery and nothing else.
+    const sandboxInfo = {
+      id: "sandbox-public-surface",
+      status: "running" as const,
+      filesystemIncarnationId: "incarnation-1",
+      filesystemIncarnationProvenance: "fresh" as const,
+      filesystemIncarnationReadiness: "ready" as const,
+      createdAt: "2026-08-01T20:00:00.000Z",
+    };
     const publicInstance = new SandboxInstance(
       {
-        fetch: async () => {
+        fetch: async (path: string) => {
+          if (path === `/v1/sandboxes/${sandboxInfo.id}`) {
+            return jsonResponse(sandboxInfo);
+          }
+          if (path === `/v1/sandboxes/${sandboxInfo.id}/runtime/capabilities`) {
+            return jsonResponse(DEPLOYMENT_CAPABILITIES);
+          }
           throw new Error("packed surface check must not make a network request");
         },
       } as never,
-      {
-        id: "sandbox-public-surface",
-        status: "running",
-        createdAt: new Date("2026-08-01T20:00:00.000Z"),
-      },
+      { ...sandboxInfo, createdAt: new Date(sandboxInfo.createdAt) },
     );
     const provider = createTangleProvider({
       client: { create: async () => publicInstance },
@@ -148,6 +180,8 @@ describe("packed Tangle exact-session control", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sandbox-1",
+      status: "running",
+      capabilities: async () => DEPLOYMENT_CAPABILITIES,
       async *streamPrompt(_message, options) {
         eventSelector(options);
         const events = [
@@ -236,6 +270,8 @@ describe("packed Tangle exact-session control", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sandbox-unproven",
+      status: "running",
+      capabilities: async () => DEPLOYMENT_CAPABILITIES,
       async *streamPrompt() {},
       dispatchPrompt: async (_prompt, options) => ({
         sessionId: options?.sessionId ?? session.id,

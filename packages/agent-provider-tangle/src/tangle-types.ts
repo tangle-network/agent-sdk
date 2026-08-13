@@ -49,6 +49,40 @@ export interface SandboxClientLike {
   describePlacement?(box: SandboxInstanceLike): unknown;
 }
 
+/**
+ * The `GET /capabilities` document as this adapter reads it: what the DEPLOYED
+ * sidecar image compiled in, not which methods the linked SDK class carries.
+ *
+ * Every field is optional here. The document's own convention is that a
+ * missing flag means "unknown to that image", never false, so an absent field
+ * must reach the caller as unknown instead of being coerced. The SDK's
+ * `SandboxRuntimeCapabilities` is assignable to this shape;
+ * `deployment-capabilities.test.ts` pins that against the published type.
+ */
+export interface SandboxRuntimeCapabilityDocument {
+  schema?: number;
+  agentInterface?: string;
+  sidecarVersion?: string;
+  image?: string;
+  dispatch?: {
+    /** Run requests accept a caller-supplied exact `runControlRef`. */
+    runControlRef?: boolean;
+    executionIdOnAdmission?: boolean;
+  };
+  cancel?: {
+    canonicalRunCancellation?: boolean;
+    digestBound?: boolean;
+    idempotent?: boolean;
+  };
+  runs?: {
+    executionScopedStatus?: boolean;
+    eventReplay?: boolean;
+  };
+  interactions?: {
+    responseDedupe?: boolean;
+  };
+}
+
 export interface SandboxProcessStatusLike {
   pid: number;
   running: boolean;
@@ -116,6 +150,15 @@ export interface SandboxInstanceLike {
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
+  /**
+   * Capability discovery against the deployment behind this sandbox. Absent
+   * on a Sandbox SDK older than 0.22.0, which is why every call site feature-
+   * detects it: an older SDK cannot read deployment truth, so the adapter
+   * claims no retained control rather than trusting its own method surface.
+   * Resolves to null when the deployment cannot disclose a document this SDK
+   * reads; a malformed document throws.
+   */
+  capabilities?(): Promise<SandboxRuntimeCapabilityDocument | null>;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<void>;
 }
