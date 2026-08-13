@@ -132,13 +132,59 @@ export const agentProfileResourcesSchema = z.strictObject({
 
 export const reasoningEffortSchema = z.enum(REASONING_EFFORTS);
 
-export const agentProfileModelHintsSchema = z.strictObject({
+/**
+ * Enforce the token ceilings that live together: each single ceiling must not
+ * exceed the total. It fails loud on a violation and never clamps a value.
+ * `reasoningEffort` is a separate quality dial and is not a bound here.
+ */
+export function enforceModelTokenBounds(
+  hints: {
+    maxVisibleOutputTokens?: number;
+    maxReasoningTokens?: number;
+    maxTotalOutputTokens?: number;
+  },
+  context: z.RefinementCtx,
+): void {
+  const { maxVisibleOutputTokens, maxReasoningTokens, maxTotalOutputTokens } =
+    hints;
+  if (maxTotalOutputTokens === undefined) return;
+  if (
+    maxVisibleOutputTokens !== undefined &&
+    maxVisibleOutputTokens > maxTotalOutputTokens
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["maxVisibleOutputTokens"],
+      message: "maxVisibleOutputTokens must not exceed maxTotalOutputTokens",
+    });
+  }
+  if (
+    maxReasoningTokens !== undefined &&
+    maxReasoningTokens > maxTotalOutputTokens
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["maxReasoningTokens"],
+      message: "maxReasoningTokens must not exceed maxTotalOutputTokens",
+    });
+  }
+}
+
+// Base shape without cross-field checks, so candidate derivations may still
+// call `.omit`/`.extend`; zod refuses those on a schema that carries a refinement.
+export const agentProfileModelHintsBaseSchema = z.strictObject({
   default: z.string().optional(),
   small: z.string().optional(),
   provider: z.string().optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
+  maxVisibleOutputTokens: z.number().int().positive().optional(),
+  maxReasoningTokens: z.number().int().positive().optional(),
+  maxTotalOutputTokens: z.number().int().positive().optional(),
   metadata: ownPropertyRecordSchema(z.unknown()).optional(),
 });
+
+export const agentProfileModelHintsSchema =
+  agentProfileModelHintsBaseSchema.superRefine(enforceModelTokenBounds);
 
 /**
  * Replacement and addition are separate, independently optional fields, and the

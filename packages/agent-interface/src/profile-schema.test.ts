@@ -10,6 +10,7 @@ import { validateAgentProfileSecurity } from "./profile-security.js";
 import {
   agentProfileDiffSchema,
   agentProfileJsonSchema,
+  agentProfileModelHintsSchema,
   agentProfileSchema,
   capabilitySchema,
   reasoningEffortSchema,
@@ -21,6 +22,58 @@ const ambiguousMcpServer: AgentProfileMcpServer = {
   url: "https://mcp.example.com",
 };
 void ambiguousMcpServer;
+
+describe("agentProfileModelHintsSchema token ceilings", () => {
+  it("accepts all three ceilings when each single bound stays within the total", () => {
+    expect(
+      agentProfileModelHintsSchema.parse({
+        reasoningEffort: "high",
+        maxVisibleOutputTokens: 100,
+        maxReasoningTokens: 150,
+        maxTotalOutputTokens: 200,
+      }),
+    ).toMatchObject({
+      maxVisibleOutputTokens: 100,
+      maxReasoningTokens: 150,
+      maxTotalOutputTokens: 200,
+    });
+  });
+
+  it("accepts a profile that sets no ceiling", () => {
+    expect(
+      agentProfileModelHintsSchema.parse({}).maxTotalOutputTokens,
+    ).toBeUndefined();
+  });
+
+  it("rejects a visible ceiling above the total", () => {
+    expect(
+      agentProfileModelHintsSchema.safeParse({
+        maxVisibleOutputTokens: 300,
+        maxTotalOutputTokens: 200,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a reasoning ceiling above the total", () => {
+    expect(
+      agentProfileModelHintsSchema.safeParse({
+        maxReasoningTokens: 300,
+        maxTotalOutputTokens: 200,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a fractional or zero ceiling", () => {
+    expect(
+      agentProfileModelHintsSchema.safeParse({ maxTotalOutputTokens: 1.5 })
+        .success,
+    ).toBe(false);
+    expect(
+      agentProfileModelHintsSchema.safeParse({ maxTotalOutputTokens: 0 })
+        .success,
+    ).toBe(false);
+  });
+});
 
 describe("agentProfileSchema", () => {
   it("derives reasoning validation from the canonical ordered values", () => {

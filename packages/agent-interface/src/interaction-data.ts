@@ -5,7 +5,10 @@ import {
   CONTRACT_MAX_ARRAY_LENGTH,
   CONTRACT_MAX_MAP_ENTRIES,
 } from "./contract-limits.js";
-import { InteractionFieldNameSchema } from "./interaction-fields.js";
+import {
+  InteractionFieldNameSchema,
+  RESERVED_INTERACTION_FIELD_NAMES,
+} from "./interaction-fields.js";
 
 export const InteractionSecretReferenceSchema = z.strictObject({
   kind: z.literal("secret_handle"),
@@ -35,15 +38,35 @@ export type InteractionDataValue =
 export const InteractionDataSchema: z.ZodType<
   Record<string, InteractionDataValue>
 > = z
-  .record(InteractionFieldNameSchema, InteractionDataValueSchema)
-  .superRefine((data, refinement) => {
-    if (Object.keys(data).length > CONTRACT_MAX_MAP_ENTRIES) {
-      refinement.addIssue({
-        code: "custom",
-        message: "interaction data has too many fields",
-      });
+  .unknown()
+  // A record parser assigns keys onto an ordinary object, so a raw own key
+  // `__proto__` invokes the legacy prototype setter and vanishes before any
+  // key schema runs. Reject reserved keys on the raw input, so this schema and
+  // `validateInteractionResponse` refuse the same value rather than one of them
+  // accepting a silently emptied object.
+  .superRefine((value, refinement) => {
+    if (value === null || typeof value !== "object") return;
+    for (const key of Object.getOwnPropertyNames(value)) {
+      if (RESERVED_INTERACTION_FIELD_NAMES.has(key)) {
+        refinement.addIssue({
+          code: "custom",
+          message: `interaction field name "${key}" is reserved`,
+        });
+      }
     }
   })
+  .pipe(
+    z
+      .record(InteractionFieldNameSchema, InteractionDataValueSchema)
+      .superRefine((data, refinement) => {
+        if (Object.keys(data).length > CONTRACT_MAX_MAP_ENTRIES) {
+          refinement.addIssue({
+            code: "custom",
+            message: "interaction data has too many fields",
+          });
+        }
+      }),
+  )
   .transform((data) => {
     const safe: Record<string, unknown> = Object.create(null) as Record<
       string,
@@ -51,7 +74,7 @@ export const InteractionDataSchema: z.ZodType<
     >;
     for (const key of Object.keys(data)) safe[key] = data[key];
     return safe as Record<string, InteractionDataValue>;
-  });
+  }) as z.ZodType<Record<string, InteractionDataValue>>;
 export type InteractionData = Record<string, InteractionDataValue>;
 
 export const InteractionResolutionSchema = z.discriminatedUnion("outcome", [

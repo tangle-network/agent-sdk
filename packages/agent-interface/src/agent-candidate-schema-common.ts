@@ -231,9 +231,14 @@ export function isCanonicalJsonValue(
 
   const nextAncestors = new Set(ancestors).add(value);
   if (Array.isArray(value)) {
-    return value.every((entry) =>
-      isCanonicalJsonValue(entry, nextAncestors),
-    );
+    for (let index = 0; index < value.length; index += 1) {
+      // A sparse hole serializes to the same bytes as a dense null but is a
+      // distinct in-memory value, so two observable inputs would share one
+      // content digest. Reject the sparse form; never change the output bytes.
+      if (!(index in value)) return false;
+      if (!isCanonicalJsonValue(value[index], nextAncestors)) return false;
+    }
+    return true;
   }
   return Object.entries(value).every(
     ([key, entry]) =>

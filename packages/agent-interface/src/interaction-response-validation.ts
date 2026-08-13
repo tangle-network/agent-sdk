@@ -7,9 +7,8 @@ import {
   type InteractionResponseCommand,
 } from "./interaction-envelope.js";
 import { type InteractionValidation } from "./interaction-answer-validation.js";
+import { RESERVED_INTERACTION_FIELD_NAMES } from "./interaction-fields.js";
 import { validateResolutionForRequest } from "./interaction-resolution-validation.js";
-
-const FORBIDDEN_DATA_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 export type InteractionResponseValidation =
   | { ok: true; response: InteractionResponse }
@@ -32,7 +31,7 @@ function forbiddenKeyErrors(response: unknown): string[] {
   const data = (response as { data?: unknown }).data;
   if (!data || typeof data !== "object") return [];
   return Object.getOwnPropertyNames(data)
-    .filter((key) => FORBIDDEN_DATA_KEYS.has(key))
+    .filter((key) => RESERVED_INTERACTION_FIELD_NAMES.has(key))
     .map((key) => `unknown field "${key}"`);
 }
 
