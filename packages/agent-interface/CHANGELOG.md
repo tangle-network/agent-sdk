@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 0.51.0
+
+### Minor Changes
+
+- 3cdb9d4: Expose detached environment metadata and preserve a recursively frozen Sandbox metadata snapshot in the Tangle provider.
+
 ## 0.50.0
 
 ### Minor Changes
