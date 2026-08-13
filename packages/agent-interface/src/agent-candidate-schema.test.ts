@@ -5,6 +5,7 @@ import { agentCandidateBundleSchema } from "./agent-candidate-schema.js";
 import { agentCandidateMaterializationReceiptSchema } from "./agent-candidate-receipt-schema.js";
 import {
   canonicalCandidateDigest,
+  isCanonicalJsonValue,
   omitTopLevelDigest,
 } from "./agent-candidate-schema-common.js";
 import {
@@ -539,4 +540,28 @@ describe("candidate receipts", () => {
     ).toThrow(/exact resolved model/);
   });
 
+});
+
+describe("isCanonicalJsonValue sparse-array rejection", () => {
+  it("rejects a sparse array while a dense null array passes", () => {
+    // A sparse array serializes to the same bytes as a shorter dense array, so
+    // it must fail input validation rather than reach the serializer.
+    expect(isCanonicalJsonValue(Array(1))).toBe(false);
+    expect(isCanonicalJsonValue([null])).toBe(true);
+    expect(isCanonicalJsonValue([1, 2])).toBe(true);
+    // A nested hole is rejected at any depth.
+    expect(isCanonicalJsonValue([Array(1)])).toBe(false);
+    const trailingHole = [1];
+    trailingHole[2] = 3;
+    expect(isCanonicalJsonValue(trailingHole)).toBe(false);
+  });
+
+  it("blocks the digest collapse a sparse hole would cause", () => {
+    // Array(1) and [] both serialize to "[]"; rejecting the sparse input keeps
+    // two observably different values from sharing one content digest.
+    expect(() => canonicalCandidateDigest(Array(1))).toThrow(
+      /finite, acyclic RFC 8785 JSON/,
+    );
+    expect(canonicalCandidateDigest([])).toMatch(/^sha256:/);
+  });
 });

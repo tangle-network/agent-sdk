@@ -6,9 +6,19 @@ import {
   CONTRACT_MAX_STRING_LENGTH,
 } from "./contract-limits.js";
 
-const forbiddenFieldNames = new Set(["__proto__", "constructor", "prototype"]);
+/**
+ * Field names whose own-key form collides with object internals. A record
+ * parser drops a raw `__proto__` key through the legacy prototype setter before
+ * a key schema runs, so every schema and validator over interaction data
+ * rejects these names against one owner rather than a private copy.
+ */
+export const RESERVED_INTERACTION_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
 export const InteractionFieldNameSchema = boundedIdentifierSchema.refine(
-  (value) => !forbiddenFieldNames.has(value),
+  (value) => !RESERVED_INTERACTION_FIELD_NAMES.has(value),
   "interaction field name is reserved",
 );
 

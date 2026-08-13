@@ -17,10 +17,11 @@ import { harnessTypeSchema } from "./harness.js";
 import {
   agentProfileConfidentialSchema,
   agentProfileModeSchema,
-  agentProfileModelHintsSchema,
+  agentProfileModelHintsBaseSchema,
   agentProfilePermissionSchema,
   agentProfilePromptSchema,
   agentSubagentProfileSchema,
+  enforceModelTokenBounds,
 } from "./profile-schema.js";
 
 const executableSchema = z
@@ -68,14 +69,15 @@ export const agentCandidateHookCommandSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateHookCommand>;
 
-const candidateModelHintsSchema = agentProfileModelHintsSchema
+const candidateModelHintsSchema = agentProfileModelHintsBaseSchema
   .omit({ metadata: true })
   .extend({
     default: z.string().min(1).optional(),
     small: z.string().min(1).optional(),
     provider: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(enforceModelTokenBounds);
 const candidateSubagentSchema = agentSubagentProfileSchema
   .omit({ metadata: true })
   .extend({

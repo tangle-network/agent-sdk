@@ -14,6 +14,34 @@
     "./environment-provider": {
       "import": "./dist/environment-provider.js",
       "types": "./src/environment-provider.ts"
+    },
+    "./profile": {
+      "import": "./dist/agent-profile.js",
+      "types": "./src/agent-profile.ts"
+    },
+    "./profile-snapshot": {
+      "import": "./dist/agent-profile-snapshot.js",
+      "types": "./src/agent-profile-snapshot.ts"
+    },
+    "./profile-schema": {
+      "import": "./dist/profile-schema.js",
+      "types": "./src/profile-schema.ts"
+    },
+    "./profile-security": {
+      "import": "./dist/profile-security.js",
+      "types": "./src/profile-security.ts"
+    },
+    "./harness": {
+      "import": "./dist/harness.js",
+      "types": "./src/harness.ts"
+    },
+    "./harness-capabilities": {
+      "import": "./dist/harness-capabilities.js",
+      "types": "./src/harness-capabilities.ts"
+    },
+    "./interaction": {
+      "import": "./dist/interaction.js",
+      "types": "./src/interaction.ts"
     }
   },
   "repository": {
@@ -36,6 +64,41 @@
         "import": "./dist/environment-provider.js",
         "types": "./dist/environment-provider.d.ts",
         "default": "./dist/environment-provider.js"
+      },
+      "./profile": {
+        "import": "./dist/agent-profile.js",
+        "types": "./dist/agent-profile.d.ts",
+        "default": "./dist/agent-profile.js"
+      },
+      "./profile-snapshot": {
+        "import": "./dist/agent-profile-snapshot.js",
+        "types": "./dist/agent-profile-snapshot.d.ts",
+        "default": "./dist/agent-profile-snapshot.js"
+      },
+      "./profile-schema": {
+        "import": "./dist/profile-schema.js",
+        "types": "./dist/profile-schema.d.ts",
+        "default": "./dist/profile-schema.js"
+      },
+      "./profile-security": {
+        "import": "./dist/profile-security.js",
+        "types": "./dist/profile-security.d.ts",
+        "default": "./dist/profile-security.js"
+      },
+      "./harness": {
+        "import": "./dist/harness.js",
+        "types": "./dist/harness.d.ts",
+        "default": "./dist/harness.js"
+      },
+      "./harness-capabilities": {
+        "import": "./dist/harness-capabilities.js",
+        "types": "./dist/harness-capabilities.d.ts",
+        "default": "./dist/harness-capabilities.js"
+      },
+      "./interaction": {
+        "import": "./dist/interaction.js",
+        "types": "./dist/interaction.d.ts",
+        "default": "./dist/interaction.js"
       }
     }
   },

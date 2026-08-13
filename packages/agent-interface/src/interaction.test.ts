@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentExecutionInput, SdkProviderAdapter } from "./index.js";
 
 import {
+  InteractionDataSchema,
   InteractionExecutionBindingSchema,
   InteractionAcknowledgementSchema,
   InteractionCapabilitiesSchema,
@@ -538,6 +539,25 @@ describe("interaction response command", () => {
         ]),
       );
     }
+
+    // InteractionDataSchema and validateInteractionResponse now refuse the same
+    // raw __proto__ input; the schema no longer accepts a dropped-and-emptied
+    // object where the validator rejects.
+    expect(
+      InteractionDataSchema.safeParse(JSON.parse('{"__proto__":"x"}')).success,
+    ).toBe(false);
+    const acceptedData = InteractionDataSchema.safeParse(
+      JSON.parse('{"answer":"yes"}'),
+    );
+    expect(acceptedData.success).toBe(true);
+    if (acceptedData.success) {
+      expect(Object.getPrototypeOf(acceptedData.data)).toBeNull();
+      expect(acceptedData.data.answer).toBe("yes");
+    }
+    // A key that is a valid interaction field name passes.
+    expect(
+      InteractionDataSchema.safeParse(JSON.parse('{"note":"ok"}')).success,
+    ).toBe(true);
   });
 });
 

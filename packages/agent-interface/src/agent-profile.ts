@@ -159,8 +159,26 @@ export interface AgentProfileModelHints {
   /**
    * Reasoning/thinking effort hint — a first-class, portable model dimension (not buried in
    * `extensions`). Backends map it to their native control at materialization.
+   *
+   * This is a quality dial, not a spend limit. It never bounds token count.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Maximum visible answer tokens a backend may bill for one completion.
+   * A positive integer. Independent of the reasoning and total ceilings.
+   */
+  maxVisibleOutputTokens?: number;
+  /**
+   * Maximum hidden reasoning tokens a backend may bill for one completion.
+   * A positive integer, separate from visible answer tokens.
+   */
+  maxReasoningTokens?: number;
+  /**
+   * Maximum total billed completion tokens for visible answer and hidden
+   * reasoning tokens together. A positive integer. When it is set with either
+   * single ceiling, that single ceiling must not exceed it.
+   */
+  maxTotalOutputTokens?: number;
   /**
    * Backend-agnostic model metadata/hints.
    */
