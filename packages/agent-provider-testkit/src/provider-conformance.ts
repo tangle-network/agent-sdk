@@ -1,6 +1,6 @@
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type { ProviderConformanceOptions, ProviderConformanceReport } from "./conformance-types.js";
-import { assert, checkCapabilityExposure, checkWorkspace, collect, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
+import { assert, checkCapabilityExposure, checkWorkspace, collect, environmentCapabilityDocument, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
 
 export async function runAgentEnvironmentProviderConformance(
   options: ProviderConformanceOptions,
@@ -28,8 +28,15 @@ export async function runAgentEnvironmentProviderConformance(
   return withEnvironmentCleanup(environment, checked, async () => {
     assert(environment.id, "environment.id must be non-empty", checked);
     assert(environment.provider, "environment.provider must be non-empty", checked);
-    checkCapabilityExposure(environment, capabilities, checked);
-    if (capabilities.interactions) {
+    // Every check below is about this environment, so it binds to the document
+    // that describes this environment.
+    const environmentCapabilities = environmentCapabilityDocument(
+      environment,
+      capabilities,
+    );
+    checked.push("environment-capabilities");
+    checkCapabilityExposure(environment, environmentCapabilities, checked);
+    if (environmentCapabilities.interactions) {
       assert(
         typeof environment.respondToInteraction === "function",
         "interaction capability requires respondToInteraction()",
@@ -37,19 +44,20 @@ export async function runAgentEnvironmentProviderConformance(
       );
     }
     if (
-      capabilities.branching.retrySafe ||
-      capabilities.branching.lookup ||
-      capabilities.branching.cleanup
+      environmentCapabilities.branching.retrySafe ||
+      environmentCapabilities.branching.lookup ||
+      environmentCapabilities.branching.cleanup
     ) {
       assert(
-        capabilities.branching.checkpoint && capabilities.branching.fork,
+        environmentCapabilities.branching.checkpoint &&
+          environmentCapabilities.branching.fork,
         "durable branching requires checkpoint and fork capabilities",
         checked,
       );
       assert(
-        capabilities.branching.retrySafe &&
-          capabilities.branching.lookup &&
-          capabilities.branching.cleanup,
+        environmentCapabilities.branching.retrySafe &&
+          environmentCapabilities.branching.lookup &&
+          environmentCapabilities.branching.cleanup,
         "durable branching idempotency, lookup, and cleanup are all-or-nothing",
         checked,
       );
@@ -89,7 +97,7 @@ export async function runAgentEnvironmentProviderConformance(
       "stream must emit a terminal result/done/status event",
       checked,
     );
-    if (options.requireUsage || capabilities.usage) {
+    if (options.requireUsage || environmentCapabilities.usage) {
       assert(
         events.some((event) => Boolean(event.usage)),
         "provider declared usage support but emitted no usage",
@@ -98,7 +106,7 @@ export async function runAgentEnvironmentProviderConformance(
     }
     checked.push("stream");
 
-    if (capabilities.nativeContinuation !== undefined) {
+    if (environmentCapabilities.nativeContinuation !== undefined) {
       assert(
         typeof environment.session === "function",
         "native continuation requires session()",
@@ -118,7 +126,7 @@ export async function runAgentEnvironmentProviderConformance(
       checked.push("native-continuation-operations");
     }
 
-    if (options.requireDispatch || capabilities.streaming.detach) {
+    if (options.requireDispatch || environmentCapabilities.streaming.detach) {
       assert(
         typeof environment.dispatch === "function",
         "detach support requires dispatch()",
@@ -132,13 +140,14 @@ export async function runAgentEnvironmentProviderConformance(
       checked.push("dispatch");
     }
 
-    await checkWorkspace(environment, capabilities, checked);
+    await checkWorkspace(environment, environmentCapabilities, checked);
     checked.push("capability-denial");
 
     return {
       provider: provider.name,
       environmentId: environment.id,
       capabilities,
+      environmentCapabilities,
       events: events.length,
       checked,
     };

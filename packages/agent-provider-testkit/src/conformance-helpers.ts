@@ -1,10 +1,28 @@
 import { isDeepStrictEqual } from "node:util";
+import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
 } from "@tangle-network/agent-interface/environment-provider";
 import { ProviderConformanceError } from "./conformance-types.js";
+
+/**
+ * The capability document that describes one environment.
+ *
+ * A capability the connected deployment decides is environment-scoped, so the
+ * provider document cannot state it: one provider reaches deployments of
+ * different ages. An environment that publishes its own document answers for
+ * itself, and every exposure check binds to that answer. An environment that
+ * publishes none is fully described by the provider document.
+ */
+export function environmentCapabilityDocument(
+  environment: AgentEnvironment,
+  providerCapabilities: AgentEnvironmentCapabilities,
+): AgentEnvironmentCapabilities {
+  if (environment.capabilities === undefined) return providerCapabilities;
+  return AgentEnvironmentCapabilitiesSchema.parse(environment.capabilities);
+}
 
 export async function checkWorkspace(
   environment: AgentEnvironment,

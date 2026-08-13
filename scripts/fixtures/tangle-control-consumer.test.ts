@@ -5,12 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SandboxInstance,
   type SandboxEvent,
+  type SandboxRuntimeCapabilities,
   type TangleSandboxClient,
 } from "@tangle-network/sandbox";
 import {
   createTangleProvider,
   type SandboxClientLike,
   type SandboxInstanceLike,
+  type SandboxRuntimeCapabilityDocument,
   type SandboxSessionLike,
 } from "@tangle-network/agent-provider-tangle";
 
@@ -19,6 +21,32 @@ function acceptPublicTangleClient(client: TangleSandboxClient): SandboxClientLik
 }
 
 void acceptPublicTangleClient;
+
+/**
+ * The wire body of `GET /capabilities` for a deployment that reports the
+ * complete retained-control flag set. It carries the SDK's type because the
+ * SDK parses it: a v1 document that omits a declared group is malformed, so
+ * this body must stay complete even where the adapter reads only part of it.
+ */
+const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilities = {
+  schema: 1,
+  agentInterface: "0.49.0",
+  sidecarVersion: "1.0.0-packed",
+  image: `example/sidecar@sha256:${"c".repeat(64)}`,
+  dispatch: { runControlRef: true, executionIdOnAdmission: true },
+  cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
+  runs: { executionScopedStatus: true, eventReplay: true },
+  interactions: {},
+};
+const DEPLOYMENT_CAPABILITIES_AS_READ: SandboxRuntimeCapabilityDocument =
+  DEPLOYMENT_CAPABILITIES;
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   const output: T[] = [];
@@ -33,21 +61,33 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.21.1");
+    expect(manifest.version).toBe("0.22.0");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
+    // Composing an environment reads deployment truth, so the transport
+    // answers the sandbox lookup and capability discovery and nothing else.
+    const sandboxInfo = {
+      id: "sandbox-public-surface",
+      status: "running" as const,
+      filesystemIncarnationId: "incarnation-1",
+      filesystemIncarnationProvenance: "fresh" as const,
+      filesystemIncarnationReadiness: "ready" as const,
+      createdAt: "2026-08-01T20:00:00.000Z",
+    };
     const publicInstance = new SandboxInstance(
       {
-        fetch: async () => {
+        fetch: async (path: string) => {
+          if (path === `/v1/sandboxes/${sandboxInfo.id}`) {
+            return jsonResponse(sandboxInfo);
+          }
+          if (path === `/v1/sandboxes/${sandboxInfo.id}/runtime/capabilities`) {
+            return jsonResponse(DEPLOYMENT_CAPABILITIES);
+          }
           throw new Error("packed surface check must not make a network request");
         },
       } as never,
-      {
-        id: "sandbox-public-surface",
-        status: "running",
-        createdAt: new Date("2026-08-01T20:00:00.000Z"),
-      },
+      { ...sandboxInfo, createdAt: new Date(sandboxInfo.createdAt) },
     );
     const provider = createTangleProvider({
       client: { create: async () => publicInstance },
@@ -63,6 +103,18 @@ describe("packed Tangle exact-session control", () => {
     expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
+
+    // The environment-scoped document reaches a packed consumer, and the
+    // operations it exposes match it. This deployment backs exact dispatch
+    // and event replay, while the client offers no `get`, so the run cannot
+    // be reconstructed and retained control stays unclaimed.
+    expect(environment.capabilities).toMatchObject({
+      streaming: { detach: true, replay: true, turnIdempotency: true },
+      sessions: { continue: false },
+    });
+    expect(environment.capabilities).not.toHaveProperty("retainedControl");
+    expect(typeof environment.dispatch).toBe("function");
+    expect(typeof environment.session).toBe("function");
   });
 
   it("claims retained control for an SDK-backed client with reconstruction", async () => {
@@ -148,6 +200,8 @@ describe("packed Tangle exact-session control", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sandbox-1",
+      status: "running",
+      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
       async *streamPrompt(_message, options) {
         eventSelector(options);
         const events = [
@@ -236,6 +290,8 @@ describe("packed Tangle exact-session control", () => {
     };
     const box: SandboxInstanceLike = {
       id: "sandbox-unproven",
+      status: "running",
+      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
       async *streamPrompt() {},
       dispatchPrompt: async (_prompt, options) => ({
         sessionId: options?.sessionId ?? session.id,

@@ -49,6 +49,47 @@ export interface SandboxClientLike {
   describePlacement?(box: SandboxInstanceLike): unknown;
 }
 
+/**
+ * The `GET /capabilities` document as this adapter reads it: what the DEPLOYED
+ * sidecar image compiled in, not which methods the linked SDK class carries.
+ *
+ * Every capability flag this shape declares gates a claim the adapter makes,
+ * and the wire document's other flags are absent here because the adapter does
+ * not act on them yet. Every field is optional, and the document's own
+ * convention is that a missing flag means "unknown to that image", never
+ * false. The linked SDK parses a v1 wire body strictly, but this adapter reads
+ * any `SandboxInstanceLike`, so it never assumes a flag was validated: an
+ * absent field reaches the claim as unknown instead of being coerced. The
+ * SDK's `SandboxRuntimeCapabilities` is assignable to this shape;
+ * `deployment-capabilities.test.ts` pins that against the published type.
+ */
+export interface SandboxRuntimeCapabilityDocument {
+  schema?: number;
+  agentInterface?: string;
+  sidecarVersion?: string;
+  image?: string;
+  dispatch?: {
+    /** Run requests accept a caller-supplied exact `runControlRef`. */
+    runControlRef?: boolean;
+    /** Admission echoes the executionId the request named. */
+    executionIdOnAdmission?: boolean;
+  };
+  cancel?: {
+    /** Cancellation accepts the canonical digest-bound request. */
+    canonicalRunCancellation?: boolean;
+    /** Cancellation binds to the run's request digest. */
+    digestBound?: boolean;
+    /** Replaying an operation id returns the stored acknowledgement. */
+    idempotent?: boolean;
+  };
+  runs?: {
+    /** Status and results select one execution of a session. */
+    executionScopedStatus?: boolean;
+    /** Buffered run events replay by execution. */
+    eventReplay?: boolean;
+  };
+}
+
 export interface SandboxProcessStatusLike {
   pid: number;
   running: boolean;
@@ -116,6 +157,15 @@ export interface SandboxInstanceLike {
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
+  /**
+   * Capability discovery against the deployment behind this sandbox. Absent
+   * on a Sandbox SDK older than 0.22.0, which is why every call site feature-
+   * detects it: an older SDK cannot read deployment truth, so the adapter
+   * claims no retained control rather than trusting its own method surface.
+   * Resolves to null when the deployment cannot disclose a document this SDK
+   * reads; a malformed document throws.
+   */
+  capabilities?(): Promise<SandboxRuntimeCapabilityDocument | null>;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<void>;
 }

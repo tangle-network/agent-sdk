@@ -8,6 +8,11 @@ import {
   defaultTangleSandboxCapabilities,
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
+import { deploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
+import {
+  RETAINED_DEPLOYMENT_DOCUMENT,
+  retainedDeployment,
+} from "./retained-control-test-helpers.js";
 import {
   assertBoundedJson,
   awaitWithSignal,
@@ -114,6 +119,10 @@ const capabilities = defaultTangleSandboxCapabilities();
 const minimalClient: SandboxClientLike = {
   create: async () => ({ id: "client", async *streamPrompt() {} }),
 };
+const CONFIRMED_DEPLOYMENT = deploymentCapabilitySupport(
+  RETAINED_DEPLOYMENT_DOCUMENT,
+);
+const REFUSED_DEPLOYMENT = deploymentCapabilitySupport(null);
 
 const exactInput = {
   image: `sha256:${"a".repeat(64)}`,
@@ -169,7 +178,9 @@ describe("Tangle split leaf modules", () => {
     // pass strips it until deployment facts prove it.
     expect(capabilities.sessions.continue).toBe(true);
     expect(capabilities.retainedControl).toBeDefined();
-    expect(capabilitiesForSandbox(capabilities, support).workspace.read).toBe(true);
+    expect(
+      capabilitiesForSandbox(capabilities, support, CONFIRMED_DEPLOYMENT).workspace.read,
+    ).toBe(true);
     const retainedSupport = {
       ...support,
       reconstruct: true,
@@ -184,19 +195,32 @@ describe("Tangle split leaf modules", () => {
       capabilitiesForClient(capabilities, minimalClient),
     ).not.toHaveProperty("retainedControl");
     expect(
-      capabilitiesForSandbox(capabilities, retainedSupport),
+      capabilitiesForSandbox(capabilities, retainedSupport, CONFIRMED_DEPLOYMENT),
     ).toMatchObject({
       sessions: { continue: true },
       retainedControl: capabilities.retainedControl,
     });
     for (const clearedFact of ["cancelRun", "reconstruct"] as const) {
-      const narrowed = capabilitiesForSandbox(capabilities, {
-        ...retainedSupport,
-        [clearedFact]: false,
-      });
+      const narrowed = capabilitiesForSandbox(
+        capabilities,
+        { ...retainedSupport, [clearedFact]: false },
+        CONFIRMED_DEPLOYMENT,
+      );
       expect(narrowed).toMatchObject({ sessions: { continue: false } });
       expect(narrowed).not.toHaveProperty("retainedControl");
     }
+    // Every local fact holds and the deployment still decides: an
+    // unconfirmed document clears retained control and detached dispatch.
+    const deploymentRefused = capabilitiesForSandbox(
+      capabilities,
+      retainedSupport,
+      REFUSED_DEPLOYMENT,
+    );
+    expect(deploymentRefused).toMatchObject({
+      sessions: { continue: false },
+      streaming: { detach: false },
+    });
+    expect(deploymentRefused).not.toHaveProperty("retainedControl");
     const overDeclaredBranching = {
       ...capabilities,
       branching: {
@@ -214,7 +238,10 @@ describe("Tangle split leaf modules", () => {
       lookup: false,
       cleanup: false,
     });
-    expect(capabilitiesForSandbox(overDeclaredBranching, retainedSupport).branching).toMatchObject({
+    expect(
+      capabilitiesForSandbox(overDeclaredBranching, retainedSupport, CONFIRMED_DEPLOYMENT)
+        .branching,
+    ).toMatchObject({
       checkpoint: false,
       fork: false,
       retrySafe: false,
@@ -482,7 +509,7 @@ describe("Tangle split leaf modules", () => {
       prompt: async () => promptResult(),
       interrupt: async () => interruptPending.promise,
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-1",
       status: "running",
       async *streamPrompt() {},
@@ -490,8 +517,8 @@ describe("Tangle split leaf modules", () => {
       read: async () => readPending.promise,
       exec: async () => execPending.promise as never,
       refresh: async () => refreshPending.promise,
-    };
-    const environment = sandboxInstanceAsEnvironment(box, "tangle-sandbox", minimalClient, capabilities);
+    });
+    const environment = await sandboxInstanceAsEnvironment(box, "tangle-sandbox", minimalClient, capabilities);
     const alreadyAborted = new AbortController();
     alreadyAborted.abort();
     await expect(environment.read?.("/tmp/file", { signal: alreadyAborted.signal })).rejects.toThrow();
@@ -530,12 +557,12 @@ describe("Tangle split leaf modules", () => {
       prompt: async () => promptResult(),
       interrupt: async () => ({ cancelled: true }),
     };
-    const box: SandboxInstanceLike = {
+    const box: SandboxInstanceLike = retainedDeployment({
       id: "replay-environment",
       async *streamPrompt() {},
       session: () => session,
-    };
-    const environment = sandboxInstanceAsEnvironment(
+    });
+    const environment = await sandboxInstanceAsEnvironment(
       box,
       "tangle-sandbox",
       minimalClient,

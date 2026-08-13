@@ -43,7 +43,13 @@ export interface ProviderConformanceOptions {
 export interface ProviderConformanceReport {
   provider: string;
   environmentId: string;
+  /** The provider document, read before any environment exists. */
   capabilities: AgentEnvironmentCapabilities;
+  /**
+   * The document every exposure check ran against: the created environment's
+   * own document when it publishes one, and the provider document otherwise.
+   */
+  environmentCapabilities: AgentEnvironmentCapabilities;
   events: number;
   checked: string[];
 }

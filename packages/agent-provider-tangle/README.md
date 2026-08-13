@@ -1,7 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.19.6 <1.0.0`; retained-run cancellation (`session.cancelRun`) first shipped in 0.19.6, and this package is developed and tested against 0.21.1.
+The peer range is `>=0.19.6 <1.0.0`; retained-run cancellation (`session.cancelRun`) first shipped in 0.19.6, and this package is developed and tested against 0.22.0.
+The floor stays at 0.19.6 although deployment capability discovery (`box.capabilities()`) needs 0.22.0: the adapter feature-detects that method, so a consumer on an older SDK keeps working and claims no retained control instead of failing to load.
 
 ```ts
 import { Sandbox } from '@tangle-network/sandbox'
@@ -18,11 +19,49 @@ Reconstruct an exact session with `environment.session(reference.id, { controlRe
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
 
-The provider claims `retainedControl` only from probed facts.
+## Two capability documents
+
+Capabilities are derived in two stages, and the two stages answer different questions.
+
+`provider.capabilities()` answers "what can this provider do against a deployment that backs it".
+It runs before any sandbox exists, so it measures the adapter surface alone and states the adapter's ceiling for everything a deployment decides.
 A lazy instance handle minted from the linked Sandbox SDK over the client's `fetch` transport must prove `dispatchPrompt`, `session`, and `cancelRun`, and the client must expose `get` for reconstruction; the probe sends no request and creates no resource.
-The probe measures the linked SDK's method surface, not the connected service; service-side truth needs the sidecar capability endpoint and is a follow-up.
-A client that cannot prove those facts gets no claim, so the runtime rejects retained dispatch before any sandbox is created.
-Each concrete sandbox narrows the declared document independently against its own measured method surface, so a capable sandbox keeps retained control even when the provider-level claim failed closed.
+That handle measures the linked SDK's method surface, never the connected service.
+A client that cannot prove those facts gets no retained-control claim, so the runtime rejects retained dispatch before any sandbox is created.
+
+`environment.capabilities` answers "what can this environment do", and it is the document to read before offering an operation.
+Composing an environment calls `box.capabilities()` once and derives every deployment-decided claim from that document.
+The operations an environment exposes match its own document exactly: a claim the document does not carry has no method behind it.
+One provider reaches deployments of different ages, which is why the environment carries its own document rather than inheriting the provider's.
+
+Each deployment flag this adapter reads gates the claims it backs, and no flag is read that gates nothing:
+
+| Deployment flag | Claims it gates |
+| --- | --- |
+| `dispatch.runControlRef` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `dispatch.executionIdOnAdmission` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.canonicalRunCancellation` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.digestBound` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.idempotent` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `runs.eventReplay` | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `runs.executionScopedStatus` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+
+Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
+`sessions.continue`, `retainedControl`, and `session.cancelRun` need every flag in the table, because the capability schema refuses a partial retained-control block and each identity rests on its own flag.
+A claim takes its operation with it: `streaming.detach` gates `dispatch()`, and `session()` stands while any of `streaming.detach`, `streaming.replay`, or `sessions.continue` stands.
+A missing flag means unknown, and unknown is never a claim.
+
+Four inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), and a capability read that fails.
+In each case the environment omits `dispatch` and `session`, so a caller never selects an action the deployment will reject.
+A document that leaves a flag unset is not one of them.
+It drops the claims that flag gates and keeps every claim its remaining flags back.
+A document without `cancel.digestBound` still carries `streaming.detach` and `streaming.replay`, and its environment still exposes `dispatch` and `session`.
+A failed read claims nothing rather than failing `create()`: discovery runs against a sandbox a cold provision has already paid for, and a transport failure is not evidence about the deployment.
+The failure is reported on the warning channel.
+
+The document is measured once, when the environment is composed.
+A sandbox that is not yet running cannot answer, so an environment composed during provisioning claims nothing and keeps claiming nothing — the exposed operations and the document are composed together, and a caller may already hold either one.
+Compose the environment again through `provider.get(id)` once the sandbox is running.
 
 Pass the SDK client itself when retained control matters.
 An object-spread wrapper (`{ ...client }`) drops class prototype methods, including `fetch`, so the provider treats the wrapper as a non-SDK client and claims no retained control.

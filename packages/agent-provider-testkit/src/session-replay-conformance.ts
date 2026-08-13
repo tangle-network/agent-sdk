@@ -1,7 +1,7 @@
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import { AgentRunControlRefSchema } from "@tangle-network/agent-interface";
 import type { SessionReplayConformanceOptions, SessionReplayConformanceReport } from "./conformance-types.js";
-import { assert, collect, deepEqual, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
+import { assert, collect, deepEqual, environmentCapabilityDocument, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
 
 export async function runSessionReplayConformance(
   options: SessionReplayConformanceOptions,
@@ -11,14 +11,28 @@ export async function runSessionReplayConformance(
   const capabilities = AgentEnvironmentCapabilitiesSchema.parse(
     await provider.capabilities(),
   );
-  assert(capabilities.streaming.detach, "provider must declare detach", checked);
-  assert(capabilities.streaming.replay, "provider must declare replay", checked);
   const environment = await provider.create({
     profile: { name: `${options.name}-profile` },
     name: `${options.name}-environment`,
     ...(options.createInput ?? {}),
   });
   return withEnvironmentCleanup(environment, checked, async () => {
+    // Detach and replay can rest on the connected deployment, so the answer
+    // belongs to this environment. It is read after create for that reason.
+    const environmentCapabilities = environmentCapabilityDocument(
+      environment,
+      capabilities,
+    );
+    assert(
+      environmentCapabilities.streaming.detach,
+      "provider must declare detach",
+      checked,
+    );
+    assert(
+      environmentCapabilities.streaming.replay,
+      "provider must declare replay",
+      checked,
+    );
     assert(
       typeof environment.dispatch === "function",
       "detach requires dispatch()",
