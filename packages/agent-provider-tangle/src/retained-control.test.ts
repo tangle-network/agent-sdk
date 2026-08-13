@@ -953,6 +953,15 @@ describe("Tangle retained control", () => {
         },
       },
       {
+        id: "event-native-session",
+        type: "session.updated",
+        data: {
+          sessionId: "opencode-native-session",
+          sessionID: "opencode-native-session",
+          title: "Native harness session",
+        },
+      },
+      {
         id: "event-2",
         type: "result",
         data: {
@@ -984,7 +993,7 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.since === "event-1"
-            ? [upstreamEvents[1]!, upstreamEvents[1]!]
+            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1022,7 +1031,7 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.lastEventId === "event-1"
-            ? [upstreamEvents[1]!, upstreamEvents[1]!]
+            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1057,7 +1066,15 @@ describe("Tangle retained control", () => {
     });
 
     const replay = await collect(session.events({ since: "event-1" }));
-    expect(replay.map((event) => event.id)).toEqual(["event-2"]);
+    expect(replay.map((event) => event.id)).toEqual([
+      "event-native-session",
+      "event-2",
+    ]);
+    expect(replay[0]?.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "opencode-native-session",
+      title: "Native harness session",
+    });
     expect(capturedOptions).toMatchObject({
       lastEventId: "event-1",
       executionId,

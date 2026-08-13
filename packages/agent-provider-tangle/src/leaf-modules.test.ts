@@ -351,9 +351,77 @@ describe("Tangle split leaf modules", () => {
       { type: "status", data: { executionId: "wrong", sessionId: "session-1" } } as never,
       { executionId: "execution-1", sessionId: "session-1" },
     )).toThrow(/executionId/);
+    const nativeSessionEvent = environmentEventFromSandboxEvent(
+      {
+        type: "session.updated",
+        id: "event-native-session",
+        data: {
+          sessionId: "opencode-native-session",
+          sessionID: "opencode-native-session",
+          title: "Native harness session",
+        },
+      } as never,
+      {
+        executionId: "execution-1",
+        sessionId: "runtime-session-1",
+        streamBound: true,
+      },
+    );
+    expect(nativeSessionEvent.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "opencode-native-session",
+      title: "Native harness session",
+    });
+    expect(() => environmentEventFromSandboxEvent(
+      {
+        type: "session.updated",
+        data: {
+          executionId: "execution-other",
+          sessionId: "opencode-native-session",
+        },
+      } as never,
+      {
+        executionId: "execution-1",
+        sessionId: "runtime-session-1",
+        streamBound: true,
+      },
+    )).toThrow(/executionId/);
+    expect(() => environmentEventFromSandboxEvent(
+      {
+        type: "execution.started",
+        data: {
+          executionId: "execution-other",
+          sessionId: "runtime-session-1",
+        },
+      } as never,
+      {
+        executionId: "execution-1",
+        sessionId: "runtime-session-1",
+        streamBound: true,
+      },
+    )).toThrow(/executionId/);
     expect(tokenUsageFromData({ usage: { inputTokens: 2, outputTokens: 3 } })).toEqual({ inputTokens: 2, outputTokens: 3 });
     expect(execResultFromSandboxExecResult({ exitCode: 0, stdout: "ok", stderr: "" } as never)).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
     expect(validatedSandboxPromptResult(promptResult())).toMatchObject({ success: true, status: "success" });
+    expect(validatedSandboxPromptResult({
+      success: true,
+      status: "success",
+      durationMs: 1,
+      executionId: "execution-1",
+      response: "done",
+      error: undefined,
+      approval: undefined,
+      question: undefined,
+      plan: undefined,
+      traceId: undefined,
+      usage: undefined,
+      costUsd: undefined,
+      toolInvocations: undefined,
+    } as never)).toEqual(promptResult());
+    expect(() => validatedSandboxPromptResult({
+      ...(promptResult() as unknown as Record<string, unknown>),
+      unsupported: undefined,
+    } as never)).toThrow(/JSON bound/);
     expect(agentTurnResultFromPromptRecord(validatedSandboxPromptResult(promptResult()), { sessionId: "session-1" })).toMatchObject({ text: "done", success: true });
     const semanticInput = { prompt: "hello", turnId: "turn-1" } as never;
     const baseRequestDigest = sessionPromptRequestDigest(
