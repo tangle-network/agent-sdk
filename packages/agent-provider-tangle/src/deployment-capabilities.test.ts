@@ -3,6 +3,7 @@ import type { SandboxEvent, SandboxRuntimeCapabilities } from "@tangle-network/s
 import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
 import { agentRunCancellationRequestDigest } from "@tangle-network/agent-interface";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import type { AgentEnvironmentCapabilities } from "@tangle-network/agent-interface/environment-provider";
 import {
   createTangleProvider,
   type SandboxClientLike,
@@ -11,6 +12,7 @@ import {
 } from "./index.js";
 import {
   deploymentCapabilitySupport,
+  readDeploymentCapabilitySupport,
   UNPROVEN_DEPLOYMENT,
 } from "./tangle-deployment-capabilities.js";
 import {
@@ -124,6 +126,73 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
     },
   };
   return { provider: createTangleProvider({ client }), box, sessionId };
+}
+
+/**
+ * Every claim a capability document carries, addressed by path. A relation
+ * between two documents is stated over all of them rather than over a chosen
+ * few, so a claim the schema gains later joins the comparison on its own.
+ */
+function capabilityClaims(
+  document: AgentEnvironmentCapabilities,
+): Map<string, boolean> {
+  const claims = new Map<string, boolean>();
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === "boolean") {
+      claims.set(path, value);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+      walk(nested, path === "" ? key : `${path}.${key}`);
+    }
+  };
+  walk(document, "");
+  return claims;
+}
+
+/** The claims the connected deployment decides, and only those. */
+const DEPLOYMENT_DECIDED_CLAIMS = [
+  "streaming.detach",
+  "streaming.replay",
+  "streaming.turnIdempotency",
+  "sessions.continue",
+  "retainedControl",
+] as const;
+
+function decidedByDeployment(path: string): boolean {
+  return DEPLOYMENT_DECIDED_CLAIMS.some(
+    (claim) => path === claim || path.startsWith(`${claim}.`),
+  );
+}
+
+function deploymentDecidedClaims(document: AgentEnvironmentCapabilities) {
+  return {
+    detach: document.streaming.detach,
+    replay: document.streaming.replay,
+    turnIdempotency: document.streaming.turnIdempotency,
+    continued: document.sessions.continue,
+    retainedControl: document.retainedControl !== undefined,
+  };
+}
+
+function claimsTheDeploymentDoesNotDecide(
+  document: AgentEnvironmentCapabilities,
+): Record<string, boolean> {
+  return Object.fromEntries(
+    [...capabilityClaims(document)].filter(([path]) => !decidedByDeployment(path)),
+  );
+}
+
+/** The paths where one document claims what the other does not back. */
+function claimsBeyond(
+  document: AgentEnvironmentCapabilities,
+  ceiling: AgentEnvironmentCapabilities,
+): string[] {
+  const bound = capabilityClaims(ceiling);
+  return [...capabilityClaims(document)]
+    .filter(([path, claimed]) => claimed && bound.get(path) !== true)
+    .map(([path]) => path);
 }
 
 describe("Tangle deployment capability discovery", () => {
@@ -283,6 +352,16 @@ describe("Tangle deployment capability discovery", () => {
         continued: false,
       });
       expect(claimed).not.toHaveProperty("retainedControl");
+      // A partial document keeps every operation its remaining flags back, so
+      // the exposed operations follow the claims that survived the missing one.
+      expect(typeof environment.dispatch === "function").toBe(
+        claimed.streaming.detach,
+      );
+      expect(typeof environment.session === "function").toBe(
+        claimed.streaming.detach ||
+          claimed.streaming.replay ||
+          claimed.sessions.continue,
+      );
       expect(environment.session!(sessionId).cancelRun).toBeUndefined();
     }
   });
@@ -329,20 +408,105 @@ describe("Tangle deployment capability discovery", () => {
     expect(deleted).toHaveBeenCalledTimes(1);
   });
 
-  it("pairs the client-stage document against the sandbox surface it produces", async () => {
-    // The client-stage document is the only capability document a consumer
-    // reads, so it must describe the environment this provider builds. An
-    // SDK-backed client measures the linked SDK's full method surface, which
-    // leaves the deployment document as the single variable: run the repo's
-    // conformance suite over both answers a deployment can give.
-    for (const document of [null, RETAINED_DEPLOYMENT_DOCUMENT]) {
-      const { provider } = sdkBackedProvider(document);
+  it("propagates the caller's abort when the aborted read fails", async () => {
+    // The read fails and the caller's own abort is what failed it. A failed
+    // read claims nothing, but only about a deployment that was asked: this
+    // read reported on the caller, so the abort leaves the boundary instead
+    // of resolving into a fact and instead of reaching the warning channel.
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const controller = new AbortController();
+      const box: SandboxInstanceLike = {
+        id: "sbx-aborted-read",
+        status: "running",
+        async *streamPrompt() {},
+        capabilities: () =>
+          new Promise((_resolve, reject) => {
+            // Both outcomes are live on the same read: the abort lands while
+            // the request is in flight, and the request then fails.
+            queueMicrotask(() => {
+              controller.abort(new Error("caller cancelled the read"));
+              reject(new Error("capability transport closed"));
+            });
+          }),
+      };
+
       await expect(
-        runAgentEnvironmentProviderConformance({
-          name: "tangle-deployment",
-          createProvider: () => provider,
-        }),
-      ).resolves.toMatchObject({ provider: "tangle-sandbox" });
+        readDeploymentCapabilitySupport(box, { signal: controller.signal }),
+      ).rejects.toThrow(/caller cancelled the read/);
+      expect(warned).not.toHaveBeenCalled();
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("pairs the client-stage document against the sandbox surface it produces", async () => {
+    // The two documents answer different questions, so the relation between
+    // them is a bound, not an equality: the client stage states this adapter's
+    // ceiling against a deployment that backs everything, and the sandbox
+    // stage states what one deployment reported. Three facts hold together.
+    // The sandbox stage never claims what the ceiling does not carry, or a
+    // caller who selected this provider on the ceiling would meet an operation
+    // the provider document never offered. The two stages agree on every claim
+    // the deployment does not decide, so a difference between them names a
+    // deployment fact and nothing else. The exposed operations follow the
+    // sandbox-stage document exactly, which is what the conformance suite
+    // checks against the document an environment publishes.
+    //
+    // Equality across both stages is the wrong assertion. The client stage
+    // runs before any sandbox exists, so a deployment that discloses nothing
+    // would drag the provider document down and refuse retained runs against
+    // every deployment, including the ones that back them.
+    for (const testCase of [
+      { deployment: "undisclosed", document: null, backed: false },
+      {
+        deployment: "retained",
+        document: RETAINED_DEPLOYMENT_DOCUMENT,
+        backed: true,
+      },
+    ] as const) {
+      const { provider } = sdkBackedProvider(testCase.document);
+      const report = await runAgentEnvironmentProviderConformance({
+        name: `tangle-${testCase.deployment}-deployment`,
+        createProvider: () => provider,
+      });
+      const clientStage = report.capabilities;
+      const sandboxStage = report.environmentCapabilities;
+
+      expect(report.provider).toBe("tangle-sandbox");
+      expect(deploymentDecidedClaims(clientStage)).toEqual({
+        detach: true,
+        replay: true,
+        turnIdempotency: true,
+        continued: true,
+        retainedControl: true,
+      });
+      expect({
+        deployment: testCase.deployment,
+        ...deploymentDecidedClaims(sandboxStage),
+      }).toEqual({
+        deployment: testCase.deployment,
+        detach: testCase.backed,
+        replay: testCase.backed,
+        turnIdempotency: testCase.backed,
+        continued: testCase.backed,
+        retainedControl: testCase.backed,
+      });
+      expect(claimsBeyond(sandboxStage, clientStage)).toEqual([]);
+      expect(claimsTheDeploymentDoesNotDecide(sandboxStage)).toEqual(
+        claimsTheDeploymentDoesNotDecide(clientStage),
+      );
+
+      const environment = await provider.create({ profile: { name: "worker" } });
+      expect(environment.capabilities).toEqual(sandboxStage);
+      expect(typeof environment.dispatch === "function").toBe(
+        sandboxStage.streaming.detach,
+      );
+      expect(typeof environment.session === "function").toBe(
+        sandboxStage.streaming.detach ||
+          sandboxStage.streaming.replay ||
+          sandboxStage.sessions.continue,
+      );
     }
   });
 

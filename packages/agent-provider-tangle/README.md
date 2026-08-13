@@ -38,20 +38,24 @@ Each deployment flag this adapter reads gates the claims it backs, and no flag i
 
 | Deployment flag | Claims it gates |
 | --- | --- |
-| `dispatch.runControlRef` | `streaming.detach`, `streaming.turnIdempotency`, `retainedControl` |
-| `dispatch.executionIdOnAdmission` | `streaming.detach`, `streaming.turnIdempotency`, `retainedControl` |
-| `cancel.canonicalRunCancellation` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
-| `cancel.digestBound` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
-| `cancel.idempotent` | `retainedControl`, `sessions.continue`, `session.cancelRun` |
-| `runs.eventReplay` | `streaming.replay`, `retainedControl` |
-| `runs.executionScopedStatus` | `retainedControl`, `sessions.continue` |
+| `dispatch.runControlRef` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `dispatch.executionIdOnAdmission` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.canonicalRunCancellation` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.digestBound` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `cancel.idempotent` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `runs.eventReplay` | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `runs.executionScopedStatus` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
 
 Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
-`retainedControl` needs every flag in the table, because the capability schema refuses a partial block and each identity rests on its own flag.
+`sessions.continue`, `retainedControl`, and `session.cancelRun` need every flag in the table, because the capability schema refuses a partial retained-control block and each identity rests on its own flag.
+A claim takes its operation with it: `streaming.detach` gates `dispatch()`, and `session()` stands while any of `streaming.detach`, `streaming.replay`, or `sessions.continue` stands.
 A missing flag means unknown, and unknown is never a claim.
 
-Five inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), a document that leaves any required flag unset, and a capability read that fails.
+Four inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), and a capability read that fails.
 In each case the environment omits `dispatch` and `session`, so a caller never selects an action the deployment will reject.
+A document that leaves a flag unset is not one of them.
+It drops the claims that flag gates and keeps every claim its remaining flags back.
+A document without `cancel.digestBound` still carries `streaming.detach` and `streaming.replay`, and its environment still exposes `dispatch` and `session`.
 A failed read claims nothing rather than failing `create()`: discovery runs against a sandbox a cold provision has already paid for, and a transport failure is not evidence about the deployment.
 The failure is reported on the warning channel.
 
