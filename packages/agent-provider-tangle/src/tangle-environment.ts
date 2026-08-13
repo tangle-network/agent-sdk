@@ -119,6 +119,7 @@ export async function sandboxInstanceAsEnvironment(
     id: environmentId,
     provider: providerName,
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
+    ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,
     async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
       assertOptionKeys(options, ["signal"], "Tangle environment status");
@@ -291,4 +292,17 @@ export async function sandboxInstanceAsEnvironment(
         }
       : {}),
   };
+}
+
+function snapshotMetadata(
+  metadata: Record<string, unknown>,
+): Readonly<Record<string, unknown>> {
+  return deepFreeze(structuredClone(metadata));
+}
+
+function deepFreeze<T>(value: T, seen = new Set<object>()): T {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze(child, seen);
+  return Object.freeze(value);
 }

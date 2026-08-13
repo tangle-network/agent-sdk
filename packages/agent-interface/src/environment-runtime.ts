@@ -234,6 +234,11 @@ export interface AgentEnvironment {
   readonly provider: string;
   readonly name?: string;
   /**
+   * Detached metadata returned by the provider.
+   * It can contain caller-authored annotations and is not authorization evidence.
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
    * The capability document for THIS environment, and the document a caller
    * reads to decide which operation to offer against it.
    *
