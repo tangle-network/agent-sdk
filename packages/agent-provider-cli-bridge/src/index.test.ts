@@ -886,6 +886,73 @@ describe("createCliBridgeProvider", () => {
     }
   });
 
+  it("does not let a stale completed result flip a replayed cancellation", async () => {
+    let resultRequests = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) {
+          resultRequests += 1;
+          return Response.json({
+            id: "replay-cancel",
+            choices: [
+              {
+                message: { role: "assistant", content: "done" },
+                finish_reason: "stop",
+              },
+            ],
+          });
+        }
+        return new Response(
+          [
+            'id: 1\ndata: {"error":{"message":"run cancelled by caller","type":"run_cancelled"}}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "replay-cancel",
+              "x-run-request-digest": testDigest("replay-cancel"),
+            },
+          },
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      sessionId: "replay-cancel",
+      executionId: "replay-cancel",
+      lastEventId: "0",
+    })) events.push(event);
+
+    // A cancelled terminal is authoritative, so the withheld result is never
+    // requested and a stale completion cannot add or replace a terminal event.
+    expect(resultRequests).toBe(0);
+    expect(events.map((event) => event.type)).toEqual(["status"]);
+    expect(events[0]).toMatchObject({
+      type: "status",
+      data: {
+        status: "cancelled",
+        error: "run cancelled by caller",
+        runId: "replay-cancel",
+        sessionId: "replay-cancel",
+        executionId: "replay-cancel",
+      },
+      normalized: {
+        type: "status",
+        status: "cancelled",
+        detail: "run cancelled by caller",
+      },
+    });
+    expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
   it("lets authoritative cancellation replace a raced completion after a cursor", async () => {
     let requests = 0;
     const provider = createCliBridgeProvider({
