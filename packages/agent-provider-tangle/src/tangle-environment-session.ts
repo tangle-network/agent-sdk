@@ -23,6 +23,7 @@ import type { SandboxEvent } from "@tangle-network/sandbox";
 import type { SandboxSessionLike } from "./tangle-types.js";
 import type { ExecutionUsageLog } from "./tangle-usage-log.js";
 import {
+  carriedSessionIds,
   environmentEventFromSandboxEvent,
   isSandboxConnectionMarker,
   sandboxEventIdentity,
@@ -203,13 +204,15 @@ export function sandboxSessionAsAgentSession(
                 "Tangle exact session connection identified a different executionId",
               );
             }
-            if (
-              markerIdentity.sessionId !== undefined &&
-              markerIdentity.sessionId !== session.id
-            ) {
-              throw new Error(
-                "Tangle exact session connection identified a different sessionId",
-              );
+            // Every position that names a session on the marker names the
+            // session the stream was opened for. The marker carries no native
+            // id, so no position is exempt.
+            for (const carried of carriedSessionIds(markerIdentity)) {
+              if (carried !== session.id) {
+                throw new Error(
+                  "Tangle exact session connection identified a different sessionId",
+                );
+              }
             }
             continue;
           }
