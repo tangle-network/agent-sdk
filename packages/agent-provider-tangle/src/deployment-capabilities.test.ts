@@ -177,6 +177,7 @@ const DEPLOYMENT_DECIDED_CLAIMS = [
   "streaming.turnIdempotency",
   "sessions.continue",
   "retainedControl",
+  "interactions",
 ] as const;
 
 function decidedByDeployment(path: string): boolean {
@@ -192,6 +193,7 @@ function deploymentDecidedClaims(document: AgentEnvironmentCapabilities) {
     turnIdempotency: document.streaming.turnIdempotency,
     continued: document.sessions.continue,
     retainedControl: document.retainedControl !== undefined,
+    interactions: document.interactions !== undefined,
   };
 }
 
@@ -477,11 +479,30 @@ describe("Tangle deployment capability discovery", () => {
     // would drag the provider document down and refuse retained runs against
     // every deployment, including the ones that back them.
     for (const testCase of [
-      { deployment: "undisclosed", document: null, backed: false },
       {
+        deployment: "undisclosed",
+        document: null,
+        backed: false,
+        interactions: false,
+      },
+      {
+        // Retained control and interaction responses rest on separate flags.
+        // This document backs the run operations and stays silent about the
+        // response record, so the environment offers retained control and
+        // refuses to claim interactions.
         deployment: "retained",
         document: RETAINED_DEPLOYMENT_DOCUMENT,
         backed: true,
+        interactions: false,
+      },
+      {
+        deployment: "retained-and-interactive",
+        document: {
+          ...RETAINED_DEPLOYMENT_DOCUMENT,
+          interactions: { responseDedupe: true },
+        },
+        backed: true,
+        interactions: true,
       },
     ] as const) {
       const { provider } = sdkBackedProvider(testCase.document);
@@ -499,6 +520,7 @@ describe("Tangle deployment capability discovery", () => {
         turnIdempotency: true,
         continued: true,
         retainedControl: true,
+        interactions: true,
       });
       expect({
         deployment: testCase.deployment,
@@ -510,6 +532,7 @@ describe("Tangle deployment capability discovery", () => {
         turnIdempotency: testCase.backed,
         continued: testCase.backed,
         retainedControl: testCase.backed,
+        interactions: testCase.interactions,
       });
       expect(claimsBeyond(sandboxStage, clientStage)).toEqual([]);
       expect(claimsTheDeploymentDoesNotDecide(sandboxStage)).toEqual(
@@ -552,6 +575,9 @@ describe("Tangle deployment capability discovery", () => {
       canonicalCancellation: true,
       eventReplay: true,
       executionScopedStatus: true,
+      // The published fixture carries an empty `interactions` block, so the
+      // flag is unset and the fact stays false.
+      interactionResponses: false,
     });
     expect(deploymentCapabilitySupport(null)).toEqual(UNPROVEN_DEPLOYMENT);
     expect(deploymentCapabilitySupport({ schema: 1 })).toEqual(
