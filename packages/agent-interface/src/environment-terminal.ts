@@ -182,11 +182,24 @@ export function terminalAttachResultMatchesRequest(
 }
 
 /**
- * Live handle for one interactive terminal. Signatures only; a provider adapter
- * binds the transport in phase two.
+ * The replay cursors a terminal handle can serve.
+ *
+ * `earliest` is the oldest cursor `events` accepts and `latest` is the newest
+ * frame the handle holds. A handle retains a bounded number of frames, so a
+ * consumer that holds no cursor, or holds one the handle dropped, reads this
+ * window to resume from a cursor that still exists.
  */
+export const TerminalReplayWindowSchema = z.strictObject({
+  earliest: z.number().int().nonnegative(),
+  latest: z.number().int().nonnegative(),
+});
+export type TerminalReplayWindow = z.infer<typeof TerminalReplayWindowSchema>;
+
+/** Live handle for one interactive terminal. */
 export interface AgentTerminalSession {
   readonly ref: TerminalSessionRef;
+  /** Cursors this handle can serve, so an evicted cursor is recoverable. */
+  readonly cursors: TerminalReplayWindow;
   input(input: TerminalInput, options?: { signal?: AbortSignal }): Promise<void>;
   resize(resize: TerminalResize, options?: { signal?: AbortSignal }): Promise<void>;
   detach(options?: { signal?: AbortSignal }): Promise<TerminalDetachAck>;

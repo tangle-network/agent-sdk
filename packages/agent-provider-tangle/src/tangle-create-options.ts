@@ -10,6 +10,7 @@ import {
   MAX_ARRAY_LENGTH,
   MAX_MAP_ENTRIES,
 } from "./tangle-contract-safety.js";
+import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
@@ -44,19 +45,13 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle resource providerOptions are not supported");
   }
   if (input.resources?.providerOptions) assertBoundedRecord(input.resources.providerOptions, "Tangle resource providerOptions");
-  if (input.resources?.gpu !== undefined) boundedIdentifier(input.resources.gpu, "Tangle GPU");
   if (input.idempotencyKey !== undefined) {
     boundedIdentifier(input.idempotencyKey, "Tangle idempotency key");
   }
   if (input.workspace?.cwd === "") throw new Error("Tangle workspace cwd cannot be empty");
   if (workspace.image === "") throw new Error("Tangle workspace image cannot be empty");
   if (workspace.repoUrl === "") throw new Error("Tangle repository URL cannot be empty");
-  for (const [name, value] of Object.entries(input.resources ?? {})) {
-    if (name === "providerOptions" || name === "gpu") continue;
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
-      throw new Error(`Tangle resource ${name} must be a positive safe integer`);
-    }
-  }
+  const resources = sandboxResourcesFromResourceRequest(input.resources);
   if (workspace.environment !== undefined && workspace.image !== undefined) {
     throw new Error("Tangle workspace cannot specify both environment and image");
   }
@@ -76,7 +71,7 @@ export function sandboxOptionsFromCreateInput(
           },
         }
       : {}),
-    ...(input.resources ? { resources: input.resources as unknown as CreateSandboxOptions["resources"] } : {}),
+    ...(resources ? { resources } : {}),
     ...(input.env ? { env: input.env } : {}),
     ...(Array.isArray(input.secrets) ? { secrets: input.secrets } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),

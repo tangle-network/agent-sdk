@@ -21,6 +21,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import type { SandboxSessionLike } from "./tangle-types.js";
+import type { ExecutionUsageLog } from "./tangle-usage-log.js";
 import {
   environmentEventFromSandboxEvent,
   isSandboxConnectionMarker,
@@ -66,6 +67,9 @@ type ExactExecutionEventStream = (options: {
  * document grants retained control. Canonical cancellation is offered only
  * under that grant: a `cancelRun` method the deployment does not honor is an
  * action the caller selects and finds rejected on the wire.
+ * @param usageLog Sink for the token usage each execution measured. The
+ * environment observation reads it, because Sandbox reports usage per
+ * execution result and never for the environment.
  */
 export function sandboxSessionAsAgentSession(
   session: SandboxSessionLike,
@@ -75,7 +79,15 @@ export function sandboxSessionAsAgentSession(
   dispatch: ((input: AgentTurnInput) => Promise<AgentSessionRef>) | undefined,
   exactExecutionEvents: ExactExecutionEventStream | undefined,
   retainedControl: boolean,
+  usageLog?: ExecutionUsageLog,
 ): AgentSession {
+  const measured = (
+    executionId: string | undefined,
+    result: AgentTurnResult,
+  ): AgentTurnResult => {
+    usageLog?.record(executionId, result.usage);
+    return result;
+  };
   let activeControlRef: AgentExactRunControlRef | undefined = controlRef
     ? resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId)
     : undefined;
@@ -227,10 +239,13 @@ export function sandboxSessionAsAgentSession(
       options?.signal?.throwIfAborted();
       const resultRecord = validatedSandboxPromptResult(result);
       if (resultRecord.executionId !== expectedExecutionId) throw new Error("Tangle session result did not confirm its exact executionId");
-      return agentTurnResultFromPromptRecord(resultRecord, {
-        sessionId: session.id,
-        controlRef: activeControlRef,
-      });
+      return measured(
+        expectedExecutionId,
+        agentTurnResultFromPromptRecord(resultRecord, {
+          sessionId: session.id,
+          controlRef: activeControlRef,
+        }),
+      );
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
       AgentTurnInputSchema.parse(input);
@@ -306,10 +321,13 @@ export function sandboxSessionAsAgentSession(
               "Tangle detached session prompt did not confirm its exact executionId",
             );
           }
-          return agentTurnResultFromPromptRecord(resultRecord, {
-            sessionId: session.id,
-            controlRef: nextControlRef,
-          });
+          return measured(
+            nextControlRef.executionId,
+            agentTurnResultFromPromptRecord(resultRecord, {
+              sessionId: session.id,
+              controlRef: nextControlRef,
+            }),
+          );
         }
         const sourceControlRef = requestedControlRef ?? activeControlRef;
         const replay = input.lastEventId !== undefined;
@@ -427,16 +445,19 @@ export function sandboxSessionAsAgentSession(
           }
           const nextControlRef = targetControlRef;
           activeControlRef = nextControlRef;
-          return agentTurnResultFromPromptRecord(resultRecord, {
-            sessionId: session.id,
-            controlRef: nextControlRef,
-            ...(input.contextTransfer
-              ? { contextTransferRequest: input.contextTransfer }
-              : {}),
-            ...(input.contextTransfer
-              ? { contextTransferRequested: true }
-              : {}),
-          });
+          return measured(
+            executionId,
+            agentTurnResultFromPromptRecord(resultRecord, {
+              sessionId: session.id,
+              controlRef: nextControlRef,
+              ...(input.contextTransfer
+                ? { contextTransferRequest: input.contextTransfer }
+                : {}),
+              ...(input.contextTransfer
+                ? { contextTransferRequested: true }
+                : {}),
+            }),
+          );
         } catch (error) {
           if (input.signal?.aborted && input.detach !== true) {
             void interruptExecutionAfterAbort(session, session.id, executionId);

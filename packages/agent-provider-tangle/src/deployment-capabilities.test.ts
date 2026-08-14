@@ -76,9 +76,10 @@ function deployedProvider(options: {
 
 /**
  * One SDK-backed client, so the client stage mints the linked SDK probe and
- * measures its complete method surface. The sandbox carries every workspace
- * and session method that surface promises, which leaves the deployment
- * document as the single variable between the two capability stages.
+ * measures its complete method surface. The sandbox carries every workspace,
+ * session, observation, and terminal source that surface promises, which
+ * leaves the deployment document as the single variable between the two
+ * capability stages.
  */
 function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
   const files = new Map<string, string>();
@@ -86,6 +87,24 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
   const box: SandboxInstanceLike = {
     id: "sbx-sdk-backed",
     status: "running",
+    connection: { runtimeUrl: "https://sbx-sdk-backed.runtime.example:8443/v1" },
+    gpuLease: {
+      accelerator: { kind: "nvidia-h100", count: 1 },
+      estimatedCustomerCostUsd: 2.5,
+    },
+    resourceUsage: async () => ({
+      memoryCurrentMb: 512,
+      memoryPeakMb: 900,
+      memoryLimitMb: 4_096,
+      cpuUsageUsec: 1_000,
+      sampledAtMs: Date.parse("2026-08-13T00:00:00.000Z"),
+    }),
+    terminals: {
+      get: async () => null,
+      attach: async () => {
+        throw new Error("the capability stage must not open a terminal socket");
+      },
+    },
     async *streamPrompt(_message, promptOptions): AsyncIterable<SandboxEvent> {
       yield {
         type: "result",

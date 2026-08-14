@@ -38,6 +38,7 @@ export {
   TerminalDetachAckSchema,
   TerminalInputSchema,
   TerminalOutputEventSchema,
+  TerminalReplayWindowSchema,
   TerminalResizeSchema,
   TerminalSessionRefSchema,
   terminalAttachResultMatchesRequest,
