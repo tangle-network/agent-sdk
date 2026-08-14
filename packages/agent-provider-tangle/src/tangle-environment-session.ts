@@ -49,6 +49,7 @@ import {
   boundedIdentifier,
 } from "./tangle-contract-safety.js";
 import { assertOptionKeys } from "./tangle-environment-validation.js";
+import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import {
   hasReplayPayload,
   interruptExecutionAfterAbort,
@@ -68,6 +69,10 @@ type ExactExecutionEventStream = (options: {
  * document grants retained control. Canonical cancellation is offered only
  * under that grant: a `cancelRun` method the deployment does not honor is an
  * action the caller selects and finds rejected on the wire.
+ * @param interactionResponses Whether the environment's narrowed capability
+ * document claims interaction responses. The method is offered only under
+ * that claim, so a caller never selects an answer the deployment cannot
+ * record.
  * @param usageLog Sink for the token usage each execution measured. The
  * environment observation reads it, because Sandbox reports usage per
  * execution result and never for the environment.
@@ -80,6 +85,7 @@ export function sandboxSessionAsAgentSession(
   dispatch: ((input: AgentTurnInput) => Promise<AgentSessionRef>) | undefined,
   exactExecutionEvents: ExactExecutionEventStream | undefined,
   retainedControl: boolean,
+  interactionResponses: boolean,
   usageLog?: ExecutionUsageLog,
 ): AgentSession {
   const measured = (
@@ -93,6 +99,15 @@ export function sandboxSessionAsAgentSession(
     ? resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId)
     : undefined;
   let promptInFlight = false;
+  const respondToInteraction =
+    interactionResponses && typeof session.respondToInteraction === "function"
+      ? tangleInteractionResponder({
+          session,
+          sessionId: session.id,
+          provider,
+          environmentId,
+        })
+      : undefined;
   const cancelRunMethod = retainedControl ? session.cancelRun : undefined;
   const cancelRun = typeof cancelRunMethod === "function"
     ? async (
@@ -481,5 +496,6 @@ export function sandboxSessionAsAgentSession(
       if (result.cancelled !== true) throw new Error("Tangle sandbox did not confirm cancellation");
     },
     ...(cancelRun ? { cancelRun } : {}),
+    ...(respondToInteraction ? { respondToInteraction } : {}),
   };
 }

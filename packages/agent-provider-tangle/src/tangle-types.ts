@@ -10,6 +10,8 @@ import type {
   AgentRunCancellationAcknowledgement,
   AgentRunCancellationRequest,
   InputPart,
+  InteractionRequest,
+  InteractionResponseCommand,
 } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironmentCapabilities,
@@ -112,6 +114,16 @@ export interface SandboxRuntimeCapabilityDocument {
     executionScopedStatus?: boolean;
     /** Buffered run events replay by execution. */
     eventReplay?: boolean;
+  };
+  interactions?: {
+    /**
+     * The interaction route records every acknowledged resolution durably:
+     * repeating a response replays the recorded resolution, a different answer
+     * for a recorded resolution raises a conflict, and the deployment refuses
+     * rather than acknowledge a resolution it cannot record. Absent on an
+     * image that predates the flag, which is unknown and never a claim.
+     */
+    responseDedupe?: boolean;
   };
 }
 
@@ -321,6 +333,46 @@ export interface SandboxSessionLike {
     request: AgentRunCancellationRequest,
     options?: { signal?: AbortSignal },
   ): Promise<AgentRunCancellationAcknowledgement>;
+  /**
+   * Every ask still awaiting a response on this session. The adapter reads the
+   * answer spec from here to refuse an answer the ask does not accept, so an
+   * ask that has already left the outstanding set is absent rather than an
+   * error. Absent on a Sandbox SDK that cannot list the outstanding set.
+   */
+  interactions?(options?: {
+    signal?: AbortSignal;
+  }): Promise<readonly InteractionRequest[]>;
+  /**
+   * Deliver one digest-bound response to the exact ask its binding names.
+   *
+   * The result carries the acknowledgement the deployment's durable record
+   * produced, and `serverResult` carries that record itself. Absent on a
+   * Sandbox SDK older than 0.23.0, whose response path selected an ask by
+   * position rather than by id.
+   */
+  respondToInteraction?(
+    command: InteractionResponseCommand,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxInteractionCommandResultLike>;
+}
+
+/**
+ * The Sandbox SDK's reply to one response command.
+ *
+ * Both members are read as unvalidated wire content: the acknowledgement
+ * reaches the canonical schema before this adapter returns it, and the
+ * resolution is read only for the two facts the acknowledgement cannot
+ * carry — whether the deployment confirmed delivery, and the digest of the
+ * response a conflicting resolution already holds.
+ */
+export interface SandboxInteractionCommandResultLike {
+  acknowledgement: unknown;
+  serverResult?: {
+    status?: unknown;
+    delivered?: unknown;
+    existingResponseDigest?: unknown;
+    [key: string]: unknown;
+  };
 }
 
 export interface TangleProviderOptions {

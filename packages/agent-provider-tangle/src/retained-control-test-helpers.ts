@@ -73,6 +73,18 @@ export function retainedSessionHandle(id: string): SandboxSessionLike {
       status: "accepted",
       effect: "not_live",
     }),
+    interactions: async () => [],
+    // The minimal deployment behind a response command: it records the
+    // resolution and acknowledges the exact operation it was sent.
+    respondToInteraction: async (command) => ({
+      acknowledgement: {
+        operationId: command.operationId,
+        binding: command.binding,
+        commandDigest: command.commandDigest,
+        status: "accepted",
+      },
+      serverResult: { status: "accepted", delivered: true },
+    }),
   };
 }
 

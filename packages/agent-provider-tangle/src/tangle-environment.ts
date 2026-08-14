@@ -3,6 +3,8 @@ import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interf
 import type {
   AgentExactRunControlRef,
   AgentRunControlRef,
+  InteractionAcknowledgement,
+  InteractionResponseCommand,
 } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironment,
@@ -57,6 +59,7 @@ import {
 } from "./tangle-environment-control.js";
 import { dispatchEnvironmentRun } from "./tangle-environment-dispatch.js";
 import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
+import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import { createExecutionUsageLog } from "./tangle-usage-log.js";
 import { observeTangleEnvironment } from "./tangle-observation.js";
 import { createTangleTerminalRegistry } from "./tangle-terminal.js";
@@ -108,6 +111,7 @@ export async function sandboxInstanceAsEnvironment(
   // The published document is the single source for what this environment
   // offers, so the session surface reads its grant from there.
   const retainedControl = capabilities.retainedControl !== undefined;
+  const interactionResponses = capabilities.interactions !== undefined;
   // Usage is measured per execution, so the log collects what runs through
   // this handle and the observation reports the newest record it holds.
   const usageLog = createExecutionUsageLog();
@@ -225,6 +229,7 @@ export async function sandboxInstanceAsEnvironment(
               dispatch,
               exactExecutionEvents,
               retainedControl,
+              interactionResponses,
               usageLog,
             );
             // sessions.continue was granted from the probe session and the
@@ -241,6 +246,39 @@ export async function sandboxInstanceAsEnvironment(
               );
             }
             return agentSession;
+          },
+        }
+      : {}),
+    ...(interactionResponses && box.session
+      ? {
+          respondToInteraction(
+            command: InteractionResponseCommand,
+            options?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            assertOptionKeys(options, ["signal"], "Tangle interaction response");
+            options?.signal?.throwIfAborted();
+            // The command names its own session, so the environment answers an
+            // ask on any session of this sandbox without the caller holding a
+            // session object. The binding is checked against this handle, so a
+            // command for another session is refused rather than delivered.
+            const sessionId = boundedIdentifier(
+              command?.binding?.sessionId,
+              "Tangle interaction session id",
+            );
+            const session = box.session?.(
+              sessionId,
+              options?.signal ? { signal: options.signal } : undefined,
+            );
+            if (!session) throw new Error("sandbox session(id) returned undefined");
+            if (session.id !== sessionId) {
+              throw new Error("sandbox session(id) returned an unrelated session");
+            }
+            return tangleInteractionResponder({
+              session,
+              sessionId,
+              provider: providerName,
+              environmentId,
+            })(command, options);
           },
         }
       : {}),
