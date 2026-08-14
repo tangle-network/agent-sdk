@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.7.1
+
+### Patch Changes
+
+- 2da20c6: Make retained CLI Bridge state authoritative for completion, cancellation, and replay.
+  Reject aggregate responses that do not match the accepted run identity.
+  Read cancelled retained state when a stream ends with only its protocol marker.
+  Consume rejected aggregate responses before returning identity errors.
+
 ## 0.7.0
 
 ### Minor Changes
