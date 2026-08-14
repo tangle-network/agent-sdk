@@ -33,6 +33,8 @@
   "files": [
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/observation.d.ts",
+    "dist/observation.js",
     "dist/provider-options.d.ts",
     "dist/provider-options.js",
     "dist/retained-control.d.ts",

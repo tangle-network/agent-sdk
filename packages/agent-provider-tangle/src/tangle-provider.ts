@@ -16,6 +16,7 @@ import {
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
+import { requestedResourceProfile } from "./tangle-resources.js";
 import type { TangleProviderOptions } from "./tangle-types.js";
 import {
   assertBoundedJson,
@@ -116,12 +117,19 @@ export function createTangleProvider(
       }
       try {
         input.signal?.throwIfAborted();
+        const requestedResources = requestedResourceProfile(input.resources);
         const environment = await sandboxInstanceAsEnvironment(
           box,
           providerName,
           options.client,
           declaredCapabilities,
           input.signal ? { signal: input.signal } : undefined,
+          {
+            backend: input.backend ?? options.defaultBackend ?? "opencode",
+            ...(requestedResources === undefined
+              ? {}
+              : { resources: requestedResources }),
+          },
         );
         input.signal?.throwIfAborted();
         return environment;

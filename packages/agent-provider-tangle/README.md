@@ -75,6 +75,62 @@ It also rejects `contextTransfer` and `nativeContinuation` inputs explicitly unt
 The adapter never advertises `branching.checkpoint` or `branching.fork`.
 Sandbox exposes `snapshot`, `listSnapshots`, `deleteSnapshot`, and `branch(count)` with different semantics; durable workspace branching stays unadvertised until the full `AgentWorkspaceBranching` contract — retry, lookup, conflict, and cleanup together — is implemented over that surface.
 
+## Environment observation
+
+`environment.observe()` returns the normalized `AgentEnvironmentObservation`.
+Every surface carries a freshness discriminator, so a value the Sandbox SDK does not report is visibly absent instead of arriving as a measured zero.
+The `observation` capability flag for a surface is true only when a source can put a value on it for that environment; the observation itself always carries the surface, with `unavailable` and its reason when there is nothing to report.
+
+| Surface | Sandbox source | State when the source is missing |
+| --- | --- | --- |
+| `identity` | provider name and `box.id` | always known |
+| `lifecycle.status` | `box.status` after a refresh | `stale` with the refresh failure |
+| `lifecycle.cleanup` | `box.expiresAt` as a scheduled retirement | omitted from the lifecycle value |
+| `endpoint` | scheme, host, and explicit port of `connection.runtimeUrl` | `unavailable` |
+| `placement.verified` | `client.describePlacement(box)` | `unavailable` |
+| `resources.requested` | the `create()` resource request | omitted on an environment rebuilt by id |
+| `resources.effective` | cgroup `memoryLimitMb` and the attached GPU lease | `unavailable` |
+| `resourceUse.current` / `peak` | cgroup `memoryCurrentMb` / `memoryPeakMb` | `unavailable` |
+| `modelUsage` | the newest execution this handle measured | `unavailable` |
+| `computeBilling` | the GPU lease's billed or estimated customer cost | `unavailable` |
+| `accountUsage` | `client.subscription()` and `client.usage()` | `unavailable` |
+
+Four quantities have no Sandbox source at all, and the adapter reports them as absent rather than deriving them.
+There is no effective CPU or disk figure anywhere in the SDK, so `resources.effective` carries memory and the accelerator only.
+The cgroup reports cumulative CPU microseconds, which is not a utilization figure, so `resourceUse` carries memory only rather than a rate computed from one sample.
+Sandbox prices an attached GPU lease and publishes no per-sandbox container compute cost, so `computeBilling` is unavailable on an environment with no lease.
+`lifecycle.continuity` and `lifecycle.persistence` have no readable source and are omitted.
+
+Two account values are reported as absent on purpose.
+A negative credit balance under an overage plan cannot be stated as non-negative remaining credit, and an account with no concurrent-sandbox ceiling has no quota to state; reporting either as zero would hide a debt or invent a limit.
+
+`resources.requested` is the request the adapter sends, not the request the caller typed.
+The contract states CPU, memory, and disk as `cpu`/`memoryMb`/`diskMb` while Sandbox reads `cpuCores`/`memoryMB`/`diskGB`, so the adapter translates them; a disk size that is not a whole number of gibibytes is refused rather than rounded.
+A `resources.gpu` class becomes one accelerator device, which is the Sandbox default device count for a request that names only its class.
+
+The observation makes two calls of its own — the account subscription and usage counters — plus the cgroup sample and a refresh.
+A hop that fails does not fail the observation: its surface carries the transport's own message as the reason, and a value the refresh could not renew is reported as `stale` rather than as current.
+
+Nothing in the observation can carry a credential.
+The endpoint holds only a scheme, a host, and an explicit port; userinfo, path, and query are dropped, and the bearer beside the runtime URL is never read.
+
+## Interactive terminal
+
+`environment.attachTerminal(request)` opens or reattaches one PTY over the sandbox terminal WebSocket, and `environment.terminal(id)` returns the live handle.
+The four `interactiveTerminal` flags rest on one fact — the sandbox serves the PTY socket and reports terminal metadata — because all four operations reach the caller through one socket from one linked SDK.
+
+Attach uses the request's `connectionId`, else its `terminalSessionId`, else a generated id; reusing an id reattaches the PTY and replays its retained screen, which the runtime reports as `reattached`.
+`mode: "logical"` is refused: Sandbox resumes a terminal only by attaching it, and serving an attach the caller did not ask for would start a PTY behind their back.
+
+`events()` replays retained frames from an EXCLUSIVE `since` cursor and then continues until the terminal exits.
+Only `output` frames carry a sequence; `ready`, `resize`, `error`, and `exit` keep their place in the same ordered log.
+A cursor the retained buffer no longer holds is refused, because resuming after the gap would drop output the consumer believes it received.
+
+Every reference states an expiry one detach window past the newest activity the adapter can prove, and `input` and `resize` refuse a reference that is expired or no longer running.
+`attachCount` counts the attaches this environment holds, not the runtime's own viewers.
+`close()` reports `closed` only when the socket delivered an exit; Sandbox exposes no terminal delete, so an unproven close reports `unknown` rather than claiming a termination that did not happen.
+An attach whose runtime metadata lacks a name, shell, working directory, geometry, timestamps, running state, or detach window fails closed with `unknown`, because a reference cannot state facts the runtime did not report.
+
 Pass `exactProcess: {}` only when the Sandbox deployment supports `agent: false` creates and reports `metadata.runtimeMode: "control"`.
 The optional capability creates an ephemeral sandbox with an authenticated control service but no managed agent workload or agent credentials, explicit resources, exact blocked/domain egress, bounded binary file reads, shell-free launch, and recoverable process output plus terminal reason.
 Set `teamId` inside `exactProcess` to scope create, lookup, and recovery to one team.

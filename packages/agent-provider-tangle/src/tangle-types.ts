@@ -47,6 +47,31 @@ export interface SandboxClientLike {
     signal?: AbortSignal;
   }): Promise<SandboxInstanceLike[]>;
   describePlacement?(box: SandboxInstanceLike): unknown;
+  /** Account usage counters for the credential behind this client. */
+  usage?(): Promise<SandboxAccountUsageLike>;
+  /** Plan, credit balance, and concurrency ceiling for the account. */
+  subscription?(): Promise<SandboxSubscriptionLike>;
+}
+
+/** The account usage counters the observation reads. */
+export interface SandboxAccountUsageLike {
+  activeSandboxes: number;
+  periodStart: Date | string;
+  periodEnd: Date | string;
+}
+
+/**
+ * The subscription fields the observation reads.
+ *
+ * `creditsAvailableUsd` can be negative on an overage plan, and
+ * `maxConcurrentSandboxes` is 0 when the account has no ceiling. Neither value
+ * fits the contract's non-negative credit and quota shapes, so the observation
+ * reports those two cases as unavailable instead of clamping them.
+ */
+export interface SandboxSubscriptionLike {
+  plan: string;
+  creditsAvailableUsd: number;
+  maxConcurrentSandboxes: number;
 }
 
 /**
@@ -123,11 +148,114 @@ export interface SandboxProcessManagerLike {
   ): Promise<SandboxProcessLike>;
 }
 
+/**
+ * The connection fields this adapter reads.
+ *
+ * The Sandbox connection object also carries a bearer token and its expiry.
+ * Neither is declared here, so no code path can copy a credential into an
+ * observation: the adapter reads the runtime URL and nothing else.
+ */
+export interface SandboxConnectionLike {
+  runtimeUrl?: string;
+}
+
+/** Live cgroup sample for one sandbox. `null` fields mean the host reported none. */
+export interface SandboxResourceUsageLike {
+  memoryCurrentMb: number;
+  memoryPeakMb: number | null;
+  memoryLimitMb: number | null;
+  cpuUsageUsec: number;
+  sampledAtMs: number;
+}
+
+/**
+ * The GPU lease fields the observation reads: the accelerator actually
+ * attached, and the compute cost charged for it. `billing` exists after the
+ * lease stops; `estimatedCustomerCostUsd` is the running estimate before that.
+ */
+export interface SandboxGpuLeaseLike {
+  accelerator: { kind: string; count: number; memoryMB?: number };
+  region?: string;
+  billing?: { customerCostUsd: number };
+  estimatedCustomerCostUsd?: number;
+}
+
+/** Interactive terminal metadata the runtime reports for one PTY. */
+export interface SandboxTerminalInfoLike {
+  sessionId: string;
+  connectionId?: string;
+  name?: string;
+  shell?: string;
+  command?: string;
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+  createdAt?: string;
+  lastActivityAt?: string;
+  isRunning?: boolean;
+  exitCode?: number;
+  exitSignal?: string;
+}
+
+/** The `ready` acknowledgement the terminal WebSocket returns on attach. */
+export interface SandboxTerminalReadyLike {
+  connectionId: string;
+  sessionId: string;
+  /** True when the runtime reattached an existing PTY and replays its history. */
+  restored: boolean;
+  /** How long the runtime keeps the PTY alive after this socket closes. */
+  detachTimeoutMs: number;
+}
+
+/** Callbacks bound before the terminal socket opens. */
+export interface SandboxTerminalHandlersLike {
+  onData?: (data: Uint8Array) => void;
+  onReady?: (info: SandboxTerminalReadyLike) => void;
+  onExit?: (info: { exitCode?: number; exitSignal?: string }) => void;
+  onError?: (error: Error) => void;
+  onClose?: (code: number, reason: string) => void;
+}
+
+/** One live terminal WebSocket. */
+export interface SandboxTerminalStreamLike {
+  readonly connectionId: string;
+  readonly ready: SandboxTerminalReadyLike;
+  readonly isOpen: boolean;
+  write(data: string | Uint8Array): void;
+  resize(cols: number, rows: number): void;
+  close(): Promise<void>;
+}
+
+/**
+ * The terminal surface this adapter binds: metadata lookup plus the live PTY
+ * attach. Reusing a connection id reattaches an existing PTY and replays its
+ * buffered output; a new id starts a shell or the requested command.
+ */
+export interface SandboxTerminalsLike {
+  get(sessionId: string): Promise<SandboxTerminalInfoLike | null>;
+  attach(
+    connectionId: string,
+    options?: {
+      cols?: number;
+      rows?: number;
+      command?: string;
+      cwd?: string;
+      handlers?: SandboxTerminalHandlersLike;
+    },
+  ): Promise<SandboxTerminalStreamLike>;
+}
+
 export interface SandboxInstanceLike {
   id: string;
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
+  /** Network location of the sandbox runtime, without its bearer. */
+  connection?: SandboxConnectionLike;
+  /** When the platform retires this sandbox, when it set a lifetime. */
+  expiresAt?: Date | string;
+  /** GPU lease attached at create time, when one was requested. */
+  gpuLease?: SandboxGpuLeaseLike;
   streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
   prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
   dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
@@ -166,6 +294,14 @@ export interface SandboxInstanceLike {
    * reads; a malformed document throws.
    */
   capabilities?(): Promise<SandboxRuntimeCapabilityDocument | null>;
+  /**
+   * Live cgroup sample for the whole sandbox. Resolves to null when the host
+   * collects no cgroup statistics, which the observation reports as an absent
+   * measurement rather than a zero.
+   */
+  resourceUsage?(): Promise<SandboxResourceUsageLike | null>;
+  /** Interactive terminal transport. Absent on a client that cannot serve a PTY. */
+  terminals?: SandboxTerminalsLike;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<void>;
 }

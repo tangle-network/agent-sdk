@@ -1,6 +1,8 @@
 import type {
   AgentEnvironment,
+  AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
+  AgentEnvironmentObservation,
   AgentSession,
   AgentSessionStatus,
   AgentTurnInput,
@@ -10,6 +12,7 @@ import type {
 import type {
   AgentRunCancellationAcknowledgement,
   AgentRunControlRef,
+  TokenUsage,
 } from "@tangle-network/agent-interface";
 import {
   agentSessionStatusFromRun,
@@ -18,11 +21,17 @@ import {
   getCliBridgeRun,
 } from "./retained-control.js";
 import {
+  addTokenUsage,
   collectCliBridgeTurnResult,
   dispatchCliBridgeTurn,
   streamCliBridgeSessionEvents,
   streamTrackedCliBridgeTurn,
 } from "./retained-execution.js";
+import {
+  createExecutionUsageLog,
+  observeCliBridgeEnvironment,
+  type ExecutionUsageLog,
+} from "./observation.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import {
   assertRunMatchesControlRef,
@@ -42,6 +51,12 @@ export interface CreateCliBridgeEnvironmentArgs {
   readonly environmentId: string;
   readonly allowDispatch: boolean;
   readonly cancelRunsOnDestroy: boolean;
+  /**
+   * The document this provider publishes. The environment offers an optional
+   * operation only where the document claims it, so a caller never selects an
+   * action the document did not carry.
+   */
+  readonly capabilities: AgentEnvironmentCapabilities;
 }
 
 export function createCliBridgeEnvironment(
@@ -52,6 +67,7 @@ export function createCliBridgeEnvironment(
   const runs = new Map<string, CliBridgeRun>();
   const sessions = new Map<string, CliBridgeSessionState>();
   const readers = new Set<AbortController>();
+  const usageLog = createExecutionUsageLog();
   let destroyed = false;
   let closePromise: Promise<void> | undefined;
   const stream = async function* (
@@ -68,7 +84,10 @@ export function createCliBridgeEnvironment(
       environmentId,
       false,
     );
-    yield* streamTrackedCliBridgeTurn(
+    // A streamed run reports usage across its events, so the totals are summed
+    // here and recorded as one execution's measurement.
+    let streamedUsage: TokenUsage | undefined;
+    for await (const event of streamTrackedCliBridgeTurn(
       options,
       environmentInput,
       prepared,
@@ -76,7 +95,11 @@ export function createCliBridgeEnvironment(
       runs,
       sessions,
       readers,
-    );
+    )) {
+      streamedUsage = addTokenUsage(streamedUsage, event.usage);
+      usageLog.record(prepared.run.executionId, streamedUsage);
+      yield event;
+    }
   };
   return {
     id: environmentId,
@@ -124,8 +147,23 @@ export function createCliBridgeEnvironment(
         allowPrompt: args.allowDispatch,
         requestedControlRef: sessionOptions?.controlRef,
         isDestroyed: () => destroyed,
+        usageLog,
       });
     },
+    ...(args.capabilities.observation
+      ? {
+          async observe(observeOptions): Promise<AgentEnvironmentObservation> {
+            observeOptions?.signal?.throwIfAborted();
+            return observeCliBridgeEnvironment({
+              options,
+              provider: providerName,
+              environmentId,
+              destroyed,
+              usageLog,
+            });
+          },
+        }
+      : {}),
     placement: async (placementOptions) => {
       placementOptions?.signal?.throwIfAborted();
       return {
@@ -195,6 +233,7 @@ interface CreateCliBridgeSessionArgs {
   readonly allowPrompt: boolean;
   readonly requestedControlRef?: AgentRunControlRef;
   readonly isDestroyed: () => boolean;
+  readonly usageLog: ExecutionUsageLog;
 }
 
 function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession {
@@ -267,7 +306,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
     },
     async result(resultOptions): Promise<AgentTurnResult> {
       const run = requireCurrentRun();
-      return collectCliBridgeTurnResult(
+      const result = await collectCliBridgeTurnResult(
         streamCliBridgeSessionEvents(
           args.options,
           args.environmentInput,
@@ -282,6 +321,8 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.transport,
         resultOptions?.signal,
       );
+      args.usageLog.record(run.executionId, result.usage);
+      return result;
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
       if (!args.allowPrompt) {
@@ -317,6 +358,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.transport,
         input.signal,
       );
+      args.usageLog.record(prepared.run.executionId, result.usage);
       return { ...result, sessionId: args.id };
     },
     async cancel(cancelOptions): Promise<void> {

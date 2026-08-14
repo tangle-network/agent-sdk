@@ -8,12 +8,17 @@ import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
+  AgentEnvironmentObservation,
   AgentEnvironmentStatus,
   AgentSession,
+  AgentTerminalSession,
   AgentTurnInput,
   ExecRequest,
   ExecResult,
   PlacementInfo,
+  ResourceProfile,
+  TerminalAttachRequest,
+  TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   SandboxClientLike,
@@ -52,6 +57,9 @@ import {
 } from "./tangle-environment-control.js";
 import { dispatchEnvironmentRun } from "./tangle-environment-dispatch.js";
 import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
+import { createExecutionUsageLog } from "./tangle-usage-log.js";
+import { observeTangleEnvironment } from "./tangle-observation.js";
+import { createTangleTerminalRegistry } from "./tangle-terminal.js";
 
 /**
  * Compose one concrete sandbox into an environment.
@@ -69,6 +77,10 @@ import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
  * nothing and keeps claiming nothing: the exposed operations and the document
  * are composed together and a caller may already hold either one. Compose the
  * environment again through `provider.get(id)` once the sandbox is running.
+ *
+ * @param request What the create call asked for. An environment rebuilt by id
+ * carries none of it, so its observation reports the requested compute shape
+ * as absent instead of restating a request it never saw.
  */
 export async function sandboxInstanceAsEnvironment(
   box: SandboxInstanceLike,
@@ -76,6 +88,7 @@ export async function sandboxInstanceAsEnvironment(
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
   operation?: { signal?: AbortSignal },
+  request?: { backend?: string; resources?: ResourceProfile },
 ): Promise<AgentEnvironment> {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
@@ -85,7 +98,7 @@ export async function sandboxInstanceAsEnvironment(
     }
     assertBoundedJson(box.metadata);
   }
-  const support = sandboxCapabilitySupport(box, client);
+  const support = sandboxCapabilitySupport(box, client, request?.resources);
   const deployment = await readDeploymentCapabilitySupport(box, operation);
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
@@ -95,6 +108,13 @@ export async function sandboxInstanceAsEnvironment(
   // The published document is the single source for what this environment
   // offers, so the session surface reads its grant from there.
   const retainedControl = capabilities.retainedControl !== undefined;
+  // Usage is measured per execution, so the log collects what runs through
+  // this handle and the observation reports the newest record it holds.
+  const usageLog = createExecutionUsageLog();
+  const terminals =
+    capabilities.interactiveTerminal?.attach === true
+      ? createTangleTerminalRegistry(box)
+      : undefined;
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
@@ -154,6 +174,7 @@ export async function sandboxInstanceAsEnvironment(
               ? { streamBound: true }
               : {}),
           });
+          usageLog.record(expectedExecutionId, converted.usage);
           input.signal?.throwIfAborted();
           yield converted;
         }
@@ -204,6 +225,7 @@ export async function sandboxInstanceAsEnvironment(
               dispatch,
               exactExecutionEvents,
               retainedControl,
+              usageLog,
             );
             // sessions.continue was granted from the probe session and the
             // deployment document together; this backstop holds every
@@ -271,6 +293,48 @@ export async function sandboxInstanceAsEnvironment(
             );
             options?.signal?.throwIfAborted();
             return placementInfoFromLoopPlacement(placement, box);
+          },
+        }
+      : {}),
+    ...(capabilities.observation
+      ? {
+          async observe(options?: {
+            signal?: AbortSignal;
+          }): Promise<AgentEnvironmentObservation> {
+            assertOptionKeys(options, ["signal"], "Tangle observe");
+            return await observeTangleEnvironment(
+              {
+                box,
+                client,
+                provider: providerName,
+                environmentId,
+                ...(request?.backend === undefined ? {} : { backend: request.backend }),
+                ...(request?.resources === undefined
+                  ? {}
+                  : { requestedResources: request.resources }),
+                usageLog,
+              },
+              options,
+            );
+          },
+        }
+      : {}),
+    ...(terminals
+      ? {
+          async attachTerminal(
+            terminalRequest: TerminalAttachRequest,
+            options?: { signal?: AbortSignal },
+          ): Promise<TerminalAttachResult> {
+            return await terminals.attach(terminalRequest, options);
+          },
+          terminal(
+            terminalSessionId: string,
+            options?: { signal?: AbortSignal },
+          ): AgentTerminalSession {
+            boundedIdentifier(terminalSessionId, "Tangle terminal session id");
+            assertOptionKeys(options, ["signal"], "Tangle terminal");
+            options?.signal?.throwIfAborted();
+            return terminals.get(terminalSessionId);
           },
         }
       : {}),

@@ -14,6 +14,13 @@ import {
   deploymentBacksRetainedControl,
 } from "./tangle-deployment-capabilities.js";
 import type { DeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
+import type { ResourceProfile } from "@tangle-network/agent-interface";
+import {
+  clientObservationSurfaceSupport,
+  observationSurfaceSupport,
+  type ObservationSurfaceSupport,
+} from "./tangle-observation.js";
+import { sandboxBacksInteractiveTerminal } from "./tangle-terminal.js";
 
 /**
  * The full capability document this adapter supports when the Sandbox client
@@ -73,6 +80,27 @@ export function defaultTangleSandboxCapabilities(
     // Confidential execution needs verified attestation evidence, which this
     // adapter does not yet obtain, so it is never declared by default.
     confidential: false,
+    // Observation surfaces are declared as intent and narrowed per sandbox to
+    // the sources that can put a value on each one.
+    observation: {
+      identity: true,
+      lifecycle: true,
+      endpoint: true,
+      placement: true,
+      resources: true,
+      resourceUse: true,
+      modelUsage: true,
+      computeBilling: true,
+      accountUsage: true,
+    },
+    // The four terminal operations rest on one fact: the sandbox serves the
+    // PTY socket and reports terminal metadata. They stand or fall together.
+    interactiveTerminal: {
+      attach: true,
+      input: true,
+      resize: true,
+      reattach: true,
+    },
   };
 }
 
@@ -94,6 +122,10 @@ export interface SandboxCapabilitySupport {
   placement: boolean;
   destroy: boolean;
   cancelRun: boolean;
+  /** Per-surface sources for the normalized observation. */
+  observation: ObservationSurfaceSupport;
+  /** The sandbox serves the PTY socket and reports terminal metadata. */
+  interactiveTerminal: boolean;
 }
 
 // One reserved id names both probe handles; neither ever reaches the service.
@@ -102,6 +134,7 @@ const CAPABILITY_PROBE_ID = "__tangle-capability-probe__";
 export function sandboxCapabilitySupport(
   box: SandboxInstanceLike,
   client: SandboxClientLike,
+  requestedResources?: ResourceProfile,
 ): SandboxCapabilitySupport {
   let session: SandboxSessionLike | undefined;
   if (typeof box.session === "function") {
@@ -123,6 +156,8 @@ export function sandboxCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: typeof box.delete === "function",
     cancelRun: typeof session?.cancelRun === "function",
+    observation: observationSurfaceSupport(box, client, requestedResources),
+    interactiveTerminal: sandboxBacksInteractiveTerminal(box),
   };
 }
 
@@ -167,8 +202,14 @@ function linkedSdkProbeInstance(
 export function clientCapabilitySupport(
   client: SandboxClientLike,
 ): SandboxCapabilitySupport {
+  const observation = clientObservationSurfaceSupport(client);
   const probe = linkedSdkProbeInstance(client);
-  if (probe) return sandboxCapabilitySupport(probe, client);
+  if (probe) {
+    // The probe measures the linked SDK's method surface, so it decides the
+    // terminal transport. It carries no sandbox data, so the observation
+    // surfaces that rest on one environment's values stay at the ceiling.
+    return { ...sandboxCapabilitySupport(probe, client), observation };
+  }
   return {
     reconstruct: typeof client.get === "function",
     dispatchPrompt: true,
@@ -179,6 +220,8 @@ export function clientCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: true,
     cancelRun: false,
+    observation,
+    interactiveTerminal: true,
   };
 }
 
@@ -277,11 +320,61 @@ export function narrowedTangleCapabilities(
     },
     placement: support.placement ? declared.placement : false,
     usage: false,
+    ...(declared.observation === undefined
+      ? {}
+      : { observation: narrowedObservation(declared.observation, support.observation) }),
+    ...(declared.interactiveTerminal === undefined
+      ? {}
+      : {
+          interactiveTerminal: narrowedInteractiveTerminal(
+            declared.interactiveTerminal,
+            support.interactiveTerminal,
+          ),
+        }),
   };
   delete narrowed.interactions;
   delete narrowed.nativeContinuation;
   if (!supportsRetainedControl) delete narrowed.retainedControl;
   return narrowed;
+}
+
+/**
+ * Clear every observation surface no source backs. The flag states whether a
+ * value can be produced; the observation itself always carries the surface
+ * with its freshness state, so a cleared flag never turns into a missing key.
+ */
+function narrowedObservation(
+  declared: NonNullable<AgentEnvironmentCapabilities["observation"]>,
+  support: ObservationSurfaceSupport,
+): NonNullable<AgentEnvironmentCapabilities["observation"]> {
+  return {
+    identity: support.identity ? declared.identity : false,
+    lifecycle: support.lifecycle ? declared.lifecycle : false,
+    endpoint: support.endpoint ? declared.endpoint : false,
+    placement: support.placement ? declared.placement : false,
+    resources: support.resources ? declared.resources : false,
+    resourceUse: support.resourceUse ? declared.resourceUse : false,
+    modelUsage: support.modelUsage ? declared.modelUsage : false,
+    computeBilling: support.computeBilling ? declared.computeBilling : false,
+    accountUsage: support.accountUsage ? declared.accountUsage : false,
+  };
+}
+
+/**
+ * The four terminal operations reach the caller through one PTY socket from
+ * one linked SDK, so one fact decides them all: a sandbox that cannot serve
+ * the socket claims none of them.
+ */
+function narrowedInteractiveTerminal(
+  declared: NonNullable<AgentEnvironmentCapabilities["interactiveTerminal"]>,
+  supported: boolean,
+): NonNullable<AgentEnvironmentCapabilities["interactiveTerminal"]> {
+  return {
+    attach: supported ? declared.attach : false,
+    input: supported ? declared.input : false,
+    resize: supported ? declared.resize : false,
+    reattach: supported ? declared.reattach : false,
+  };
 }
 
 /**

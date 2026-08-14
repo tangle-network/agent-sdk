@@ -13,17 +13,31 @@ import {
   assertCliBridgeProviderOptions,
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
+import { narrowedCliBridgeObservation } from "./observation.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
+export { safeEndpointFromBaseUrl } from "./observation.js";
 
 export function createCliBridgeProvider(
   options: CliBridgeProviderOptions,
 ): AgentEnvironmentProvider {
   assertCliBridgeProviderOptions(options);
   const name = options.name ?? "cli-bridge";
+  // The observation surfaces are declared as intent and narrowed to the
+  // sources this bridge can put a value on, so the environment offers the
+  // operation exactly where the document claims it.
+  const resolveCapabilities = (): AgentEnvironmentCapabilities => {
+    const declared = options.capabilities ?? defaultCliBridgeCapabilities();
+    return declared.observation === undefined
+      ? declared
+      : {
+          ...declared,
+          observation: narrowedCliBridgeObservation(declared.observation, options),
+        };
+  };
   return {
     name,
-    capabilities: () => options.capabilities ?? defaultCliBridgeCapabilities(),
+    capabilities: resolveCapabilities,
     async create(input) {
       if (typeof input.profile === "string") {
         throw new Error(
@@ -42,6 +56,7 @@ export function createCliBridgeProvider(
         environmentId,
         allowDispatch: true,
         cancelRunsOnDestroy: true,
+        capabilities: resolveCapabilities(),
       });
     },
     async get(id) {
@@ -55,6 +70,7 @@ export function createCliBridgeProvider(
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
+        capabilities: resolveCapabilities(),
       });
     },
   };
@@ -110,5 +126,19 @@ export function defaultCliBridgeCapabilities(
     placement: true,
     usage: true,
     confidential: false,
+    // cli-bridge measures what a turn cost and where it forwarded that turn.
+    // It provisions no compute and holds no account, so the surfaces that
+    // describe provisioned resources and billing are never claimed.
+    observation: {
+      identity: true,
+      lifecycle: true,
+      endpoint: true,
+      placement: true,
+      resources: false,
+      resourceUse: false,
+      modelUsage: true,
+      computeBilling: false,
+      accountUsage: false,
+    },
   };
 }

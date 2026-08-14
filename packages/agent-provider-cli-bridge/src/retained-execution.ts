@@ -340,7 +340,8 @@ export async function collectCliBridgeTurnResult(
   };
 }
 
-function addTokenUsage(
+/** Sum the usage a run reported across its events into one total. */
+export function addTokenUsage(
   current: TokenUsage | undefined,
   next: TokenUsage | undefined,
 ): TokenUsage | undefined {
