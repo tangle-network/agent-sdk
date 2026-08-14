@@ -12,7 +12,9 @@ import {
   retainedEventsWithIdentity,
   retainedReplayRequest,
 } from "./retained-event-cursor.js";
+import { detachCliBridgeReader } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
+import type { CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
 import { requestHeaders, trimSlash } from "./transport.js";
 import {
@@ -46,7 +48,8 @@ export async function* streamCliBridgeTurn(
   runId: string,
   lastEventId?: string,
   signal?: AbortSignal,
-  onAccepted?: (response: CliBridgeResponse) => void,
+  onResponse?: (response: CliBridgeResponse) => void,
+  readAuthoritativeRun?: () => Promise<CliBridgeRunSnapshot | null>,
 ): AsyncIterable<AgentEnvironmentEvent> {
   const reconnect = requestBody === undefined;
   const replay = retainedReplayRequest(lastEventId);
@@ -77,8 +80,20 @@ export async function* streamCliBridgeTurn(
     }
     throw new CliBridgeRequestRejectedError(response.status, detail);
   }
-  onAccepted?.(response);
   if (!response.body) throw new Error("cli-bridge response body is empty");
+  try {
+    onResponse?.(response);
+  } catch (error) {
+    try {
+      await detachCliBridgeReader(response.body);
+    } catch (detachError) {
+      throw new AggregateError(
+        [error, detachError],
+        `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+      );
+    }
+    throw error;
+  }
 
   let text = "";
   const sessionId = turn.sessionId ?? runId;
@@ -91,10 +106,16 @@ export async function* streamCliBridgeTurn(
   let servedModel: string | undefined;
   let systemFingerprint: string | undefined;
   let textBoundaryPending = false;
-  let terminalCursor: string | undefined;
   let sawProtocolEnd = false;
   let terminalFrameSeen = false;
   let cancelledTerminalSeen = false;
+  let terminalFrame:
+    | {
+      readonly id?: string;
+      readonly events: AgentEnvironmentEvent[];
+      readonly finishReason: string;
+    }
+    | undefined;
   for await (const frame of parseSse(response.body)) {
     if (frame.data === "[DONE]") {
       sawProtocolEnd = true;
@@ -230,22 +251,12 @@ export async function* streamCliBridgeTurn(
         throw new Error("cli-bridge returned finish_reason=error");
       }
       completed = true;
-      if (lastEventId && requestBody !== undefined) {
-        terminalCursor = frame.id === undefined
-          ? undefined
-          : `${frame.id}:${frameEvents.length}`;
-      } else {
-        frameEvents.push({
-          type: "result",
-          data: {
-            finalText: text,
-            finishReason: choice.finish_reason,
-            status: "completed",
-            ...identityData,
-            ...(modelRequestsKnown ? { modelRequests: observedModelRequests } : {}),
-          },
-        });
-      }
+      terminalFrame = {
+        ...(frame.id === undefined ? {} : { id: frame.id }),
+        events: frameEvents,
+        finishReason: choice.finish_reason,
+      };
+      continue;
     }
     yield* retainedEventsWithIdentity(
       frameEvents,
@@ -259,75 +270,161 @@ export async function* streamCliBridgeTurn(
   if (!sawProtocolEnd) {
     throw new Error("cli-bridge stream ended without the [DONE] protocol marker");
   }
+  if (cancelledTerminalSeen) return;
   if (!completed && lastEventId === undefined) {
+    let snapshot: CliBridgeRunSnapshot;
+    try {
+      snapshot = await terminalRunSnapshot(runId, readAuthoritativeRun);
+    } catch (error) {
+      throw new Error("cli-bridge stream ended without a terminal result", {
+        cause: error,
+      });
+    }
+    if (snapshot.status === "cancelled") {
+      const event = cancelledEvent(`cli-bridge run "${runId}" was cancelled`);
+      yield {
+        ...event,
+        data: {
+          ...event.data,
+          runId,
+          sessionId,
+          ...(turn.executionId === undefined
+            ? {}
+            : { executionId: turn.executionId }),
+        },
+      };
+      return;
+    }
     throw new Error("cli-bridge stream ended without a terminal result");
   }
-  if (lastEventId && requestBody !== undefined && !cancelledTerminalSeen) {
-    let result: Awaited<ReturnType<typeof readFullCliBridgeResult>>;
+  if (!terminalFrame) {
+    if (requestBody !== undefined && lastEventId !== undefined) {
+      try {
+        await readFullCliBridgeResult(
+          options,
+          requestBody,
+          transport,
+          signal,
+          onResponse,
+        );
+      } catch (error) {
+        if (error instanceof CliBridgeRunCancelledError) return;
+        throw error;
+      }
+    } else if (requestBody === undefined) {
+      await terminalRunSnapshot(runId, readAuthoritativeRun);
+    }
+    return;
+  }
+
+  let terminalEvent: AgentEnvironmentEvent | undefined;
+  let terminalFailure: Error | undefined;
+  if (requestBody !== undefined) {
+    let result: Awaited<ReturnType<typeof readFullCliBridgeResult>> | undefined;
     try {
       result = await readFullCliBridgeResult(
         options,
         requestBody,
         transport,
         signal,
-        onAccepted,
+        onResponse,
       );
     } catch (error) {
       if (error instanceof CliBridgeRunCancelledError) {
-        // A normal finish frame can race with the bridge's authoritative
-        // cancelled state. Replace the withheld result at the same cursor.
-        if (terminalCursor !== undefined) {
-          yield {
-            type: "status",
-            data: {
-              status: "cancelled",
-              error: error.detail,
-              runId,
-              sessionId,
-              ...(turn.executionId === undefined
-                ? {}
-                : { executionId: turn.executionId }),
-              cursor: terminalCursor,
-            },
-            normalized: {
-              type: "status",
-              status: "cancelled",
-              detail: error.detail,
-            },
-            id: terminalCursor,
-          };
-        }
-        // If no new terminal frame followed the requested cursor, the caller
-        // already consumed the cancellation event. Do not duplicate it.
-        return;
+        terminalEvent = cancelledEvent(error.detail);
+      } else {
+        throw error;
       }
-      throw error;
     }
-    const finalModelRequests = result.modelRequests ??
-      (modelRequestsKnown ? observedModelRequests : undefined);
-    const finalCursor = terminalCursor ?? lastEventId;
-    yield {
-      type: "result",
-      data: {
-        finalText: result.text,
-        finishReason: result.finishReason,
-        status: "completed",
-        ...(result.model === undefined ? {} : { model: result.model }),
-        ...(result.system_fingerprint === undefined
-          ? {}
-          : { system_fingerprint: result.system_fingerprint }),
-        runId,
-        sessionId,
-        ...(turn.executionId === undefined ? {} : { executionId: turn.executionId }),
-        ...(finalCursor === undefined ? {} : { cursor: finalCursor }),
-        ...(finalModelRequests === undefined
-          ? {}
-          : { modelRequests: finalModelRequests }),
-      },
-      ...(result.usage && !sawUsage ? { usage: result.usage } : {}),
-      ...(finalCursor === undefined ? {} : { id: finalCursor }),
-    };
+    if (result !== undefined) {
+      const finalModelRequests = result.modelRequests ??
+        (modelRequestsKnown ? observedModelRequests : undefined);
+      terminalEvent = {
+        type: "result",
+        data: {
+          finalText: lastEventId === undefined ? text : result.text,
+          finishReason:
+            lastEventId === undefined ? terminalFrame.finishReason : result.finishReason,
+          status: "completed",
+          ...(result.model === undefined ? {} : { model: result.model }),
+          ...(result.system_fingerprint === undefined
+            ? {}
+            : { system_fingerprint: result.system_fingerprint }),
+          ...(finalModelRequests === undefined
+            ? {}
+            : { modelRequests: finalModelRequests }),
+        },
+        ...(result.usage && !sawUsage ? { usage: result.usage } : {}),
+      };
+    }
+  } else {
+    const snapshot = await terminalRunSnapshot(runId, readAuthoritativeRun);
+    if (snapshot.status === "cancelled") {
+      terminalEvent = cancelledEvent(`cli-bridge run "${runId}" was cancelled`);
+    } else if (snapshot.status === "error") {
+      const detail = `cli-bridge run "${runId}" ended with an error`;
+      terminalEvent = failedEvent(detail);
+      terminalFailure = new Error(detail);
+    } else {
+      terminalEvent = {
+        type: "result",
+        data: {
+          finalText: text,
+          finishReason: terminalFrame.finishReason,
+          status: "completed",
+          ...(servedModel === undefined ? {} : { model: servedModel }),
+          ...(systemFingerprint === undefined
+            ? {}
+            : { system_fingerprint: systemFingerprint }),
+          ...(modelRequestsKnown ? { modelRequests: observedModelRequests } : {}),
+        },
+      };
+    }
   }
+  if (!terminalEvent) {
+    throw new Error("cli-bridge terminal state did not produce a terminal event");
+  }
+  terminalFrame.events.push(terminalEvent);
+  yield* retainedEventsWithIdentity(
+    terminalFrame.events,
+    terminalFrame.id,
+    runId,
+    sessionId,
+    turn.executionId,
+    replay.anchor,
+  );
+  if (terminalFailure) throw terminalFailure;
+}
+
+async function terminalRunSnapshot(
+  runId: string,
+  readAuthoritativeRun?: () => Promise<CliBridgeRunSnapshot | null>,
+): Promise<CliBridgeRunSnapshot> {
+  if (!readAuthoritativeRun) {
+    throw new Error("cli-bridge retained stream omitted authoritative run status");
+  }
+  const snapshot = await readAuthoritativeRun();
+  if (!snapshot) throw new Error(`cli-bridge lost run "${runId}" before terminal replay`);
+  if (!snapshot.terminal || snapshot.status === "running") {
+    throw new Error(`cli-bridge run "${runId}" remained active after its stream ended`);
+  }
+  return snapshot;
+}
+
+function cancelledEvent(detail: string): AgentEnvironmentEvent {
+  return {
+    type: "status",
+    data: { status: "cancelled", error: detail },
+    normalized: { type: "status", status: "cancelled", detail },
+  };
+}
+
+function failedEvent(detail: string): AgentEnvironmentEvent {
+  return {
+    type: "status",
+    data: { status: "failed", error: detail },
+    normalized: { type: "status", status: "failed", detail },
+  };
 }
 
 async function readFullCliBridgeResult(
@@ -335,7 +432,7 @@ async function readFullCliBridgeResult(
   requestBody: string,
   transport: CliBridgeTransport,
   signal?: AbortSignal,
-  onAccepted?: (response: CliBridgeResponse) => void,
+  onResponse?: (response: CliBridgeResponse) => void,
 ): Promise<{
   text: string;
   finishReason: string;
@@ -352,16 +449,16 @@ async function readFullCliBridgeResult(
     body: JSON.stringify({ ...body, stream: false }),
     ...(signal ? { signal } : {}),
   });
+  const responseText = await response.text();
+  onResponse?.(response);
   if (!response.ok) {
-    const responseText = await response.text();
     const error = cliBridgeError(safeJson(responseText));
     if (error?.type === "run_cancelled") {
       throw new CliBridgeRunCancelledError(cliBridgeErrorMessage(error));
     }
     throw new Error(`cli-bridge replay result ${response.status}: ${responseText}`);
   }
-  onAccepted?.(response);
-  const parsed = safeJson(await response.text());
+  const parsed = safeJson(responseText);
   const error = cliBridgeError(parsed);
   if (error) {
     if (error.type === "run_cancelled") {

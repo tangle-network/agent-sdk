@@ -50,9 +50,9 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       fetch: async (_url, init) => {
         body = JSON.parse(String(init?.body));
-        return new Response(
+        return exactCompletionResponse(
+          init,
           'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-          { status: 200, headers: { "content-type": "text/event-stream" } },
         );
       },
     });
@@ -128,20 +128,31 @@ describe("createCliBridgeProvider", () => {
           "x-run-request-digest": testDigest(runId),
         };
         if (body.stream === false) {
+          const continued = runId === "run-2";
           return Response.json(
             {
               choices: [{
-                message: { role: "assistant", content: `complete-${runId}` },
+                message: {
+                  role: "assistant",
+                  content: continued ? "continued" : `complete-${runId}`,
+                },
                 finish_reason: "stop",
               }],
-              usage: {
-                model_requests: 2,
-                prompt_tokens: 11,
-                completion_tokens: 7,
-                total_tokens: 18,
-                reasoning_tokens: 3,
-                cost: 0.04,
-              },
+              usage: continued
+                ? {
+                  model_requests: 1,
+                  prompt_tokens: 5,
+                  completion_tokens: 2,
+                  cost: 0.01,
+                }
+                : {
+                  model_requests: 2,
+                  prompt_tokens: 11,
+                  completion_tokens: 7,
+                  total_tokens: 18,
+                  reasoning_tokens: 3,
+                  cost: 0.04,
+                },
             },
             {
               headers: {
@@ -553,12 +564,23 @@ describe("createCliBridgeProvider", () => {
         }
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         const runId = String(body.run_id);
-        statuses.set(runId, "running");
         const headers = {
           "content-type": "text/event-stream",
           "x-run-id": runId,
           "x-run-request-digest": testDigest(runId),
         };
+        if (body.stream === false) {
+          return Response.json({
+            choices: [{
+              message: {
+                role: "assistant",
+                content: runId === "concurrent-a" ? "first" : "second",
+              },
+              finish_reason: "stop",
+            }],
+          }, { headers });
+        }
+        statuses.set(runId, "running");
         if (runId === "concurrent-a") {
           return new Response(
             new ReadableStream({
@@ -615,14 +637,14 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "codex",
       fetch: async (_url, init) => {
         body = JSON.parse(String(init?.body));
-        return new Response(
+        return exactCompletionResponse(
+          init,
           [
             ": connected\r\n\r\n",
             'data: {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\\"path\\":"}}]},"finish_reason":null}]}\r\n\r\n',
             'data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call-1","function":{"arguments":"\\"README.md\\"}"}}]},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"cost":0.01}}\r\n\r\n',
             "data: [DONE]\r\n\r\n",
           ].join(""),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
         );
       },
     });
@@ -697,15 +719,15 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "pi",
-      fetch: async () =>
-        new Response(
+      fetch: async (_url, init) =>
+        exactCompletionResponse(
+          init,
           [
             'data: {"choices":[{"delta":{"content":"I will inspect it."},"finish_reason":null}]}\n\n',
             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
             'data: {"choices":[{"delta":{"content":"## Result"},"finish_reason":"stop"}]}\n\n',
             "data: [DONE]\n\n",
           ].join(""),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
         ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
@@ -731,15 +753,15 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "codex",
-      fetch: async () =>
-        new Response(
+      fetch: async (_url, init) =>
+        exactCompletionResponse(
+          init,
           [
             'data: {"model":"codex@fp-1","system_fingerprint":"fp-1","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}',
             "",
             "data: [DONE]",
             "",
           ].join("\n"),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
         ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
@@ -759,13 +781,13 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "opencode",
-      fetch: async () =>
-        new Response(
+      fetch: async (_url, init) =>
+        exactCompletionResponse(
+          init,
           [
             'data: {"error":{"message":"harness failed","type":"provider_error"}}\n\n',
             "data: [DONE]\n\n",
           ].join(""),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
         ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
@@ -828,7 +850,7 @@ describe("createCliBridgeProvider", () => {
     }
   });
 
-  it("does not emit cancellation after a completed terminal frame", async () => {
+  it("lets authoritative cancellation replace an initial completed frame", async () => {
     const fixture = await startLiveCancellationFixture({
       initialStream: true,
       terminalOrder: "completed-then-cancelled",
@@ -852,14 +874,65 @@ describe("createCliBridgeProvider", () => {
       );
       expect(terminalEvents).toHaveLength(1);
       expect(terminalEvents[0]).toMatchObject({
-        type: "result",
-        data: { status: "completed", finalText: "done" },
+        type: "status",
+        data: { status: "cancelled", error: "run cancelled by caller" },
       });
-      expect(events.some((event) => event.data.status === "cancelled")).toBe(false);
+      expect(events.some((event) => event.type === "result")).toBe(false);
     } finally {
       await environment?.destroy?.();
       await fixture.close();
     }
+  });
+
+  it("uses retained cancellation when the initial stream only sends protocol end", async () => {
+    let statusReads = 0;
+    let aggregateReads = 0;
+    const runId = "protocol-end-cancel";
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (url, init) => {
+        if (init?.method === "GET") {
+          statusReads += 1;
+          expect(String(url)).toBe(
+            `http://bridge.local/v1/runs/${runId}?wait_ms=30000`,
+          );
+          return runResponse(runId, "cancelled", true);
+        }
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) aggregateReads += 1;
+        return new Response("data: [DONE]\n\n", {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-run-id": runId,
+            "x-run-request-digest": testDigest(runId),
+          },
+        });
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      sessionId: runId,
+      executionId: runId,
+    })) events.push(event);
+
+    expect(statusReads).toBe(1);
+    expect(aggregateReads).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "status",
+      data: {
+        status: "cancelled",
+        runId,
+        sessionId: runId,
+        executionId: runId,
+      },
+      normalized: { type: "status", status: "cancelled" },
+    });
   });
 
   it("does not reconstruct a second result after a cancelled terminal replay", async () => {
@@ -958,17 +1031,27 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "opencode",
-      fetch: async (_url, init) => {
+      fetch: async (url, init) => {
         requests += 1;
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         if (body.stream === false) {
+          expect(String(url)).toBe("http://bridge.local/v1/chat/completions");
+          expect(body.run_id).toBe("raced-cancel");
           return Response.json({
             error: {
               message: "run cancelled by caller",
               type: "run_cancelled",
             },
-          }, { status: 409 });
+          }, {
+            status: 409,
+            headers: {
+              "x-run-id": "raced-cancel",
+              "x-run-request-digest": testDigest("raced-cancel"),
+            },
+          });
         }
+        expect(String(url)).toBe("http://bridge.local/v1/chat/completions");
+        expect(body.run_id).toBe("raced-cancel");
         expect(new Headers(init?.headers).get("last-event-id")).toBe("0");
         return new Response(
           [
@@ -1019,6 +1102,180 @@ describe("createCliBridgeProvider", () => {
       },
     });
     expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "missing run identity",
+      headers: new Headers({
+        "x-run-request-digest": testDigest("aggregate-identity"),
+      }),
+      error: "cli-bridge response omitted X-Run-Id",
+    },
+    {
+      name: "another run id",
+      headers: new Headers({
+        "x-run-id": "another-run",
+        "x-run-request-digest": testDigest("aggregate-identity"),
+      }),
+      error:
+        'cli-bridge accepted run "another-run" for requested run "aggregate-identity"',
+    },
+    {
+      name: "another request digest",
+      headers: new Headers({
+        "x-run-id": "aggregate-identity",
+        "x-run-request-digest": testDigest("another-request"),
+      }),
+      error: "cli-bridge changed request digest",
+    },
+  ])("rejects a cancelled aggregate response with $name", async ({ headers, error }) => {
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) {
+          return Response.json({
+            error: {
+              message: "run cancelled by caller",
+              type: "run_cancelled",
+            },
+          }, { status: 409, headers });
+        }
+        return new Response(
+          'id: 1\ndata: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "aggregate-identity",
+              "x-run-request-digest": testDigest("aggregate-identity"),
+            },
+          },
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    await expect(consumeEvents(environment.stream({
+      prompt: "work",
+      executionId: "aggregate-identity",
+    }))).rejects.toThrow(error);
+  });
+
+  it("consumes rejected aggregate bodies before reusing the Undici connection", async () => {
+    let connectionCount = 0;
+    let aggregateRequests = 0;
+    let statusRequests = 0;
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer((request, response) => {
+      void (async () => {
+        const url = new URL(request.url ?? "/", "http://bridge.local");
+        if (request.method === "GET") {
+          statusRequests += 1;
+          const runId = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+          sendJson(response, {
+            id: runId,
+            requestDigest: testDigest(runId),
+            status: "cancelled",
+            terminal: true,
+          });
+          return;
+        }
+        const body = await readJsonRequest(request);
+        const runId = String(body.run_id);
+        if (body.stream === false) {
+          aggregateRequests += 1;
+          sendJson(response, {
+            error: {
+              message: "run cancelled by caller",
+              type: "run_cancelled",
+            },
+            padding: "x".repeat(256 * 1024),
+          }, 409, {
+            "x-run-request-digest": testDigest(runId),
+          });
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": testDigest(runId),
+        });
+        response.end(
+          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      })().catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : undefined);
+      });
+    });
+    server.on("connection", (socket) => {
+      connectionCount += 1;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("test server did not bind TCP");
+    }
+
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      let connectionsAfterFirstMismatch = 0;
+      for (let turn = 0; turn < 3; turn += 1) {
+        await expect(consumeEvents(environment.stream({
+          prompt: "work",
+          executionId: `identity-mismatch-${turn}`,
+        }))).rejects.toThrow("cli-bridge response omitted X-Run-Id");
+        if (turn === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          connectionsAfterFirstMismatch = connectionCount;
+        }
+      }
+      expect(aggregateRequests).toBe(3);
+      expect(statusRequests).toBe(3);
+      expect(connectionsAfterFirstMismatch).toBeGreaterThan(0);
+      expect(connectionsAfterFirstMismatch).toBeLessThanOrEqual(2);
+      expect(connectionCount).toBe(connectionsAfterFirstMismatch);
+    } finally {
+      await environment?.destroy?.();
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
+    }
+  });
+
+  it("does not replay a terminal event already consumed at a composite cursor", async () => {
+    let aggregateCalls = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) aggregateCalls += 1;
+        return exactCompletionResponse(
+          init,
+          'id: 1\ndata: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      executionId: "composite-terminal",
+      lastEventId: "1:1",
+    })) events.push(event);
+
+    expect(events).toEqual([]);
+    expect(aggregateCalls).toBe(1);
   });
 
   it("replays a live caller cancellation as one terminal event and reports a cancelled result", async () => {
@@ -1088,6 +1345,63 @@ describe("createCliBridgeProvider", () => {
     }
   });
 
+  it("lets retained cancellation replace a reconnect completion frame", async () => {
+    const controlRef: AgentExactRunControlRef = {
+      runId: "reconnect-cancel",
+      provider: "cli-bridge",
+      environmentId: "reconnect-environment",
+      sessionId: "reconnect-session",
+      executionId: "reconnect-cancel",
+      requestDigest: testDigest("reconnect-cancel"),
+    };
+    let statusReads = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (url, init) => {
+        expect(init?.method).toBe("GET");
+        if (String(url).endsWith("/events")) {
+          return new Response(
+            'id: 1\ndata: {"choices":[{"delta":{"content":"stale completion"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream",
+                "x-run-id": controlRef.runId,
+                "x-run-request-digest": controlRef.requestDigest,
+              },
+            },
+          );
+        }
+        statusReads += 1;
+        return runResponse(controlRef.runId, "cancelled", true);
+      },
+    });
+    const environment = await provider.get!(controlRef.environmentId);
+    const events = [];
+
+    for await (const event of environment!.session!(controlRef.sessionId, {
+      controlRef,
+    }).events({ since: "0" })) events.push(event);
+
+    expect(statusReads).toBe(1);
+    expect(events.map((event) => event.type)).toEqual([
+      "message.part.updated",
+      "status",
+    ]);
+    expect(events[1]).toMatchObject({
+      id: "1:1",
+      data: {
+        status: "cancelled",
+        runId: controlRef.runId,
+        sessionId: controlRef.sessionId,
+        executionId: controlRef.executionId,
+      },
+      normalized: { type: "status", status: "cancelled" },
+    });
+    expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
   it("replays an exact cancellation acknowledgement without duplicating the cancellation request", async () => {
     const fixture = await startLiveCancellationFixture({ initialStream: false });
     let environment: AgentEnvironment | undefined;
@@ -1141,11 +1455,11 @@ describe("createCliBridgeProvider", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "opencode",
-      fetch: async () =>
-        new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: [DONE]\n\n', {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
+      fetch: async (_url, init) =>
+        exactCompletionResponse(
+          init,
+          'data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: [DONE]\n\n',
+        ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
 
@@ -1160,13 +1474,34 @@ describe("createCliBridgeProvider", () => {
   it("uses the timeout-free default transport for delayed bridge responses", async () => {
     let connectionCount = 0;
     const sockets = new Set<import("node:net").Socket>();
-    const server = createServer((_request, response) => {
-      setTimeout(() => {
-        response.writeHead(200, { "content-type": "text/event-stream" });
+    const server = createServer((request, response) => {
+      void (async () => {
+        const body = await readJsonRequest(request);
+        const runId = String(body.run_id);
+        const headers = {
+          "x-run-id": runId,
+          "x-run-request-digest": testDigest(runId),
+        };
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        if (body.stream === false) {
+          sendJson(response, {
+            choices: [{
+              message: { role: "assistant", content: "done" },
+              finish_reason: "stop",
+            }],
+          }, 200, headers);
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          ...headers,
+        });
         response.end(
           'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
         );
-      }, 25);
+      })().catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : undefined);
+      });
     });
     server.on("connection", (socket) => {
       connectionCount += 1;
@@ -1193,7 +1528,9 @@ describe("createCliBridgeProvider", () => {
         });
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      expect(connectionCount).toBe(1);
+      expect(connectionCount).toBeGreaterThan(0);
+      expect(connectionCount).toBeLessThanOrEqual(2);
+      const completedConnectionCount = connectionCount;
 
       const lazy = environment.stream({ prompt: "too late" });
       await environment.destroy?.();
@@ -1203,7 +1540,7 @@ describe("createCliBridgeProvider", () => {
       await expect(consumeEvents(lazy)).rejects.toThrow(
         "cli-bridge environment is destroyed",
       );
-      expect(connectionCount).toBe(1);
+      expect(connectionCount).toBe(completedConnectionCount);
       await expect(environment.destroy?.()).resolves.toBeUndefined();
     } finally {
       await environment?.destroy?.();
@@ -1297,13 +1634,24 @@ describe("createCliBridgeProvider", () => {
         }));
         return;
       }
-      response.writeHead(200, { "content-type": "text/event-stream" });
-      response.write('data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n');
-      delayedBody = setTimeout(() => {
-        response.end(
-          'data: {"choices":[{"delta":{"content":"late"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      void readJsonRequest(request).then((body) => {
+        const requestRunId = String(body.run_id);
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-run-id": requestRunId,
+          "x-run-request-digest": testDigest(requestRunId),
+        });
+        response.write(
+          'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
         );
-      }, 5_000);
+        delayedBody = setTimeout(() => {
+          response.end(
+            'data: {"choices":[{"delta":{"content":"late"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          );
+        }, 5_000);
+      }).catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : undefined);
+      });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -1360,12 +1708,9 @@ describe("createCliBridgeProvider", () => {
           answer = `answer-${bodies.length}`;
           answers.set(runId, answer);
         }
-        return new Response(
-          [
-            `id: 1\ndata: {"choices":[{"delta":{"content":"${answer}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1}}\n\n`,
-            "data: [DONE]\n\n",
-          ].join(""),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
+        return terminalResponse(
+          init,
+          answer,
         );
       },
     });
@@ -1432,7 +1777,14 @@ describe("createCliBridgeProvider", () => {
             'id: 1\ndata: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
             'id: 2\ndata: {"choices":[{"delta":{"content":"unused"},"finish_reason":"stop"}]}\n\n',
           ].join(""),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "run-reader-stop",
+              "x-run-request-digest": testDigest("run-reader-stop"),
+            },
+          },
         );
       },
     });
@@ -1543,8 +1895,8 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
-        return terminalResponse("ok");
+        if (body.stream !== false) runIds.push(String(body.run_id));
+        return terminalResponse(init, "ok");
       },
     });
     const first = await provider.create({ profile: { name: "same-name" } });
@@ -1568,8 +1920,8 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
-        return terminalResponse("ok");
+        if (body.stream !== false) runIds.push(String(body.run_id));
+        return terminalResponse(init, "ok");
       },
     });
     const environment = await provider.create({
@@ -1597,6 +1949,10 @@ describe("createCliBridgeProvider", () => {
       fetch: async (_url, init) => {
         if (init?.method === "GET") return runResponse("run-replay", status, status === "done");
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const headers = {
+          "x-run-id": "run-replay",
+          "x-run-request-digest": testDigest("run-replay"),
+        };
         if (body.stream === false) {
           aggregateCalls += 1;
           return Response.json({
@@ -1604,7 +1960,7 @@ describe("createCliBridgeProvider", () => {
               message: { role: "assistant", content: "partial complete" },
               finish_reason: "stop",
             }],
-          });
+          }, { headers });
         }
         chatCalls += 1;
         if (chatCalls === 1) {
@@ -1619,14 +1975,20 @@ describe("createCliBridgeProvider", () => {
                 controller.error(new Error("reader disconnected"));
               },
             }),
-            { status: 200, headers: { "content-type": "text/event-stream" } },
+            {
+              status: 200,
+              headers: { ...headers, "content-type": "text/event-stream" },
+            },
           );
         }
         replayCursor = new Headers(init?.headers).get("last-event-id");
         status = "done";
         return new Response(
           'id: 2\ndata: {"choices":[{"delta":{"content":" complete"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-          { status: 200, headers: { "content-type": "text/event-stream" } },
+          {
+            status: 200,
+            headers: { ...headers, "content-type": "text/event-stream" },
+          },
         );
       },
     });
@@ -1664,6 +2026,10 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "runner/model",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const headers = {
+          "x-run-id": "terminal-replay",
+          "x-run-request-digest": testDigest("terminal-replay"),
+        };
         if (body.stream === false) {
           aggregateCalls += 1;
           return Response.json({
@@ -1671,11 +2037,11 @@ describe("createCliBridgeProvider", () => {
               message: { role: "assistant", content: "already complete" },
               finish_reason: "stop",
             }],
-          });
+          }, { headers });
         }
         return new Response("data: [DONE]\n\n", {
           status: 200,
-          headers: { "content-type": "text/event-stream" },
+          headers: { ...headers, "content-type": "text/event-stream" },
         });
       },
     });
@@ -1688,19 +2054,7 @@ describe("createCliBridgeProvider", () => {
       lastEventId: "3",
     })) events.push(event);
 
-    expect(events).toEqual([{
-      type: "result",
-      id: "3",
-      data: {
-        finalText: "already complete",
-        finishReason: "stop",
-        status: "completed",
-        runId: "terminal-replay",
-        sessionId: "terminal-replay",
-        executionId: "terminal-replay",
-        cursor: "3",
-      },
-    }]);
+    expect(events).toEqual([]);
     expect(aggregateCalls).toBe(1);
   });
 
@@ -1761,7 +2115,7 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       fetch: async (_url, init) => {
         body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return terminalResponse("ok");
+        return terminalResponse(init, "ok");
       },
     });
     const environment = await provider.create({
@@ -1786,7 +2140,7 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       fetch: async (_url, init) => {
         body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return terminalResponse("ok");
+        return terminalResponse(init, "ok");
       },
     });
     const environment = await provider.create({
@@ -1869,11 +2223,69 @@ async function consumeEvents(
   }
 }
 
-function terminalResponse(text: string): Response {
+function terminalResponse(init: RequestInit | undefined, text: string): Response {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  const runId = String(body.run_id);
+  const headers = {
+    "x-run-id": runId,
+    "x-run-request-digest": testDigest(runId),
+  };
+  if (body.stream === false) {
+    return Response.json({
+      choices: [{
+        message: { role: "assistant", content: text },
+        finish_reason: "stop",
+      }],
+    }, { headers });
+  }
   return new Response(
     `data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`,
-    { status: 200, headers: { "content-type": "text/event-stream" } },
+    { status: 200, headers: { ...headers, "content-type": "text/event-stream" } },
   );
+}
+
+function exactCompletionResponse(
+  init: RequestInit | undefined,
+  sse: string,
+): Response {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  const runId = String(body.run_id);
+  const headers = {
+    "x-run-id": runId,
+    "x-run-request-digest": testDigest(runId),
+  };
+  if (body.stream !== false) {
+    return new Response(sse, {
+      status: 200,
+      headers: { ...headers, "content-type": "text/event-stream" },
+    });
+  }
+  let text = "";
+  let finishReason = "stop";
+  let usage: unknown;
+  let model: unknown;
+  let systemFingerprint: unknown;
+  for (const line of sse.split(/\r?\n/u)) {
+    if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+    const chunk = JSON.parse(line.slice("data: ".length)) as Record<string, unknown>;
+    const choice = Array.isArray(chunk.choices)
+      ? chunk.choices[0] as Record<string, unknown> | undefined
+      : undefined;
+    const delta = choice?.delta && typeof choice.delta === "object"
+      ? choice.delta as Record<string, unknown>
+      : undefined;
+    if (typeof delta?.content === "string") text += delta.content;
+    if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason;
+    if (chunk.usage !== undefined) usage = chunk.usage;
+    if (chunk.model !== undefined) model = chunk.model;
+    if (chunk.system_fingerprint !== undefined) systemFingerprint = chunk.system_fingerprint;
+  }
+  return Response.json({
+    choices: [{ message: { role: "assistant", content: text }, finish_reason: finishReason }],
+    ...(usage === undefined ? {} : { usage }),
+    ...(model === undefined ? {} : { model }),
+    ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
+  }, { headers });
 }
 
 function runResponse(
@@ -1942,7 +2354,10 @@ async function startLiveCancellationFixture(args: {
               message: "run cancelled by caller",
               type: "run_cancelled",
             },
-          }, 409);
+          }, 409, {
+            "x-run-id": runId,
+            "x-run-request-digest": testDigest(runId),
+          });
           return;
         }
         response.writeHead(200, {
@@ -2083,8 +2498,9 @@ function sendJson(
   response: import("node:http").ServerResponse,
   value: Record<string, unknown>,
   status = 200,
+  headers: Readonly<Record<string, string>> = {},
 ): void {
-  response.writeHead(status, { "content-type": "application/json" });
+  response.writeHead(status, { "content-type": "application/json", ...headers });
   response.end(JSON.stringify(value));
 }
 

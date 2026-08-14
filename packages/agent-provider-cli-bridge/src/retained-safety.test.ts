@@ -99,13 +99,33 @@ describe("retained cli-bridge safety", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
-      fetch: async () => new Response(
-        [
-          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":-1,"completion_tokens":1.5}}\n\n',
-          "data: [DONE]\n\n",
-        ].join(""),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      ),
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const headers = exactHeaders(init);
+        if (body.stream === false) {
+          return Response.json({
+            choices: [{
+              message: { role: "assistant", content: "done" },
+              finish_reason: "stop",
+            }],
+            usage: {
+              model_requests: 2,
+              prompt_tokens: -1,
+              completion_tokens: 1.5,
+            },
+          }, { headers });
+        }
+        return new Response(
+          [
+            'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":-1,"completion_tokens":1.5}}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          {
+            status: 200,
+            headers: { ...headers, "content-type": "text/event-stream" },
+          },
+        );
+      },
     });
     const environment = await provider.create({ profile: { name: "worker" } });
     const events: AgentEnvironmentEvent[] = [];
@@ -127,9 +147,12 @@ describe("retained cli-bridge safety", () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
-      fetch: async () => new Response(
+      fetch: async (_url, init) => new Response(
         'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n',
-        { status: 200, headers: { "content-type": "text/event-stream" } },
+        {
+          status: 200,
+          headers: { ...exactHeaders(init), "content-type": "text/event-stream" },
+        },
       ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
@@ -177,4 +200,13 @@ function exactControlRef(): AgentExactRunControlRef {
 
 function testDigest(value: string): `sha256:${string}` {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function exactHeaders(init: { readonly body?: unknown } | undefined) {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  const runId = String(body.run_id);
+  return {
+    "x-run-id": runId,
+    "x-run-request-digest": testDigest(runId),
+  };
 }
