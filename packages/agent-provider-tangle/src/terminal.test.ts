@@ -46,9 +46,13 @@ interface FakeTerminalTransport {
   written: string[];
   resizes: Array<{ cols: number; rows: number }>;
   attachCalls: Array<{ connectionId: string; cols?: number; rows?: number }>;
+  /** One record per socket the transport opened, newest last. */
+  sockets: Array<{ connectionId: string; closed: boolean }>;
   emitOutput(text: string): void;
   emitExit(exit: { exitCode?: number; exitSignal?: string }): void;
   emitError(message: string): void;
+  /** Drop the newest socket the way a runtime drops one, with no close call. */
+  dropSocket(): void;
   closed(): boolean;
 }
 
@@ -62,6 +66,7 @@ function fakeTerminalTransport(options?: {
   const written: string[] = [];
   const resizes: Array<{ cols: number; rows: number }> = [];
   const attachCalls: Array<{ connectionId: string; cols?: number; rows?: number }> = [];
+  const sockets: Array<{ connectionId: string; closed: boolean }> = [];
   const encoder = new TextEncoder();
   let handlers: Parameters<SandboxTerminalsLike["attach"]>[1] extends
     | { handlers?: infer H }
@@ -74,9 +79,14 @@ function fakeTerminalTransport(options?: {
     written,
     resizes,
     attachCalls,
+    sockets,
     emitOutput: (text) => handlers?.onData?.(encoder.encode(text)),
     emitExit: (exit) => handlers?.onExit?.(exit),
     emitError: (message) => handlers?.onError?.(new Error(message)),
+    dropSocket: () => {
+      const socket = sockets.at(-1);
+      if (socket !== undefined) socket.closed = true;
+    },
     closed: () => isClosed,
     terminals: {
       get: async (requested) =>
@@ -93,6 +103,11 @@ function fakeTerminalTransport(options?: {
           ...(attachOptions?.rows === undefined ? {} : { rows: attachOptions.rows }),
         });
         handlers = attachOptions?.handlers;
+        // Each socket keeps its own handlers and its own open state, so closing
+        // one never speaks for another.
+        const ownHandlers = attachOptions?.handlers;
+        const socket = { connectionId, closed: false };
+        sockets.push(socket);
         const ready = {
           connectionId,
           sessionId,
@@ -108,7 +123,7 @@ function fakeTerminalTransport(options?: {
           connectionId,
           ready,
           get isOpen() {
-            return !isClosed;
+            return !socket.closed;
           },
           write: (data) => {
             written.push(
@@ -119,8 +134,9 @@ function fakeTerminalTransport(options?: {
             resizes.push({ cols, rows });
           },
           close: async () => {
+            socket.closed = true;
             isClosed = true;
-            handlers?.onClose?.(1_000, "closed");
+            ownHandlers?.onClose?.(1_000, "closed");
           },
         };
       },
@@ -323,15 +339,26 @@ describe("Tangle interactive terminal", () => {
       retryable: false,
     });
 
-    const failing = fakeTerminalTransport({ attachError: new Error("socket refused") });
+    // The transport states the request URL in its message, and that URL can
+    // carry userinfo, so the attach result names the read and the structured
+    // cause instead of repeating the message.
+    const failing = fakeTerminalTransport({
+      attachError: Object.assign(
+        new Error("wss://agent:hunter2@runtime.example/terminal failed (502): refused"),
+        { status: 502 },
+      ),
+    });
     const unreachable = await terminalEnvironment(failing.terminals);
-    await expect(
-      unreachable.attachTerminal!({ parentExecutionId: "execution-1", mode: "attach" }),
-    ).resolves.toEqual({
+    const refused = await unreachable.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    expect(refused).toEqual({
       status: "unknown",
-      message: "socket refused",
+      message: "the Sandbox terminal attach failed (HTTP 502)",
       retryable: true,
     });
+    expect(JSON.stringify(refused)).not.toContain("hunter2");
   });
 
   it("refuses a logical resume the transport cannot serve", async () => {
@@ -375,6 +402,112 @@ describe("Tangle interactive terminal", () => {
         new Date(Date.now() + DETACH_TIMEOUT_MS * 2).toISOString(),
       ),
     ).toBe(false);
+  });
+
+  it("denies use of a terminal this handle detached", async () => {
+    const transport = fakeTerminalTransport();
+    const environment = await terminalEnvironment(transport.terminals);
+    const attached = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (attached.status !== "attached") throw new Error("attach did not succeed");
+    const session = environment.terminal!(attached.ref.terminalSessionId);
+    expect(terminalSessionUsable(session.ref, new Date().toISOString())).toBe(true);
+
+    await session.detach();
+
+    // The runtime keeps the PTY, but this handle no longer holds a socket, so
+    // the reference it hands out cannot read as usable.
+    expect(session.ref.isRunning).toBe(false);
+    expect(terminalSessionUsable(session.ref, new Date().toISOString())).toBe(false);
+    await expect(session.input({ data: "ls\n" })).rejects.toThrow(
+      /requires a live, unexpired terminal/,
+    );
+    await expect(session.resize({ cols: 90, rows: 20 })).rejects.toThrow(
+      /requires a live, unexpired terminal/,
+    );
+    expect(transport.written).toEqual([]);
+  });
+
+  it("denies use when the runtime drops the socket under the handle", async () => {
+    const transport = fakeTerminalTransport();
+    const environment = await terminalEnvironment(transport.terminals);
+    const attached = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (attached.status !== "attached") throw new Error("attach did not succeed");
+    const session = environment.terminal!(attached.ref.terminalSessionId);
+
+    // No detach, no exit: the socket simply goes away, which the transport
+    // reports through `isOpen`.
+    transport.dropSocket();
+
+    expect(session.ref.isRunning).toBe(false);
+    expect(terminalSessionUsable(session.ref, new Date().toISOString())).toBe(false);
+    await expect(session.input({ data: "ls\n" })).rejects.toThrow(
+      /requires a live, unexpired terminal/,
+    );
+  });
+
+  it("closes the socket a reattach replaces", async () => {
+    const transport = fakeTerminalTransport({ restored: true });
+    const environment = await terminalEnvironment(transport.terminals);
+    const request = {
+      parentExecutionId: "execution-1",
+      terminalSessionId: "terminal-1",
+      connectionId: "connection-1",
+      mode: "attach" as const,
+    };
+
+    await environment.attachTerminal!(request);
+    expect(transport.sockets.map((socket) => socket.closed)).toEqual([false]);
+
+    await environment.attachTerminal!(request);
+
+    // The registry holds one socket per terminal, so the replaced socket is
+    // closed instead of being left open on the runtime.
+    expect(transport.sockets.map((socket) => socket.closed)).toEqual([true, false]);
+  });
+
+  it("states the cursors a consumer can resume from after eviction", async () => {
+    const transport = fakeTerminalTransport();
+    const environment = await terminalEnvironment(transport.terminals);
+    const attached = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (attached.status !== "attached") throw new Error("attach did not succeed");
+    const session = environment.terminal!(attached.ref.terminalSessionId);
+
+    expect(session.cursors).toEqual({ earliest: 0, latest: 1 });
+    for (let frame = 0; frame < 1_100; frame += 1) transport.emitOutput(`line ${frame}\r\n`);
+    transport.emitExit({ exitCode: 0 });
+
+    const { earliest, latest } = session.cursors;
+    expect(latest).toBe(1_101);
+    expect(earliest).toBeGreaterThan(0);
+
+    // A consumer that holds nothing is told where the retained frames start
+    // instead of being refused for good.
+    await expect(drain(session.events({ since: 0 }))).rejects.toThrow(
+      new RegExp(`older than the retained frame buffer; resume from cursor ${earliest}`),
+    );
+
+    const resumed = await drain(session.events({ since: earliest }));
+    const outputs = resumed.filter(
+      (frame): frame is Extract<TerminalOutputEvent, { type: "output" }> =>
+        frame.type === "output",
+    );
+    // Resuming at the stated cursor loses no output: the first frame is the one
+    // after it and the sequence runs unbroken to the newest.
+    expect(outputs.at(0)?.seq).toBe(earliest + 1);
+    expect(outputs.at(-1)?.seq).toBe(latest);
+    expect(outputs.map((frame) => frame.seq)).toEqual(
+      outputs.map((_frame, index) => earliest + 1 + index),
+    );
+    expect(resumed.at(-1)).toEqual({ type: "exit", exitCode: 0 });
   });
 
   it("refuses a replay cursor the frame buffer cannot serve", async () => {

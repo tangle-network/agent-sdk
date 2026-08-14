@@ -23,7 +23,8 @@ import type {
   SandboxTerminalStreamLike,
 } from "./tangle-types.js";
 import { TerminalFrameLog } from "./tangle-terminal-frames.js";
-import { awaitWithSignal } from "./tangle-contract-safety.js";
+import { awaitWithSignal, MAX_STRING_LENGTH } from "./tangle-contract-safety.js";
+import { transportFailureReason } from "./tangle-failure-reason.js";
 import { assertOptionKeys } from "./tangle-environment-validation.js";
 
 const MAX_TERMINAL_DIMENSION = 10_000;
@@ -74,10 +75,16 @@ interface TerminalState {
   attachCount: number;
 }
 
+/** One attached terminal and the socket that serves it. */
+interface AttachedTerminal {
+  session: AgentTerminalSession;
+  stream: SandboxTerminalStreamLike;
+}
+
 export function createTangleTerminalRegistry(
   box: SandboxInstanceLike,
 ): TangleTerminalRegistry {
-  const attached = new Map<string, AgentTerminalSession>();
+  const attached = new Map<string, AttachedTerminal>();
   return {
     async attach(
       request: TerminalAttachRequest,
@@ -156,7 +163,10 @@ export function createTangleTerminalRegistry(
                 log.end();
               },
               onError: (error) => {
-                log.append({ type: "error", message: describeFailure(error) });
+                // A frame belongs to the PTY stream, which carries whatever the
+                // terminal itself produced, so the socket error is carried as
+                // the terminal reports it and only its length is bounded.
+                log.append({ type: "error", message: socketErrorFrame(error) });
               },
               onClose: () => {
                 log.end();
@@ -169,7 +179,7 @@ export function createTangleTerminalRegistry(
         options?.signal?.throwIfAborted();
         return {
           status: "unknown",
-          message: describeFailure(error),
+          message: transportFailureReason("terminal attach", error),
           retryable: true,
         };
       }
@@ -221,7 +231,11 @@ export function createTangleTerminalRegistry(
       } catch (error) {
         options?.signal?.throwIfAborted();
         await closeQuietly(stream);
-        return { status: "unknown", message: describeFailure(error), retryable: true };
+        return {
+          status: "unknown",
+          message: transportFailureReason("terminal metadata read", error),
+          retryable: true,
+        };
       }
       if (info === null || info === undefined) {
         await closeQuietly(stream);
@@ -242,9 +256,14 @@ export function createTangleTerminalRegistry(
         return { status: "unknown", message: state, retryable: false };
       }
       const previous = attached.get(state.terminalSessionId);
-      state.attachCount = previous === undefined ? 1 : previous.ref.attachCount + 1;
+      state.attachCount =
+        previous === undefined ? 1 : previous.session.ref.attachCount + 1;
       const session = createTangleTerminalSession(stream, log, state, activity, exit);
-      attached.set(state.terminalSessionId, session);
+      attached.set(state.terminalSessionId, { session, stream });
+      // The registry holds one socket per terminal. The socket this attach
+      // replaces stays open on the runtime until its own close, so it is
+      // closed here rather than abandoned with the handle that owned it.
+      if (previous !== undefined) await closeQuietly(previous.stream);
       return {
         status: acknowledgement.restored === true ? "reattached" : "attached",
         mode: "attach",
@@ -253,11 +272,11 @@ export function createTangleTerminalRegistry(
       };
     },
     get(terminalSessionId: string): AgentTerminalSession {
-      const session = attached.get(terminalSessionId);
-      if (session === undefined) {
+      const held = attached.get(terminalSessionId);
+      if (held === undefined) {
         throw new Error("Tangle terminal is not attached through this environment");
       }
-      return session;
+      return held.session;
     },
   };
 }
@@ -327,6 +346,12 @@ function createTangleTerminalSession(
   activity: { localMs: number },
   exit: { exitCode?: number; exitSignal?: string; seen: boolean },
 ): AgentTerminalSession {
+  // A reference describes what this handle can do with its own socket. The
+  // runtime keeps a detached PTY alive, but a closed socket carries no input
+  // and no output, so a detached or closed handle reports the terminal as not
+  // running and every operation that needs a live socket is denied.
+  let detached = false;
+  const socketOpen = (): boolean => detached === false && stream.isOpen !== false;
   const currentRef = (): TerminalSessionRef => {
     const lastActivityMs = Math.max(state.runtimeLastActivityMs, activity.localMs);
     return TerminalSessionRefSchema.parse({
@@ -346,7 +371,7 @@ function createTangleTerminalSession(
       // prove. An attached socket keeps renewing that instant, and a reference
       // read after the window denies use instead of guessing.
       expiresAt: new Date(lastActivityMs + state.detachTimeoutMs).toISOString(),
-      isRunning: state.isRunning && !exit.seen,
+      isRunning: state.isRunning && !exit.seen && socketOpen(),
       ...(exit.seen && Number.isSafeInteger(exit.exitCode)
         ? { exitCode: exit.exitCode as number }
         : state.exitCode === undefined
@@ -368,6 +393,9 @@ function createTangleTerminalSession(
   return {
     get ref(): TerminalSessionRef {
       return currentRef();
+    },
+    get cursors() {
+      return log.cursors;
     },
     async input(input: TerminalInput, options?: { signal?: AbortSignal }): Promise<void> {
       assertOptionKeys(options, ["signal"], "Tangle terminal input");
@@ -394,6 +422,7 @@ function createTangleTerminalSession(
     async detach(options?: { signal?: AbortSignal }): Promise<TerminalDetachAck> {
       assertOptionKeys(options, ["signal"], "Tangle terminal detach");
       options?.signal?.throwIfAborted();
+      detached = true;
       await awaitWithSignal(stream.close(), options?.signal);
       state.attachCount = Math.max(0, state.attachCount - 1);
       return {
@@ -405,6 +434,7 @@ function createTangleTerminalSession(
     async close(options?: { signal?: AbortSignal }): Promise<TerminalDetachAck> {
       assertOptionKeys(options, ["signal"], "Tangle terminal close");
       options?.signal?.throwIfAborted();
+      detached = true;
       await awaitWithSignal(stream.close(), options?.signal);
       state.attachCount = Math.max(0, state.attachCount - 1);
       if (exit.seen) {
@@ -474,10 +504,10 @@ function isoTimestamp(value: unknown): string | undefined {
   return time === undefined ? undefined : new Date(time).toISOString();
 }
 
-function describeFailure(error: unknown): string {
+function socketErrorFrame(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const trimmed = message.trim();
   return trimmed.length === 0
     ? "the Tangle terminal transport failed without a message"
-    : trimmed.slice(0, 16_384);
+    : trimmed.slice(0, MAX_STRING_LENGTH);
 }

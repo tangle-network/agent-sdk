@@ -88,7 +88,7 @@ export async function sandboxInstanceAsEnvironment(
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
   operation?: { signal?: AbortSignal },
-  request?: { backend?: string; resources?: ResourceProfile },
+  request?: { resources?: ResourceProfile },
 ): Promise<AgentEnvironment> {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
@@ -308,7 +308,6 @@ export async function sandboxInstanceAsEnvironment(
                 client,
                 provider: providerName,
                 environmentId,
-                ...(request?.backend === undefined ? {} : { backend: request.backend }),
                 ...(request?.resources === undefined
                   ? {}
                   : { requestedResources: request.resources }),

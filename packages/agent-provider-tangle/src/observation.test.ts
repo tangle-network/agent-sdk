@@ -131,10 +131,11 @@ describe("Tangle environment observation", () => {
     });
 
     expect(AgentEnvironmentObservationSchema.safeParse(observation).success).toBe(true);
+    // The subject names only what both a create handle and a handle rebuilt by
+    // id can produce, so the two bind to each other.
     expect(observation.subject).toEqual({
       provider: "tangle-sandbox",
       environmentId: "sbx-observed",
-      backend: "opencode",
     });
     expect(observation.identity).toMatchObject({
       state: "known",
@@ -378,13 +379,13 @@ describe("Tangle environment observation", () => {
     });
   });
 
-  it("carries the transport failure into the surface it degraded", async () => {
+  it("names the read that failed on the surface it degraded", async () => {
     const box = observedBox({
       refresh: async () => {
-        throw new Error("runtime lookup timed out");
+        throw Object.assign(new Error("runtime lookup timed out"), { status: 504 });
       },
       resourceUsage: async () => {
-        throw new Error("cgroup read failed");
+        throw Object.assign(new Error("cgroup read failed"), { code: "CGROUP_UNAVAILABLE" });
       },
     });
     const client: SandboxClientLike = {
@@ -393,33 +394,162 @@ describe("Tangle environment observation", () => {
         throw new Error("placement service unreachable");
       },
       usage: async () => {
-        throw new Error("usage service unreachable");
+        throw Object.assign(new Error("usage service unreachable"), { name: "TimeoutError" });
       },
     };
     const { observation } = await observeCreated(client);
 
+    // The reason names the read and the structured cause. The transport's own
+    // message is never carried, because it states the request URL.
     expect(observation.lifecycle).toMatchObject({
       state: "stale",
-      reason: "runtime lookup timed out",
+      reason: "the Sandbox environment refresh failed (HTTP 504)",
     });
     expect(observation.endpoint).toMatchObject({
       state: "stale",
-      reason: "runtime lookup timed out",
+      reason: "the Sandbox environment refresh failed (HTTP 504)",
     });
     expect(observation.placement?.verified).toEqual({
       state: "unavailable",
-      reason: "placement service unreachable",
+      reason: "the Sandbox placement lookup failed (cause unreported)",
     });
     expect(observation.resourceUse?.current).toEqual({
       state: "unavailable",
-      reason: "cgroup read failed",
+      reason: "the Sandbox resource usage read failed (code CGROUP_UNAVAILABLE)",
     });
     expect(observation.accountUsage?.period).toEqual({
       state: "unavailable",
-      reason: "usage service unreachable",
+      reason: "the Sandbox account usage read failed (timed out)",
     });
     // A subscription that answered still reports its own surfaces.
     expect(observation.accountUsage?.plan).toMatchObject({ state: "known" });
+    const rendered = JSON.stringify(observation);
+    for (const message of [
+      "runtime lookup timed out",
+      "cgroup read failed",
+      "placement service unreachable",
+      "usage service unreachable",
+    ]) {
+      expect(rendered).not.toContain(message);
+    }
+  });
+
+  it("keeps a credential out of every reason a failing transport produces", async () => {
+    // The Sandbox SDK states the request URL in its message, and that URL can
+    // carry userinfo or a token. Each of the five reads that can fail is made
+    // to throw one.
+    const leaking = (): Error =>
+      new Error(
+        "https://agent:hunter2@runtime.example/v1/usage failed (500): token sbx-bearer-value rejected",
+      );
+    const box = observedBox({
+      refresh: async () => {
+        throw leaking();
+      },
+      resourceUsage: async () => {
+        throw leaking();
+      },
+    });
+    const client: SandboxClientLike = {
+      ...observingClient(box),
+      describePlacement: () => {
+        throw leaking();
+      },
+      subscription: async () => {
+        throw leaking();
+      },
+      usage: async () => {
+        throw leaking();
+      },
+    };
+    const { observation } = await observeCreated(client);
+
+    expect(observationContainsCredential(observation)).toBe(false);
+    const rendered = JSON.stringify(observation);
+    expect(rendered).not.toContain("hunter2");
+    expect(rendered).not.toContain("sbx-bearer-value");
+    expect(rendered).not.toContain("runtime.example/v1/usage");
+    // Every degraded surface still states which read failed.
+    for (const degraded of [
+      observation.lifecycle,
+      observation.endpoint,
+      observation.placement?.verified,
+      observation.resourceUse?.current,
+      observation.accountUsage?.plan,
+      observation.accountUsage?.period,
+    ]) {
+      expect((degraded as { reason: string }).reason).toMatch(/^the Sandbox .+ failed \(/);
+    }
+  });
+
+  it("degrades one refused field instead of the whole observation", async () => {
+    // `plan` is a bounded identifier, so trailing whitespace is a value the
+    // contract refuses. Every surface beside it must survive.
+    const box = observedBox();
+    const client: SandboxClientLike = {
+      ...observingClient(box),
+      subscription: async () => ({
+        plan: "pro ",
+        creditsAvailableUsd: 42.5,
+        maxConcurrentSandboxes: 10,
+      }),
+    };
+    const { observation } = await observeCreated(client);
+
+    expect(observation.accountUsage?.plan).toEqual({
+      state: "unavailable",
+      reason: "the sandbox reported a plan the observation contract refuses",
+    });
+    expect(observation.accountUsage?.credits).toMatchObject({ state: "known" });
+    expect(observation.lifecycle).toMatchObject({ state: "known" });
+    expect(observation.endpoint).toMatchObject({ state: "known" });
+    expect(observation.placement?.verified).toMatchObject({ state: "known" });
+    expect(observation.resources?.effective).toMatchObject({ state: "known" });
+    expect(observation.resourceUse?.current).toMatchObject({ state: "known" });
+    expect(observation.computeBilling).toMatchObject({ state: "known" });
+
+    // The endpoint is the same class: a host the contract refuses degrades the
+    // endpoint alone.
+    const longHost = `${"h".repeat(600)}.example`;
+    const refused = await observeCreated(
+      observingClient(observedBox({ connection: { runtimeUrl: `https://${longHost}:8443/v1` } })),
+    );
+    expect(refused.observation.endpoint).toEqual({
+      state: "unavailable",
+      reason: "the sandbox reported a runtime URL the observation contract refuses",
+    });
+    expect(refused.observation.lifecycle).toMatchObject({ state: "known" });
+    expect(refused.observation.accountUsage?.plan).toMatchObject({ state: "known" });
+
+    // An SDK accessor that throws before its sandbox is usable degrades only
+    // the surface that reads it.
+    const throwing = observedBox();
+    Object.defineProperty(throwing, "connection", {
+      get(): never {
+        throw new Error("sandbox connection is not ready");
+      },
+    });
+    const unready = await observeCreated(observingClient(throwing));
+    expect(unready.observation.endpoint).toEqual({
+      state: "unavailable",
+      reason: "the sandbox reports no runtime URL for this environment",
+    });
+    expect(unready.observation.resourceUse?.current).toMatchObject({ state: "known" });
+  });
+
+  it("binds a create handle to the same sandbox rebuilt by id", async () => {
+    const box = observedBox();
+    const provider = createTangleProvider({ client: observingClient(box) });
+    const created = await provider.create({
+      profile: { name: "observer" },
+      backend: "claude-code",
+    });
+    const rebuilt = await provider.get!(box.id);
+    if (rebuilt === null) throw new Error("the provider did not rebuild the environment");
+
+    const live = await created.observe!();
+    const replay = await rebuilt.observe!();
+    expect(agentEnvironmentObservationIdentityMatches(live, replay)).toBe(true);
   });
 
   it("binds a live observation to its replay by the same subject", async () => {

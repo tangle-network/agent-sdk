@@ -124,12 +124,7 @@ export function createTangleProvider(
           options.client,
           declaredCapabilities,
           input.signal ? { signal: input.signal } : undefined,
-          {
-            backend: input.backend ?? options.defaultBackend ?? "opencode",
-            ...(requestedResources === undefined
-              ? {}
-              : { resources: requestedResources }),
-          },
+          requestedResources === undefined ? undefined : { resources: requestedResources },
         );
         input.signal?.throwIfAborted();
         return environment;

@@ -29,7 +29,7 @@ async function drain(events: AsyncIterable<unknown>): Promise<void> {
 }
 
 describe("cli-bridge environment observation", () => {
-  it("reports the bridge endpoint, placement, and lifecycle it can prove", async () => {
+  it("reports the bridge endpoint and identity it can prove", async () => {
     const provider = usageStreamProvider("https://bridge.example:8443/v1");
     const environment = await provider.create({ profile: { name: "worker" } });
     const observation = await environment.observe!();
@@ -40,18 +40,31 @@ describe("cli-bridge environment observation", () => {
       environmentId: expect.any(String),
     });
     expect(observation.identity).toMatchObject({ state: "known", value: observation.subject });
-    expect(observation.lifecycle).toMatchObject({
-      state: "known",
-      value: { status: "running" },
-    });
     expect(observation.endpoint).toMatchObject({
       state: "known",
       value: { scheme: "https", host: "bridge.example", port: 8443 },
     });
-    expect(observation.placement?.verified).toMatchObject({
-      state: "known",
-      value: { kind: "local" },
+  });
+
+  it("reports configuration as the request it is, never as a verified fact", async () => {
+    const provider = usageStreamProvider("https://bridge.example/v1");
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const observation = await environment.observe!();
+
+    // The configured execution kind is what the caller asked for. cli-bridge
+    // runs no placement check and never probes the bridge, so neither the
+    // placement nor the lifecycle is carried as a proven value.
+    expect(observation.placement?.requested).toEqual({ kind: "local" });
+    expect(observation.placement?.verified).toEqual({
+      state: "unavailable",
+      reason: "cli-bridge never probes the bridge, so its runtime state is unproven",
     });
+    expect(observation.lifecycle).toEqual({
+      state: "unavailable",
+      reason: "cli-bridge never probes the bridge, so its runtime state is unproven",
+    });
+    expect(observation.placement?.verified).not.toHaveProperty("value");
+    expect(observation.lifecycle).not.toHaveProperty("value");
   });
 
   it("states every surface the bridge cannot back rather than a measured zero", async () => {
@@ -109,9 +122,62 @@ describe("cli-bridge environment observation", () => {
     });
     await environment.destroy!();
 
+    // The adapter performed the destroy, so this is the one lifecycle fact it
+    // establishes without probing the bridge.
     await expect(environment.observe!()).resolves.toMatchObject({
       lifecycle: { state: "known", value: { status: "stopped" } },
     });
+  });
+
+  it("clears every surface a caller's document claims that the bridge cannot back", async () => {
+    // A caller can supply the capability document, so the narrowing is proved
+    // against one that claims every surface. The bridge provisions no compute
+    // and holds no account, so those claims must not survive.
+    const overclaiming = defaultCliBridgeCapabilities();
+    const provider = createCliBridgeProvider({
+      baseUrl: "https://bridge.example/v1",
+      capabilities: {
+        ...overclaiming,
+        observation: {
+          identity: true,
+          lifecycle: true,
+          endpoint: true,
+          placement: true,
+          resources: true,
+          resourceUse: true,
+          modelUsage: true,
+          computeBilling: true,
+          accountUsage: true,
+        },
+      },
+      fetch: async () => new Response(null, { status: 500 }),
+    });
+
+    expect((await provider.capabilities()).observation).toEqual({
+      identity: true,
+      lifecycle: true,
+      endpoint: true,
+      placement: true,
+      resources: false,
+      resourceUse: false,
+      modelUsage: true,
+      computeBilling: false,
+      accountUsage: false,
+    });
+    // The observation the environment produces agrees with the narrowed
+    // document: a surface the caller claimed carries its reason, not a value.
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const observation = await environment.observe!();
+    for (const absent of [
+      observation.resources?.effective,
+      observation.resourceUse?.current,
+      observation.resourceUse?.peak,
+      observation.computeBilling,
+      observation.accountUsage?.plan,
+    ]) {
+      expect(absent?.state).toBe("unavailable");
+      expect(absent).not.toHaveProperty("value");
+    }
   });
 
   it("claims an observation surface only where the bridge backs it", async () => {
@@ -128,10 +194,15 @@ describe("cli-bridge environment observation", () => {
       accountUsage: false,
     });
 
-    // A base URL that states no reachable host cannot back the endpoint, and
-    // the observation then carries the surface with its reason.
+    // A base URL that states no reachable host cannot back the endpoint, even
+    // when the caller's document claims it, and the observation then carries
+    // the surface with its reason.
     const unreachable = createCliBridgeProvider({
       baseUrl: "not-a-url",
+      capabilities: {
+        ...declared,
+        observation: { ...declared.observation!, endpoint: true },
+      },
       fetch: async () => new Response(null, { status: 500 }),
     });
     const document = await unreachable.capabilities();

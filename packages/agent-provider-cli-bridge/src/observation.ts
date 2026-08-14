@@ -136,27 +136,29 @@ export function observeCliBridgeEnvironment(
   });
   const noCompute = "cli-bridge forwards a turn and provisions no compute";
   const noAccount = "cli-bridge reports no account plan, credit, or quota";
+  const noProbe = "cli-bridge never probes the bridge, so its runtime state is unproven";
   return AgentEnvironmentObservationSchema.parse({
     subject,
     capturedAt,
     identity: { state: "known", value: subject, provenance },
-    lifecycle: {
-      state: "known",
-      value: { status: sources.destroyed ? "stopped" : "running" },
-      provenance,
-    },
+    // A destroyed handle stopped because this adapter stopped it, which is the
+    // only lifecycle fact cli-bridge establishes. A live handle holds a base
+    // URL and nothing else, and configuration is not a running runtime.
+    lifecycle: sources.destroyed
+      ? { state: "known", value: { status: "stopped" }, provenance }
+      : absent(noProbe),
     endpoint:
       endpoint === undefined
         ? absent("the cli-bridge base URL states no reachable host")
         : { state: "known", value: endpoint, provenance },
+    // The configured execution kind is where the caller asked the turn to run,
+    // so it is carried as the request. cli-bridge runs no placement check, so
+    // nothing verifies it.
     placement: {
-      verified: {
-        state: "known",
-        value: {
-          kind: sources.options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
-        },
-        provenance,
+      requested: {
+        kind: sources.options.defaultExecution?.kind === "sandbox" ? "sandbox" : "local",
       },
+      verified: absent(noProbe),
     },
     resources: { effective: absent(noCompute) },
     resourceUse: { current: absent(noCompute), peak: absent(noCompute) },

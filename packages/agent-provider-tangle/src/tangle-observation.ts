@@ -1,4 +1,8 @@
-import { AgentEnvironmentObservationSchema } from "@tangle-network/agent-interface";
+import {
+  AccountUsageSchema,
+  AgentEnvironmentObservationSchema,
+  SafeEndpointSchema,
+} from "@tangle-network/agent-interface";
 import type {
   AgentEnvironmentObservation,
   ComputeBilling,
@@ -18,7 +22,8 @@ import type {
   SandboxResourceUsageLike,
 } from "./tangle-types.js";
 import { placementInfoFromLoopPlacement, statusFromUnknown } from "./tangle-environment-values.js";
-import { awaitWithSignal, boundedString, MAX_STRING_LENGTH } from "./tangle-contract-safety.js";
+import { awaitWithSignal } from "./tangle-contract-safety.js";
+import { transportFailureReason } from "./tangle-failure-reason.js";
 import type { ExecutionUsageLog } from "./tangle-usage-log.js";
 
 /** Everything one observation reads, resolved when the environment is composed. */
@@ -27,8 +32,6 @@ export interface TangleObservationSources {
   client: SandboxClientLike;
   provider: string;
   environmentId: string;
-  /** Agent backend selected for this environment, when the create input named one. */
-  backend?: string;
   /** Compute shape the caller asked for. Absent on an environment rebuilt by id. */
   requestedResources?: ResourceProfile;
   usageLog: ExecutionUsageLog;
@@ -116,7 +119,9 @@ function readSandboxMember<T>(read: () => T): T | undefined {
  * Only the scheme, host, and explicit port of the runtime URL are carried.
  * Userinfo, path, and query are dropped, and the bearer beside the URL is
  * never read, so an endpoint payload cannot transport a credential. A port the
- * URL leaves to its scheme default is omitted rather than inferred.
+ * URL leaves to its scheme default is omitted rather than inferred. The result
+ * is held to the contract's own endpoint schema, so a runtime URL the contract
+ * refuses reads as no endpoint instead of failing the whole observation.
  */
 export function safeEndpointFromConnection(
   connection: SandboxConnectionLike | undefined,
@@ -136,28 +141,55 @@ export function safeEndpointFromConnection(
   if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) {
     return undefined;
   }
-  return {
+  const endpoint = SafeEndpointSchema.safeParse({
     scheme,
     host,
     ...(port === undefined ? {} : { port }),
+  });
+  return endpoint.success ? endpoint.data : undefined;
+}
+
+/**
+ * Hold one surface to the schema the contract states for it.
+ *
+ * An observation is composed of independent surfaces, and every value on them
+ * comes from the platform. A value the contract refuses degrades that surface
+ * alone, so one unbounded field cannot destroy the lifecycle, endpoint,
+ * placement, resource, usage, and billing facts beside it.
+ */
+function heldToContract<T>(
+  schema: { safeParse(value: unknown): { success: boolean } },
+  observation: Observation<T>,
+  surface: string,
+): Observation<T> {
+  if (schema.safeParse(observation).success) return observation;
+  return {
+    state: "unavailable",
+    reason: `the sandbox reported a ${surface} the observation contract refuses`,
   };
 }
+
+const observationShape = AgentEnvironmentObservationSchema.shape;
+const placementShape = observationShape.placement.unwrap().shape;
+const resourcesShape = observationShape.resources.unwrap().shape;
+const resourceUseShape = observationShape.resourceUse.unwrap().shape;
+const accountShape = AccountUsageSchema.shape;
 
 /** Build the normalized, freshness-tagged observation of one environment. */
 export async function observeTangleEnvironment(
   sources: TangleObservationSources,
   options?: { signal?: AbortSignal },
 ): Promise<AgentEnvironmentObservation> {
-  const { box, client, provider, environmentId, backend } = sources;
+  const { box, client, provider, environmentId } = sources;
   options?.signal?.throwIfAborted();
   const refreshFailure = await refreshBeforeObservation(box, options);
   options?.signal?.throwIfAborted();
   const capturedAt = new Date().toISOString();
-  const subject: ProviderIdentity = {
-    provider,
-    environmentId,
-    ...(backend === undefined ? {} : { backend }),
-  };
+  // The subject binds a live observation to its replay, so it carries only the
+  // identifiers both a create handle and a handle rebuilt by id can produce.
+  // The Sandbox client cannot read back the agent backend a create call named,
+  // so naming it here would deny that binding for the same sandbox.
+  const subject: ProviderIdentity = { provider, environmentId };
   const sample = await readResourceSample(box, options);
   options?.signal?.throwIfAborted();
   const account = await readAccountObservations(client, capturedAt, options);
@@ -170,25 +202,55 @@ export async function observeTangleEnvironment(
       value: subject,
       provenance: reportedAt(capturedAt, "sandbox-instance"),
     },
-    lifecycle: freshOrStale(
-      lifecycleFromSandbox(box),
-      reportedAt(capturedAt, "sandbox-instance"),
-      refreshFailure,
+    lifecycle: heldToContract(
+      observationShape.lifecycle,
+      freshOrStale(
+        lifecycleFromSandbox(box),
+        reportedAt(capturedAt, "sandbox-instance"),
+        refreshFailure,
+      ),
+      "lifecycle",
     ),
     endpoint: endpointObservation(box, capturedAt, refreshFailure),
-    placement: { verified: await verifiedPlacement(box, client, capturedAt, options) },
+    placement: {
+      verified: heldToContract(
+        placementShape.verified,
+        await verifiedPlacement(box, client, capturedAt, options),
+        "placement",
+      ),
+    },
     resources: {
       ...(sources.requestedResources === undefined
         ? {}
         : { requested: sources.requestedResources }),
-      effective: effectiveResources(box, sample, capturedAt),
+      effective: heldToContract(
+        resourcesShape.effective,
+        effectiveResources(box, sample, capturedAt),
+        "compute shape",
+      ),
     },
     resourceUse: {
-      current: currentResourceUse(sample),
-      peak: peakResourceUse(sample),
+      current: heldToContract(
+        resourceUseShape.current,
+        currentResourceUse(sample),
+        "resource sample",
+      ),
+      peak: heldToContract(
+        resourceUseShape.peak,
+        peakResourceUse(sample),
+        "resource sample",
+      ),
     },
-    modelUsage: modelUsageObservation(sources.usageLog),
-    computeBilling: computeBillingObservation(box, capturedAt),
+    modelUsage: heldToContract(
+      observationShape.modelUsage,
+      modelUsageObservation(sources.usageLog),
+      "token usage",
+    ),
+    computeBilling: heldToContract(
+      observationShape.computeBilling,
+      computeBillingObservation(box, capturedAt),
+      "compute cost",
+    ),
     accountUsage: account,
   };
   options?.signal?.throwIfAborted();
@@ -226,14 +288,14 @@ async function refreshBeforeObservation(
     return undefined;
   } catch (error) {
     options?.signal?.throwIfAborted();
-    return describeFailure(error);
+    return transportFailureReason("environment refresh", error);
   }
 }
 
 function lifecycleFromSandbox(box: SandboxInstanceLike): EnvironmentLifecycle {
-  const scheduledAt = isoTimestamp(box.expiresAt);
+  const scheduledAt = isoTimestamp(readSandboxMember(() => box.expiresAt));
   return {
-    status: statusFromUnknown(box.status),
+    status: statusFromUnknown(readSandboxMember(() => box.status)),
     // The platform retires the sandbox at its lifetime bound, so the expiry is
     // a scheduled cleanup. It is unconfirmed until the sandbox actually stops.
     ...(scheduledAt === undefined
@@ -247,17 +309,22 @@ function endpointObservation(
   capturedAt: string,
   refreshFailure: string | undefined,
 ): Observation<SafeEndpoint> {
-  const endpoint = safeEndpointFromConnection(box.connection);
+  const connection = readSandboxMember(() => box.connection);
+  const endpoint = safeEndpointFromConnection(connection);
   if (endpoint === undefined) {
+    const stated =
+      typeof connection?.runtimeUrl === "string" && connection.runtimeUrl.length > 0;
     return {
       state: "unavailable",
-      reason: "the sandbox reports no runtime URL for this environment",
+      reason: stated
+        ? "the sandbox reported a runtime URL the observation contract refuses"
+        : "the sandbox reports no runtime URL for this environment",
     };
   }
-  return freshOrStale(
-    endpoint,
-    reportedAt(capturedAt, "sandbox-instance"),
-    refreshFailure,
+  return heldToContract(
+    observationShape.endpoint,
+    freshOrStale(endpoint, reportedAt(capturedAt, "sandbox-instance"), refreshFailure),
+    "runtime endpoint",
   );
 }
 
@@ -292,7 +359,10 @@ async function verifiedPlacement(
     };
   } catch (error) {
     options?.signal?.throwIfAborted();
-    return { state: "unavailable", reason: describeFailure(error) };
+    return {
+      state: "unavailable",
+      reason: transportFailureReason("placement lookup", error),
+    };
   }
 }
 
@@ -335,7 +405,10 @@ async function readResourceSample(
     return { measured: true, sample, observedAt };
   } catch (error) {
     options?.signal?.throwIfAborted();
-    return { measured: false, reason: describeFailure(error) };
+    return {
+      measured: false,
+      reason: transportFailureReason("resource usage read", error),
+    };
   }
 }
 
@@ -347,7 +420,7 @@ function effectiveResources(
   const memoryMb = sample.measured
     ? positiveInteger(sample.sample.memoryLimitMb)
     : undefined;
-  const accelerator = box.gpuLease?.accelerator;
+  const accelerator = readSandboxMember(() => box.gpuLease?.accelerator);
   const acceleratorProfile =
     accelerator !== undefined &&
     typeof accelerator.kind === "string" &&
@@ -435,7 +508,7 @@ function peakResourceUse(sample: ResourceSample): Observation<ResourceUseSample>
 
 function modelUsageObservation(
   usageLog: ExecutionUsageLog,
-): AgentEnvironmentObservation["modelUsage"] {
+): NonNullable<AgentEnvironmentObservation["modelUsage"]> {
   const latest = usageLog.latest();
   if (latest === undefined) {
     return {
@@ -467,7 +540,7 @@ function modelUsageObservation(
 function computeBillingFromLease(
   box: SandboxInstanceLike,
 ): { billing: ComputeBilling; origin: "reported" | "estimated" } | undefined {
-  const lease = box.gpuLease;
+  const lease = readSandboxMember(() => box.gpuLease);
   if (lease === undefined) return undefined;
   const billed = nonNegativeNumber(lease.billing?.customerCostUsd);
   if (billed !== undefined) {
@@ -523,7 +596,7 @@ async function readAccountObservations(
     subscription = await awaitWithSignal(client.subscription(), options?.signal);
   } catch (error) {
     options?.signal?.throwIfAborted();
-    subscriptionFailure = describeFailure(error);
+    subscriptionFailure = transportFailureReason("subscription read", error);
   }
   let usageFailure: string | undefined;
   let usage: Awaited<ReturnType<NonNullable<SandboxClientLike["usage"]>>> | undefined;
@@ -531,14 +604,30 @@ async function readAccountObservations(
     usage = await awaitWithSignal(client.usage(), options?.signal);
   } catch (error) {
     options?.signal?.throwIfAborted();
-    usageFailure = describeFailure(error);
+    usageFailure = transportFailureReason("account usage read", error);
   }
   const provenance = reportedAt(capturedAt, "sandbox-account");
   return {
-    plan: planObservation(subscription?.plan, subscriptionFailure, provenance),
-    credits: creditsObservation(subscription, subscriptionFailure, provenance),
-    quota: quotaObservation(subscription, usage, subscriptionFailure, usageFailure, provenance),
-    period: periodObservation(usage, usageFailure, provenance),
+    plan: heldToContract(
+      accountShape.plan,
+      planObservation(subscription?.plan, subscriptionFailure, provenance),
+      "plan",
+    ),
+    credits: heldToContract(
+      accountShape.credits,
+      creditsObservation(subscription, subscriptionFailure, provenance),
+      "credit balance",
+    ),
+    quota: heldToContract(
+      accountShape.quota,
+      quotaObservation(subscription, usage, subscriptionFailure, usageFailure, provenance),
+      "sandbox quota",
+    ),
+    period: heldToContract(
+      accountShape.period,
+      periodObservation(usage, usageFailure, provenance),
+      "billing period",
+    ),
   };
 }
 
@@ -637,12 +726,4 @@ function nonNegativeNumber(value: number | null | undefined): number | undefined
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
-}
-
-/** Carry a transport failure into an observation reason without losing it. */
-function describeFailure(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const trimmed = message.trim();
-  if (trimmed.length === 0) return "the Sandbox transport failed without a message";
-  return boundedString(trimmed.slice(0, MAX_STRING_LENGTH), "Tangle observation reason");
 }

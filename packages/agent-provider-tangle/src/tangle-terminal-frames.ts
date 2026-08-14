@@ -1,4 +1,5 @@
 import type { TerminalOutputEvent } from "@tangle-network/agent-interface";
+import type { TerminalReplayWindow } from "@tangle-network/agent-interface";
 import { MAX_ARRAY_LENGTH, MAX_STRING_LENGTH } from "./tangle-contract-safety.js";
 
 /** Frames retained for replay. An older cursor is refused, never skipped. */
@@ -10,15 +11,22 @@ const MAX_RETAINED_FRAMES = MAX_ARRAY_LENGTH;
  * Every frame takes a monotonic ordinal, and an `output` frame also takes a
  * monotonic `seq` that a consumer replays from. `since` is EXCLUSIVE: it names
  * the last sequence the consumer processed, so a reconnect resumes with
- * neither loss nor duplication. A cursor the buffer no longer retains is
+ * neither loss nor duplication. A cursor whose successor frames were evicted is
  * refused, because silently resuming after the gap would drop terminal output
  * the consumer believes it received.
+ *
+ * The buffer is bounded, so the accepted cursors move as frames are evicted.
+ * {@link cursors} states the window they moved to: `earliest` is the oldest
+ * cursor `read` accepts and delivers every retained frame from, and `latest` is
+ * the newest output frame. A consumer that holds no cursor, or holds one that
+ * was evicted, resumes from `earliest` instead of being locked out.
  */
 export class TerminalFrameLog {
   private entries: Array<{ ordinal: number; event: TerminalOutputEvent }> = [];
   private lastOrdinal = 0;
   private outputSeq = 0;
   private evictedOrdinal = 0;
+  private evictedOutputSeq = 0;
   private ended = false;
   private waiters: Array<() => void> = [];
 
@@ -27,7 +35,9 @@ export class TerminalFrameLog {
     this.entries.push({ ordinal: this.lastOrdinal, event });
     while (this.entries.length > MAX_RETAINED_FRAMES) {
       const dropped = this.entries.shift();
-      if (dropped !== undefined) this.evictedOrdinal = dropped.ordinal;
+      if (dropped === undefined) continue;
+      this.evictedOrdinal = dropped.ordinal;
+      if (dropped.event.type === "output") this.evictedOutputSeq = dropped.event.seq;
     }
     this.wake();
   }
@@ -50,8 +60,13 @@ export class TerminalFrameLog {
     this.wake();
   }
 
-  get latestSeq(): number {
-    return this.outputSeq;
+  /**
+   * The cursors this buffer can serve. Reading from `earliest` yields every
+   * retained frame and loses no output, because eviction drops output frames in
+   * sequence order and `earliest` names the newest one that was dropped.
+   */
+  get cursors(): TerminalReplayWindow {
+    return { earliest: this.evictedOutputSeq, latest: this.outputSeq };
   }
 
   async *read(
@@ -87,16 +102,21 @@ export class TerminalFrameLog {
         "Tangle terminal replay cursor must be a non-negative safe integer",
       );
     }
-    if (since === 0) return 0;
     if (since > this.outputSeq) {
       throw new Error("Tangle terminal replay cursor is ahead of the retained frames");
     }
+    // The oldest accepted cursor names the newest evicted output frame, so a
+    // consumer holding it has processed every frame this buffer dropped and
+    // receives every frame it still holds.
+    if (since === this.evictedOutputSeq) return this.evictedOrdinal;
     const found = this.entries.find(
       (entry) => entry.event.type === "output" && entry.event.seq === since,
     );
     if (found === undefined) {
+      // Name the live cursor in the refusal, so a consumer that read no window
+      // still learns where it can resume instead of retrying the dropped one.
       throw new Error(
-        "Tangle terminal replay cursor is older than the retained frame buffer",
+        `Tangle terminal replay cursor is older than the retained frame buffer; resume from cursor ${this.evictedOutputSeq}`,
       );
     }
     return found.ordinal;
