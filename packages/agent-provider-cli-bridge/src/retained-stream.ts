@@ -32,7 +32,7 @@ export class CliBridgeRequestRejectedError extends Error {
 }
 
 class CliBridgeRunCancelledError extends Error {
-  constructor(detail: string) {
+  constructor(readonly detail: string) {
     super(`cli-bridge run cancelled: ${detail}`);
     this.name = "CliBridgeRunCancelledError";
   }
@@ -273,10 +273,34 @@ export async function* streamCliBridgeTurn(
         onAccepted,
       );
     } catch (error) {
-      // A cursor after a cancelled terminal has no event left to replay. The
-      // bridge proves that state with a typed non-streaming response; do not
-      // synthesize a second terminal event for an already committed cursor.
-      if (error instanceof CliBridgeRunCancelledError) return;
+      if (error instanceof CliBridgeRunCancelledError) {
+        // A normal finish frame can race with the bridge's authoritative
+        // cancelled state. Replace the withheld result at the same cursor.
+        if (terminalCursor !== undefined) {
+          yield {
+            type: "status",
+            data: {
+              status: "cancelled",
+              error: error.detail,
+              runId,
+              sessionId,
+              ...(turn.executionId === undefined
+                ? {}
+                : { executionId: turn.executionId }),
+              cursor: terminalCursor,
+            },
+            normalized: {
+              type: "status",
+              status: "cancelled",
+              detail: error.detail,
+            },
+            id: terminalCursor,
+          };
+        }
+        // If no new terminal frame followed the requested cursor, the caller
+        // already consumed the cancellation event. Do not duplicate it.
+        return;
+      }
       throw error;
     }
     const finalModelRequests = result.modelRequests ??
