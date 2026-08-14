@@ -1,5 +1,17 @@
 # @tangle-network/agent-core
 
+## 0.8.0
+
+### Minor Changes
+
+- c4e1978: Add caller cancellation as a canonical stream status and keep the Agent Core status type aligned with that contract.
+
+### Patch Changes
+
+- Updated dependencies [c4e1978]
+- Updated dependencies [18dd3ce]
+  - @tangle-network/agent-interface@0.52.0
+
 ## 0.7.3
 
 ### Patch Changes

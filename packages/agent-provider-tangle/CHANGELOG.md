@@ -1,5 +1,121 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.10.0
+
+### Minor Changes
+
+- e2d6933: Answer an exact interaction through the Tangle provider.
+
+  `respondToInteraction` is offered on a Tangle environment and on a session
+  handle. It takes the canonical `InteractionResponseCommand` and returns the
+  canonical `InteractionAcknowledgement`, carrying the deployment's own durable
+  result: a repeated command reads as `already_resolved_same`, and a different
+  answer for a recorded ask reads as `already_resolved_different` with the
+  recorded digest named. A refusal is never reported as a success, and a
+  response the deployment records without confirming delivery is reported as
+  `transport_failure` rather than `accepted`.
+
+  The command carries only the answer the caller supplied. An answer that omits
+  a field the outstanding ask requires is refused with that field named, so no
+  value is invented for a question the caller did not answer.
+
+  The `interactions` capability is claimed only when the connected deployment
+  reports `interactions.responseDedupe`, because the adapter keeps no record of
+  its own and every replay answer comes from the deployment. An absent flag, a
+  `null` capability document, and an unreadable one all claim nothing.
+
+  The `@tangle-network/sandbox` peer floor moves to `>=0.23.0 <1.0.0`.
+  `session.respondToInteraction` first shipped in 0.23.0. The adapter
+  feature-detects it, so an older SDK claims no interactions; the floor stands
+  because the earlier answer path resolves the session's first outstanding
+  question rather than the one a response names, and this adapter never falls
+  back to it.
+
+- 18dd3ce: Wire the Tangle provider to the observation and interactive-terminal contracts.
+
+  `environment.observe()` returns the normalized observation over the Sandbox SDK: provider and session identity, lifecycle with its scheduled retirement, the credential-free runtime endpoint, verified placement, requested and effective compute shape, current and peak memory use, the newest execution's token usage and cost, GPU-lease compute billing, and the account plan, credits, quota, and billing period.
+  Each surface carries its freshness state, so a value Sandbox does not report is visibly absent instead of arriving as a measured zero.
+  Sandbox states no effective CPU or disk, no CPU utilization, and no per-sandbox container compute cost, so those surfaces report `unavailable` with the reason.
+
+  `environment.attachTerminal()` and `environment.terminal()` bind the sandbox terminal WebSocket: attach and reattach, ordered output with an exclusive replay cursor, input, resize, detach, and close, each bound to its parent execution and to a fail-closed expiry.
+
+  Both capability blocks are claimed only where a concrete source backs them, and the create call now sends the compute shape Sandbox reads (`cpuCores`, `memoryMB`, `diskGB`, `accelerator`) instead of passing the contract's field names through unchanged.
+
+  A transport failure never reaches a payload as its own message, because the Sandbox SDK states the request URL there and that URL can carry a credential.
+  Each degraded surface names the read that failed and a structured cause: an HTTP status, an error code, or an abort.
+  Each surface is also held to its own schema, so one value the contract refuses degrades that surface alone instead of destroying the observation beside it.
+  The observation subject names only the provider and the environment id, which both a create handle and a handle rebuilt by id can produce, so the two bind to each other.
+  A detached or dropped terminal socket makes its reference unusable, a reattach closes the socket it replaces, and the terminal states the replay cursors it can serve.
+
+### Patch Changes
+
+- 45cb44f: Report a cancelled Tangle run as `cancelled` on the event stream.
+
+  `statusFromSandboxValue` mapped `cancelled` to `failed`, so a caller cancellation
+  and a run error reached the consumer as one state. The session status surface
+  already keeps them apart, so the same cancellation rendered differently
+  depending on which surface a consumer read, and differently again from an
+  identically cancelled CLI Bridge run.
+
+  The local `CanonicalStatus` union is replaced by `StreamStatus` from
+  `@tangle-network/agent-interface`. The duplicate union is what let the two
+  contracts drift: a widening of the shared type could not reach this file.
+
+- 8697c59: Bind a Sandbox event's session identity to the field position that carried it.
+  The run-frame position (`data.sessionId`/`data.sessionID`) holds the
+  harness-native session id on `session.updated`, so a stream-bound iterator keeps
+  it as content and it reaches the normalized event with the frame's title and
+  time. The envelope position (`properties`, `properties.info`,
+  `properties.part`) holds the runtime session id and is compared to the expected
+  session id on every frame, including a `session.updated` frame that fills both
+  positions.
+
+  Session-bus frames that carry their session id only inside `properties.part`
+  now pass identity binding. A session surface opened without an exact execution
+  id reads that bus, and `message.part.updated` puts the id in no other position,
+  so every part frame on that lane was refused. The part position is read only on
+  a frame type whose part the sidecar rewrites. A `raw` frame carries a backend
+  event the sidecar does not shape, so its payload stays opaque to the identity
+  read.
+
+  Every check that compares a session id compares each position the frame fills,
+  not a single precedence winner. This holds for the expected-session check, for a
+  supplied `normalized` block, and for the connection marker of a session stream.
+
+  Scope of the other identity rules this adds, by the shape each applies to:
+
+  - The envelope rule engages on the session bus, which serves envelope frames.
+    The run/stream lane and the execution replay lane serve flat run frames, so on
+    those lanes the rule refuses only a frame that fills both positions. Neither
+    lane emits that shape, so the rule adds no refusal to their current traffic.
+  - A frame whose id aliases disagree is refused. Previously the first alias won
+    and the rest went unread.
+  - A supplied `normalized` block that names a session the frame's own positions
+    do not carry is refused. Previously the block was returned unread. The block
+    names no field position of its own, so it cannot say which position it
+    repeats. A frame whose positions name two sessions therefore supplies no
+    block.
+  - A frame that omits its executionId or sessionId off an iterator that is not
+    stream-bound now reports that absence, rather than reporting the mismatch of a
+    value it never carried.
+
+- 18dd3ce: Hold the Tangle terminal to its replay window, its attach result, and its registry lifetime.
+
+  `events()` called with no cursor now starts at the oldest frame the log still retains, resolved when the read begins.
+  It previously started at cursor 0, which the log refuses once the bounded buffer has evicted an output frame, so a consumer that held no cursor was locked out of a terminal it had just attached.
+  A cursor the consumer names is still refused when its successors were evicted, because the consumer believes it received the frames that gap would drop.
+
+  `attachTerminal()` now reads the ready acknowledgement inside a guard and reports a failed read as `unknown` with the structured cause.
+  The Sandbox stream exposes `ready` as an accessor that throws before the runtime acknowledges, so an unguarded read replaced the attach result with a raw transport error and abandoned the socket the attach had opened.
+  That error states the request URL, and the URL can carry a credential, so the result names the read and the cause instead.
+
+  A terminal handle now releases its registry entry when it detaches or closes, so a long-lived provider does not retain every terminal it ever attached.
+  A handle releases only the entry built on its own socket, so a stale handle cannot evict the terminal a later attach installed.
+
+- Updated dependencies [c4e1978]
+- Updated dependencies [18dd3ce]
+  - @tangle-network/agent-interface@0.52.0
+
 ## 0.9.0
 
 ### Minor Changes

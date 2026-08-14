@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-testkit",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Framework-neutral conformance checks for AgentEnvironmentProvider implementations",
   "type": "module",
   "license": "MIT",
@@ -66,7 +66,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.51.0"
+    "@tangle-network/agent-interface": "0.52.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
