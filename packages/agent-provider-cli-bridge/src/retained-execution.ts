@@ -72,7 +72,7 @@ export async function* streamTrackedCliBridgeTurn(
       run.id,
       originalTurn.lastEventId,
       signal,
-      (response) => captureCliBridgeRunIdentity(response, run, false),
+      (response) => captureCliBridgeRunIdentity(response, run, true),
     )) {
       yield event;
     }
@@ -241,6 +241,7 @@ export async function* streamCliBridgeSessionEvents(
       eventOptions?.since ?? "0",
       signal,
       (response) => captureCliBridgeRunIdentity(response, run, false),
+      () => getCliBridgeRun(options, transport, run, 30_000, signal),
     );
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);

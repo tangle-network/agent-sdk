@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AgentEnvironmentObservationSchema,
@@ -10,15 +11,36 @@ function usageStreamProvider(baseUrl: string, bearerToken?: string) {
   return createCliBridgeProvider({
     baseUrl,
     ...(bearerToken === undefined ? {} : { bearerToken }),
-    fetch: async () =>
-      new Response(
+    fetch: async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const runId = String(body.run_id);
+      const headers = {
+        "x-run-id": runId,
+        "x-run-request-digest": testDigest(runId),
+      };
+      if (body.stream === false) {
+        return Response.json({
+          choices: [{
+            message: { role: "assistant", content: "partial done" },
+            finish_reason: "stop",
+          }],
+          usage: {
+            prompt_tokens: 15,
+            completion_tokens: 6,
+            total_tokens: 21,
+            cost: 0.03,
+          },
+        }, { headers });
+      }
+      return new Response(
         [
           'data: {"choices":[{"delta":{"content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cost":0.01}}\n\n',
           'data: {"choices":[{"delta":{"content":" done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7,"cost":0.02}}\n\n',
           "data: [DONE]\n\n",
         ].join(""),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { ...headers, "content-type": "text/event-stream" } },
+      );
+    },
   });
 }
 
@@ -26,6 +48,10 @@ async function drain(events: AsyncIterable<unknown>): Promise<void> {
   for await (const _event of events) {
     // Drain the stream to its terminal condition.
   }
+}
+
+function testDigest(value: string): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 describe("cli-bridge environment observation", () => {
