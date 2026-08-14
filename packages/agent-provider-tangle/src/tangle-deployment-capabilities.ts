@@ -27,6 +27,13 @@ export interface DeploymentCapabilitySupport {
   readonly eventReplay: boolean;
   /** Status and results select one execution, not the session's latest. */
   readonly executionScopedStatus: boolean;
+  /**
+   * Interaction responses are recorded durably, so repeating one replays the
+   * recorded acknowledgement instead of delivering a second answer to a
+   * running agent. The adapter holds no record of its own, so this fact alone
+   * decides whether a response can be retried safely.
+   */
+  readonly interactionResponses: boolean;
 }
 
 /**
@@ -42,6 +49,7 @@ export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
   canonicalCancellation: false,
   eventReplay: false,
   executionScopedStatus: false,
+  interactionResponses: false,
 };
 
 /**
@@ -64,6 +72,7 @@ export const ADAPTER_CEILING_DEPLOYMENT: DeploymentCapabilitySupport = {
   canonicalCancellation: true,
   eventReplay: true,
   executionScopedStatus: true,
+  interactionResponses: true,
 };
 
 /**
@@ -84,6 +93,7 @@ export function deploymentCapabilitySupport(
       document.cancel?.idempotent === true,
     eventReplay: document.runs?.eventReplay === true,
     executionScopedStatus: document.runs?.executionScopedStatus === true,
+    interactionResponses: document.interactions?.responseDedupe === true,
   };
 }
 

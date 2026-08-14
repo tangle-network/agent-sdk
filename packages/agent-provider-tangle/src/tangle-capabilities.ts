@@ -65,6 +65,26 @@ export function defaultTangleSandboxCapabilities(
     // together over one Sandbox surface, and the capability schema refuses
     // a partial block, so they stand or fall on the same fact set.
     sessions: { continue: true, list: false, messages: false },
+    // Answering an ask is declared as intent and stripped by narrowing unless
+    // the session exposes the command route and the deployment discloses its
+    // durable response record. Three claims are bounded by what the adapter
+    // can establish rather than by what the route carries:
+    //  - `secretAnswers` false, and no `secret` answer field: the deployment
+    //    discloses nothing about resolving a one-use secret handle, and an
+    //    undisclosed fact is not a claim.
+    //  - `responseScopes` names `interaction` alone, for the same reason: no
+    //    document states that a broader grant is honored on reuse.
+    //  - `concurrentRequests` true: the command names the ask it answers, so
+    //    several outstanding asks each take their own exact response.
+    interactions: {
+      kinds: ["question", "permission", "plan"],
+      answerFieldTypes: ["text", "number", "boolean", "select"],
+      responseScopes: ["interaction"],
+      secretAnswers: false,
+      concurrentRequests: true,
+      replay: true,
+      responseIdempotency: true,
+    },
     retainedControl: {
       exactRunIdentity: true,
       resultIdentity: true,
@@ -122,6 +142,8 @@ export interface SandboxCapabilitySupport {
   placement: boolean;
   destroy: boolean;
   cancelRun: boolean;
+  /** The session handle exposes the digest-bound interaction command route. */
+  respondToInteraction: boolean;
   /** Per-surface sources for the normalized observation. */
   observation: ObservationSurfaceSupport;
   /** The sandbox serves the PTY socket and reports terminal metadata. */
@@ -156,6 +178,7 @@ export function sandboxCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: typeof box.delete === "function",
     cancelRun: typeof session?.cancelRun === "function",
+    respondToInteraction: typeof session?.respondToInteraction === "function",
     observation: observationSurfaceSupport(box, client, requestedResources),
     interactiveTerminal: sandboxBacksInteractiveTerminal(box),
   };
@@ -220,6 +243,7 @@ export function clientCapabilitySupport(
     placement: typeof client.describePlacement === "function",
     destroy: true,
     cancelRun: false,
+    respondToInteraction: false,
     observation,
     interactiveTerminal: true,
   };
@@ -251,6 +275,31 @@ export function tangleRetainedControlSupported(
     support.dispatchPrompt &&
     support.session &&
     support.cancelRun
+  );
+}
+
+/**
+ * Decide whether answering an interaction may be claimed.
+ *
+ * Two independent fact sets must agree, as they do for retained control. The
+ * adapter surface must be able to send the command: a session handle exposing
+ * the digest-bound route. The deployment must record what it acknowledges,
+ * because this adapter keeps no resolution record of its own — every replay
+ * answer comes from the deployment. A deployment that leaves the flag unset
+ * refuses the claim even though the local method exists, since an
+ * unrecorded response cannot be retried without risking a second answer to a
+ * running agent.
+ */
+export function tangleInteractionResponsesSupported(
+  declared: AgentEnvironmentCapabilities,
+  support: SandboxCapabilitySupport,
+  deployment: DeploymentCapabilitySupport,
+): boolean {
+  return (
+    declared.interactions !== undefined &&
+    deployment.interactionResponses &&
+    support.session &&
+    support.respondToInteraction
   );
 }
 
@@ -332,7 +381,12 @@ export function narrowedTangleCapabilities(
           ),
         }),
   };
-  delete narrowed.interactions;
+  // A claimed block is passed through whole. Its sub-flags state what the
+  // route carries, not what one deployment reports, and the deployment's own
+  // fact has already decided whether the block survives at all.
+  if (!tangleInteractionResponsesSupported(declared, support, deployment)) {
+    delete narrowed.interactions;
+  }
   delete narrowed.nativeContinuation;
   if (!supportsRetainedControl) delete narrowed.retainedControl;
   return narrowed;

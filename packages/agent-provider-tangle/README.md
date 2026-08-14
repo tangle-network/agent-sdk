@@ -1,8 +1,10 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.19.6 <1.0.0`; retained-run cancellation (`session.cancelRun`) first shipped in 0.19.6, and this package is developed and tested against 0.22.0.
-The floor stays at 0.19.6 although deployment capability discovery (`box.capabilities()`) needs 0.22.0: the adapter feature-detects that method, so a consumer on an older SDK keeps working and claims no retained control instead of failing to load.
+The peer range is `>=0.23.0 <1.0.0`, and this package is developed and tested against 0.23.0.
+The floor is 0.23.0 because `session.respondToInteraction` first shipped there.
+An earlier SDK answers the session's first outstanding question rather than the one a response names, so a response meant for one ask resolves another and reports success.
+That failure cannot be feature-detected, because the older method has the same name and the same success shape.
 
 ```ts
 import { Sandbox } from '@tangle-network/sandbox'
@@ -47,11 +49,39 @@ Each deployment flag this adapter reads gates the claims it backs, and no flag i
 | `cancel.idempotent` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
 | `runs.eventReplay` | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
 | `runs.executionScopedStatus` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| `interactions.responseDedupe` | `interactions`, `environment.respondToInteraction`, `session.respondToInteraction` |
 
 Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
 `sessions.continue`, `retainedControl`, and `session.cancelRun` need every flag in the table, because the capability schema refuses a partial retained-control block and each identity rests on its own flag.
 A claim takes its operation with it: `streaming.detach` gates `dispatch()`, and `session()` stands while any of `streaming.detach`, `streaming.replay`, or `sessions.continue` stands.
 A missing flag means unknown, and unknown is never a claim.
+
+Answering an ask rests on `interactions.responseDedupe` alone, and on nothing retained control needs.
+The adapter keeps no record of the responses it sent, so every replay answer comes from the deployment: repeating a command returns the recorded acknowledgement, and a different answer for a recorded ask is refused as `already_resolved_different`.
+A deployment that does not record what it acknowledges therefore claims no interactions, even where the local method exists, because an unrecorded response cannot be retried without risking a second answer to a running agent.
+The claim and the two methods stand or fall together.
+
+## Answering an interaction
+
+`respondToInteraction` takes the canonical `InteractionResponseCommand` and returns the canonical `InteractionAcknowledgement`.
+It is offered on the environment and on a session handle; the environment routes the command to the session its binding names.
+The command carries only the answer the caller supplied. No field is filled in on the caller's behalf, and an answer the outstanding ask's spec rejects is refused with the field named.
+
+| Result | Acknowledgement status |
+| --- | --- |
+| The deployment recorded and delivered the response | `accepted` |
+| The deployment already holds this exact response | `already_resolved_same` |
+| The deployment already holds a different response for the ask | `already_resolved_different`, message naming the recorded digest |
+| The command names another provider, environment, or session | `binding_mismatch` |
+| The deployment refuses the binding | `binding_mismatch` |
+| The ask is unknown to the deployment | `unknown_interaction` |
+| The session is unknown to the deployment | `unknown_run` |
+| The ask left the outstanding set on a deadline | `expired` |
+| The ask's spec rejects the answer | `invalid_response`, message naming each field |
+| The response is recorded and delivery is unconfirmed | `transport_failure`, `retryable: true` |
+| The request did not reach the route | `transport_failure`, `retryable: true` |
+
+A refusal is never reported as a success, and a recorded response whose delivery the deployment does not confirm is never reported as `accepted`.
 
 Four inputs claim nothing at all: a Sandbox SDK older than 0.22.0, a sandbox that is not running, a `null` document (a deployment predating capability discovery, or one serving a newer schema this SDK cannot read), and a capability read that fails.
 In each case the environment omits `dispatch` and `session`, so a caller never selects an action the deployment will reject.
