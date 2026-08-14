@@ -355,6 +355,28 @@ describe("Tangle split leaf modules", () => {
     ).toBe("unknown");
   });
 
+  it("reports a cancelled run as cancelled and keeps errors separate", () => {
+    // A caller cancellation and a run error are different outcomes. The session
+    // status surface already keeps them apart, so collapsing them on the event
+    // stream makes one product state render differently per provider.
+    const statusOf = (status: string) =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "status",
+          id: "event-1",
+          data: { executionId: "execution-1", sessionId: "session-1", status },
+        } as never,
+        { executionId: "execution-1", sessionId: "session-1" },
+      ).normalized;
+
+    expect(statusOf("cancelled")).toEqual({
+      type: "status",
+      status: "cancelled",
+    });
+    expect(statusOf("failed")).toEqual({ type: "status", status: "failed" });
+    expect(statusOf("error")).toEqual({ type: "status", status: "failed" });
+  });
+
   it("binds direct event, result, prompt, and session leaves to exact identity", async () => {
     const event = environmentEventFromSandboxEvent(
       { type: "status", id: "event-1", data: { executionId: "execution-1", sessionId: "session-1", status: "running" } } as never,

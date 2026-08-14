@@ -2,6 +2,7 @@ import type { SandboxEvent } from "@tangle-network/sandbox";
 import {
   CanonicalStreamEventSchema,
   type StreamEvent,
+  type StreamStatus,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { assertBoundedJson } from "./tangle-contract-safety.js";
@@ -9,7 +10,6 @@ import { optionalNonEmptyString } from "./tangle-environment-values.js";
 import { tokenUsageFromData } from "./tangle-result-values.js";
 
 type EventRecord = Record<string, unknown>;
-type CanonicalStatus = "started" | "processing" | "completed" | "failed";
 
 /** The sidecar sends this envelope when an SSE connection is ready. */
 export function isSandboxConnectionMarker(event: SandboxEvent): boolean {
@@ -397,7 +397,7 @@ function parseCanonical(value: unknown): StreamEvent | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-function statusFromSandboxValue(value: unknown): CanonicalStatus | undefined {
+function statusFromSandboxValue(value: unknown): StreamStatus | undefined {
   if (typeof value !== "string") return undefined;
   switch (value) {
     case "started":
@@ -411,8 +411,9 @@ function statusFromSandboxValue(value: unknown): CanonicalStatus | undefined {
       return "completed";
     case "failed":
     case "error":
-    case "cancelled":
       return "failed";
+    case "cancelled":
+      return "cancelled";
     default:
       return undefined;
   }
