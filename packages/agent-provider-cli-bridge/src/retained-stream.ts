@@ -110,9 +110,11 @@ export async function* streamCliBridgeTurn(
       yield* retainedEventsWithIdentity([{
         type: "status",
         data: { status: cancelled ? "cancelled" : "failed", error: message },
-        ...(cancelled
-          ? {}
-          : { normalized: { type: "status", status: "failed", detail: message } }),
+        normalized: {
+          type: "status",
+          status: cancelled ? "cancelled" : "failed",
+          detail: message,
+        },
       }], frame.id, runId, sessionId, turn.executionId, replay.anchor);
       terminalFrameSeen = true;
       completed = cancelled;
@@ -206,6 +208,7 @@ export async function* streamCliBridgeTurn(
     }
     if (toolCallDeltas.length > 0) textBoundaryPending = true;
     if (choice?.finish_reason) {
+      terminalFrameSeen = true;
       if (choice.finish_reason === "error") {
         frameEvents.push({
           type: "status",

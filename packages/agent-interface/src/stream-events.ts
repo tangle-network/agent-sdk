@@ -8,6 +8,13 @@ export type MessagePartUpdatedEvent = {
   delta?: string;
 };
 
+export type StreamStatus =
+  | "started"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
 export type StreamEvent =
   | MessagePartUpdatedEvent
   | {
@@ -31,7 +38,7 @@ export type StreamEvent =
     }
   | {
       type: "status";
-      status: "started" | "processing" | "completed" | "failed";
+      status: StreamStatus;
       detail?: string;
     }
   | {

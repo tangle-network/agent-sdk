@@ -63,7 +63,7 @@ export interface EventMetadata {
 }
 
 // Import Part type for use in events
-import type { Part } from "@tangle-network/agent-interface";
+import type { Part, StreamStatus } from "@tangle-network/agent-interface";
 
 // The primary content event - all text, tool, and reasoning updates
 export interface MessagePartUpdatedEvent {
@@ -76,7 +76,7 @@ export interface MessagePartUpdatedEvent {
 // Status event
 export interface StatusEvent {
   type: "status";
-  status: "started" | "processing" | "completed" | "failed";
+  status: StreamStatus;
   detail?: string;
   _meta?: EventMetadata;
 }
