@@ -854,18 +854,21 @@ describe("Tangle split leaf modules", () => {
     });
   });
 
-  it("refuses a supplied normalized block that only one position of the frame carries", () => {
+  it("refuses a supplied normalized block naming a session the frame does not carry", () => {
     const bound = {
       executionId: "execution-1",
       sessionId: "runtime-session-1",
       streamBound: true,
     };
 
-    // The run-frame position holds the native id and the envelope position
-    // holds the runtime id, so the frame's two positions name two sessions. A
-    // supplied block names an id and no position, so it cannot say which of the
-    // two it repeats, and neither choice is verifiable against the other.
-    const twoPositions = (suppliedSessionId: string) =>
+    // A stream-bound `session.updated` carries two ids BY DESIGN: the run-frame
+    // position holds the harness's native session id and the envelope holds the
+    // runtime session id. A supplied block names an id and no position, so it
+    // may repeat either id the frame carries. It may never introduce one the
+    // frame does not carry, which is the only thing it could invent. A foreign
+    // RUNTIME id is refused before this point, by the rule that compares every
+    // position naming the runtime session.
+    const withSupplied = (suppliedSessionId: string) =>
       ({
         type: "session.updated",
         id: `event-supplied-${suppliedSessionId}`,
@@ -877,35 +880,44 @@ describe("Tangle split leaf modules", () => {
       }) as never;
 
     expect(() =>
-      environmentEventFromSandboxEvent(
-        twoPositions("ses_opencode_native"),
-        bound,
-      ),
-    ).toThrow(/only one position of the frame carries/);
+      environmentEventFromSandboxEvent(withSupplied("ses_somebody_else"), bound),
+    ).toThrow(/named a session the frame does not carry/);
 
+    for (const carried of ["ses_opencode_native", "runtime-session-1"]) {
+      expect(
+        environmentEventFromSandboxEvent(withSupplied(carried), bound)
+          .normalized,
+      ).toEqual({ type: "session.updated", sessionId: carried });
+    }
+  });
+
+  it("refuses a foreign runtime session id in a position that did not win precedence", () => {
+    // The original defect was winner-take-all: one position won the precedence
+    // read and the other went unchecked, so a foreign runtime id in the losing
+    // position reached the caller. Every position that names the runtime
+    // session is compared, whichever one precedence would have chosen.
     expect(() =>
-      environmentEventFromSandboxEvent(twoPositions("runtime-session-1"), bound),
-    ).toThrow(/only one position of the frame carries/);
-
-    // One agreeing position in each place leaves one id for the block to
-    // repeat, so the block is accepted.
-    expect(
       environmentEventFromSandboxEvent(
         {
           type: "session.updated",
-          id: "event-supplied-agreed",
+          id: "event-foreign-envelope",
           data: {
             sessionId: "runtime-session-1",
-            properties: { info: { sessionID: "runtime-session-1" } },
-            normalized: {
-              type: "session.updated",
-              sessionId: "runtime-session-1",
+            properties: {
+              info: {
+                sessionID: "runtime-session-somebody-else",
+                executionId: "execution-1",
+              },
             },
           },
         } as never,
-        bound,
-      ).normalized,
-    ).toEqual({ type: "session.updated", sessionId: "runtime-session-1" });
+        {
+          executionId: "execution-1",
+          sessionId: "runtime-session-1",
+          streamBound: false,
+        },
+      ),
+    ).toThrow(/identified a different sessionId/);
   });
 
   it("leaves a raw frame's backend payload opaque to the identity read", () => {

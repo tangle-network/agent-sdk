@@ -300,23 +300,16 @@ function normalizeSandboxEvent(
         `Tangle Sandbox normalized event type "${parsed.data.type}" does not match transport type "${type}"`,
       );
     }
-    // A supplied block is a field of the frame, so it repeats a session id the
-    // frame's own positions carry. It carries no field position of its own, so
-    // it cannot say which position it repeats: every position must agree with
-    // it. Reading it against one precedence winner would leave the other
-    // position free to name a different session. A frame that carries no
-    // session id at all can supply no session id either.
+    // A supplied block is a field of the frame, so it repeats a session id one
+    // of the frame's own positions carries and introduces none of its own. Each
+    // position it can repeat is already bound: the check above compared every
+    // position that names the runtime session, and the run-frame position of a
+    // stream-bound `session.updated` holds the native id the computed block
+    // carries too. A frame that carries no session id can supply none either.
     if (parsed.data.type === "session.updated") {
-      const suppliedSessionId = parsed.data.sessionId;
-      const carried = carriedSessionIds(identity);
-      if (!carried.includes(suppliedSessionId)) {
+      if (!carriedSessionIds(identity).includes(parsed.data.sessionId)) {
         throw new Error(
           "Tangle Sandbox normalized event named a session the frame does not carry",
-        );
-      }
-      if (carried.some((value) => value !== suppliedSessionId)) {
-        throw new Error(
-          "Tangle Sandbox normalized event named a session only one position of the frame carries",
         );
       }
     }
