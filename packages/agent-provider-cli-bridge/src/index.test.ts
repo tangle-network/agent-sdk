@@ -884,6 +884,57 @@ describe("createCliBridgeProvider", () => {
     }
   });
 
+  it("uses retained cancellation when the initial stream only sends protocol end", async () => {
+    let statusReads = 0;
+    let aggregateReads = 0;
+    const runId = "protocol-end-cancel";
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (url, init) => {
+        if (init?.method === "GET") {
+          statusReads += 1;
+          expect(String(url)).toBe(
+            `http://bridge.local/v1/runs/${runId}?wait_ms=30000`,
+          );
+          return runResponse(runId, "cancelled", true);
+        }
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) aggregateReads += 1;
+        return new Response("data: [DONE]\n\n", {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-run-id": runId,
+            "x-run-request-digest": testDigest(runId),
+          },
+        });
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      sessionId: runId,
+      executionId: runId,
+    })) events.push(event);
+
+    expect(statusReads).toBe(1);
+    expect(aggregateReads).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "status",
+      data: {
+        status: "cancelled",
+        runId,
+        sessionId: runId,
+        executionId: runId,
+      },
+      normalized: { type: "status", status: "cancelled" },
+    });
+  });
+
   it("does not reconstruct a second result after a cancelled terminal replay", async () => {
     const fixture = await startLiveCancellationFixture({ initialStream: true });
     let environment: AgentEnvironment | undefined;
@@ -1111,6 +1162,93 @@ describe("createCliBridgeProvider", () => {
       prompt: "work",
       executionId: "aggregate-identity",
     }))).rejects.toThrow(error);
+  });
+
+  it("consumes rejected aggregate bodies before reusing the Undici connection", async () => {
+    let connectionCount = 0;
+    let aggregateRequests = 0;
+    let statusRequests = 0;
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer((request, response) => {
+      void (async () => {
+        const url = new URL(request.url ?? "/", "http://bridge.local");
+        if (request.method === "GET") {
+          statusRequests += 1;
+          const runId = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+          sendJson(response, {
+            id: runId,
+            requestDigest: testDigest(runId),
+            status: "cancelled",
+            terminal: true,
+          });
+          return;
+        }
+        const body = await readJsonRequest(request);
+        const runId = String(body.run_id);
+        if (body.stream === false) {
+          aggregateRequests += 1;
+          sendJson(response, {
+            error: {
+              message: "run cancelled by caller",
+              type: "run_cancelled",
+            },
+            padding: "x".repeat(256 * 1024),
+          }, 409, {
+            "x-run-request-digest": testDigest(runId),
+          });
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": testDigest(runId),
+        });
+        response.end(
+          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        );
+      })().catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : undefined);
+      });
+    });
+    server.on("connection", (socket) => {
+      connectionCount += 1;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("test server did not bind TCP");
+    }
+
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      let connectionsAfterFirstMismatch = 0;
+      for (let turn = 0; turn < 3; turn += 1) {
+        await expect(consumeEvents(environment.stream({
+          prompt: "work",
+          executionId: `identity-mismatch-${turn}`,
+        }))).rejects.toThrow("cli-bridge response omitted X-Run-Id");
+        if (turn === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          connectionsAfterFirstMismatch = connectionCount;
+        }
+      }
+      expect(aggregateRequests).toBe(3);
+      expect(statusRequests).toBe(3);
+      expect(connectionsAfterFirstMismatch).toBeGreaterThan(0);
+      expect(connectionsAfterFirstMismatch).toBeLessThanOrEqual(2);
+      expect(connectionCount).toBe(connectionsAfterFirstMismatch);
+    } finally {
+      await environment?.destroy?.();
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
+    }
   });
 
   it("does not replay a terminal event already consumed at a composite cursor", async () => {

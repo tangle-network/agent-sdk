@@ -12,6 +12,7 @@ import {
   retainedEventsWithIdentity,
   retainedReplayRequest,
 } from "./retained-event-cursor.js";
+import { detachCliBridgeReader } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
@@ -79,8 +80,20 @@ export async function* streamCliBridgeTurn(
     }
     throw new CliBridgeRequestRejectedError(response.status, detail);
   }
-  onResponse?.(response);
   if (!response.body) throw new Error("cli-bridge response body is empty");
+  try {
+    onResponse?.(response);
+  } catch (error) {
+    try {
+      await detachCliBridgeReader(response.body);
+    } catch (detachError) {
+      throw new AggregateError(
+        [error, detachError],
+        `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+      );
+    }
+    throw error;
+  }
 
   let text = "";
   const sessionId = turn.sessionId ?? runId;
@@ -257,10 +270,33 @@ export async function* streamCliBridgeTurn(
   if (!sawProtocolEnd) {
     throw new Error("cli-bridge stream ended without the [DONE] protocol marker");
   }
+  if (cancelledTerminalSeen) return;
   if (!completed && lastEventId === undefined) {
+    let snapshot: CliBridgeRunSnapshot;
+    try {
+      snapshot = await terminalRunSnapshot(runId, readAuthoritativeRun);
+    } catch (error) {
+      throw new Error("cli-bridge stream ended without a terminal result", {
+        cause: error,
+      });
+    }
+    if (snapshot.status === "cancelled") {
+      const event = cancelledEvent(`cli-bridge run "${runId}" was cancelled`);
+      yield {
+        ...event,
+        data: {
+          ...event.data,
+          runId,
+          sessionId,
+          ...(turn.executionId === undefined
+            ? {}
+            : { executionId: turn.executionId }),
+        },
+      };
+      return;
+    }
     throw new Error("cli-bridge stream ended without a terminal result");
   }
-  if (cancelledTerminalSeen) return;
   if (!terminalFrame) {
     if (requestBody !== undefined && lastEventId !== undefined) {
       try {
@@ -413,16 +449,16 @@ async function readFullCliBridgeResult(
     body: JSON.stringify({ ...body, stream: false }),
     ...(signal ? { signal } : {}),
   });
+  const responseText = await response.text();
   onResponse?.(response);
   if (!response.ok) {
-    const responseText = await response.text();
     const error = cliBridgeError(safeJson(responseText));
     if (error?.type === "run_cancelled") {
       throw new CliBridgeRunCancelledError(cliBridgeErrorMessage(error));
     }
     throw new Error(`cli-bridge replay result ${response.status}: ${responseText}`);
   }
-  const parsed = safeJson(await response.text());
+  const parsed = safeJson(responseText);
   const error = cliBridgeError(parsed);
   if (error) {
     if (error.type === "run_cancelled") {

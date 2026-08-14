@@ -73,6 +73,7 @@ export async function* streamTrackedCliBridgeTurn(
       originalTurn.lastEventId,
       signal,
       (response) => captureCliBridgeRunIdentity(response, run, true),
+      () => getCliBridgeRun(options, transport, run, 30_000, signal),
     )) {
       yield event;
     }
