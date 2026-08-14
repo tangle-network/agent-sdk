@@ -14,7 +14,14 @@ positions.
 Session-bus frames that carry their session id only inside `properties.part`
 now pass identity binding. A session surface opened without an exact execution
 id reads that bus, and `message.part.updated` puts the id in no other position,
-so every part frame on that lane was refused.
+so every part frame on that lane was refused. The part position is read only on
+a frame type whose part the sidecar rewrites. A `raw` frame carries a backend
+event the sidecar does not shape, so its payload stays opaque to the identity
+read.
+
+Every check that compares a session id compares each position the frame fills,
+not a single precedence winner. This holds for the expected-session check, for a
+supplied `normalized` block, and for the connection marker of a session stream.
 
 Scope of the other identity rules this adds, by the shape each applies to:
 
@@ -25,7 +32,10 @@ Scope of the other identity rules this adds, by the shape each applies to:
 - A frame whose id aliases disagree is refused. Previously the first alias won
   and the rest went unread.
 - A supplied `normalized` block that names a session the frame's own positions
-  do not carry is refused. Previously the block was returned unread.
+  do not carry is refused. Previously the block was returned unread. The block
+  names no field position of its own, so it cannot say which position it
+  repeats. A frame whose positions name two sessions therefore supplies no
+  block.
 - A frame that omits its executionId or sessionId off an iterator that is not
   stream-bound now reports that absence, rather than reporting the mismatch of a
   value it never carried.

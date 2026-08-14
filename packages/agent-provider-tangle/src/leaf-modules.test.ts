@@ -854,6 +854,111 @@ describe("Tangle split leaf modules", () => {
     });
   });
 
+  it("refuses a supplied normalized block that only one position of the frame carries", () => {
+    const bound = {
+      executionId: "execution-1",
+      sessionId: "runtime-session-1",
+      streamBound: true,
+    };
+
+    // The run-frame position holds the native id and the envelope position
+    // holds the runtime id, so the frame's two positions name two sessions. A
+    // supplied block names an id and no position, so it cannot say which of the
+    // two it repeats, and neither choice is verifiable against the other.
+    const twoPositions = (suppliedSessionId: string) =>
+      ({
+        type: "session.updated",
+        id: `event-supplied-${suppliedSessionId}`,
+        data: {
+          sessionId: "ses_opencode_native",
+          properties: { info: { sessionID: "runtime-session-1" } },
+          normalized: { type: "session.updated", sessionId: suppliedSessionId },
+        },
+      }) as never;
+
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        twoPositions("ses_opencode_native"),
+        bound,
+      ),
+    ).toThrow(/only one position of the frame carries/);
+
+    expect(() =>
+      environmentEventFromSandboxEvent(twoPositions("runtime-session-1"), bound),
+    ).toThrow(/only one position of the frame carries/);
+
+    // One agreeing position in each place leaves one id for the block to
+    // repeat, so the block is accepted.
+    expect(
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-supplied-agreed",
+          data: {
+            sessionId: "runtime-session-1",
+            properties: { info: { sessionID: "runtime-session-1" } },
+            normalized: {
+              type: "session.updated",
+              sessionId: "runtime-session-1",
+            },
+          },
+        } as never,
+        bound,
+      ).normalized,
+    ).toEqual({ type: "session.updated", sessionId: "runtime-session-1" });
+  });
+
+  it("leaves a raw frame's backend payload opaque to the identity read", () => {
+    // A `raw` frame carries a backend event the sidecar does not shape. The
+    // envelope around it names the runtime session; the part inside it is the
+    // backend's own and names the backend's session.
+    const rawFrame = {
+      type: "raw",
+      id: "event-raw",
+      data: {
+        properties: {
+          sessionID: "runtime-session-1",
+          part: {
+            id: "part-1",
+            sessionID: "ses_opencode_native",
+            messageID: "message-1",
+          },
+        },
+      },
+    };
+
+    expect(sandboxEventIdentity(rawFrame as never)).toEqual({
+      executionId: undefined,
+      sessionId: "runtime-session-1",
+      runFrameSessionId: undefined,
+      envelopeSessionId: "runtime-session-1",
+    });
+    expect(
+      environmentEventFromSandboxEvent(rawFrame as never, {
+        sessionId: "runtime-session-1",
+      }).type,
+    ).toBe("raw");
+  });
+
+  it("refuses a raw frame whose only session id sits in its backend payload", () => {
+    // A backend part that names the runtime session does not stand in for the
+    // envelope the sidecar did not write, so this frame carries no identity.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "raw",
+          id: "event-raw-bare",
+          data: {
+            properties: {
+              part: { id: "part-1", sessionID: "runtime-session-1" },
+            },
+          },
+        } as never,
+        { sessionId: "runtime-session-1" },
+      ),
+    ).toThrow(/arrived without a sessionId/);
+  });
+
   it("honors pre-abort and mid-flight abort on environment methods", async () => {
     const readPending = deferred<string>();
     const execPending = deferred<unknown>();

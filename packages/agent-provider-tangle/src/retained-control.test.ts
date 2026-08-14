@@ -1139,6 +1139,23 @@ describe("Tangle retained control", () => {
           },
         } as unknown as SandboxEvent,
       ],
+      // A marker carries no native id, so filling the run-frame position with
+      // this session does not exempt the envelope position from the check.
+      markerMixed: [
+        {
+          id: "connection-marker",
+          type: "connection.established",
+          data: {
+            type: "connection.established",
+            sessionId,
+            properties: {
+              sessionId: "other-session",
+              executionId: controlRef.executionId,
+              timestamp: 1,
+            },
+          },
+        } as unknown as SandboxEvent,
+      ],
     };
 
     for (const [shape, frames] of Object.entries(foreignFrames)) {

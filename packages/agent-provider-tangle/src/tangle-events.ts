@@ -33,10 +33,11 @@ export function isSandboxConnectionMarker(event: SandboxEvent): boolean {
  * it is the harness-native session id (Claude, Codex, OpenCode) rather than the
  * runtime session id.
  *
- * `envelopeSessionId` is the `properties`, `properties.info` and
- * `properties.part` position of an /agents/events frame. The sidecar rewrites
- * the backend's own ids to the runtime ids before it publishes there, so that
- * position names the runtime session on every frame type.
+ * `envelopeSessionId` is the `properties` and `properties.info` position of an
+ * /agents/events frame, plus `properties.part` on a frame type that publishes a
+ * part. The sidecar rewrites the backend's own ids to the runtime ids before it
+ * publishes there, so that position names the runtime session on every frame
+ * type it shapes.
  *
  * `sessionId` is the frame's own session id for a consumer that does not care
  * which position carried it: the run-frame position when present, otherwise the
@@ -50,8 +51,38 @@ export type SandboxEventIdentity = {
   envelopeSessionId?: string;
 };
 
+/**
+ * The frame types whose `properties.part` the sidecar shapes.
+ *
+ * A `raw` frame carries a backend event the sidecar does not shape, so any
+ * `sessionID` inside it is the backend's own value and names no runtime
+ * session. The part position is therefore read only on a frame type that
+ * publishes a rewritten part. A type outside this set keeps its data opaque.
+ */
+const PART_BEARING_FRAME_TYPES: ReadonlySet<string> = new Set([
+  "message.part.updated",
+]);
+
+/**
+ * The session ids a frame carries, one per field position.
+ *
+ * Every position that names a session is an assertion the frame makes about
+ * itself, so each one is compared. Reducing them to a single precedence winner
+ * leaves the losing position unchecked.
+ */
+export function carriedSessionIds(
+  identity: SandboxEventIdentity,
+): readonly string[] {
+  return [identity.runFrameSessionId, identity.envelopeSessionId].filter(
+    (value): value is string => value !== undefined,
+  );
+}
+
 /** Unwrap the nested identity carriers of a session-bus frame. */
-function sessionEnvelope(data: EventRecord): {
+function sessionEnvelope(
+  data: EventRecord,
+  type: string | undefined,
+): {
   properties?: EventRecord;
   info?: EventRecord;
   part?: EventRecord;
@@ -66,7 +97,10 @@ function sessionEnvelope(data: EventRecord): {
   return {
     properties,
     info: record(properties?.info),
-    part: record(properties?.part),
+    part:
+      type !== undefined && PART_BEARING_FRAME_TYPES.has(type)
+        ? record(properties?.part)
+        : undefined,
   };
 }
 
@@ -106,7 +140,10 @@ export function sandboxEventIdentity(event: SandboxEvent): SandboxEventIdentity 
     return {};
   }
   const dataRecord = data as EventRecord;
-  const { properties, info, part } = sessionEnvelope(dataRecord);
+  const { properties, info, part } = sessionEnvelope(
+    dataRecord,
+    typeof record.type === "string" ? record.type : undefined,
+  );
   const runFrameSessionId = agreedIdentifier(
     [dataRecord.sessionId, dataRecord.sessionID],
     "Tangle Sandbox event sessionId",
@@ -138,7 +175,7 @@ function sessionUpdateContent(data: EventRecord): {
   title?: unknown;
   time?: unknown;
 } {
-  const { info } = sessionEnvelope(data);
+  const { info } = sessionEnvelope(data, "session.updated");
   return {
     title: data.title ?? info?.title,
     time: data.time ?? info?.time,
@@ -198,10 +235,11 @@ export function environmentEventFromSandboxEvent(
   const identity = sandboxEventIdentity(event);
   const runFrameCarriesNativeSessionId =
     expected.streamBound === true && record.type === "session.updated";
-  const identityBearingSessionIds = [
-    ...(runFrameCarriesNativeSessionId ? [] : [identity.runFrameSessionId]),
-    identity.envelopeSessionId,
-  ].filter((value): value is string => value !== undefined);
+  const identityBearingSessionIds = carriedSessionIds(
+    runFrameCarriesNativeSessionId
+      ? { envelopeSessionId: identity.envelopeSessionId }
+      : identity,
+  );
   if (expected.executionId !== undefined) {
     if (identity.executionId === undefined && expected.streamBound !== true) {
       throw new Error(
@@ -232,11 +270,7 @@ export function environmentEventFromSandboxEvent(
   const usage = tokenUsageFromData(data);
   // The session id reaches the normalized event whichever position carried it,
   // including the native id an execution-bound stream just accepted as content.
-  const normalized = normalizeSandboxEvent(
-    record.type,
-    data,
-    identity.sessionId,
-  );
+  const normalized = normalizeSandboxEvent(record.type, data, identity);
   return {
     type: record.type,
     data,
@@ -252,8 +286,9 @@ export function environmentEventFromSandboxEvent(
 function normalizeSandboxEvent(
   type: string,
   data: Record<string, unknown>,
-  sessionId: string | undefined,
+  identity: SandboxEventIdentity,
 ): StreamEvent | undefined {
+  const sessionId = identity.sessionId;
   const supplied = data.normalized;
   if (supplied !== undefined) {
     const parsed = CanonicalStreamEventSchema.safeParse(supplied);
@@ -265,16 +300,25 @@ function normalizeSandboxEvent(
         `Tangle Sandbox normalized event type "${parsed.data.type}" does not match transport type "${type}"`,
       );
     }
-    // A supplied block is a field of the frame, so it cannot name a session the
-    // frame's own identity positions do not carry. A frame that carries no
+    // A supplied block is a field of the frame, so it repeats a session id the
+    // frame's own positions carry. It carries no field position of its own, so
+    // it cannot say which position it repeats: every position must agree with
+    // it. Reading it against one precedence winner would leave the other
+    // position free to name a different session. A frame that carries no
     // session id at all can supply no session id either.
-    if (
-      parsed.data.type === "session.updated" &&
-      parsed.data.sessionId !== sessionId
-    ) {
-      throw new Error(
-        "Tangle Sandbox normalized event named a session the frame does not carry",
-      );
+    if (parsed.data.type === "session.updated") {
+      const suppliedSessionId = parsed.data.sessionId;
+      const carried = carriedSessionIds(identity);
+      if (!carried.includes(suppliedSessionId)) {
+        throw new Error(
+          "Tangle Sandbox normalized event named a session the frame does not carry",
+        );
+      }
+      if (carried.some((value) => value !== suppliedSessionId)) {
+        throw new Error(
+          "Tangle Sandbox normalized event named a session only one position of the frame carries",
+        );
+      }
     }
     return parsed.data;
   }
