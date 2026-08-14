@@ -31,6 +31,13 @@ export class CliBridgeRequestRejectedError extends Error {
   }
 }
 
+class CliBridgeRunCancelledError extends Error {
+  constructor(readonly detail: string) {
+    super(`cli-bridge run cancelled: ${detail}`);
+    this.name = "CliBridgeRunCancelledError";
+  }
+}
+
 export async function* streamCliBridgeTurn(
   options: CliBridgeProviderOptions,
   turn: AgentTurnInput,
@@ -86,22 +93,34 @@ export async function* streamCliBridgeTurn(
   let textBoundaryPending = false;
   let terminalCursor: string | undefined;
   let sawProtocolEnd = false;
+  let terminalFrameSeen = false;
+  let cancelledTerminalSeen = false;
   for await (const frame of parseSse(response.body)) {
     if (frame.data === "[DONE]") {
       sawProtocolEnd = true;
       continue;
     }
+    if (terminalFrameSeen) continue;
     const parsed = safeJson(frame.data);
     if (!parsed) continue;
     if (parsed.error && typeof parsed.error === "object") {
       const error = parsed.error as Record<string, unknown>;
       const message = typeof error.message === "string" ? error.message : "cli-bridge error";
+      const cancelled = error.type === "run_cancelled";
       yield* retainedEventsWithIdentity([{
         type: "status",
-        data: { status: "failed", error: message },
-        normalized: { type: "status", status: "failed", detail: message },
+        data: { status: cancelled ? "cancelled" : "failed", error: message },
+        normalized: {
+          type: "status",
+          status: cancelled ? "cancelled" : "failed",
+          detail: message,
+        },
       }], frame.id, runId, sessionId, turn.executionId, replay.anchor);
-      throw new Error(`cli-bridge: ${message}`);
+      terminalFrameSeen = true;
+      completed = cancelled;
+      cancelledTerminalSeen = cancelled;
+      if (!cancelled) throw new Error(`cli-bridge: ${message}`);
+      continue;
     }
     const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
     const delta = choice?.delta;
@@ -189,6 +208,7 @@ export async function* streamCliBridgeTurn(
     }
     if (toolCallDeltas.length > 0) textBoundaryPending = true;
     if (choice?.finish_reason) {
+      terminalFrameSeen = true;
       if (choice.finish_reason === "error") {
         frameEvents.push({
           type: "status",
@@ -242,14 +262,47 @@ export async function* streamCliBridgeTurn(
   if (!completed && lastEventId === undefined) {
     throw new Error("cli-bridge stream ended without a terminal result");
   }
-  if (lastEventId && requestBody !== undefined) {
-    const result = await readFullCliBridgeResult(
-      options,
-      requestBody,
-      transport,
-      signal,
-      onAccepted,
-    );
+  if (lastEventId && requestBody !== undefined && !cancelledTerminalSeen) {
+    let result: Awaited<ReturnType<typeof readFullCliBridgeResult>>;
+    try {
+      result = await readFullCliBridgeResult(
+        options,
+        requestBody,
+        transport,
+        signal,
+        onAccepted,
+      );
+    } catch (error) {
+      if (error instanceof CliBridgeRunCancelledError) {
+        // A normal finish frame can race with the bridge's authoritative
+        // cancelled state. Replace the withheld result at the same cursor.
+        if (terminalCursor !== undefined) {
+          yield {
+            type: "status",
+            data: {
+              status: "cancelled",
+              error: error.detail,
+              runId,
+              sessionId,
+              ...(turn.executionId === undefined
+                ? {}
+                : { executionId: turn.executionId }),
+              cursor: terminalCursor,
+            },
+            normalized: {
+              type: "status",
+              status: "cancelled",
+              detail: error.detail,
+            },
+            id: terminalCursor,
+          };
+        }
+        // If no new terminal frame followed the requested cursor, the caller
+        // already consumed the cancellation event. Do not duplicate it.
+        return;
+      }
+      throw error;
+    }
     const finalModelRequests = result.modelRequests ??
       (modelRequestsKnown ? observedModelRequests : undefined);
     const finalCursor = terminalCursor ?? lastEventId;
@@ -300,15 +353,21 @@ async function readFullCliBridgeResult(
     ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
-    throw new Error(`cli-bridge replay result ${response.status}: ${await response.text()}`);
+    const responseText = await response.text();
+    const error = cliBridgeError(safeJson(responseText));
+    if (error?.type === "run_cancelled") {
+      throw new CliBridgeRunCancelledError(cliBridgeErrorMessage(error));
+    }
+    throw new Error(`cli-bridge replay result ${response.status}: ${responseText}`);
   }
   onAccepted?.(response);
   const parsed = safeJson(await response.text());
-  if (parsed?.error && typeof parsed.error === "object") {
-    const error = parsed.error as Record<string, unknown>;
-    const message =
-      typeof error.message === "string" ? error.message : "cli-bridge replay failed";
-    throw new Error(`cli-bridge replay result failed: ${message}`);
+  const error = cliBridgeError(parsed);
+  if (error) {
+    if (error.type === "run_cancelled") {
+      throw new CliBridgeRunCancelledError(cliBridgeErrorMessage(error));
+    }
+    throw new Error(`cli-bridge replay result failed: ${cliBridgeErrorMessage(error)}`);
   }
   const choice = Array.isArray(parsed?.choices) ? parsed.choices[0] : undefined;
   const message =
@@ -337,4 +396,17 @@ async function readFullCliBridgeResult(
       ? {}
       : { system_fingerprint: responseIdentity.system_fingerprint }),
   };
+}
+
+function cliBridgeError(
+  parsed: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  const error = parsed?.error;
+  return error && typeof error === "object" && !Array.isArray(error)
+    ? error as Record<string, unknown>
+    : undefined;
+}
+
+function cliBridgeErrorMessage(error: Record<string, unknown>): string {
+  return typeof error.message === "string" ? error.message : "cli-bridge replay failed";
 }

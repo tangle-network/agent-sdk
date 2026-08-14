@@ -9,6 +9,7 @@ shapes; higher-level packages import from here rather than redefining them.
 
 `AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
 `RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
+The canonical `cancelled` status identifies caller cancellation and remains distinct from `failed`.
 Providers advertise `retainedControl` only when exact run, result, event, cancellation, replay, detach, turn, and session identity are all implemented together.
 `AgentEnvironment.metadata` is the detached snapshot returned by create or get, so recovery can check persisted annotations without listing environments.
 Metadata can include caller-authored values and does not prove authorization or authorship.

@@ -185,4 +185,24 @@ describe("runtime event envelope", () => {
       }),
     ).toThrow();
   });
+
+  it("preserves caller cancellation as a canonical terminal status", () => {
+    const event = {
+      type: "status",
+      status: "cancelled",
+      detail: "run cancelled by caller",
+    } as const;
+
+    expect(CanonicalStreamEventSchema.parse(event)).toEqual(event);
+    expect(
+      RuntimeEventEnvelopeSchema.parse({
+        runId: "run-cancelled",
+        eventId: "event-cancelled",
+        sequence: 1,
+        cursor: "1:0",
+        receivedAt: "2026-08-14T06:00:00.000Z",
+        event,
+      }).event,
+    ).toEqual(event);
+  });
 });

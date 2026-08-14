@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import {
+  CanonicalStreamEventSchema,
   agentRunCancellationRequestDigest,
   type AgentExactRunControlRef,
   type AgentProfile,
@@ -759,18 +760,381 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       defaultModel: "opencode",
       fetch: async () =>
-        new Response('data: {"error":{"message":"harness failed"}}\n\n', {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
+        new Response(
+          [
+            'data: {"error":{"message":"harness failed","type":"provider_error"}}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
     });
     const environment = await provider.create({ profile: { name: "worker" } });
     const iterator = environment.stream({ prompt: "go" })[Symbol.asyncIterator]();
 
     await expect(iterator.next()).resolves.toMatchObject({
-      value: { type: "status", data: { status: "failed", error: "harness failed" } },
+      value: {
+        type: "status",
+        data: { status: "failed", error: "harness failed" },
+        normalized: { type: "status", status: "failed", detail: "harness failed" },
+      },
     });
     await expect(iterator.next()).rejects.toThrow("cli-bridge: harness failed");
+  });
+
+  it("maps a live caller cancellation to one cancelled terminal event during initial streaming", async () => {
+    const fixture = await startLiveCancellationFixture({ initialStream: true });
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: fixture.baseUrl,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      const events = [];
+      for await (const event of environment.stream({
+        prompt: "work",
+        sessionId: "initial-cancel",
+        executionId: "initial-cancel",
+      })) events.push(event);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        id: "1:0",
+        type: "status",
+        data: {
+          status: "cancelled",
+          error: "run cancelled by caller",
+          cursor: "1:0",
+          runId: "initial-cancel",
+          sessionId: "initial-cancel",
+          executionId: "initial-cancel",
+        },
+        normalized: {
+          type: "status",
+          status: "cancelled",
+          detail: "run cancelled by caller",
+        },
+      });
+      expect(CanonicalStreamEventSchema.parse(events[0]?.normalized)).toEqual({
+        type: "status",
+        status: "cancelled",
+        detail: "run cancelled by caller",
+      });
+      expect(events.some((event) => event.data.status === "failed")).toBe(false);
+      await expect(environment.session?.("initial-cancel").status()).resolves.toBe("cancelled");
+    } finally {
+      await environment?.destroy?.();
+      await fixture.close();
+    }
+  });
+
+  it("does not emit cancellation after a completed terminal frame", async () => {
+    const fixture = await startLiveCancellationFixture({
+      initialStream: true,
+      terminalOrder: "completed-then-cancelled",
+    });
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: fixture.baseUrl,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      const events = [];
+      for await (const event of environment.stream({
+        prompt: "work",
+        sessionId: "completed-before-cancel",
+        executionId: "completed-before-cancel",
+      })) events.push(event);
+
+      const terminalEvents = events.filter(
+        (event) => event.type === "result" || event.type === "status",
+      );
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]).toMatchObject({
+        type: "result",
+        data: { status: "completed", finalText: "done" },
+      });
+      expect(events.some((event) => event.data.status === "cancelled")).toBe(false);
+    } finally {
+      await environment?.destroy?.();
+      await fixture.close();
+    }
+  });
+
+  it("does not reconstruct a second result after a cancelled terminal replay", async () => {
+    const fixture = await startLiveCancellationFixture({ initialStream: true });
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: fixture.baseUrl,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      const events = [];
+      for await (const event of environment.stream({
+        prompt: "work",
+        sessionId: "request-replay-cancel",
+        executionId: "request-replay-cancel",
+        lastEventId: "1",
+      })) events.push(event);
+
+      expect(events).toEqual([]);
+    } finally {
+      await environment?.destroy?.();
+      await fixture.close();
+    }
+  });
+
+  it("does not let a stale completed result flip a replayed cancellation", async () => {
+    let resultRequests = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) {
+          resultRequests += 1;
+          return Response.json({
+            id: "replay-cancel",
+            choices: [
+              {
+                message: { role: "assistant", content: "done" },
+                finish_reason: "stop",
+              },
+            ],
+          });
+        }
+        return new Response(
+          [
+            'id: 1\ndata: {"error":{"message":"run cancelled by caller","type":"run_cancelled"}}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "replay-cancel",
+              "x-run-request-digest": testDigest("replay-cancel"),
+            },
+          },
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      sessionId: "replay-cancel",
+      executionId: "replay-cancel",
+      lastEventId: "0",
+    })) events.push(event);
+
+    // A cancelled terminal is authoritative, so the withheld result is never
+    // requested and a stale completion cannot add or replace a terminal event.
+    expect(resultRequests).toBe(0);
+    expect(events.map((event) => event.type)).toEqual(["status"]);
+    expect(events[0]).toMatchObject({
+      type: "status",
+      data: {
+        status: "cancelled",
+        error: "run cancelled by caller",
+        runId: "replay-cancel",
+        sessionId: "replay-cancel",
+        executionId: "replay-cancel",
+      },
+      normalized: {
+        type: "status",
+        status: "cancelled",
+        detail: "run cancelled by caller",
+      },
+    });
+    expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
+  it("lets authoritative cancellation replace a raced completion after a cursor", async () => {
+    let requests = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode",
+      fetch: async (_url, init) => {
+        requests += 1;
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (body.stream === false) {
+          return Response.json({
+            error: {
+              message: "run cancelled by caller",
+              type: "run_cancelled",
+            },
+          }, { status: 409 });
+        }
+        expect(new Headers(init?.headers).get("last-event-id")).toBe("0");
+        return new Response(
+          [
+            'id: 1\ndata: {"choices":[{"delta":{"content":"partial"},"finish_reason":"stop"}]}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "raced-cancel",
+              "x-run-request-digest": testDigest("raced-cancel"),
+            },
+          },
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+
+    for await (const event of environment.stream({
+      prompt: "work",
+      sessionId: "raced-cancel",
+      executionId: "raced-cancel",
+      lastEventId: "0",
+    })) events.push(event);
+
+    expect(requests).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "message.part.updated",
+      "status",
+    ]);
+    expect(events[1]).toMatchObject({
+      id: "1:1",
+      type: "status",
+      data: {
+        status: "cancelled",
+        error: "run cancelled by caller",
+        cursor: "1:1",
+        runId: "raced-cancel",
+        sessionId: "raced-cancel",
+        executionId: "raced-cancel",
+      },
+      normalized: {
+        type: "status",
+        status: "cancelled",
+        detail: "run cancelled by caller",
+      },
+    });
+    expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
+  it("replays a live caller cancellation as one terminal event and reports a cancelled result", async () => {
+    const fixture = await startLiveCancellationFixture({ initialStream: false });
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: fixture.baseUrl,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      const reference = await environment.dispatch?.({
+        prompt: "work",
+        sessionId: "retained-cancel",
+        executionId: "retained-cancel",
+      });
+      const session = environment.session?.(reference!.id, {
+        controlRef: reference!.controlRef,
+      });
+      const replayed = [];
+      for await (const event of session!.events({ since: "0" })) replayed.push(event);
+
+      expect(replayed).toHaveLength(1);
+      expect(replayed[0]).toMatchObject({
+        id: "1:0",
+        type: "status",
+        data: {
+          status: "cancelled",
+          error: "run cancelled by caller",
+          cursor: "1:0",
+        },
+        normalized: {
+          type: "status",
+          status: "cancelled",
+          detail: "run cancelled by caller",
+        },
+      });
+      const canonicalEvents = replayed.flatMap((event) => {
+        const parsed = CanonicalStreamEventSchema.safeParse(event.normalized);
+        return parsed.success ? [parsed.data] : [];
+      });
+      expect(canonicalEvents).toEqual([
+        {
+          type: "status",
+          status: "cancelled",
+          detail: "run cancelled by caller",
+        },
+      ]);
+      await expect(session?.status()).resolves.toBe("cancelled");
+
+      const result = await session!.result();
+      expect(result).toMatchObject({
+        text: "",
+        success: false,
+        error: "cli-bridge run ended cancelled",
+        metadata: {
+          runId: "retained-cancel",
+          executionId: "retained-cancel",
+          status: "cancelled",
+        },
+      });
+      expect(result.events?.map((event) => event.type)).toEqual(["status"]);
+      expect(result.events?.[0]?.data.status).toBe("cancelled");
+    } finally {
+      await environment?.destroy?.();
+      await fixture.close();
+    }
+  });
+
+  it("replays an exact cancellation acknowledgement without duplicating the cancellation request", async () => {
+    const fixture = await startLiveCancellationFixture({ initialStream: false });
+    let environment: AgentEnvironment | undefined;
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: fixture.baseUrl,
+        defaultModel: "opencode",
+      });
+      environment = await provider.create({ profile: { name: "worker" } });
+      const reference = await environment.dispatch?.({
+        prompt: "work",
+        sessionId: "exact-cancel",
+        executionId: "exact-cancel",
+      });
+      const session = environment.session?.(reference!.id);
+      const controlRef = reference?.controlRef as AgentExactRunControlRef;
+      const material = {
+        operationId: "exact-cancel-operation",
+        run: controlRef,
+        reason: "caller stopped the run",
+      };
+      const request = {
+        ...material,
+        requestDigest: agentRunCancellationRequestDigest(material),
+      };
+
+      const first = await session?.cancelRun?.(request);
+      const replayed = await session?.cancelRun?.(request);
+
+      expect(first).toMatchObject({
+        operationId: "exact-cancel-operation",
+        status: "accepted",
+        effect: "cancelled",
+        run: controlRef,
+      });
+      expect(replayed).toMatchObject({
+        operationId: "exact-cancel-operation",
+        status: "replayed",
+        effect: "cancelled",
+        run: controlRef,
+      });
+      expect(fixture.exactCancelCalls).toBe(2);
+      await expect(session?.status()).resolves.toBe("cancelled");
+    } finally {
+      await environment?.destroy?.();
+      await fixture.close();
+    }
   });
 
   it("rejects a stream that ends without a terminal result", async () => {
@@ -1546,6 +1910,188 @@ function cancelResponse(
       headers: { "content-type": "application/json" },
     },
   );
+}
+
+interface LiveCancellationFixture {
+  readonly baseUrl: string;
+  readonly exactCancelCalls: number;
+  close(): Promise<void>;
+}
+
+async function startLiveCancellationFixture(args: {
+  initialStream: boolean;
+  terminalOrder?: "cancelled" | "completed-then-cancelled";
+}): Promise<LiveCancellationFixture> {
+  const statuses = new Map<string, "running" | "cancelled">();
+  const cancellationOperations = new Set<string>();
+  let exactCancelCalls = 0;
+  const server = createServer((request, response) => {
+    void (async () => {
+      const url = new URL(request.url ?? "/", "http://bridge.local");
+      const segments = url.pathname
+        .split("/")
+        .filter((segment) => segment.length > 0)
+        .map((segment) => decodeURIComponent(segment));
+      if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+        const body = await readJsonRequest(request);
+        const runId = String(body.run_id);
+        statuses.set(runId, args.initialStream ? "cancelled" : "running");
+        if (body.stream === false) {
+          sendJson(response, {
+            error: {
+              message: "run cancelled by caller",
+              type: "run_cancelled",
+            },
+          }, 409);
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": testDigest(runId),
+        });
+        response.end(
+          args.initialStream && request.headers["last-event-id"] !== "1"
+            ? liveCancellationSse(args.terminalOrder)
+            : ": connected\n\ndata: [DONE]\n\n",
+        );
+        return;
+      }
+      const runId = segments[2];
+      if (!runId || segments[0] !== "v1" || segments[1] !== "runs") {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      if (request.method === "POST" && segments[3] === "cancel") {
+        const body = await readJsonRequest(request);
+        statuses.set(runId, "cancelled");
+        if (
+          typeof body.operationId === "string" &&
+          typeof body.requestDigest === "string" &&
+          body.run &&
+          typeof body.run === "object"
+        ) {
+          exactCancelCalls += 1;
+          const replayed = cancellationOperations.has(body.operationId);
+          cancellationOperations.add(body.operationId);
+          sendJson(response, {
+            operationId: body.operationId,
+            requestDigest: body.requestDigest,
+            run: body.run,
+            status: replayed ? "replayed" : "accepted",
+            effect: "cancelled",
+          });
+          return;
+        }
+        sendJson(response, {
+          cancelled: true,
+          cancel_requested: true,
+          terminal: true,
+          run: {
+            id: runId,
+            requestDigest: testDigest(runId),
+            status: "cancelled",
+            terminal: true,
+          },
+        });
+        return;
+      }
+      if (request.method === "GET" && segments[3] === "events") {
+        statuses.set(runId, "cancelled");
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": testDigest(runId),
+        });
+        response.end(liveCancellationSse());
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3) {
+        const status = statuses.get(runId) ?? "running";
+        sendJson(response, {
+          id: runId,
+          requestDigest: testDigest(runId),
+          status,
+          terminal: status === "cancelled",
+        });
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    })().catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      sendJson(response, {
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+          type: "fixture_error",
+        },
+      }, 500);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await closeServer(server);
+    throw new Error("live cancellation fixture did not bind TCP");
+  }
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    get exactCancelCalls() {
+      return exactCancelCalls;
+    },
+    close: () => closeServer(server),
+  };
+}
+
+async function readJsonRequest(
+  request: import("node:http").IncomingMessage,
+): Promise<Record<string, unknown>> {
+  let raw = "";
+  for await (const chunk of request) {
+    raw += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+  }
+  const parsed: unknown = raw.length === 0 ? {} : JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("fixture request body is not an object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function liveCancellationSse(
+  terminalOrder: "cancelled" | "completed-then-cancelled" = "cancelled",
+): string {
+  return [
+    ...(terminalOrder === "completed-then-cancelled"
+      ? ['id: 1\ndata: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n']
+      : []),
+    `id: ${terminalOrder === "completed-then-cancelled" ? "2" : "1"}\ndata: {"error":{"message":"run cancelled by caller","type":"run_cancelled"}}\n\n`,
+    "data: [DONE]\n\n",
+  ].join("");
+}
+
+function sendJson(
+  response: import("node:http").ServerResponse,
+  value: Record<string, unknown>,
+  status = 200,
+): void {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(value));
+}
+
+async function closeServer(server: import("node:http").Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 function testDigest(value: string): `sha256:${string}` {

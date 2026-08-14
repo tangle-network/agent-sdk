@@ -417,7 +417,13 @@ export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
     }),
     z.strictObject({
       type: z.literal("status"),
-      status: z.enum(["started", "processing", "completed", "failed"]),
+      status: z.enum([
+        "started",
+        "processing",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
       detail: boundedStringSchema.optional(),
     }),
     z.strictObject({
