@@ -943,19 +943,6 @@ describe("Tangle retained control", () => {
         },
       },
       {
-        id: "event-envelope-session",
-        type: "session.updated",
-        data: {
-          properties: {
-            info: {
-              id: "session-replay",
-              sessionID: "session-replay",
-              title: "Runtime session",
-            },
-          },
-        },
-      },
-      {
         id: "event-2",
         type: "result",
         data: {
@@ -987,12 +974,7 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.since === "event-1"
-            ? [
-                upstreamEvents[1]!,
-                upstreamEvents[2]!,
-                upstreamEvents[3]!,
-                upstreamEvents[3]!,
-              ]
+            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1030,12 +1012,7 @@ describe("Tangle retained control", () => {
         } as SandboxEvent;
         const replayEvents =
           options?.lastEventId === "event-1"
-            ? [
-                upstreamEvents[1]!,
-                upstreamEvents[2]!,
-                upstreamEvents[3]!,
-                upstreamEvents[3]!,
-              ]
+            ? [upstreamEvents[1]!, upstreamEvents[2]!, upstreamEvents[2]!]
             : upstreamEvents;
         for (const event of replayEvents) yield event;
       },
@@ -1072,21 +1049,15 @@ describe("Tangle retained control", () => {
     const replay = await collect(session.events({ since: "event-1" }));
     expect(replay.map((event) => event.id)).toEqual([
       "event-native-session",
-      "event-envelope-session",
       "event-2",
     ]);
-    // The run frame's harness-native id is content and survives replay.
+    // The replay lane serves run frames, so `session.updated` arrives with the
+    // harness-native id in `data.sessionId`. That id is content and reaches the
+    // normalized event.
     expect(replay[0]?.normalized).toEqual({
       type: "session.updated",
       sessionId: "opencode-native-session",
       title: "Native harness session",
-    });
-    // The session-envelope position holds the runtime session id and reaches
-    // the normalized event rather than being dropped.
-    expect(replay[1]?.normalized).toEqual({
-      type: "session.updated",
-      sessionId: "session-replay",
-      title: "Runtime session",
     });
     expect(capturedOptions).toMatchObject({
       lastEventId: "event-1",
@@ -1112,13 +1083,29 @@ describe("Tangle retained control", () => {
       sessionId,
     );
     const foreignFrames: Record<string, SandboxEvent[]> = {
-      // The session-envelope position carries the runtime session id, so a
-      // foreign value there is another session's frame on this stream.
+      // The envelope position names the runtime session on every frame, so a
+      // foreign value there is another session's frame. The replay lane serves
+      // run frames and the session bus serves envelopes; the rule binds the
+      // position, so it holds on whichever lane the shape arrives.
       envelope: [
         {
           id: "event-foreign-envelope",
           type: "session.updated",
           data: {
+            properties: {
+              info: { id: "other-session", sessionID: "other-session" },
+            },
+          },
+        } as unknown as SandboxEvent,
+      ],
+      // The run-frame position is content on `session.updated` only. A run
+      // frame that also fills the envelope position is still checked there.
+      mixed: [
+        {
+          id: "event-foreign-mixed",
+          type: "session.updated",
+          data: {
+            sessionId: "opencode-native-session",
             properties: {
               info: { id: "other-session", sessionID: "other-session" },
             },
@@ -1176,8 +1163,94 @@ describe("Tangle retained control", () => {
       await expect(
         collect(session.events()),
         `foreign ${shape} frame must not pass identity binding`,
-      ).rejects.toThrow(/sessionId/);
+      ).rejects.toThrow(/identified a different sessionId/);
     }
+  });
+
+  it("carries the runtime session id of a session-bus envelope frame", async () => {
+    const environmentId = "sbx-session-bus";
+    const sessionId = "session-bus";
+    // Without an exact executionId the session surface reads the session bus,
+    // which serves envelopes under `properties` rather than run frames. That
+    // position names the runtime session on every frame.
+    const envelopeFrame = (id: string, sessionID: string): SandboxEvent =>
+      ({
+        id,
+        type: "session.updated",
+        data: {
+          properties: {
+            info: { id: sessionID, sessionID, title: "Runtime session" },
+          },
+        },
+      }) as unknown as SandboxEvent;
+
+    const busEnvironment = async (frames: SandboxEvent[]) => {
+      const sandboxSession: SandboxSessionLike = {
+        ...retainedSessionHandle(sessionId),
+        async *events() {
+          for (const frame of frames) yield frame;
+        },
+      };
+      const box: SandboxInstanceLike = retainedDeployment({
+        id: environmentId,
+        async *streamPrompt() {},
+        session: () => sandboxSession,
+      });
+      const provider = createTangleProvider({
+        client: { create: async () => box },
+      });
+      const environment = await provider.create({ profile: { name: "worker" } });
+      return environment.session!(sessionId);
+    };
+
+    // A message part names its session only inside the part. The sidecar
+    // rewrites that id to the runtime session before it publishes to the bus.
+    const partFrame = (id: string, sessionID: string): SandboxEvent =>
+      ({
+        id,
+        type: "message.part.updated",
+        data: {
+          properties: {
+            part: {
+              id: "part-1",
+              sessionID,
+              messageID: "message-1",
+              type: "text",
+              text: "hello",
+            },
+          },
+        },
+      }) as unknown as SandboxEvent;
+
+    const own = await busEnvironment([
+      envelopeFrame("event-bus", sessionId),
+      partFrame("event-bus-part", sessionId),
+    ]);
+    const events = await collect(own.events());
+    expect(events.map((event) => event.id)).toEqual([
+      "event-bus",
+      "event-bus-part",
+    ]);
+    expect(events[0]?.normalized).toEqual({
+      type: "session.updated",
+      sessionId,
+      title: "Runtime session",
+    });
+    expect(events[1]?.type).toBe("message.part.updated");
+
+    const foreignPart = await busEnvironment([
+      partFrame("event-bus-part-foreign", "other-session"),
+    ]);
+    await expect(collect(foreignPart.events())).rejects.toThrow(
+      /identified a different sessionId/,
+    );
+
+    const foreign = await busEnvironment([
+      envelopeFrame("event-bus-foreign", "other-session"),
+    ]);
+    await expect(collect(foreign.events())).rejects.toThrow(
+      /identified a different sessionId/,
+    );
   });
 
   it("keeps the provider-owned control reference after external mutation", async () => {

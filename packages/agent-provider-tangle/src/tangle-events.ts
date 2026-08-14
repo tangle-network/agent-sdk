@@ -26,76 +26,110 @@ export function isSandboxConnectionMarker(event: SandboxEvent): boolean {
 }
 
 /**
- * Which field position carried a frame's session id.
+ * The session ids a Sandbox event carries, kept separate by field position.
  *
- * `run-frame` is `data.sessionId`/`data.sessionID`. The run/stream lane copies
- * that value straight from the backend adapter, so on `session.updated` it is
- * the harness-native session id (Claude, Codex, OpenCode) rather than the
+ * `runFrameSessionId` is `data.sessionId`/`data.sessionID`. The run/stream lane
+ * copies that value straight from the backend adapter, so on `session.updated`
+ * it is the harness-native session id (Claude, Codex, OpenCode) rather than the
  * runtime session id.
  *
- * `session-envelope` is the `properties`/`properties.info` position of an
- * /agents/events frame. The sidecar writes the runtime session id there for
- * every frame type, so that position stays identity-bearing.
+ * `envelopeSessionId` is the `properties`, `properties.info` and
+ * `properties.part` position of an /agents/events frame. The sidecar rewrites
+ * the backend's own ids to the runtime ids before it publishes there, so that
+ * position names the runtime session on every frame type.
+ *
+ * `sessionId` is the frame's own session id for a consumer that does not care
+ * which position carried it: the run-frame position when present, otherwise the
+ * envelope position. It repeats one of those two values and is never a third
+ * one, so a caller that must know the position reads the position.
  */
-export type SandboxSessionIdSource = "run-frame" | "session-envelope";
+export type SandboxEventIdentity = {
+  executionId?: string;
+  sessionId?: string;
+  runFrameSessionId?: string;
+  envelopeSessionId?: string;
+};
 
-/** Unwrap the `properties`/`properties.info` nesting of a session-bus frame. */
+/** Unwrap the nested identity carriers of a session-bus frame. */
 function sessionEnvelope(data: EventRecord): {
   properties?: EventRecord;
   info?: EventRecord;
+  part?: EventRecord;
 } {
-  const properties =
-    data.properties &&
-    typeof data.properties === "object" &&
-    !Array.isArray(data.properties)
-      ? (data.properties as EventRecord)
+  const record = (value: unknown): EventRecord | undefined =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as EventRecord)
       : undefined;
-  const info =
-    properties?.info &&
-    typeof properties.info === "object" &&
-    !Array.isArray(properties.info)
-      ? (properties.info as EventRecord)
-      : undefined;
-  return { properties, info };
+  const properties = record(data.properties);
+  // `data.part` is the run lane's raw backend part, whose ids are the backend's
+  // own. Only the part under `properties` has been rewritten to the runtime ids.
+  return {
+    properties,
+    info: record(properties?.info),
+    part: record(properties?.part),
+  };
+}
+
+/**
+ * The one value a set of alias fields carries.
+ *
+ * The aliases of an id within one frame are copies of a single value, so two
+ * different values across them is a frame claiming two identities. Such a frame
+ * is refused rather than resolved by field precedence, which would leave the
+ * losing alias unchecked.
+ */
+function agreedIdentifier(
+  values: readonly unknown[],
+  label: string,
+): string | undefined {
+  let agreed: string | undefined;
+  for (const raw of values) {
+    if (raw === undefined || raw === null) continue;
+    const value = optionalNonEmptyString(raw, label);
+    if (value === undefined) continue;
+    if (agreed === undefined) {
+      agreed = value;
+      continue;
+    }
+    if (agreed !== value) {
+      throw new Error(`${label} disagreed across the fields that carry it`);
+    }
+  }
+  return agreed;
 }
 
 /** Read identity from both run frames and /agents/events session envelopes. */
-export function sandboxEventIdentity(event: SandboxEvent): {
-  executionId?: string;
-  sessionId?: string;
-  sessionIdSource?: SandboxSessionIdSource;
-} {
+export function sandboxEventIdentity(event: SandboxEvent): SandboxEventIdentity {
   const record = event as unknown as EventRecord;
   const data = record.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return {};
   }
   const dataRecord = data as EventRecord;
-  const { properties, info } = sessionEnvelope(dataRecord);
-  const runFrameSessionId = dataRecord.sessionId ?? dataRecord.sessionID;
-  const envelopeSessionId =
-    properties?.sessionId ??
-    properties?.sessionID ??
-    info?.sessionId ??
-    info?.sessionID;
-  const sessionId = optionalNonEmptyString(
-    runFrameSessionId ?? envelopeSessionId,
+  const { properties, info, part } = sessionEnvelope(dataRecord);
+  const runFrameSessionId = agreedIdentifier(
+    [dataRecord.sessionId, dataRecord.sessionID],
+    "Tangle Sandbox event sessionId",
+  );
+  const envelopeSessionId = agreedIdentifier(
+    [
+      properties?.sessionId,
+      properties?.sessionID,
+      info?.sessionId,
+      info?.sessionID,
+      part?.sessionId,
+      part?.sessionID,
+    ],
     "Tangle Sandbox event sessionId",
   );
   return {
-    executionId: optionalNonEmptyString(
-      dataRecord.executionId ?? properties?.executionId ?? info?.executionId,
+    executionId: agreedIdentifier(
+      [dataRecord.executionId, properties?.executionId, info?.executionId],
       "Tangle Sandbox event executionId",
     ),
-    sessionId,
-    ...(sessionId === undefined
-      ? {}
-      : {
-          sessionIdSource:
-            (runFrameSessionId ?? undefined) !== undefined
-              ? ("run-frame" as const)
-              : ("session-envelope" as const),
-        }),
+    sessionId: runFrameSessionId ?? envelopeSessionId,
+    runFrameSessionId,
+    envelopeSessionId,
   };
 }
 
@@ -153,36 +187,47 @@ export function environmentEventFromSandboxEvent(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
     );
   }
-  // An exact run stream is already selected by the runtime execution id. On
-  // that stream, a `session.updated` run frame carries the harness-native
-  // session id (for example an OpenCode session), not the runtime session id,
-  // so that value is content. Every other frame, and the session-envelope
-  // position of `session.updated` itself, still carries the runtime session id
-  // and stays identity-checked.
+  // A stream-bound iterator is the response body of the run this call started
+  // or the replay of one named execution, so the transport itself excludes
+  // another session's frames. On such a stream the run-frame position of
+  // `session.updated` carries the harness-native session id (for example an
+  // OpenCode session) rather than the runtime session id, so that one position
+  // on that one frame type is content. Every other position of that frame, and
+  // every position of every other frame type, names the runtime session and is
+  // compared to the expected id.
   const identity = sandboxEventIdentity(event);
-  const eventExecutionId = identity.executionId;
-  const carriesNativeSessionId =
-    expected.streamBound === true &&
-    record.type === "session.updated" &&
-    identity.sessionIdSource === "run-frame";
-  const eventSessionId = carriesNativeSessionId
-    ? undefined
-    : identity.sessionId;
-  if (
-    expected.executionId !== undefined &&
-    ((eventExecutionId === undefined && expected.streamBound !== true) ||
-      (eventExecutionId !== undefined && eventExecutionId !== expected.executionId))
-  ) {
-    throw new Error(
-      "Tangle exact session event identified a different executionId",
-    );
+  const runFrameCarriesNativeSessionId =
+    expected.streamBound === true && record.type === "session.updated";
+  const identityBearingSessionIds = [
+    ...(runFrameCarriesNativeSessionId ? [] : [identity.runFrameSessionId]),
+    identity.envelopeSessionId,
+  ].filter((value): value is string => value !== undefined);
+  if (expected.executionId !== undefined) {
+    if (identity.executionId === undefined && expected.streamBound !== true) {
+      throw new Error(
+        "Tangle exact session event arrived without an executionId",
+      );
+    }
+    if (
+      identity.executionId !== undefined &&
+      identity.executionId !== expected.executionId
+    ) {
+      throw new Error(
+        "Tangle exact session event identified a different executionId",
+      );
+    }
   }
-  if (
-    expected.sessionId !== undefined &&
-    ((eventSessionId === undefined && expected.streamBound !== true) ||
-      (eventSessionId !== undefined && eventSessionId !== expected.sessionId))
-  ) {
-    throw new Error("Tangle exact session event identified a different sessionId");
+  if (expected.sessionId !== undefined) {
+    if (identityBearingSessionIds.length === 0 && expected.streamBound !== true) {
+      throw new Error("Tangle exact session event arrived without a sessionId");
+    }
+    for (const value of identityBearingSessionIds) {
+      if (value !== expected.sessionId) {
+        throw new Error(
+          "Tangle exact session event identified a different sessionId",
+        );
+      }
+    }
   }
   const usage = tokenUsageFromData(data);
   // The session id reaches the normalized event whichever position carried it,
@@ -218,6 +263,17 @@ function normalizeSandboxEvent(
     if (parsed.data.type !== type) {
       throw new Error(
         `Tangle Sandbox normalized event type "${parsed.data.type}" does not match transport type "${type}"`,
+      );
+    }
+    // A supplied block is a field of the frame, so it cannot name a session the
+    // frame's own identity positions do not carry. A frame that carries no
+    // session id at all can supply no session id either.
+    if (
+      parsed.data.type === "session.updated" &&
+      parsed.data.sessionId !== sessionId
+    ) {
+      throw new Error(
+        "Tangle Sandbox normalized event named a session the frame does not carry",
       );
     }
     return parsed.data;

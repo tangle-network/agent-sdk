@@ -42,7 +42,10 @@ import {
   assertOptionKeys,
   assertRecord,
 } from "./tangle-environment-validation.js";
-import { environmentEventFromSandboxEvent } from "./tangle-events.js";
+import {
+  environmentEventFromSandboxEvent,
+  sandboxEventIdentity,
+} from "./tangle-events.js";
 import {
   exactProcessStatusFromSandbox,
   sandboxProcessAsExactProcess,
@@ -570,19 +573,7 @@ describe("Tangle split leaf modules", () => {
         } as never,
         bound,
       ),
-    ).toThrow(/sessionId/);
-
-    // The run-frame allowance belongs to execution-bound streams only.
-    expect(() =>
-      environmentEventFromSandboxEvent(
-        {
-          type: "session.updated",
-          id: "event-unbound",
-          data: { sessionId: "ses_opencode_native" },
-        } as never,
-        { sessionId: "runtime-session-1" },
-      ),
-    ).toThrow(/sessionId/);
+    ).toThrow(/identified a different sessionId/);
 
     // It belongs to `session.updated` only: every other frame keeps its
     // runtime identity check in the same position.
@@ -595,7 +586,272 @@ describe("Tangle split leaf modules", () => {
         } as never,
         bound,
       ),
-    ).toThrow(/sessionId/);
+    ).toThrow(/identified a different sessionId/);
+  });
+
+  it("reads each session id position separately and takes the run frame as the frame's own id", () => {
+    expect(
+      sandboxEventIdentity({
+        type: "session.updated",
+        data: {
+          sessionId: "ses_opencode_native",
+          properties: { info: { sessionID: "runtime-session-1" } },
+        },
+      } as never),
+    ).toEqual({
+      executionId: undefined,
+      sessionId: "ses_opencode_native",
+      runFrameSessionId: "ses_opencode_native",
+      envelopeSessionId: "runtime-session-1",
+    });
+
+    expect(
+      sandboxEventIdentity({
+        type: "session.updated",
+        data: { properties: { info: { sessionID: "runtime-session-1" } } },
+      } as never),
+    ).toEqual({
+      executionId: undefined,
+      sessionId: "runtime-session-1",
+      runFrameSessionId: undefined,
+      envelopeSessionId: "runtime-session-1",
+    });
+  });
+
+  it("reads a message part's session id from the envelope position only", () => {
+    // The run lane forwards the backend's own part, so `data.part` holds the
+    // harness-native session id and names no runtime session.
+    expect(
+      sandboxEventIdentity({
+        type: "message.part.updated",
+        data: {
+          part: {
+            id: "part-1",
+            sessionID: "ses_opencode_native",
+            messageID: "message-1",
+          },
+        },
+      } as never),
+    ).toEqual({
+      executionId: undefined,
+      sessionId: undefined,
+      runFrameSessionId: undefined,
+      envelopeSessionId: undefined,
+    });
+
+    // The session bus rewrites the part to the runtime ids before publishing.
+    expect(
+      sandboxEventIdentity({
+        type: "message.part.updated",
+        data: {
+          properties: {
+            part: {
+              id: "part-1",
+              sessionID: "runtime-session-1",
+              messageID: "message-1",
+            },
+          },
+        },
+      } as never),
+    ).toEqual({
+      executionId: undefined,
+      sessionId: "runtime-session-1",
+      runFrameSessionId: undefined,
+      envelopeSessionId: "runtime-session-1",
+    });
+  });
+
+  it("refuses a frame whose id aliases carry two different values", () => {
+    expect(() =>
+      sandboxEventIdentity({
+        type: "status",
+        data: { sessionId: "runtime-session-1", sessionID: "other-session" },
+      } as never),
+    ).toThrow(/sessionId disagreed/);
+
+    expect(() =>
+      sandboxEventIdentity({
+        type: "status",
+        data: {
+          executionId: "execution-1",
+          properties: { executionId: "execution-2" },
+        },
+      } as never),
+    ).toThrow(/executionId disagreed/);
+  });
+
+  it("checks the envelope session id even when the run frame position also carries one", () => {
+    const bound = {
+      executionId: "execution-1",
+      sessionId: "runtime-session-1",
+      streamBound: true,
+    };
+
+    // The run-frame position is content on this stream, but the envelope
+    // position names the runtime session and must still match.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-mixed-foreign",
+          data: {
+            sessionId: "ses_opencode_native",
+            properties: {
+              info: { sessionID: "other-session" },
+            },
+          },
+        } as never,
+        bound,
+      ),
+    ).toThrow(/identified a different sessionId/);
+
+    // The same shape naming this session passes, and the run-frame position
+    // still supplies the normalized event's session id.
+    const converted = environmentEventFromSandboxEvent(
+      {
+        type: "session.updated",
+        id: "event-mixed-own",
+        data: {
+          sessionId: "ses_opencode_native",
+          properties: {
+            info: { sessionID: "runtime-session-1", title: "Runtime session" },
+          },
+        },
+      } as never,
+      bound,
+    );
+    expect(converted.normalized).toEqual({
+      type: "session.updated",
+      sessionId: "ses_opencode_native",
+      title: "Runtime session",
+    });
+  });
+
+  it("grants the native-session-id allowance to stream-bound iterators only", () => {
+    const nativeRunFrame = {
+      type: "session.updated",
+      id: "event-native",
+      data: { sessionId: "ses_opencode_native" },
+    };
+
+    // Off a stream-bound iterator the run-frame position is identity, so this
+    // is a mismatch rather than a frame that carried no session id.
+    expect(() =>
+      environmentEventFromSandboxEvent(nativeRunFrame as never, {
+        sessionId: "runtime-session-1",
+      }),
+    ).toThrow(/identified a different sessionId/);
+
+    expect(
+      environmentEventFromSandboxEvent(nativeRunFrame as never, {
+        sessionId: "runtime-session-1",
+        streamBound: true,
+      }).normalized,
+    ).toEqual({
+      type: "session.updated",
+      sessionId: "ses_opencode_native",
+    });
+  });
+
+  it("requires an identity a frame off a stream-bound iterator may omit", () => {
+    const noSessionId = {
+      type: "status",
+      id: "event-no-session",
+      data: { status: "processing" },
+    };
+    expect(() =>
+      environmentEventFromSandboxEvent(noSessionId as never, {
+        sessionId: "runtime-session-1",
+      }),
+    ).toThrow(/arrived without a sessionId/);
+    expect(
+      environmentEventFromSandboxEvent(noSessionId as never, {
+        sessionId: "runtime-session-1",
+        streamBound: true,
+      }).type,
+    ).toBe("status");
+
+    const noExecutionId = {
+      type: "status",
+      id: "event-no-execution",
+      data: { status: "processing" },
+    };
+    expect(() =>
+      environmentEventFromSandboxEvent(noExecutionId as never, {
+        executionId: "execution-1",
+      }),
+    ).toThrow(/arrived without an executionId/);
+    expect(
+      environmentEventFromSandboxEvent(noExecutionId as never, {
+        executionId: "execution-1",
+        streamBound: true,
+      }).type,
+    ).toBe("status");
+  });
+
+  it("refuses a supplied normalized block that names a session the frame does not carry", () => {
+    const bound = {
+      executionId: "execution-1",
+      sessionId: "runtime-session-1",
+      streamBound: true,
+    };
+
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-supplied-foreign",
+          data: {
+            sessionId: "ses_opencode_native",
+            normalized: {
+              type: "session.updated",
+              sessionId: "other-session",
+            },
+          },
+        } as never,
+        bound,
+      ),
+    ).toThrow(/named a session the frame does not carry/);
+
+    // A frame that carries no session id can supply none either.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-supplied-invented",
+          data: {
+            normalized: {
+              type: "session.updated",
+              sessionId: "other-session",
+            },
+          },
+        } as never,
+        bound,
+      ),
+    ).toThrow(/named a session the frame does not carry/);
+
+    // A block that repeats the frame's own session id is accepted.
+    expect(
+      environmentEventFromSandboxEvent(
+        {
+          type: "session.updated",
+          id: "event-supplied-own",
+          data: {
+            sessionId: "ses_opencode_native",
+            normalized: {
+              type: "session.updated",
+              sessionId: "ses_opencode_native",
+              title: "Native harness session",
+            },
+          },
+        } as never,
+        bound,
+      ).normalized,
+    ).toEqual({
+      type: "session.updated",
+      sessionId: "ses_opencode_native",
+      title: "Native harness session",
+    });
   });
 
   it("honors pre-abort and mid-flight abort on environment methods", async () => {
