@@ -23,6 +23,8 @@ its own and every replay answer comes from the deployment. An absent flag, a
 `null` capability document, and an unreadable one all claim nothing.
 
 The `@tangle-network/sandbox` peer floor moves to `>=0.23.0 <1.0.0`.
-`session.respondToInteraction` first shipped in 0.23.0; an earlier SDK
-resolves the session's first outstanding question rather than the one a
-response names, and that cannot be feature-detected.
+`session.respondToInteraction` first shipped in 0.23.0. The adapter
+feature-detects it, so an older SDK claims no interactions; the floor stands
+because the earlier answer path resolves the session's first outstanding
+question rather than the one a response names, and this adapter never falls
+back to it.

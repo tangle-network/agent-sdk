@@ -2,9 +2,10 @@
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
 The peer range is `>=0.23.0 <1.0.0`, and this package is developed and tested against 0.23.0.
-The floor is 0.23.0 because `session.respondToInteraction` first shipped there.
-An earlier SDK answers the session's first outstanding question rather than the one a response names, so a response meant for one ask resolves another and reports success.
-That failure cannot be feature-detected, because the older method has the same name and the same success shape.
+The floor is 0.23.0 because the response path needs `session.respondToInteraction`, which first shipped there.
+The adapter feature-detects that method, so an older SDK claims no interactions rather than failing to load.
+The floor stands anyway: the earlier answer path resolves the session's first outstanding question rather than the one a response names, so a response meant for one ask resolves another and reports success.
+This adapter never falls back to it.
 
 ```ts
 import { Sandbox } from '@tangle-network/sandbox'
