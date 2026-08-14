@@ -18,8 +18,10 @@ const MAX_RETAINED_FRAMES = MAX_ARRAY_LENGTH;
  * The buffer is bounded, so the accepted cursors move as frames are evicted.
  * {@link cursors} states the window they moved to: `earliest` is the oldest
  * cursor `read` accepts and delivers every retained frame from, and `latest` is
- * the newest output frame. A consumer that holds no cursor, or holds one that
- * was evicted, resumes from `earliest` instead of being locked out.
+ * the newest output frame. A read with no cursor starts at `earliest`, so a
+ * consumer that holds none is never locked out. A consumer that names an
+ * evicted cursor is refused and told which cursor to resume from, because it
+ * believes it received the frames the gap would silently drop.
  */
 export class TerminalFrameLog {
   private entries: Array<{ ordinal: number; event: TerminalOutputEvent }> = [];
@@ -70,11 +72,14 @@ export class TerminalFrameLog {
   }
 
   async *read(
-    since: number,
+    since: number | undefined,
     signal?: AbortSignal,
   ): AsyncIterable<TerminalOutputEvent> {
     signal?.throwIfAborted();
-    let cursor = this.ordinalForCursor(since);
+    // An absent cursor resolves to the oldest retained frame here, where the
+    // read begins, so frames evicted between the call and the first iteration
+    // cannot lock the consumer out of a window it never named.
+    let cursor = this.ordinalForCursor(since ?? this.evictedOutputSeq);
     while (true) {
       signal?.throwIfAborted();
       if (this.evictedOrdinal > cursor) {

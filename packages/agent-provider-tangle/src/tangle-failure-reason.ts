@@ -19,6 +19,7 @@ export type TransportRead =
   | "subscription read"
   | "account usage read"
   | "terminal attach"
+  | "terminal acknowledgement"
   | "terminal metadata read"
   | "terminal socket";
 

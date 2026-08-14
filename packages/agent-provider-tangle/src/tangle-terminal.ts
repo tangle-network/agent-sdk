@@ -184,7 +184,21 @@ export function createTangleTerminalRegistry(
         };
       }
       options?.signal?.throwIfAborted();
-      const acknowledgement = ready ?? stream.ready;
+      let acknowledgement: SandboxTerminalReadyLike | undefined;
+      try {
+        // `ready` is an accessor on the SDK stream that throws until the
+        // runtime's acknowledgement arrives. Read outside a guard it would
+        // replace this attach's result with a raw transport error and abandon
+        // the socket the attach opened.
+        acknowledgement = ready ?? stream.ready;
+      } catch (error) {
+        await closeQuietly(stream);
+        return {
+          status: "unknown",
+          message: transportFailureReason("terminal acknowledgement", error),
+          retryable: true,
+        };
+      }
       if (
         acknowledgement === undefined ||
         typeof acknowledgement.sessionId !== "string" ||
@@ -258,7 +272,22 @@ export function createTangleTerminalRegistry(
       const previous = attached.get(state.terminalSessionId);
       state.attachCount =
         previous === undefined ? 1 : previous.session.ref.attachCount + 1;
-      const session = createTangleTerminalSession(stream, log, state, activity, exit);
+      // A handle drops only the entry it still owns, matched by the socket it
+      // was built on. A later attach replaces that entry with its own socket,
+      // so a stale handle's detach cannot evict the terminal now held.
+      const release = (): void => {
+        if (attached.get(state.terminalSessionId)?.stream === stream) {
+          attached.delete(state.terminalSessionId);
+        }
+      };
+      const session = createTangleTerminalSession(
+        stream,
+        log,
+        state,
+        activity,
+        exit,
+        release,
+      );
       attached.set(state.terminalSessionId, { session, stream });
       // The registry holds one socket per terminal. The socket this attach
       // replaces stays open on the runtime until its own close, so it is
@@ -345,11 +374,14 @@ function createTangleTerminalSession(
   state: TerminalState,
   activity: { localMs: number },
   exit: { exitCode?: number; exitSignal?: string; seen: boolean },
+  release: () => void,
 ): AgentTerminalSession {
   // A reference describes what this handle can do with its own socket. The
   // runtime keeps a detached PTY alive, but a closed socket carries no input
   // and no output, so a detached or closed handle reports the terminal as not
-  // running and every operation that needs a live socket is denied.
+  // running and every operation that needs a live socket is denied. The handle
+  // releases its registry entry at that same instant, before the socket close
+  // it cannot un-commit, so a close that fails mid-flight leaks no entry.
   let detached = false;
   const socketOpen = (): boolean => detached === false && stream.isOpen !== false;
   const currentRef = (): TerminalSessionRef => {
@@ -423,6 +455,7 @@ function createTangleTerminalSession(
       assertOptionKeys(options, ["signal"], "Tangle terminal detach");
       options?.signal?.throwIfAborted();
       detached = true;
+      release();
       await awaitWithSignal(stream.close(), options?.signal);
       state.attachCount = Math.max(0, state.attachCount - 1);
       return {
@@ -435,6 +468,7 @@ function createTangleTerminalSession(
       assertOptionKeys(options, ["signal"], "Tangle terminal close");
       options?.signal?.throwIfAborted();
       detached = true;
+      release();
       await awaitWithSignal(stream.close(), options?.signal);
       state.attachCount = Math.max(0, state.attachCount - 1);
       if (exit.seen) {
@@ -464,7 +498,10 @@ function createTangleTerminalSession(
       signal?: AbortSignal;
     }): AsyncIterable<TerminalOutputEvent> {
       assertOptionKeys(options, ["since", "signal"], "Tangle terminal events");
-      return log.read(options?.since ?? 0, options?.signal);
+      // The absent cursor stays absent: the frame log resolves it to the oldest
+      // frame it still retains. Naming 0 here would hand a fresh consumer the
+      // one cursor the log refuses once the buffer has evicted an output frame.
+      return log.read(options?.since, options?.signal);
     },
   };
 }

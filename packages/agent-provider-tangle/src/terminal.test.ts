@@ -62,6 +62,8 @@ function fakeTerminalTransport(options?: {
   sessionId?: string;
   detachTimeoutMs?: number;
   attachError?: Error;
+  /** Withhold the acknowledgement and throw from `ready`, as the SDK does. */
+  readyError?: Error;
 }): FakeTerminalTransport {
   const written: string[] = [];
   const resizes: Array<{ cols: number; rows: number }> = [];
@@ -117,11 +119,18 @@ function fakeTerminalTransport(options?: {
         // The runtime acknowledges the attach and then replays the retained
         // screen before `attach()` resolves, which is why the handlers are
         // registered up front.
-        handlers?.onReady?.(ready);
-        handlers?.onData?.(encoder.encode("replayed screen\r\n"));
+        if (options?.readyError === undefined) {
+          handlers?.onReady?.(ready);
+          handlers?.onData?.(encoder.encode("replayed screen\r\n"));
+        }
         return {
           connectionId,
-          ready,
+          // `ready` is an accessor on the published stream, and it throws until
+          // the acknowledgement arrives, so the fake reads the same way.
+          get ready() {
+            if (options?.readyError !== undefined) throw options.readyError;
+            return ready;
+          },
           get isOpen() {
             return !socket.closed;
           },
@@ -508,6 +517,95 @@ describe("Tangle interactive terminal", () => {
       outputs.map((_frame, index) => earliest + 1 + index),
     );
     expect(resumed.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+  });
+
+  it("serves a consumer that holds no cursor after the buffer evicted frames", async () => {
+    const transport = fakeTerminalTransport();
+    const environment = await terminalEnvironment(transport.terminals);
+    const attached = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (attached.status !== "attached") throw new Error("attach did not succeed");
+    const session = environment.terminal!(attached.ref.terminalSessionId);
+
+    for (let frame = 0; frame < 1_100; frame += 1) transport.emitOutput(`line ${frame}\r\n`);
+    transport.emitExit({ exitCode: 0 });
+    const { earliest, latest } = session.cursors;
+    expect(earliest).toBeGreaterThan(0);
+
+    // No cursor means every frame still retained. Reading from 0 instead would
+    // hand a fresh consumer the one cursor the buffer refuses after eviction.
+    const fresh = await drain(session.events());
+    const outputs = fresh.filter(
+      (frame): frame is Extract<TerminalOutputEvent, { type: "output" }> =>
+        frame.type === "output",
+    );
+    expect(outputs.at(0)?.seq).toBe(earliest + 1);
+    expect(outputs.at(-1)?.seq).toBe(latest);
+    expect(fresh.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+
+    // A cursor the consumer names is still refused when its successors were
+    // evicted: it believes it received the frames the gap would drop.
+    await expect(drain(session.events({ since: 0 }))).rejects.toThrow(
+      /older than the retained frame buffer/,
+    );
+  });
+
+  it("reports an acknowledgement the transport cannot produce and closes its socket", async () => {
+    // The published stream exposes `ready` as an accessor that throws before
+    // the runtime acknowledges, so an unguarded read would replace the attach
+    // result with a raw transport error and abandon the open socket.
+    const notReady = fakeTerminalTransport({
+      readyError: Object.assign(
+        new Error("wss://agent:hunter2@runtime.example/terminal is not ready yet"),
+        { name: "TerminalStreamError", code: "NOT_READY" },
+      ),
+    });
+    const environment = await terminalEnvironment(notReady.terminals);
+
+    const refused = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    expect(refused).toEqual({
+      status: "unknown",
+      message: "the Sandbox terminal acknowledgement failed (code NOT_READY)",
+      retryable: true,
+    });
+    expect(JSON.stringify(refused)).not.toContain("hunter2");
+    expect(notReady.sockets.map((socket) => socket.closed)).toEqual([true]);
+  });
+
+  it("drops a terminal from the registry when its handle detaches or closes", async () => {
+    const transport = fakeTerminalTransport();
+    const environment = await terminalEnvironment(transport.terminals);
+    const attached = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (attached.status !== "attached") throw new Error("attach did not succeed");
+    const stale = environment.terminal!("terminal-1");
+
+    await stale.detach();
+
+    // The handle held the only socket, so the environment holds no terminal
+    // and the registry keeps no entry for it.
+    expect(() => environment.terminal!("terminal-1")).toThrow(
+      /not attached through this environment/,
+    );
+
+    const again = await environment.attachTerminal!({
+      parentExecutionId: "execution-1",
+      mode: "attach",
+    });
+    if (again.status !== "attached") throw new Error("reattach did not succeed");
+    expect(environment.terminal!("terminal-1").ref.terminalSessionId).toBe("terminal-1");
+
+    // A handle releases only its own socket, so the entry the later attach
+    // installed survives the older handle's close.
+    await stale.close();
+    expect(environment.terminal!("terminal-1").ref.terminalSessionId).toBe("terminal-1");
   });
 
   it("refuses a replay cursor the frame buffer cannot serve", async () => {
