@@ -16,6 +16,20 @@ export const InteractionKind = {
 export type WellKnownInteractionKind =
   (typeof InteractionKind)[keyof typeof InteractionKind];
 
+/** Interaction kinds a provider may originate for one turn. */
+export type RequestedInteractions = {
+  [InteractionKind.Permission]?: boolean;
+  [InteractionKind.Question]?: boolean;
+  [InteractionKind.Plan]?: boolean;
+};
+
+/** Strict per-turn interaction posture; an empty object enables no kinds. */
+export const RequestedInteractionsSchema = z.strictObject({
+  [InteractionKind.Permission]: z.boolean().optional(),
+  [InteractionKind.Question]: z.boolean().optional(),
+  [InteractionKind.Plan]: z.boolean().optional(),
+}) satisfies z.ZodType<RequestedInteractions>;
+
 /** Field name carrying the grant on a `permission` interaction's response. */
 export const PERMISSION_GRANT_FIELD = "grant";
 /** Optional free-text field carrying the user's reason on a `permission` response. */

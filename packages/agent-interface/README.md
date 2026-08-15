@@ -17,6 +17,9 @@ Metadata can include caller-authored values and does not prove authorization or 
 Its acknowledgement repeats the operation, digest, and run coordinates and distinguishes a known cancellation effect from conflict or unknown state.
 
 An environment advertises `interactions` only when it can originate and answer typed requests.
+`RequestedInteractions` defines the strict per-turn posture for `permission`, `question`, and `plan` requests.
+`AgentTurnInput.interactions` and `AgentExecutionInput.interactions` carry that posture through shared execution boundaries.
+An omitted posture leaves provider defaults unchanged, while an empty object enables no interaction kind for that turn.
 `AgentEnvironmentCapabilitiesSchema` strictly validates the complete capability document at runtime, including all-or-nothing durable branching declarations.
 Optional provider methods must be absent when their capability is false so clients cannot expose an action the provider has denied.
 The capability names supported request kinds, answer field types, response scopes, secret answers, concurrency, replay, and response idempotency.

@@ -3,7 +3,7 @@ import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./a
 import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
 import type { TokenUsage } from "./execution-types.js";
-import { InteractionCapabilitiesSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand } from "./interaction.js";
+import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
 import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
 import type { AgentWorkspaceBranching } from "./workspace-branching.js";
@@ -32,6 +32,8 @@ export interface AgentTurnInput {
   /** Verified same-session continuation; never carries duplicate history. */
   nativeContinuation?: NativeContextContinuationRequest;
   context?: Record<string, unknown>;
+  /** Interaction kinds the provider may originate for this turn. */
+  interactions?: RequestedInteractions;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;
 }
@@ -50,6 +52,7 @@ export const AgentTurnInputSchema = z.strictObject({
   contextTransfer: ContextTransferRequestSchema.optional(),
   nativeContinuation: NativeContextContinuationRequestSchema.optional(),
   context: boundedJsonRecordSchema.optional(),
+  interactions: RequestedInteractionsSchema.optional(),
   signal: z.custom<AbortSignal>().optional(),
   providerOptions: boundedJsonRecordSchema.optional(),
 }) satisfies z.ZodType<AgentTurnInput>;
