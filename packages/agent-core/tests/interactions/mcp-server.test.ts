@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import type { StreamEvent } from "@tangle-network/agent-interface";
 import { describe, expect, it } from "vitest";
 import { InteractionBroker } from "../../src/interactions/broker.js";
@@ -21,13 +22,14 @@ type InteractionEvent = Extract<StreamEvent, { type: "interaction" }>;
 
 async function waitForInteraction(
   events: StreamEvent[],
+  index = 0,
 ): Promise<InteractionEvent> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5_000) {
-    const event = events.find(
+    const event = events.filter(
       (candidate): candidate is InteractionEvent =>
         candidate.type === "interaction",
-    );
+    )[index];
     if (event) return event;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -51,6 +53,48 @@ async function connectHttp() {
   const client = new Client({ name: "test", version: "1.0.0" });
   await client.connect(clientTransport);
   return { broker, client, events, server };
+}
+
+function rawMcpHeaders(token: string, sessionId?: string) {
+  return {
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+    ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+  };
+}
+
+async function initializeRawMcpClient(server: InteractionMcpServer) {
+  const response = await fetch(server.url, {
+    method: "POST",
+    headers: rawMcpHeaders(server.token),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "disconnect-test", version: "1.0.0" },
+      },
+    }),
+  });
+  expect(response.status).toBe(200);
+  const sessionId = response.headers.get("mcp-session-id");
+  expect(sessionId).toBeTruthy();
+  await response.text();
+
+  const initialized = await fetch(server.url, {
+    method: "POST",
+    headers: rawMcpHeaders(server.token, sessionId ?? undefined),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    }),
+  });
+  expect(initialized.status).toBe(202);
+  await initialized.text();
+  return sessionId as string;
 }
 
 describe("InteractionMcpServer", () => {
@@ -206,6 +250,168 @@ describe("InteractionMcpServer", () => {
       }),
     ).toBe(false);
     await client.close().catch(() => undefined);
+  });
+
+  it("cancels an exact tool call when its HTTP client disconnects", async () => {
+    const events: StreamEvent[] = [];
+    const broker = new InteractionBroker();
+    const server = new InteractionMcpServer({
+      ...brokerInteractionTools(broker, {
+        sessionId: "session-1",
+        binding,
+        emit: (event) => events.push(event),
+      }),
+    });
+    await server.start();
+    try {
+      const sessionId = await initializeRawMcpClient(server);
+      const request = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "ask_user",
+          arguments: { questions: [{ question: "Which database?" }] },
+        },
+      };
+      const firstController = new AbortController();
+      const firstCall = fetch(server.url, {
+        method: "POST",
+        headers: rawMcpHeaders(server.token, sessionId),
+        body: JSON.stringify(request),
+        signal: firstController.signal,
+      })
+        .then((response) => response.text())
+        .then(
+          () => "settled",
+          () => "disconnected",
+        );
+      const firstInteraction = await waitForInteraction(events);
+      firstController.abort();
+      await expect(firstCall).resolves.toBe("disconnected");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(
+        broker.respondQuestion({
+          id: firstInteraction.request.id,
+          outcome: "accepted",
+          data: { q0: "stale" },
+        }),
+      ).toBe(false);
+
+      const retry = fetch(server.url, {
+        method: "POST",
+        headers: rawMcpHeaders(server.token, sessionId),
+        body: JSON.stringify(request),
+      });
+      const secondInteraction = await waitForInteraction(events, 1);
+      expect(secondInteraction.request.id).not.toBe(
+        firstInteraction.request.id,
+      );
+      expect(
+        broker.respondQuestion({
+          id: secondInteraction.request.id,
+          outcome: "accepted",
+          data: { q0: "Postgres" },
+        }),
+      ).toBe(true);
+      expect(await (await retry).text()).toContain("Postgres");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("retries a client-transport call after that client disconnects", async () => {
+    const events: StreamEvent[] = [];
+    const broker = new InteractionBroker();
+    const server = new InteractionMcpServer({
+      ...brokerInteractionTools(broker, {
+        sessionId: "session-1",
+        binding,
+        emit: (event) => events.push(event),
+      }),
+    });
+    await server.start();
+    let requestId: string | number | undefined;
+    const clientTransport = new StreamableHTTPClientTransport(
+      new URL(server.url),
+      {
+        requestInit: {
+          headers: { Authorization: `Bearer ${server.token}` },
+        },
+        fetch: async (input, init) => {
+          if (typeof init?.body === "string") {
+            const body = JSON.parse(init.body) as {
+              id?: string | number;
+              method?: string;
+            };
+            if (body.method === "tools/call") requestId = body.id;
+          }
+          return fetch(input, init);
+        },
+      },
+    );
+    const client = new Client({ name: "retry-test", version: "1.0.0" });
+    await client.connect(clientTransport);
+    try {
+      const firstCall = client
+        .callTool({
+          name: "ask_user",
+          arguments: { questions: [{ question: "Which database?" }] },
+        })
+        .then(
+          () => "settled",
+          () => "disconnected",
+        );
+      const firstInteraction = await waitForInteraction(events);
+      const sessionId = clientTransport.sessionId;
+      expect(sessionId).toBeTruthy();
+      expect(requestId).toBeDefined();
+      await client.close();
+
+      const retryResponse = fetch(server.url, {
+        method: "POST",
+        headers: rawMcpHeaders(server.token, sessionId ?? undefined),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "tools/call",
+          params: {
+            name: "ask_user",
+            arguments: { questions: [{ question: "Which database?" }] },
+          },
+        }),
+      });
+      const retryText = retryResponse.then((response) => response.text());
+      const result = await Promise.race([
+        waitForInteraction(events, 1).then((interaction) => ({ interaction })),
+        retryText.then((text) => ({ text })),
+      ]);
+      expect(result).toHaveProperty("interaction");
+      if (!("interaction" in result)) throw new Error(result.text);
+      await expect(firstCall).resolves.toBe("disconnected");
+      expect(result.interaction.request.id).not.toBe(
+        firstInteraction.request.id,
+      );
+      expect(
+        broker.respondQuestion({
+          id: firstInteraction.request.id,
+          outcome: "accepted",
+          data: { q0: "stale" },
+        }),
+      ).toBe(false);
+      expect(
+        broker.respondQuestion({
+          id: result.interaction.request.id,
+          outcome: "accepted",
+          data: { q0: "Postgres" },
+        }),
+      ).toBe(true);
+      expect(await retryText).toContain("Postgres");
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.stop();
+    }
   });
 
   it("serializes concurrent starts and a stop during startup", async () => {

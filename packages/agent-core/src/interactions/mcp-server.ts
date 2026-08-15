@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -5,7 +6,14 @@ import {
   type EventStore,
   StreamableHTTPServerTransport,
 } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import {
+  isJSONRPCErrorResponse,
+  isJSONRPCRequest,
+  isJSONRPCResultResponse,
+  type JSONRPCMessage,
+  type MessageExtraInfo,
+  type RequestId,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   closeHttpServer,
@@ -65,14 +73,153 @@ class BoundedMcpEventStore implements EventStore {
   }
 }
 
+type McpRequestGeneration = {
+  completion: Promise<void>;
+  generationId: string;
+  id: RequestId;
+  settle: () => void;
+  signal?: AbortSignal;
+  superseded: boolean;
+};
+
+/**
+ * Prevent a disconnected response from replacing a retry with the same ID.
+ *
+ * The MCP transport keeps request-to-stream state until it sends the response.
+ * A retry can replace that state before the old callback settles. The protocol
+ * response keeps this async context, so stale responses can be discarded.
+ */
+class RetrySafeStreamableHttpTransport extends StreamableHTTPServerTransport {
+  private readonly responseContext =
+    new AsyncLocalStorage<McpRequestGeneration>();
+  private readonly currentGeneration = new Map<
+    RequestId,
+    McpRequestGeneration
+  >();
+  private readonly activeGenerations = new Set<McpRequestGeneration>();
+  private messageHandler?: (
+    message: JSONRPCMessage,
+    extra?: MessageExtraInfo,
+  ) => void;
+
+  constructor(
+    private readonly currentRequestSignal: () => AbortSignal | undefined,
+    options?: ConstructorParameters<typeof StreamableHTTPServerTransport>[0],
+  ) {
+    super(options);
+  }
+
+  override set onmessage(
+    handler:
+      | ((message: JSONRPCMessage, extra?: MessageExtraInfo) => void)
+      | undefined,
+  ) {
+    this.messageHandler = handler;
+    super.onmessage = handler
+      ? (message, extra) => {
+          if (!isJSONRPCRequest(message)) {
+            handler(message, extra);
+            return;
+          }
+          const previous = this.currentGeneration.get(message.id);
+          if (previous) previous.superseded = true;
+          let settle: () => void = () => {};
+          const completion = new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+          const generation: McpRequestGeneration = {
+            completion,
+            generationId: randomUUID(),
+            id: message.id,
+            settle,
+            signal: this.currentRequestSignal(),
+            superseded: false,
+          };
+          this.activeGenerations.add(generation);
+          this.currentGeneration.set(message.id, generation);
+          const dispatch = () => {
+            if (generation.superseded || generation.signal?.aborted) {
+              this.finishGeneration(generation);
+              return;
+            }
+            this.responseContext.run(generation, () =>
+              handler(message, extra),
+            );
+          };
+          if (!previous) {
+            dispatch();
+            return;
+          }
+          void previous.completion
+            .then(dispatch)
+            .catch((error) =>
+              this.onerror?.(
+                error instanceof Error ? error : new Error(String(error)),
+              ),
+            );
+        }
+      : undefined;
+  }
+
+  override get onmessage():
+    | ((message: JSONRPCMessage, extra?: MessageExtraInfo) => void)
+    | undefined {
+    return this.messageHandler;
+  }
+
+  get requestGenerationId(): string | undefined {
+    return this.responseContext.getStore()?.generationId;
+  }
+
+  override async send(
+    message: JSONRPCMessage,
+    options?: { relatedRequestId?: RequestId },
+  ): Promise<void> {
+    const responseId =
+      isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)
+        ? message.id
+        : undefined;
+    const generation = this.responseContext.getStore();
+    if (responseId !== undefined && generation?.id === responseId) {
+      try {
+        if (generation.superseded || generation.signal?.aborted) return;
+        await super.send(message, options);
+      } finally {
+        this.finishGeneration(generation);
+      }
+      return;
+    }
+    await super.send(message, options);
+  }
+
+  override async close(): Promise<void> {
+    for (const generation of [...this.activeGenerations]) {
+      generation.superseded = true;
+      this.finishGeneration(generation);
+    }
+    await super.close();
+  }
+
+  private finishGeneration(generation: McpRequestGeneration): void {
+    this.activeGenerations.delete(generation);
+    if (this.currentGeneration.get(generation.id) === generation) {
+      this.currentGeneration.delete(generation.id);
+    }
+    generation.settle();
+  }
+}
+
 function mcpOperationId(
   serverName: string,
   toolName: string,
   sessionId: string | undefined,
   requestId: RequestId,
+  generationId: string,
 ): string {
   return `mcp-${createHash("sha256")
-    .update(`${serverName}\u0000${toolName}\u0000${sessionId ?? ""}\u0000${String(requestId)}`)
+    .update(
+      `${serverName}\u0000${toolName}\u0000${sessionId ?? ""}\u0000${String(requestId)}\u0000${generationId}`,
+    )
     .digest("hex")}`;
 }
 
@@ -123,9 +270,10 @@ const questionsSchema = {
  */
 export class InteractionMcpServer {
   private readonly server: McpServer;
-  private readonly transport: StreamableHTTPServerTransport;
+  private readonly transport: RetrySafeStreamableHttpTransport;
   private readonly onStop: () => void | Promise<void>;
   private readonly lifecycle = new SerializedTransportLifecycle();
+  private readonly requestSignal = new AsyncLocalStorage<AbortSignal>();
   private readonly activePostRequests = new Set<Promise<void>>();
   private httpServer?: Server;
   private portValue = 0;
@@ -139,10 +287,13 @@ export class InteractionMcpServer {
       { name: this.serverName, version: "1.0.0" },
       { capabilities: { tools: {} } },
     );
-    this.transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      eventStore: new BoundedMcpEventStore(),
-    });
+    this.transport = new RetrySafeStreamableHttpTransport(
+      () => this.requestSignal.getStore(),
+      {
+        sessionIdGenerator: () => randomUUID(),
+        eventStore: new BoundedMcpEventStore(),
+      },
+    );
 
     if (config.permission) {
       const decide = config.permission;
@@ -163,7 +314,12 @@ export class InteractionMcpServer {
             tool_name: args.tool_name,
             input: args.input ?? {},
             tool_use_id: args.tool_use_id,
-            signal: extra.signal,
+            operationId: this.operationId(
+              "permission",
+              extra.sessionId,
+              extra.requestId,
+            ),
+            signal: this.operationSignal(extra.signal),
           });
           return {
             content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -185,13 +341,12 @@ export class InteractionMcpServer {
         async (args, extra) => {
           const answers = await askUser({
             questions: args.questions,
-            operationId: mcpOperationId(
-              this.serverName,
+            operationId: this.operationId(
               "ask_user",
               extra.sessionId,
               extra.requestId,
             ),
-            signal: extra.signal,
+            signal: this.operationSignal(extra.signal),
           });
           const text = answers
             ? answers.map((slot) => slot.join(", ")).join("\n") || "(no answer)"
@@ -218,13 +373,12 @@ export class InteractionMcpServer {
           const result = await requestPermission({
             tool_name: args.tool_name,
             input: args.input ?? {},
-            operationId: mcpOperationId(
-              this.serverName,
+            operationId: this.operationId(
               "request_permission",
               extra.sessionId,
               extra.requestId,
             ),
-            signal: extra.signal,
+            signal: this.operationSignal(extra.signal),
           });
           return {
             content: [
@@ -303,9 +457,22 @@ export class InteractionMcpServer {
         }
 
         const handle = (body?: unknown) => {
-          const handled = this.transport
-            .handleRequest(request, response, body)
-            .catch(() => fail(500));
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          const abortIfIncomplete = () => {
+            if (!response.writableFinished) abort();
+          };
+          request.once("aborted", abort);
+          response.once("close", abortIfIncomplete);
+          const handled = this.requestSignal
+            .run(controller.signal, () =>
+              this.transport.handleRequest(request, response, body),
+            )
+            .catch(() => fail(500))
+            .finally(() => {
+              request.off("aborted", abort);
+              response.off("close", abortIfIncomplete);
+            });
           if (request.method === "POST") {
             this.activePostRequests.add(handled);
             void handled.finally(() =>
@@ -373,5 +540,32 @@ export class InteractionMcpServer {
       await this.server.close().catch(() => undefined);
       if (httpServer) await closeHttpServer(httpServer);
     });
+  }
+
+  private operationSignal(protocolSignal: AbortSignal): AbortSignal {
+    const httpSignal = this.requestSignal.getStore();
+    return httpSignal
+      ? AbortSignal.any([protocolSignal, httpSignal])
+      : protocolSignal;
+  }
+
+  private operationId(
+    toolName: string,
+    sessionId: string | undefined,
+    requestId: RequestId,
+  ): string {
+    return mcpOperationId(
+      this.serverName,
+      toolName,
+      sessionId,
+      requestId,
+      this.requestGenerationId(),
+    );
+  }
+
+  private requestGenerationId(): string {
+    const generationId = this.transport.requestGenerationId;
+    if (!generationId) throw new Error("MCP request generation is missing");
+    return generationId;
   }
 }

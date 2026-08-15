@@ -14,6 +14,7 @@ export type PermissionPromptBridge = (request: {
   tool_name: string;
   input: Record<string, unknown>;
   tool_use_id: string;
+  operationId: string;
   signal?: AbortSignal;
 }) => Promise<unknown>;
 
