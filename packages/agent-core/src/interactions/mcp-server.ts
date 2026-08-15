@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -126,6 +127,7 @@ export class InteractionMcpServer {
   private readonly transport: StreamableHTTPServerTransport;
   private readonly onStop: () => void | Promise<void>;
   private readonly lifecycle = new SerializedTransportLifecycle();
+  private readonly requestSignal = new AsyncLocalStorage<AbortSignal>();
   private readonly activePostRequests = new Set<Promise<void>>();
   private httpServer?: Server;
   private portValue = 0;
@@ -163,7 +165,7 @@ export class InteractionMcpServer {
             tool_name: args.tool_name,
             input: args.input ?? {},
             tool_use_id: args.tool_use_id,
-            signal: extra.signal,
+            signal: this.operationSignal(extra.signal),
           });
           return {
             content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -191,7 +193,7 @@ export class InteractionMcpServer {
               extra.sessionId,
               extra.requestId,
             ),
-            signal: extra.signal,
+            signal: this.operationSignal(extra.signal),
           });
           const text = answers
             ? answers.map((slot) => slot.join(", ")).join("\n") || "(no answer)"
@@ -224,7 +226,7 @@ export class InteractionMcpServer {
               extra.sessionId,
               extra.requestId,
             ),
-            signal: extra.signal,
+            signal: this.operationSignal(extra.signal),
           });
           return {
             content: [
@@ -303,9 +305,22 @@ export class InteractionMcpServer {
         }
 
         const handle = (body?: unknown) => {
-          const handled = this.transport
-            .handleRequest(request, response, body)
-            .catch(() => fail(500));
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          const abortIfIncomplete = () => {
+            if (!response.writableFinished) abort();
+          };
+          request.once("aborted", abort);
+          response.once("close", abortIfIncomplete);
+          const handled = this.requestSignal
+            .run(controller.signal, () =>
+              this.transport.handleRequest(request, response, body),
+            )
+            .catch(() => fail(500))
+            .finally(() => {
+              request.off("aborted", abort);
+              response.off("close", abortIfIncomplete);
+            });
           if (request.method === "POST") {
             this.activePostRequests.add(handled);
             void handled.finally(() =>
@@ -373,5 +388,12 @@ export class InteractionMcpServer {
       await this.server.close().catch(() => undefined);
       if (httpServer) await closeHttpServer(httpServer);
     });
+  }
+
+  private operationSignal(protocolSignal: AbortSignal): AbortSignal {
+    const httpSignal = this.requestSignal.getStore();
+    return httpSignal
+      ? AbortSignal.any([protocolSignal, httpSignal])
+      : protocolSignal;
   }
 }
