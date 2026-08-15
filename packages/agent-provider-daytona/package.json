@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-daytona",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "AgentEnvironmentProvider adapter for Daytona workspaces",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.52.0"
+    "@tangle-network/agent-interface": "0.53.0"
   },
   "peerDependencies": {
     "@daytonaio/sdk": "^0.192.0"
