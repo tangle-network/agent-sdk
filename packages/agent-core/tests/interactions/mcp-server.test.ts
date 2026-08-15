@@ -319,6 +319,87 @@ describe("InteractionMcpServer", () => {
     }
   });
 
+  it("retries a client-transport call after that client disconnects", async () => {
+    const events: StreamEvent[] = [];
+    const broker = new InteractionBroker();
+    const server = new InteractionMcpServer({
+      ...brokerInteractionTools(broker, {
+        sessionId: "session-1",
+        binding,
+        emit: (event) => events.push(event),
+      }),
+    });
+    await server.start();
+    let requestId: string | number | undefined;
+    const clientTransport = new StreamableHTTPClientTransport(
+      new URL(server.url),
+      {
+        requestInit: {
+          headers: { Authorization: `Bearer ${server.token}` },
+        },
+        fetch: async (input, init) => {
+          if (typeof init?.body === "string") {
+            const body = JSON.parse(init.body) as {
+              id?: string | number;
+              method?: string;
+            };
+            if (body.method === "tools/call") requestId = body.id;
+          }
+          return fetch(input, init);
+        },
+      },
+    );
+    const client = new Client({ name: "retry-test", version: "1.0.0" });
+    await client.connect(clientTransport);
+    try {
+      const firstCall = client
+        .callTool({
+          name: "ask_user",
+          arguments: { questions: [{ question: "Which database?" }] },
+        })
+        .then(
+          () => "settled",
+          () => "disconnected",
+        );
+      await waitForInteraction(events);
+      const sessionId = clientTransport.sessionId;
+      expect(sessionId).toBeTruthy();
+      expect(requestId).toBeDefined();
+      await client.close();
+
+      const retryResponse = fetch(server.url, {
+        method: "POST",
+        headers: rawMcpHeaders(server.token, sessionId ?? undefined),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "tools/call",
+          params: {
+            name: "ask_user",
+            arguments: { questions: [{ question: "Which database?" }] },
+          },
+        }),
+      });
+      const retryText = retryResponse.then((response) => response.text());
+      const result = await Promise.race([
+        waitForInteraction(events, 1).then((interaction) => ({ interaction })),
+        retryText.then((text) => ({ text })),
+      ]);
+      expect(result).toHaveProperty("interaction");
+      if (!("interaction" in result)) throw new Error(result.text);
+      await expect(firstCall).resolves.toBe("disconnected");
+      broker.respondQuestion({
+        id: result.interaction.request.id,
+        outcome: "accepted",
+        data: { q0: "Postgres" },
+      });
+      expect(await retryText).toContain("Postgres");
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.stop();
+    }
+  });
+
   it("serializes concurrent starts and a stop during startup", async () => {
     const server = new InteractionMcpServer({ onStop: () => undefined });
     const firstStart = server.start();

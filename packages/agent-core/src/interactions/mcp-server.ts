@@ -6,7 +6,14 @@ import {
   type EventStore,
   StreamableHTTPServerTransport,
 } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import {
+  isJSONRPCErrorResponse,
+  isJSONRPCRequest,
+  isJSONRPCResultResponse,
+  type JSONRPCMessage,
+  type MessageExtraInfo,
+  type RequestId,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   closeHttpServer,
@@ -63,6 +70,136 @@ class BoundedMcpEventStore implements EventStore {
       }
     }
     return streamId;
+  }
+}
+
+type McpRequestGeneration = {
+  completion: Promise<void>;
+  id: RequestId;
+  settle: () => void;
+  signal?: AbortSignal;
+  superseded: boolean;
+};
+
+/**
+ * Prevent a disconnected response from replacing a retry with the same ID.
+ *
+ * The MCP transport keeps request-to-stream state until it sends the response.
+ * A retry can replace that state before the old callback settles. The protocol
+ * response keeps this async context, so stale responses can be discarded.
+ */
+class RetrySafeStreamableHttpTransport extends StreamableHTTPServerTransport {
+  private readonly responseContext =
+    new AsyncLocalStorage<McpRequestGeneration>();
+  private readonly currentGeneration = new Map<
+    RequestId,
+    McpRequestGeneration
+  >();
+  private readonly activeGenerations = new Set<McpRequestGeneration>();
+  private messageHandler?: (
+    message: JSONRPCMessage,
+    extra?: MessageExtraInfo,
+  ) => void;
+
+  constructor(
+    private readonly currentRequestSignal: () => AbortSignal | undefined,
+    options?: ConstructorParameters<typeof StreamableHTTPServerTransport>[0],
+  ) {
+    super(options);
+  }
+
+  override set onmessage(
+    handler:
+      | ((message: JSONRPCMessage, extra?: MessageExtraInfo) => void)
+      | undefined,
+  ) {
+    this.messageHandler = handler;
+    super.onmessage = handler
+      ? (message, extra) => {
+          if (!isJSONRPCRequest(message)) {
+            handler(message, extra);
+            return;
+          }
+          const previous = this.currentGeneration.get(message.id);
+          if (previous) previous.superseded = true;
+          let settle: () => void = () => {};
+          const completion = new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+          const generation: McpRequestGeneration = {
+            completion,
+            id: message.id,
+            settle,
+            signal: this.currentRequestSignal(),
+            superseded: false,
+          };
+          this.activeGenerations.add(generation);
+          this.currentGeneration.set(message.id, generation);
+          const dispatch = () => {
+            if (generation.superseded || generation.signal?.aborted) {
+              this.finishGeneration(generation);
+              return;
+            }
+            this.responseContext.run(generation, () =>
+              handler(message, extra),
+            );
+          };
+          if (!previous) {
+            dispatch();
+            return;
+          }
+          void previous.completion
+            .then(dispatch)
+            .catch((error) =>
+              this.onerror?.(
+                error instanceof Error ? error : new Error(String(error)),
+              ),
+            );
+        }
+      : undefined;
+  }
+
+  override get onmessage():
+    | ((message: JSONRPCMessage, extra?: MessageExtraInfo) => void)
+    | undefined {
+    return this.messageHandler;
+  }
+
+  override async send(
+    message: JSONRPCMessage,
+    options?: { relatedRequestId?: RequestId },
+  ): Promise<void> {
+    const responseId =
+      isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)
+        ? message.id
+        : undefined;
+    const generation = this.responseContext.getStore();
+    if (responseId !== undefined && generation?.id === responseId) {
+      try {
+        if (generation.superseded || generation.signal?.aborted) return;
+        await super.send(message, options);
+      } finally {
+        this.finishGeneration(generation);
+      }
+      return;
+    }
+    await super.send(message, options);
+  }
+
+  override async close(): Promise<void> {
+    for (const generation of [...this.activeGenerations]) {
+      generation.superseded = true;
+      this.finishGeneration(generation);
+    }
+    await super.close();
+  }
+
+  private finishGeneration(generation: McpRequestGeneration): void {
+    this.activeGenerations.delete(generation);
+    if (this.currentGeneration.get(generation.id) === generation) {
+      this.currentGeneration.delete(generation.id);
+    }
+    generation.settle();
   }
 }
 
@@ -124,7 +261,7 @@ const questionsSchema = {
  */
 export class InteractionMcpServer {
   private readonly server: McpServer;
-  private readonly transport: StreamableHTTPServerTransport;
+  private readonly transport: RetrySafeStreamableHttpTransport;
   private readonly onStop: () => void | Promise<void>;
   private readonly lifecycle = new SerializedTransportLifecycle();
   private readonly requestSignal = new AsyncLocalStorage<AbortSignal>();
@@ -141,10 +278,13 @@ export class InteractionMcpServer {
       { name: this.serverName, version: "1.0.0" },
       { capabilities: { tools: {} } },
     );
-    this.transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      eventStore: new BoundedMcpEventStore(),
-    });
+    this.transport = new RetrySafeStreamableHttpTransport(
+      () => this.requestSignal.getStore(),
+      {
+        sessionIdGenerator: () => randomUUID(),
+        eventStore: new BoundedMcpEventStore(),
+      },
+    );
 
     if (config.permission) {
       const decide = config.permission;
