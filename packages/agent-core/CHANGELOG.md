@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.9.0
+
+### Minor Changes
+
+- 2ab01fc: Add the public interactions package for shared permission, question, and plan transport behavior.
+
 ## 0.8.1
 
 ### Patch Changes
