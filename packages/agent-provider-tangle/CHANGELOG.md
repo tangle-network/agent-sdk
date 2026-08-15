@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.11.0
+
+### Minor Changes
+
+- 5ab7e8c: Carry strict per-turn interaction requests from the shared interface to Sandbox backend prompt options.
+
+### Patch Changes
+
+- Updated dependencies [5ab7e8c]
+  - @tangle-network/agent-interface@0.53.0
+
 ## 0.10.0
 
 ### Minor Changes
