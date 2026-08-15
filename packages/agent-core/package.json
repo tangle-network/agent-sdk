@@ -46,6 +46,14 @@
     "./telemetry": {
       "import": "./dist/telemetry/index.js",
       "types": "./src/telemetry/index.ts"
+    },
+    "./interactions": {
+      "import": "./dist/interactions/index.js",
+      "types": "./src/interactions/index.ts"
+    },
+    "./interactions/mcp": {
+      "import": "./dist/interactions/mcp-server.js",
+      "types": "./src/interactions/mcp-server.ts"
     }
   },
   "typesVersions": {
@@ -88,6 +96,15 @@
       ],
       "types/*": [
         "src/types/*"
+      ],
+      "interactions": [
+        "src/interactions/index.ts"
+      ],
+      "interactions/mcp": [
+        "src/interactions/mcp-server.ts"
+      ],
+      "interactions/*": [
+        "src/interactions/*"
       ],
       "*": [
         "src/index.ts"
@@ -154,6 +171,16 @@
         "import": "./dist/telemetry/index.js",
         "types": "./dist/telemetry/index.d.ts",
         "default": "./dist/telemetry/index.js"
+      },
+      "./interactions": {
+        "import": "./dist/interactions/index.js",
+        "types": "./dist/interactions/index.d.ts",
+        "default": "./dist/interactions/index.js"
+      },
+      "./interactions/mcp": {
+        "import": "./dist/interactions/mcp-server.js",
+        "types": "./dist/interactions/mcp-server.d.ts",
+        "default": "./dist/interactions/mcp-server.js"
       }
     }
   },
@@ -173,7 +200,16 @@
     "@tangle-network/agent-interface": "0.53.0",
     "zod": "catalog:"
   },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "^6.0.3",

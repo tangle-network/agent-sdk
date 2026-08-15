@@ -12,6 +12,8 @@ export default defineConfig({
     "src/auth/browser.ts",
     "src/resilience/index.ts",
     "src/computer-use/index.ts",
+    "src/interactions/index.ts",
+    "src/interactions/mcp-server.ts",
   ],
   format: ["esm"],
   dts: { eager: true },
