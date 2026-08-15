@@ -8,6 +8,7 @@ import { Sandbox } from "@tangle-network/sandbox";
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import {
   agentRunCancellationRequestDigest,
+  InteractionKind,
   type AgentExactRunControlRef,
   type AgentRunCancellationRequest,
 } from "@tangle-network/agent-interface";
@@ -46,6 +47,12 @@ function deferred<T>() {
 function echoedExecution(options: PromptOptions | undefined) {
   return options?.executionId;
 }
+
+const REQUESTED_INTERACTIONS = {
+  [InteractionKind.Permission]: true,
+  [InteractionKind.Question]: false,
+  [InteractionKind.Plan]: true,
+} as const;
 
 /**
  * Give a fake client the SDK HttpClient surface so the provider-level probe
@@ -881,6 +888,7 @@ describe("Tangle retained control", () => {
       prompt: "continue after reconnect",
       turnId: "direct-detach-turn",
       detach: true,
+      interactions: REQUESTED_INTERACTIONS,
       signal: abort.signal,
     });
 
@@ -894,10 +902,14 @@ describe("Tangle retained control", () => {
           sessionId: sandboxSession.id,
           turnId: "direct-detach-turn",
           detach: true,
+          interactions: REQUESTED_INTERACTIONS,
         },
         box.id,
         sandboxSession.id,
       ),
+    );
+    expect(dispatchOptions?.backend?.interactions).toEqual(
+      REQUESTED_INTERACTIONS,
     );
     expect(session.controlRef).toMatchObject({
       sessionId: sandboxSession.id,

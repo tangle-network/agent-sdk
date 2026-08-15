@@ -2,6 +2,7 @@ import type { AgentExecutionOutcome, PlanContinuation } from "./plan.js";
 import type { InputPart } from "./parts.js";
 import type { ProviderConfig } from "./provider-config.js";
 import type { InteractionExecutionBinding } from "./interaction-envelope.js";
+import type { RequestedInteractions } from "./interaction-permissions.js";
 
 export type ToolInvocation = {
   toolName: string;
@@ -35,6 +36,8 @@ export type AgentExecutionInput = {
   sessionId?: string;
   /** Exact run coordinates required when this turn can emit interactions. */
   interactionBinding?: InteractionExecutionBinding;
+  /** Interaction kinds the provider may originate for this turn. */
+  interactions?: RequestedInteractions;
   workspaceRoot?: string;
   abortSignal?: AbortSignal;
   headers?: Record<string, string>;

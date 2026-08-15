@@ -23,6 +23,8 @@ Sandbox metadata can include caller-authored values and does not authenticate it
 Reconstruct an exact session with `environment.session(reference.id, { controlRef: reference.controlRef })`; replay cursors are exclusive at both the agent interface and Sandbox session stream.
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
+`AgentTurnInput.interactions` maps unchanged to `PromptOptions.backend.interactions` for the selected Sandbox turn.
+The requested posture is part of the retained request digest, so a retry with changed interaction behavior conflicts instead of reusing prior work.
 
 ## Two capability documents
 

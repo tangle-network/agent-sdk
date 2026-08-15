@@ -89,6 +89,9 @@ export function promptOptionsFromTurnInput(
   return {
     ...(sessionId ? { sessionId } : {}),
     ...(input.model ? { model: input.model } : {}),
+    ...(input.interactions === undefined
+      ? {}
+      : { backend: { interactions: input.interactions } }),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.context ? { context: input.context } : {}),
     ...(input.signal ? { signal: input.signal } : {}),

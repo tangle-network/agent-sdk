@@ -30,6 +30,9 @@ export function sessionPromptRequestDigest(
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     ...(input.detach === undefined ? {} : { detach: input.detach }),
     ...(input.context === undefined ? {} : { context: input.context }),
+    ...(input.interactions === undefined
+      ? {}
+      : { interactions: input.interactions }),
   });
 }
 
@@ -42,6 +45,7 @@ export function hasReplayPayload(input: AgentTurnInput): boolean {
     input.turnId !== undefined ||
     input.detach !== undefined ||
     input.context !== undefined ||
+    input.interactions !== undefined ||
     input.providerOptions !== undefined
   );
 }
