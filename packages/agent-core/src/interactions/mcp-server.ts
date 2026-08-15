@@ -75,6 +75,7 @@ class BoundedMcpEventStore implements EventStore {
 
 type McpRequestGeneration = {
   completion: Promise<void>;
+  generationId: string;
   id: RequestId;
   settle: () => void;
   signal?: AbortSignal;
@@ -128,6 +129,7 @@ class RetrySafeStreamableHttpTransport extends StreamableHTTPServerTransport {
           });
           const generation: McpRequestGeneration = {
             completion,
+            generationId: randomUUID(),
             id: message.id,
             settle,
             signal: this.currentRequestSignal(),
@@ -163,6 +165,10 @@ class RetrySafeStreamableHttpTransport extends StreamableHTTPServerTransport {
     | ((message: JSONRPCMessage, extra?: MessageExtraInfo) => void)
     | undefined {
     return this.messageHandler;
+  }
+
+  get requestGenerationId(): string | undefined {
+    return this.responseContext.getStore()?.generationId;
   }
 
   override async send(
@@ -208,9 +214,12 @@ function mcpOperationId(
   toolName: string,
   sessionId: string | undefined,
   requestId: RequestId,
+  generationId: string,
 ): string {
   return `mcp-${createHash("sha256")
-    .update(`${serverName}\u0000${toolName}\u0000${sessionId ?? ""}\u0000${String(requestId)}`)
+    .update(
+      `${serverName}\u0000${toolName}\u0000${sessionId ?? ""}\u0000${String(requestId)}\u0000${generationId}`,
+    )
     .digest("hex")}`;
 }
 
@@ -305,6 +314,11 @@ export class InteractionMcpServer {
             tool_name: args.tool_name,
             input: args.input ?? {},
             tool_use_id: args.tool_use_id,
+            operationId: this.operationId(
+              "permission",
+              extra.sessionId,
+              extra.requestId,
+            ),
             signal: this.operationSignal(extra.signal),
           });
           return {
@@ -327,8 +341,7 @@ export class InteractionMcpServer {
         async (args, extra) => {
           const answers = await askUser({
             questions: args.questions,
-            operationId: mcpOperationId(
-              this.serverName,
+            operationId: this.operationId(
               "ask_user",
               extra.sessionId,
               extra.requestId,
@@ -360,8 +373,7 @@ export class InteractionMcpServer {
           const result = await requestPermission({
             tool_name: args.tool_name,
             input: args.input ?? {},
-            operationId: mcpOperationId(
-              this.serverName,
+            operationId: this.operationId(
               "request_permission",
               extra.sessionId,
               extra.requestId,
@@ -535,5 +547,25 @@ export class InteractionMcpServer {
     return httpSignal
       ? AbortSignal.any([protocolSignal, httpSignal])
       : protocolSignal;
+  }
+
+  private operationId(
+    toolName: string,
+    sessionId: string | undefined,
+    requestId: RequestId,
+  ): string {
+    return mcpOperationId(
+      this.serverName,
+      toolName,
+      sessionId,
+      requestId,
+      this.requestGenerationId(),
+    );
+  }
+
+  private requestGenerationId(): string {
+    const generationId = this.transport.requestGenerationId;
+    if (!generationId) throw new Error("MCP request generation is missing");
+    return generationId;
   }
 }

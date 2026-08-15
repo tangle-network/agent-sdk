@@ -305,7 +305,9 @@ describe("InteractionMcpServer", () => {
         body: JSON.stringify(request),
       });
       const secondInteraction = await waitForInteraction(events, 1);
-      expect(secondInteraction.request.id).toBe(firstInteraction.request.id);
+      expect(secondInteraction.request.id).not.toBe(
+        firstInteraction.request.id,
+      );
       expect(
         broker.respondQuestion({
           id: secondInteraction.request.id,
@@ -361,7 +363,7 @@ describe("InteractionMcpServer", () => {
           () => "settled",
           () => "disconnected",
         );
-      await waitForInteraction(events);
+      const firstInteraction = await waitForInteraction(events);
       const sessionId = clientTransport.sessionId;
       expect(sessionId).toBeTruthy();
       expect(requestId).toBeDefined();
@@ -388,11 +390,23 @@ describe("InteractionMcpServer", () => {
       expect(result).toHaveProperty("interaction");
       if (!("interaction" in result)) throw new Error(result.text);
       await expect(firstCall).resolves.toBe("disconnected");
-      broker.respondQuestion({
-        id: result.interaction.request.id,
-        outcome: "accepted",
-        data: { q0: "Postgres" },
-      });
+      expect(result.interaction.request.id).not.toBe(
+        firstInteraction.request.id,
+      );
+      expect(
+        broker.respondQuestion({
+          id: firstInteraction.request.id,
+          outcome: "accepted",
+          data: { q0: "stale" },
+        }),
+      ).toBe(false);
+      expect(
+        broker.respondQuestion({
+          id: result.interaction.request.id,
+          outcome: "accepted",
+          data: { q0: "Postgres" },
+        }),
+      ).toBe(true);
       expect(await retryText).toContain("Postgres");
     } finally {
       await client.close().catch(() => undefined);
