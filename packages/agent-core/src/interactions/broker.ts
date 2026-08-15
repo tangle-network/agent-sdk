@@ -6,7 +6,6 @@ import {
   type InteractionRequest,
   type InteractionRequestMaterial,
   InteractionRequestSchema,
-  type InteractionResponse,
   type InteractionResponseScope,
   interactionRequestDigest,
   PERMISSION_GRANT_FIELD,
@@ -18,6 +17,7 @@ import {
 import { z } from "zod";
 
 export const DEFAULT_INTERACTION_DECISION_TIMEOUT_MS = 300_000;
+export const MAX_INTERACTION_DECISION_TIMEOUT_MS = 2_147_483_647;
 
 export interface InteractionBrokerOptions {
   /** Default wait for an operator response before the declared default applies. */
@@ -40,8 +40,14 @@ export type InteractionQuestion = z.infer<typeof InteractionQuestionSchema>;
 const InteractionQuestionsSchema = z.array(InteractionQuestionSchema).min(1);
 
 function checkedTimeout(timeoutMs: number): number {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError("Interaction timeout must be a positive finite number");
+  if (
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_INTERACTION_DECISION_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `Interaction timeout must be between 1 and ${MAX_INTERACTION_DECISION_TIMEOUT_MS} milliseconds`,
+    );
   }
   return timeoutMs;
 }
@@ -125,16 +131,36 @@ export function interactionAnswerSpecForQuestions(
 }
 
 type PendingPermission = {
-  sessionId: string;
   request: InteractionRequest;
   settle: (grant: PermissionGrant) => void;
 };
 
 type PendingQuestion = {
-  sessionId: string;
   request: InteractionRequest;
   settle: (answers: string[][] | null) => void;
 };
+
+type InteractionEventSink = (event: StreamEvent) => unknown;
+
+function responseId(response: unknown): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const id = Reflect.get(response, "id");
+  return typeof id === "string" ? id : undefined;
+}
+
+function matchesExecution(
+  request: InteractionRequest,
+  binding: InteractionExecutionBinding,
+): boolean {
+  const actual = request.binding;
+  return (
+    actual.runId === binding.runId &&
+    actual.provider === binding.provider &&
+    actual.environmentId === binding.environmentId &&
+    actual.sessionId === binding.sessionId &&
+    actual.executionId === binding.executionId
+  );
+}
 
 /**
  * One interaction round-trip for every runner adapter.
@@ -168,7 +194,8 @@ export class InteractionBroker {
     input?: unknown;
     allowlistGrant: PermissionGrant;
     timeoutMs?: number;
-    emit?: (event: StreamEvent) => void;
+    signal?: AbortSignal;
+    emit?: InteractionEventSink;
   }): Promise<PermissionGrant> {
     if (
       opts.binding.sessionId !== opts.sessionId ||
@@ -210,13 +237,14 @@ export class InteractionBroker {
 
     return new Promise<PermissionGrant>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const abort = () => settle("deny");
       const settle = (grant: PermissionGrant) => {
         if (!this.pendingPermissions.delete(opts.id)) return;
         if (timer) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", abort);
         resolve(grant);
       };
       this.pendingPermissions.set(opts.id, {
-        sessionId: opts.sessionId,
         request,
         settle,
       });
@@ -225,9 +253,19 @@ export class InteractionBroker {
         return;
       }
       timer = setTimeout(() => settle(opts.allowlistGrant), timeoutMs);
-      timer.unref?.();
+      if (opts.signal?.aborted) {
+        settle("deny");
+        return;
+      }
+      opts.signal?.addEventListener("abort", abort, { once: true });
+      if (opts.signal?.aborted) {
+        settle("deny");
+        return;
+      }
       try {
-        opts.emit({ type: "interaction", request });
+        void Promise.resolve(opts.emit({ type: "interaction", request })).catch(
+          () => settle(opts.allowlistGrant),
+        );
       } catch {
         settle(opts.allowlistGrant);
       }
@@ -235,8 +273,10 @@ export class InteractionBroker {
   }
 
   /** Resolve a pending permission. Invalid or excessive grants deny. */
-  respond(response: InteractionResponse): boolean {
-    const entry = this.pendingPermissions.get(response.id);
+  respond(response: unknown): boolean {
+    const id = responseId(response);
+    if (!id) return false;
+    const entry = this.pendingPermissions.get(id);
     if (!entry) return false;
     const validation = validateInteractionResponse(entry.request, response);
     if (!validation.ok || validation.response.outcome !== "accepted") {
@@ -257,7 +297,8 @@ export class InteractionBroker {
     binding: InteractionExecutionBinding;
     questions: InteractionQuestion[];
     timeoutMs?: number;
-    emit?: (event: StreamEvent) => void;
+    signal?: AbortSignal;
+    emit?: InteractionEventSink;
   }): Promise<string[][] | null> {
     if (
       opts.binding.sessionId !== opts.sessionId ||
@@ -281,13 +322,14 @@ export class InteractionBroker {
 
     return new Promise<string[][] | null>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const abort = () => settle(null);
       const settle = (answers: string[][] | null) => {
         if (!this.pendingQuestions.delete(opts.id)) return;
         if (timer) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", abort);
         resolve(answers);
       };
       this.pendingQuestions.set(opts.id, {
-        sessionId: opts.sessionId,
         request,
         settle,
       });
@@ -296,9 +338,19 @@ export class InteractionBroker {
         return;
       }
       timer = setTimeout(() => settle(null), timeoutMs);
-      timer.unref?.();
+      if (opts.signal?.aborted) {
+        settle(null);
+        return;
+      }
+      opts.signal?.addEventListener("abort", abort, { once: true });
+      if (opts.signal?.aborted) {
+        settle(null);
+        return;
+      }
       try {
-        opts.emit({ type: "interaction", request });
+        void Promise.resolve(opts.emit({ type: "interaction", request })).catch(
+          () => settle(null),
+        );
       } catch {
         settle(null);
       }
@@ -306,8 +358,10 @@ export class InteractionBroker {
   }
 
   /** Resolve a pending question. Invalid, declined, and cancelled replies return null. */
-  respondQuestion(response: InteractionResponse): boolean {
-    const entry = this.pendingQuestions.get(response.id);
+  respondQuestion(response: unknown): boolean {
+    const id = responseId(response);
+    if (!id) return false;
+    const entry = this.pendingQuestions.get(id);
     if (!entry) return false;
     const validation = validateInteractionResponse(entry.request, response);
     if (!validation.ok) {
@@ -326,18 +380,20 @@ export class InteractionBroker {
   /** Fail closed every request that belongs to one session. */
   failSession(sessionId: string): void {
     for (const entry of this.pendingPermissions.values()) {
-      if (entry.sessionId === sessionId) entry.settle("deny");
+      if (entry.request.binding.sessionId === sessionId) entry.settle("deny");
     }
     for (const entry of this.pendingQuestions.values()) {
-      if (entry.sessionId === sessionId) entry.settle(null);
+      if (entry.request.binding.sessionId === sessionId) entry.settle(null);
     }
   }
 
-  /** Resolve one permission by id. Unknown or settled ids are safe no-ops. */
-  resolve(id: string, grant: PermissionGrant): boolean {
-    const entry = this.pendingPermissions.get(id);
-    if (!entry) return false;
-    entry.settle(grant);
-    return true;
+  /** Fail closed only the requests from one exact provider execution. */
+  failExecution(binding: InteractionExecutionBinding): void {
+    for (const entry of this.pendingPermissions.values()) {
+      if (matchesExecution(entry.request, binding)) entry.settle("deny");
+    }
+    for (const entry of this.pendingQuestions.values()) {
+      if (matchesExecution(entry.request, binding)) entry.settle(null);
+    }
   }
 }

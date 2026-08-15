@@ -1,6 +1,7 @@
 export {
   coercePermissionGrant,
   DEFAULT_INTERACTION_DECISION_TIMEOUT_MS,
+  MAX_INTERACTION_DECISION_TIMEOUT_MS,
   interactionAnswerSpecForQuestions,
   InteractionBroker,
   type InteractionBrokerOptions,

@@ -22,7 +22,7 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-function run(command, args, options = {}) {
+function runProcess(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? root,
     encoding: "utf8",
@@ -30,6 +30,11 @@ function run(command, args, options = {}) {
     maxBuffer: 50 * 1024 * 1024,
   });
   if (result.error) throw result.error;
+  return result;
+}
+
+function run(command, args, options = {}) {
+  const result = runProcess(command, args, options);
   if (result.status !== 0) {
     throw new Error(
       [
@@ -42,6 +47,88 @@ function run(command, args, options = {}) {
     );
   }
   return result.stdout.trim();
+}
+
+function optionalPeerNames(manifest, packagesByName) {
+  return Object.keys(manifest.peerDependencies ?? {}).filter(
+    (name) =>
+      manifest.peerDependenciesMeta?.[name]?.optional === true &&
+      !packagesByName.has(name),
+  );
+}
+
+function importFailureReport(result) {
+  const lines = `${result.stdout}\n${result.stderr}`
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse();
+  for (const line of lines) {
+    try {
+      const value = JSON.parse(line);
+      if (Array.isArray(value)) return value;
+    } catch {
+      // Keep looking past runtime warnings to the structured failure report.
+    }
+  }
+  return undefined;
+}
+
+function importExports(consumerDirectory, specifiers, optionalPeers) {
+  const script = `
+const failures = [];
+for (const specifier of ${JSON.stringify(specifiers)}) {
+  try {
+    await import(specifier);
+  } catch (error) {
+    failures.push({
+      specifier,
+      code: error?.code ?? null,
+      message: String(error?.message ?? error),
+    });
+  }
+}
+if (failures.length > 0) {
+  console.error(JSON.stringify(failures));
+  process.exit(1);
+}
+`;
+  const result = runProcess(
+    node,
+    ["--input-type=module", "--eval", script],
+    { cwd: consumerDirectory },
+  );
+  if (result.status === 0) return [];
+
+  const failures = importFailureReport(result);
+  if (!failures) {
+    throw new Error(
+      [
+        `failed to import exports in ${consumerDirectory}`,
+        result.stdout.trim(),
+        result.stderr.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const deferred = [];
+  for (const failure of failures) {
+    const peer = optionalPeers.find(
+      (name) =>
+        failure.code === "ERR_MODULE_NOT_FOUND" &&
+        (failure.message.includes(`'${name}'`) ||
+          failure.message.includes(`"${name}"`)),
+    );
+    if (!peer) {
+      throw new Error(
+        `${failure.specifier} failed to import (${failure.code ?? "unknown"}): ${failure.message}`,
+      );
+    }
+    deferred.push({ specifier: failure.specifier, peer });
+  }
+  return deferred;
 }
 
 function runJson(command, args, options) {
@@ -362,15 +449,28 @@ try {
     const exportsCheck = assertInstalledExports(directory, manifest);
     exportCount += exportsCheck.specifiers.length;
     exportTargetCount += exportsCheck.targetCount;
-    run(
-      node,
-      [
-        "--input-type=module",
-        "--eval",
-        `for (const specifier of ${JSON.stringify(exportsCheck.specifiers)}) { await import(specifier) }`,
-      ],
-      { cwd: consumerDirectory },
+    const optionalPeers = optionalPeerNames(manifest, packagesByName);
+    importExports(
+      consumerDirectory,
+      exportsCheck.specifiers,
+      optionalPeers,
     );
+    if (optionalPeers.length > 0) {
+      run(
+        npm,
+        [
+          "install",
+          "--no-save",
+          "--package-lock=false",
+          "--ignore-scripts=false",
+          ...optionalPeers.map(
+            (name) => `${name}@${manifest.peerDependencies[name]}`,
+          ),
+        ],
+        { cwd: consumerDirectory, env: npmEnvironment },
+      );
+      importExports(consumerDirectory, exportsCheck.specifiers, []);
+    }
 
     const packed = runJson(
       npm,

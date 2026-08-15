@@ -10,6 +10,10 @@ import {
   InteractionQuestionSchema,
 } from "./broker.js";
 import {
+  closeHttpServer,
+  SerializedTransportLifecycle,
+} from "./lifecycle.js";
+import {
   type AskUserBridge,
   brokerInteractionTools,
   type RequestPermissionBridge,
@@ -37,7 +41,8 @@ export class InteractionHttpBridge {
   private readonly requestPermission: RequestPermissionBridge;
   private readonly askUser: AskUserBridge;
   private readonly broker: InteractionBroker;
-  private readonly sessionId: string;
+  private readonly binding: InteractionExecutionBinding;
+  private readonly lifecycle = new SerializedTransportLifecycle();
   private httpServer?: Server;
   private portValue = 0;
 
@@ -47,11 +52,11 @@ export class InteractionHttpBridge {
       sessionId: string;
       binding: InteractionExecutionBinding;
       timeoutMs?: number;
-      emit?: (event: StreamEvent) => void;
+      emit?: (event: StreamEvent) => unknown;
     },
   ) {
     this.broker = broker;
-    this.sessionId = options.sessionId;
+    this.binding = options.binding;
     const tools = brokerInteractionTools(broker, options);
     this.requestPermission = tools.requestPermission;
     this.askUser = tools.askUser;
@@ -66,73 +71,77 @@ export class InteractionHttpBridge {
   }
 
   async start(): Promise<void> {
-    if (this.httpServer) {
-      throw new Error("Interaction HTTP bridge is already running");
-    }
-    const httpServer = createServer((request, response) => {
-      const send = (status: number, body?: unknown) => {
-        if (response.writableEnded) return;
-        const text = body === undefined ? "" : JSON.stringify(body);
-        response
-          .writeHead(status, { "content-type": "application/json" })
-          .end(text);
-      };
+    return this.lifecycle.start(async () => {
+      const httpServer = createServer((request, response) => {
+        const send = (status: number, body?: unknown) => {
+          if (response.writableEnded) return;
+          const text = body === undefined ? "" : JSON.stringify(body);
+          response
+            .writeHead(status, { "content-type": "application/json" })
+            .end(text);
+        };
 
-      if (request.headers.authorization !== `Bearer ${this.token}`) {
-        send(401);
-        return;
-      }
-      if (request.method !== "POST") {
-        send(405);
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      let size = 0;
-      request.on("error", () => send(400));
-      request.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > MAX_HTTP_BODY_BYTES) {
-          send(413);
-          request.destroy();
+        if (request.headers.authorization !== `Bearer ${this.token}`) {
+          send(401);
           return;
         }
-        chunks.push(chunk);
-      });
-      request.on("end", () => {
-        if (response.writableEnded) return;
-        let body: unknown;
-        try {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          body = raw ? JSON.parse(raw) : {};
-        } catch {
-          send(400, { error: "invalid json" });
+        if (request.method !== "POST") {
+          send(405);
           return;
         }
-        this.route(request.url ?? "", body)
-          .then((result) => send(result.status, result.body))
-          .catch(() => send(500, { error: "interaction bridge failed" }));
-      });
-    });
 
-    await new Promise<void>((resolve, reject) => {
-      httpServer.once("error", reject);
-      httpServer.listen(0, "127.0.0.1", resolve);
+        const chunks: Buffer[] = [];
+        let size = 0;
+        request.on("error", () => send(400));
+        request.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_HTTP_BODY_BYTES) {
+            send(413);
+            request.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        request.on("end", () => {
+          if (response.writableEnded) return;
+          let body: unknown;
+          try {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            send(400, { error: "invalid json" });
+            return;
+          }
+          this.route(request.url ?? "", body)
+            .then((result) => send(result.status, result.body))
+            .catch(() => send(500, { error: "interaction bridge failed" }));
+        });
+      });
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.once("error", reject);
+          httpServer.listen(0, "127.0.0.1", resolve);
+        });
+      } catch (error) {
+        httpServer.closeAllConnections?.();
+        throw error;
+      }
+      const address = httpServer.address();
+      this.portValue =
+        address && typeof address === "object" ? address.port : 0;
+      this.httpServer = httpServer;
     });
-    const address = httpServer.address();
-    this.portValue =
-      address && typeof address === "object" ? address.port : 0;
-    this.httpServer = httpServer;
   }
 
   async stop(): Promise<void> {
-    this.broker.failSession(this.sessionId);
-    const httpServer = this.httpServer;
-    this.httpServer = undefined;
-    this.portValue = 0;
-    if (!httpServer) return;
-    httpServer.closeAllConnections?.();
-    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    return this.lifecycle.stop(async () => {
+      this.broker.failExecution(this.binding);
+      const httpServer = this.httpServer;
+      this.httpServer = undefined;
+      this.portValue = 0;
+      if (httpServer) await closeHttpServer(httpServer);
+    });
   }
 
   private async route(

@@ -10,6 +10,7 @@ import {
   InteractionBroker,
   interactionAnswerSpecForQuestions,
   interactionDataToQuestionAnswers,
+  MAX_INTERACTION_DECISION_TIMEOUT_MS,
 } from "../../src/interactions/broker.js";
 
 type InteractionEvent = Extract<StreamEvent, { type: "interaction" }>;
@@ -110,7 +111,52 @@ describe("InteractionBroker permissions", () => {
         },
       }),
     ).resolves.toBe("allow_once");
-    expect(broker.resolve("permission-emit-error", "allow_once")).toBe(false);
+    expect(
+      broker.respond({
+        id: "permission-emit-error",
+        outcome: "accepted",
+        data: { grant: ["allow_once"] },
+      }),
+    ).toBe(false);
+  });
+
+  it("settles when asynchronous event delivery rejects", async () => {
+    const broker = new InteractionBroker();
+    await expect(
+      broker.request({
+        id: "permission-async-emit-error",
+        sessionId: "session-1",
+        binding: binding("session-1"),
+        toolName: "read",
+        allowlistGrant: "allow_once",
+        emit: async () => {
+          throw new Error("sink closed");
+        },
+      }),
+    ).resolves.toBe("allow_once");
+  });
+
+  it("cancels an abandoned operation and rejects its late response", async () => {
+    const broker = new InteractionBroker();
+    const controller = new AbortController();
+    const pending = broker.request({
+      id: "permission-aborted",
+      sessionId: "session-1",
+      binding: binding("session-1"),
+      toolName: "write",
+      allowlistGrant: "allow_once",
+      signal: controller.signal,
+      emit: () => undefined,
+    });
+    controller.abort();
+    await expect(pending).resolves.toBe("deny");
+    expect(
+      broker.respond({
+        id: "permission-aborted",
+        outcome: "accepted",
+        data: { grant: ["allow_once"] },
+      }),
+    ).toBe(false);
   });
 
   it("denies a mismatched binding and duplicate id", async () => {
@@ -154,6 +200,52 @@ describe("InteractionBroker permissions", () => {
     expect(() => new InteractionBroker({ decisionTimeoutMs: 0 })).toThrow(
       RangeError,
     );
+    expect(
+      () =>
+        new InteractionBroker({
+          decisionTimeoutMs: MAX_INTERACTION_DECISION_TIMEOUT_MS + 1,
+        }),
+    ).toThrow(RangeError);
+  });
+
+  it("tears down one exact execution without touching its session sibling", async () => {
+    const broker = new InteractionBroker();
+    const firstBinding = binding("session-1");
+    const secondBinding = { ...firstBinding, executionId: "execution-2" };
+    const first = broker.request({
+      id: "permission-first",
+      sessionId: "session-1",
+      binding: firstBinding,
+      toolName: "write",
+      allowlistGrant: "allow_once",
+      emit: () => undefined,
+    });
+    const second = broker.request({
+      id: "permission-second",
+      sessionId: "session-1",
+      binding: secondBinding,
+      toolName: "write",
+      allowlistGrant: "allow_once",
+      emit: () => undefined,
+    });
+
+    broker.failExecution(firstBinding);
+    await expect(first).resolves.toBe("deny");
+    expect(
+      broker.respond({
+        id: "permission-second",
+        outcome: "accepted",
+        data: { grant: ["allow_once"] },
+      }),
+    ).toBe(true);
+    await expect(second).resolves.toBe("allow_once");
+  });
+
+  it("fails closed for malformed response values and has no unsafe resolver", () => {
+    const broker = new InteractionBroker();
+    expect(broker.respond(null)).toBe(false);
+    expect(broker.respondQuestion(null)).toBe(false);
+    expect("resolve" in broker).toBe(false);
   });
 
   it("coerces unknown grants to deny", () => {

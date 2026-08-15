@@ -175,4 +175,48 @@ describe("InteractionMcpServer", () => {
       "mcp__tangle-interaction__ask_user",
     );
   });
+
+  it("cancels broker work before the MCP server closes", async () => {
+    const { broker, client, events, server } = await connectHttp();
+    const resultPromise = client
+      .callTool({
+        name: "request_permission",
+        arguments: { tool_name: "Bash", input: { command: "pnpm test" } },
+      })
+      .then(
+        () => "resolved",
+        () => "rejected",
+      );
+    const event = await waitForInteraction(events);
+
+    await server.stop();
+    await expect(
+      Promise.race([
+        resultPromise,
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve("still-pending"), 1_000),
+        ),
+      ]),
+    ).resolves.not.toBe("still-pending");
+    expect(
+      broker.respond({
+        id: event.request.id,
+        outcome: "accepted",
+        data: { grant: ["allow_once"] },
+      }),
+    ).toBe(false);
+    await client.close().catch(() => undefined);
+  });
+
+  it("serializes concurrent starts and a stop during startup", async () => {
+    const server = new InteractionMcpServer({ onStop: () => undefined });
+    const firstStart = server.start();
+    const secondStart = server.start();
+    const stop = server.stop();
+
+    await expect(firstStart).resolves.toBeUndefined();
+    await expect(secondStart).rejects.toThrow("cannot start");
+    await expect(stop).resolves.toBeUndefined();
+    expect(server.port).toBe(0);
+  });
 });

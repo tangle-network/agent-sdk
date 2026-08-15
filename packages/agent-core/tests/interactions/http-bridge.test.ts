@@ -124,9 +124,27 @@ describe("InteractionHttpBridge", () => {
     await waitForInteraction(events);
     await bridge.stop();
     activeBridge = undefined;
-    const settled = responsePromise
-      .then((response) => response.json())
-      .catch(() => ({ allowed: false }));
-    await expect(settled).resolves.toEqual({ allowed: false });
+    await expect(responsePromise.then((response) => response.json())).resolves.toEqual(
+      { allowed: false },
+    );
+  });
+
+  it("serializes concurrent starts and a stop during startup", async () => {
+    const broker = new InteractionBroker();
+    const bridge = new InteractionHttpBridge(broker, {
+      sessionId: "session-1",
+      binding,
+      emit: () => undefined,
+    });
+    activeBridge = bridge;
+
+    const firstStart = bridge.start();
+    const secondStart = bridge.start();
+    const stop = bridge.stop();
+    await expect(firstStart).resolves.toBeUndefined();
+    await expect(secondStart).rejects.toThrow("cannot start");
+    await expect(stop).resolves.toBeUndefined();
+    expect(bridge.port).toBe(0);
+    activeBridge = undefined;
   });
 });
