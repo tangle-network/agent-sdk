@@ -1,10 +1,15 @@
-import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCapabilitiesSchema,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
   AgentEnvironmentSummary,
+  CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   createTangleExactProcessProvider,
@@ -67,81 +72,102 @@ export function createTangleProvider(
     );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
     narrowedProviderCapabilities(await resolveDeclaredCapabilities());
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    assertCreateInputShape(input);
+    input.signal?.throwIfAborted();
+    assertNoInlineSecretValues(input);
+    if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
+      throw new Error("Tangle create providerOptions are not supported");
+    }
+    // The sandbox stage narrows from the declared document, not the
+    // provider-boundary one: the client stage cannot observe box-scoped
+    // facts, so measured instance facts must decide them per sandbox.
+    const declaredCapabilities = await resolveDeclaredCapabilities();
+    narrowedProviderCapabilities(declaredCapabilities);
+    const createOptions =
+      options.mapCreateInput?.(input) ??
+      sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
+    assertMappedCreateOptions(createOptions);
+    if (
+      input.idempotencyKey !== undefined &&
+      createOptions.idempotencyKey !== input.idempotencyKey
+    ) {
+      throw new Error(
+        "Tangle mapped create options must preserve input idempotencyKey",
+      );
+    }
+    assertMappedSecretNames(createOptions);
+    input.signal?.throwIfAborted();
+    const createPromise = options.client.create(
+      createOptions,
+      input.signal ? { signal: input.signal } : undefined,
+    );
+    let box: Awaited<typeof createPromise>;
+    try {
+      box = await awaitWithSignal(createPromise, input.signal);
+    } catch (error) {
+      if (input.signal?.aborted) {
+        void createPromise
+          .then(async (lateBox) => {
+            if (!lateBox.delete) {
+              attachCleanupHandle(error, lateBox);
+              return;
+            }
+            try {
+              await lateBox.delete();
+            } catch (cleanupError) {
+              attachCleanupHandle(error, lateBox, cleanupError);
+            }
+          })
+          .catch((lateError) => attachCleanupHandle(error, undefined, lateError));
+      }
+      throw error;
+    }
+    try {
+      input.signal?.throwIfAborted();
+      const requestedResources = requestedResourceProfile(input.resources);
+      const environment = await sandboxInstanceAsEnvironment(
+        box,
+        providerName,
+        options.client,
+        declaredCapabilities,
+        input.signal ? { signal: input.signal } : undefined,
+        requestedResources === undefined ? undefined : { resources: requestedResources },
+      );
+      input.signal?.throwIfAborted();
+      return environment;
+    } catch (error) {
+      if (!box.delete) {
+        const baseError = error instanceof Error ? error : new Error(String(error));
+        throw Object.assign(baseError, { cleanupHandle: box });
+      }
+      try {
+        await box.delete();
+      } catch (cleanupError) {
+        const combined = new AggregateError([error, cleanupError], "Tangle environment validation and cleanup both failed");
+        attachCleanupHandle(combined, box, cleanupError);
+        throw combined;
+      }
+      throw error;
+    }
+  };
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
     capabilities: resolveCapabilities,
     ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
-    async create(input) {
-      assertCreateInputShape(input);
-      input.signal?.throwIfAborted();
-      assertNoInlineSecretValues(input);
-      if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
-        throw new Error("Tangle create providerOptions are not supported");
-      }
-      // The sandbox stage narrows from the declared document, not the
-      // provider-boundary one: the client stage cannot observe box-scoped
-      // facts, so measured instance facts must decide them per sandbox.
-      const declaredCapabilities = await resolveDeclaredCapabilities();
-      narrowedProviderCapabilities(declaredCapabilities);
-      const createOptions =
-        options.mapCreateInput?.(input) ??
-        sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
-      assertMappedCreateOptions(createOptions);
-      assertMappedSecretNames(createOptions);
-      input.signal?.throwIfAborted();
-      const createPromise = options.client.create(
-        createOptions,
-        input.signal ? { signal: input.signal } : undefined,
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        () => createEnvironment(input),
       );
-      let box: Awaited<typeof createPromise>;
-      try {
-        box = await awaitWithSignal(createPromise, input.signal);
-      } catch (error) {
-        if (input.signal?.aborted) {
-          void createPromise
-            .then(async (lateBox) => {
-              if (!lateBox.delete) {
-                attachCleanupHandle(error, lateBox);
-                return;
-              }
-              try {
-                await lateBox.delete();
-              } catch (cleanupError) {
-                attachCleanupHandle(error, lateBox, cleanupError);
-              }
-            })
-            .catch((lateError) => attachCleanupHandle(error, undefined, lateError));
-        }
-        throw error;
-      }
-      try {
-        input.signal?.throwIfAborted();
-        const requestedResources = requestedResourceProfile(input.resources);
-        const environment = await sandboxInstanceAsEnvironment(
-          box,
-          providerName,
-          options.client,
-          declaredCapabilities,
-          input.signal ? { signal: input.signal } : undefined,
-          requestedResources === undefined ? undefined : { resources: requestedResources },
-        );
-        input.signal?.throwIfAborted();
-        return environment;
-      } catch (error) {
-        if (!box.delete) {
-          const baseError = error instanceof Error ? error : new Error(String(error));
-          throw Object.assign(baseError, { cleanupHandle: box });
-        }
-        try {
-          await box.delete();
-        } catch (cleanupError) {
-          const combined = new AggregateError([error, cleanupError], "Tangle environment validation and cleanup both failed");
-          attachCleanupHandle(combined, box, cleanupError);
-          throw combined;
-        }
-        throw error;
-      }
     },
     ...(options.client.get
       ? {

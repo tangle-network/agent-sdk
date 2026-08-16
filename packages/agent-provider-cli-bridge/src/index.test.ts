@@ -27,6 +27,33 @@ describe("createCliBridgeProvider", () => {
     expect(called).toBe(false);
   });
 
+  it("reuses a keyed generic create and rejects changed input", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async () => new Response(),
+    });
+    const input = {
+      profile: { name: "worker", harness: "pi" as const },
+      metadata: { z: "last", a: "first" },
+      idempotencyKey: "environment-create-1",
+    };
+
+    const first = await provider.create(input);
+    const replay = await provider.create({
+      idempotencyKey: input.idempotencyKey,
+      metadata: { a: "first", z: "last" },
+      profile: { harness: "pi", name: "worker" },
+    });
+
+    expect(replay).toBe(first);
+    await expect(
+      provider.create({
+        ...input,
+        profile: { name: "different-worker", harness: "pi" },
+      }),
+    ).rejects.toThrow(/conflicts with a different create input/);
+  });
+
   it("keeps profile authority separate from the task and forwards it unchanged", async () => {
     let body: Record<string, unknown> | undefined;
     const profile: AgentProfile = {

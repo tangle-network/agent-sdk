@@ -1,7 +1,9 @@
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
   AgentEnvironmentSummary,
@@ -47,15 +49,28 @@ export interface DaytonaProviderOptions {
 
 export function createDaytonaProvider(options: DaytonaProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "daytona";
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    const daytona = await resolveDaytona(options);
+    const sandbox = await daytona.create(
+      options.mapCreateInput?.(input) ?? daytonaCreateParams(input),
+    );
+    return daytonaSandboxAsEnvironment(options, name, sandbox);
+  };
   return {
     name,
     capabilities: () => options.capabilities ?? defaultDaytonaCapabilities(),
-    async create(input) {
-      const daytona = await resolveDaytona(options);
-      const sandbox = await daytona.create(
-        options.mapCreateInput?.(input) ?? daytonaCreateParams(input),
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        () => createEnvironment(input),
       );
-      return daytonaSandboxAsEnvironment(options, name, sandbox);
     },
     async get(id) {
       const daytona = await resolveDaytona(options);

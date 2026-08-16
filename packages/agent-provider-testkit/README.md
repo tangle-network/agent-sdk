@@ -18,8 +18,7 @@ await runAgentEnvironmentProviderConformance({
 })
 ```
 
-The checks create an environment, stream one turn, verify terminal completion,
-exercise declared workspace methods, and destroy the environment.
+The checks create an environment, repeat a keyed create with reordered fields, reject changed keyed input, stream one turn, verify terminal completion, exercise declared workspace methods, and destroy the environment.
 
 `runSessionReplayConformance()` dispatches a detached turn, rejects a competing run reference, requires stable event identifiers, replays after a cursor, and repeats the replay through a reconstructed session client.
 

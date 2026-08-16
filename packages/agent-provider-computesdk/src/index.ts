@@ -1,7 +1,9 @@
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
   AgentEnvironmentSummary,
@@ -49,14 +51,27 @@ export interface ComputeSdkProviderOptions {
 
 export function createComputeSdkProvider(options: ComputeSdkProviderOptions): AgentEnvironmentProvider {
   const name = options.name ?? "computesdk";
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    const sandbox = await options.compute.sandbox.create(
+      options.mapCreateInput?.(input) ?? computeCreateOptions(input),
+    );
+    return computeSandboxAsEnvironment(options, name, sandbox);
+  };
   return {
     name,
     capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
-    async create(input) {
-      const sandbox = await options.compute.sandbox.create(
-        options.mapCreateInput?.(input) ?? computeCreateOptions(input),
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        () => createEnvironment(input),
       );
-      return computeSandboxAsEnvironment(options, name, sandbox);
     },
     ...(options.compute.sandbox.getById
       ? {

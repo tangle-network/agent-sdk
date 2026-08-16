@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
+  agentEnvironmentCreateInputDigest,
+  createAgentEnvironmentWithIdempotency,
 } from "./environment-provider.js";
+import type { AgentEnvironmentCreateIdempotencyRecord } from "./environment-provider.js";
 import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
@@ -67,6 +70,76 @@ const capabilities = {
     reattach: true,
   },
 };
+
+describe("generic environment create idempotency", () => {
+  const input = {
+    profile: { name: "worker" },
+    metadata: { z: 1, a: 2 },
+    idempotencyKey: "create-1",
+    signal: new AbortController().signal,
+  };
+
+  it("uses canonical create material without the key or attempt signal", () => {
+    expect(
+      agentEnvironmentCreateInputDigest(input),
+    ).toBe(
+      agentEnvironmentCreateInputDigest({
+        signal: new AbortController().signal,
+        idempotencyKey: "create-1",
+        metadata: { a: 2, z: 1 },
+        profile: { name: "worker" },
+      }),
+    );
+    expect(
+      agentEnvironmentCreateInputDigest({ ...input, metadata: { a: 3, z: 1 } }),
+    ).not.toBe(agentEnvironmentCreateInputDigest(input));
+  });
+
+  it("coalesces same-key retries and rejects changed input", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+    >();
+    const create = vi.fn(async () => ({ id: "environment-1" }));
+
+    const first = await createAgentEnvironmentWithIdempotency(
+      records,
+      input,
+      create,
+    );
+    const replay = await createAgentEnvironmentWithIdempotency(
+      records,
+      {
+        profile: { name: "worker" },
+        metadata: { a: 2, z: 1 },
+        idempotencyKey: "create-1",
+        signal: new AbortController().signal,
+      },
+      create,
+    );
+
+    expect(replay).toBe(first);
+    expect(create).toHaveBeenCalledOnce();
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        { ...input, metadata: { a: 3, z: 1 } },
+        create,
+      ),
+    ).rejects.toThrow(/conflicts with a different create input/);
+    expect(create).toHaveBeenCalledOnce();
+
+    const aborted = new AbortController();
+    aborted.abort(new Error("retry cancelled"));
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        { ...input, signal: aborted.signal },
+        create,
+      ),
+    ).rejects.toThrow("retry cancelled");
+  });
+});
 
 describe("AgentEnvironmentCapabilitiesSchema", () => {
   it("accepts a complete strict capability document", () => {

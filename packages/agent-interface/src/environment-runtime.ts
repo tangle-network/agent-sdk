@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
+import type { Sha256Digest } from "./agent-candidate.js";
 import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
@@ -622,9 +624,86 @@ export interface CreateAgentEnvironmentInput {
   secrets?: string[] | Record<string, string>;
   metadata?: Record<string, unknown>;
   name?: string;
+  /**
+   * Stable identity for one logical environment create.
+   *
+   * When present, the provider must use this key as one idempotent operation:
+   * the same key with canonically equal create input must return or reconstruct
+   * the same environment, while a different input must be rejected.
+   * `signal` controls one attempt and is not part of create identity.
+   */
   idempotencyKey?: string;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;
+}
+
+/**
+ * Compute the canonical identity of a generic environment create request.
+ *
+ * The operation key names the request and the abort signal controls one
+ * attempt, so neither belongs in the input identity. Every other field is
+ * canonicalized with the shared RFC 8785 JSON representation.
+ * @internal
+ */
+export function agentEnvironmentCreateInputDigest(
+  input: CreateAgentEnvironmentInput,
+): Sha256Digest {
+  const { idempotencyKey: _idempotencyKey, signal: _signal, ...material } = input;
+  return canonicalCandidateDigest({
+    kind: "agent-environment-create.v1",
+    input: material,
+  });
+}
+
+/** @internal State held by one provider adapter for keyed create retries. */
+export interface AgentEnvironmentCreateIdempotencyRecord<T> {
+  readonly digest: Sha256Digest;
+  readonly pending: Promise<T>;
+  environment?: T;
+}
+
+/**
+ * Apply the generic create contract to one provider adapter's keyed requests.
+ *
+ * The provider's backing service remains responsible for retaining the key
+ * across adapter reconstruction. This helper coalesces concurrent retries and
+ * rejects collisions before the provider performs another create effect.
+ * @internal
+ */
+export async function createAgentEnvironmentWithIdempotency<T>(
+  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
+  input: CreateAgentEnvironmentInput,
+  create: () => Promise<T>,
+): Promise<T> {
+  input.signal?.throwIfAborted();
+  const key = input.idempotencyKey;
+  if (key === undefined) return create();
+
+  const digest = agentEnvironmentCreateInputDigest(input);
+  const existing = records.get(key);
+  if (existing !== undefined) {
+    if (existing.digest !== digest) {
+      throw new Error(
+        "agent environment create idempotency key conflicts with a different create input",
+      );
+    }
+    return existing.environment ?? existing.pending;
+  }
+
+  const pending = Promise.resolve().then(create);
+  const record: AgentEnvironmentCreateIdempotencyRecord<T> = {
+    digest,
+    pending,
+  };
+  records.set(key, record);
+  try {
+    const environment = await pending;
+    if (records.get(key) === record) record.environment = environment;
+    return environment;
+  } catch (error) {
+    if (records.get(key) === record) records.delete(key);
+    throw error;
+  }
 }
 
 export interface AgentEnvironmentProvider {
@@ -636,6 +715,13 @@ export interface AgentEnvironmentProvider {
   validateProfile?(
     profile: AgentProfileRef,
   ): AgentProfileValidationResult | Promise<AgentProfileValidationResult>;
+  /**
+   * Create or reconstruct one environment.
+   *
+   * With `input.idempotencyKey`, the provider must return the same environment
+   * for the same canonical input and reject any changed input before creating.
+   * Without a key, each call may create a fresh environment.
+   */
   create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;
   get?(id: string, options?: { signal?: AbortSignal }): Promise<AgentEnvironment | null>;
   list?(query?: AgentEnvironmentQuery, options?: { signal?: AbortSignal }): Promise<AgentEnvironmentSummary[]>;

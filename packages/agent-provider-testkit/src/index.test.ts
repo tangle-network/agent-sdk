@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AgentEnvironment,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentExactProcessEnvironment,
   AgentTurnInput,
 } from "@tangle-network/agent-interface/environment-provider";
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
 import {
   runAgentEnvironmentProviderConformance,
   runAgentExactProcessProviderLifecycleChecks,
@@ -17,6 +20,8 @@ describe("runAgentEnvironmentProviderConformance", () => {
     });
 
     expect(report.provider).toBe("fake");
+    expect(report.checked).toContain("create-idempotency");
+    expect(report.checked).toContain("create-idempotency-collision");
     expect(report.checked).toContain("stream");
     expect(report.checked).toContain("workspace-exec");
   });
@@ -61,6 +66,10 @@ describe("runAgentExactProcessProviderLifecycleChecks", () => {
 
 function fakeProvider(): AgentEnvironmentProvider {
   const files = new Map<string, string>();
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
   return {
     name: "fake",
     capabilities: () => ({
@@ -93,25 +102,29 @@ function fakeProvider(): AgentEnvironmentProvider {
       usage: true,
       confidential: false,
     }),
-    async create() {
-      return {
-        id: "env-1",
-        provider: "fake",
-        status: async () => "running",
-        async *stream(input: AgentTurnInput) {
-          yield {
-            type: "result",
-            data: { finalText: input.prompt ?? "ok" },
-            usage: { inputTokens: 1, outputTokens: 1 },
-          };
-        },
-        read: async (path: string) => files.get(path) ?? "",
-        write: async (path: string, content: string) => {
-          files.set(path, content);
-        },
-        exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
-        destroy: async () => {},
-      };
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        async () => ({
+          id: "env-1",
+          provider: "fake",
+          status: async () => "running",
+          async *stream(input: AgentTurnInput) {
+            yield {
+              type: "result",
+              data: { finalText: input.prompt ?? "ok" },
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          },
+          read: async (path: string) => files.get(path) ?? "",
+          write: async (path: string, content: string) => {
+            files.set(path, content);
+          },
+          exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
+          destroy: async () => {},
+        }),
+      );
     },
   };
 }

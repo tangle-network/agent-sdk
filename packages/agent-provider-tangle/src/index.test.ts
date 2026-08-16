@@ -112,6 +112,57 @@ describe("createTangleProvider", () => {
     });
   });
 
+  it("reuses a keyed generic create and rejects changed input", async () => {
+    const box: SandboxInstanceLike = {
+      id: "sbx-generic-idempotency",
+      async *streamPrompt() {},
+    };
+    const create = vi.fn(async (_options?: CreateSandboxOptions) => box);
+    const provider = createTangleProvider({ client: { create } });
+    const input = {
+      profile: { name: "worker" },
+      metadata: { z: "last", a: "first" },
+      name: "environment",
+      idempotencyKey: "environment-create-1",
+    };
+
+    const first = await provider.create(input);
+    const replay = await provider.create({
+      idempotencyKey: input.idempotencyKey,
+      name: input.name,
+      metadata: { a: "first", z: "last" },
+      profile: { name: "worker" },
+    });
+
+    expect(replay).toBe(first);
+    expect(create).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      idempotencyKey: input.idempotencyKey,
+    });
+    await expect(
+      provider.create({ ...input, name: "different-environment" }),
+    ).rejects.toThrow(/conflicts with a different create input/);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("does not let a custom mapper drop the generic create key", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput: () => ({}),
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        idempotencyKey: "environment-create-1",
+      }),
+    ).rejects.toThrow("must preserve input idempotencyKey");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed configured capabilities at the provider boundary", async () => {
     const provider = createTangleProvider({
       client: {
