@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.12.2
+
+### Patch Changes
+
+- Updated dependencies [ca3901d]
+  - @tangle-network/agent-interface@1.0.0
+
 ## 0.12.1
 
 ### Patch Changes
