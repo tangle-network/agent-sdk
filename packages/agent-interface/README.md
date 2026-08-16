@@ -158,6 +158,18 @@ The three code states are intentionally distinct:
 - `{ kind: "no-op" }` means a proposer ran and returned no change.
 - `{ kind: "git-patch" }` carries a non-empty binary Git diff whose resulting tree must be verified.
 
+## Versioning
+
+This package follows semantic versioning from 1.0.0.
+
+- A minor release is additive. A new export, a new optional field, and a widened union are minor.
+- A patch release is a fix. A behaviour correction that keeps every declared type is patch.
+- A major release removes or narrows. A deleted export, a removed member, a narrowed type, and a new required field are major.
+
+Declare this package as `^1.0.0`.
+A caret range admits every additive minor without a consumer release.
+Do not declare a single-generation window such as `>=1.4.0 <1.5.0`; that shape forces a coordinated release across every repository on each minor.
+
 ## License
 
 MIT

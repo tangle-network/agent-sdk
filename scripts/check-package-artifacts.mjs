@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { satisfies } from "semver";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -343,13 +344,17 @@ for (const entry of packages) {
         );
       }
       const internalDependency = packagesByName.get(dependency);
+      // The declared range must admit the version this workspace publishes.
+      // Equality is not required: a caret range on a package that keeps a
+      // semantic-versioning promise holds one installed copy across additive
+      // minors, and an exact pin pulls a second copy into the same tree.
       if (
         internalDependency !== undefined &&
         field !== "peerDependencies" &&
-        specifier !== internalDependency.manifest.version
+        !satisfies(internalDependency.manifest.version, specifier)
       ) {
         throw new Error(
-          `${name} ${field}.${dependency} must match workspace version ${internalDependency.manifest.version}, received ${specifier}`,
+          `${name} ${field}.${dependency} must admit workspace version ${internalDependency.manifest.version}, received ${specifier}`,
         );
       }
     }
