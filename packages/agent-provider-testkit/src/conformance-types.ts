@@ -66,6 +66,8 @@ export interface InteractiveSessionConformanceOptions {
   interactive(ref: AgentInteractiveSessionRef): AgentInteractiveSession;
   /** Number of native TUI processes started by the adapter. */
   startCount(): number | Promise<number>;
+  /** Generation persisted by the provider when it launches the process. */
+  initialControlGeneration?: number;
   prompt?: string;
   changedPrompt?: string;
 }

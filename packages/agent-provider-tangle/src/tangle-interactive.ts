@@ -13,6 +13,7 @@ import {
   agentInteractiveSessionPromptAcknowledgementMatchesCommand,
   agentInteractiveSessionRefMatchesStart,
   agentInteractiveSessionStopAcknowledgementMatchesCommand,
+  canonicalCandidateDigest,
   exactAgentInteractiveSessionStart,
 } from "@tangle-network/agent-interface";
 import type {
@@ -111,12 +112,7 @@ export function createTangleInteractiveAgentRegistry(
     expected: AgentInteractiveSessionRef,
     candidate: AgentInteractiveSessionRef,
   ): void => {
-    if (
-      expected.run.runId !== candidate.run.runId ||
-      expected.run.requestDigest !== candidate.run.requestDigest ||
-      expected.incarnationId !== candidate.incarnationId ||
-      expected.preparationReceipt.digest !== candidate.preparationReceipt.digest
-    ) {
+    if (!sameExactSessionRef(expected, candidate)) {
       throw new Error("the Sandbox returned a different interactive session ref");
     }
   };
@@ -431,15 +427,14 @@ function statusFromSandbox(
     });
   }
   const observedRef = AgentInteractiveSessionRefSchema.parse({
-    run: ref.run,
+    run: { ...ref.run, sessionId: observed.sessionId },
     preparationReceipt: observed.preparationReceipt,
     incarnationId: observed.incarnationId,
     startedAt: observed.startedAt,
   });
   if (
-    observed.sessionId !== ref.run.sessionId ||
     observed.harness !== ref.preparationReceipt.harness ||
-    observedRef.preparationReceipt.digest !== ref.preparationReceipt.digest
+    !sameExactSessionRef(ref, observedRef)
   ) {
     throw new Error(
       "the Sandbox reported a different interactive agent session identity",
@@ -463,4 +458,11 @@ function statusFromSandbox(
       ? { exitSignal: observed.exitSignal }
       : {}),
   });
+}
+
+function sameExactSessionRef(
+  expected: AgentInteractiveSessionRef,
+  candidate: AgentInteractiveSessionRef,
+): boolean {
+  return canonicalCandidateDigest(expected) === canonicalCandidateDigest(candidate);
 }

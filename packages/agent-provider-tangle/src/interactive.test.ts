@@ -19,6 +19,7 @@ import {
   type AgentInteractiveSessionPromptCommand,
   type AgentInteractiveSessionStopAcknowledgement,
   type AgentInteractiveSessionStopCommand,
+  type AgentInteractiveSessionRef,
   type AgentProfile,
 } from "@tangle-network/agent-interface";
 import { runInteractiveSessionConformance } from "@tangle-network/agent-provider-testkit";
@@ -150,7 +151,7 @@ function fakeInteractive(options: FakeInteractiveOptions = {}) {
     state: "running",
     ...refInfo,
   };
-  let currentGeneration = 0;
+  let currentGeneration = 1;
   let currentControl: AgentInteractiveSessionControlClaim | undefined;
   let starts = 0;
   const claimLedger = new Map<
@@ -398,7 +399,22 @@ function fakeInteractive(options: FakeInteractiveOptions = {}) {
       }),
     },
   };
-  return { box, handle, attach, start, starts: () => starts, writes, resizes };
+  const replaceProcessIdentity = (
+    identity: Partial<SandboxInteractiveSessionInfoLike>,
+  ) => {
+    lifecycle = { state: "running", ...refInfo, ...identity };
+  };
+  return {
+    box,
+    handle,
+    attach,
+    claimControl,
+    replaceProcessIdentity,
+    start,
+    starts: () => starts,
+    writes,
+    resizes,
+  };
 }
 
 function request() {
@@ -436,6 +452,7 @@ describe("Tangle exact interactive agent sessions", () => {
       start: (value) => registry.start(value),
       interactive: (ref) => registry.get(ref),
       startCount: test.starts,
+      initialControlGeneration: 1,
       prompt: "Return the word ok.",
       changedPrompt: "Perform a different paid action.",
     });
@@ -481,6 +498,69 @@ describe("Tangle exact interactive agent sessions", () => {
     );
   });
 
+  it("rejects every complete reference mismatch before reaching Sandbox", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId,
+    );
+    const ref = await registry.start(request());
+    const changedReceiptMaterial = {
+      ...ref.preparationReceipt,
+      harnessVersion: "pi-2",
+    };
+    const { digest: _digest, ...changedReceiptWithoutDigest } =
+      changedReceiptMaterial;
+    const changedReceipt = {
+      ...changedReceiptMaterial,
+      digest: canonicalCandidateDigest(changedReceiptWithoutDigest),
+    };
+    const variants: Array<[string, AgentInteractiveSessionRef]> = [
+      ["provider", { ...ref, run: { ...ref.run, provider: "other-provider" } }],
+      [
+        "environment",
+        { ...ref, run: { ...ref.run, environmentId: "other-environment" } },
+      ],
+      ["session", { ...ref, run: { ...ref.run, sessionId: "other-session" } }],
+      [
+        "execution",
+        { ...ref, run: { ...ref.run, executionId: "other-execution" } },
+      ],
+      ["run", { ...ref, run: { ...ref.run, runId: "other-run" } }],
+      ["request", { ...ref, run: { ...ref.run, requestDigest: sha("f") } }],
+      ["preparation receipt", { ...ref, preparationReceipt: changedReceipt }],
+      ["incarnation", { ...ref, incarnationId: "other-incarnation" }],
+      ["start time", { ...ref, startedAt: "2026-08-16T00:01:00.000Z" }],
+    ];
+    const session = registry.get(ref);
+    for (const [label, changedRef] of variants) {
+      const before = test.claimControl.mock.calls.length;
+      await expect(
+        session.claimControl(
+          claimRequest(changedRef, `mismatch-${label}`, "coordinator", 1),
+        ),
+      ).rejects.toThrow(/different interactive session ref/);
+      expect(test.claimControl).toHaveBeenCalledTimes(before);
+    }
+  });
+
+  it("fails closed when Sandbox reports a replacement process", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId,
+    );
+    const ref = await registry.start(request());
+
+    test.replaceProcessIdentity({ incarnationId: "interactive-incarnation-2" });
+
+    await expect(registry.get(ref).status()).rejects.toThrow(
+      /different interactive agent session identity/,
+    );
+  });
+
   it("does not open a Sandbox terminal for a pre-aborted attach", async () => {
     const test = fakeInteractive();
     const registry = createTangleInteractiveAgentRegistry(
@@ -490,7 +570,7 @@ describe("Tangle exact interactive agent sessions", () => {
     );
     const ref = await registry.start(request());
     const claim = await registry.get(ref).claimControl(
-      claimRequest(ref, "claim", "coordinator", 0),
+      claimRequest(ref, "claim", "coordinator", 1),
     );
     const exactClaim = AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
       claim,
