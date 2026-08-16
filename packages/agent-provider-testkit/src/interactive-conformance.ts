@@ -96,11 +96,32 @@ export async function runInteractiveSessionConformance(
   checked.push("changed-start-conflict");
 
   const session = options.interactive(first);
+  const initialControlGeneration = options.initialControlGeneration ?? 0;
+  if (initialControlGeneration > 0) {
+    const launchGenerationProbe = claimRequest(
+      first,
+      `${options.name}-launch-generation-probe`,
+      `${options.name}-coordinator-probe`,
+      0,
+    );
+    const launchGenerationConflict =
+      AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
+        await session.claimControl(launchGenerationProbe),
+      );
+    assert(
+      launchGenerationConflict.status === "conflict" &&
+        launchGenerationConflict.conflictReason === "generation_mismatch" &&
+        launchGenerationConflict.currentGeneration === initialControlGeneration,
+      "a launch control generation must reject zero as stale",
+      checked,
+    );
+    checked.push("launch-generation-fence");
+  }
   const initialClaimRequest = claimRequest(
     first,
     `${options.name}-claim-operation`,
     `${options.name}-coordinator-1`,
-    0,
+    initialControlGeneration,
   );
   const firstClaim = AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
     await session.claimControl(initialClaimRequest),
