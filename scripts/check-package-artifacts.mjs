@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Range, SemVer, satisfies } from "semver";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -343,14 +344,47 @@ for (const entry of packages) {
         );
       }
       const internalDependency = packagesByName.get(dependency);
-      if (
-        internalDependency !== undefined &&
-        field !== "peerDependencies" &&
-        specifier !== internalDependency.manifest.version
-      ) {
-        throw new Error(
-          `${name} ${field}.${dependency} must match workspace version ${internalDependency.manifest.version}, received ${specifier}`,
-        );
+      if (internalDependency !== undefined && field !== "peerDependencies") {
+        // The declared range must admit the version this workspace publishes
+        // and must stop at the next major. Equality is not required: a caret
+        // range holds one installed copy across additive minors, and an exact
+        // pin pulls a second copy into a tree that already holds another.
+        // An open range such as ">=0.9.0" is still refused, because it admits
+        // a future major whose removals this package has never compiled against.
+        const version = internalDependency.manifest.version;
+        let parsed;
+        try {
+          parsed = new SemVer(version);
+        } catch {
+          throw new Error(`${dependency} has an unreadable version ${version}`);
+        }
+        // Build the ceiling from the parsed major rather than semver's inc().
+        // inc("1.0.0-rc.1", "major") returns "1.0.0", the stable release of the
+        // same major, so a prerelease workspace would reject its own caret range.
+        const nextMajor = `${parsed.major + 1}.0.0`;
+        let range;
+        try {
+          range = new Range(specifier);
+        } catch {
+          throw new Error(
+            `${name} ${field}.${dependency} must declare a valid range, received ${specifier}`,
+          );
+        }
+        if (!satisfies(version, range)) {
+          throw new Error(
+            `${name} ${field}.${dependency} must admit workspace version ${version}, received ${specifier}`,
+          );
+        }
+        // Probe every later major, not only the next one. A disjunction such as
+        // "^1.0.0 || ^3.0.0" excludes 2.0.0 yet still admits a major this
+        // package has never compiled against.
+        for (const major of [parsed.major + 1, parsed.major + 2, 999999]) {
+          if (satisfies(`${major}.0.0`, range)) {
+            throw new Error(
+              `${name} ${field}.${dependency} must stop below ${nextMajor}, received ${specifier}`,
+            );
+          }
+        }
       }
     }
   }
