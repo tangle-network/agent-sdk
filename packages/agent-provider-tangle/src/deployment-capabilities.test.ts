@@ -178,6 +178,7 @@ const DEPLOYMENT_DECIDED_CLAIMS = [
   "sessions.continue",
   "retainedControl",
   "interactions",
+  "interactiveAgent",
 ] as const;
 
 function decidedByDeployment(path: string): boolean {
@@ -194,6 +195,9 @@ function deploymentDecidedClaims(document: AgentEnvironmentCapabilities) {
     continued: document.sessions.continue,
     retainedControl: document.retainedControl !== undefined,
     interactions: document.interactions !== undefined,
+    interactiveAgent:
+      document.interactiveAgent !== undefined &&
+      Object.values(document.interactiveAgent).some(Boolean),
   };
 }
 
@@ -521,6 +525,7 @@ describe("Tangle deployment capability discovery", () => {
         continued: true,
         retainedControl: true,
         interactions: true,
+        interactiveAgent: true,
       });
       expect({
         deployment: testCase.deployment,
@@ -533,6 +538,7 @@ describe("Tangle deployment capability discovery", () => {
         continued: testCase.backed,
         retainedControl: testCase.backed,
         interactions: testCase.interactions,
+        interactiveAgent: false,
       });
       expect(claimsBeyond(sandboxStage, clientStage)).toEqual([]);
       expect(claimsTheDeploymentDoesNotDecide(sandboxStage)).toEqual(
@@ -578,6 +584,7 @@ describe("Tangle deployment capability discovery", () => {
       // The published fixture carries an empty `interactions` block, so the
       // flag is unset and the fact stays false.
       interactionResponses: false,
+      interactiveAgent: false,
     });
     expect(deploymentCapabilitySupport(null)).toEqual(UNPROVEN_DEPLOYMENT);
     expect(deploymentCapabilitySupport({ schema: 1 })).toEqual(
