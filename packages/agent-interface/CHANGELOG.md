@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 0.56.0
+
+### Minor Changes
+
+- 4245a0b: Bind exact interactive session references to the canonical execution preparation receipt.
+
+  Add retry-safe typed prompt commands and provider-issued control claims for prompt, stop, and writable terminal attachment.
+
 ## 0.55.0
 
 ### Minor Changes
