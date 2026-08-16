@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-computesdk",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "AgentEnvironmentProvider adapter for ComputeSDK-compatible sandboxes",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "0.56.0"
+    "@tangle-network/agent-interface": "^1.0.0"
   },
   "peerDependencies": {
     "computesdk": "^4.1.3"
