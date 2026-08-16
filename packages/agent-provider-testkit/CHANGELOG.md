@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.8.0
+
+### Minor Changes
+
+- 5b99d49: Implement the exact Agent Interface 0.56 native interactive session contract.
+
+  Bind sessions to canonical provider receipts, replay-safe control claims, typed prompt and stop commands, and claim-bound terminal mutations.
+
 ## 0.7.6
 
 ### Patch Changes
