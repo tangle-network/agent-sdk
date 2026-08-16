@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { satisfies } from "semver";
+import { inc, satisfies } from "semver";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -344,18 +344,28 @@ for (const entry of packages) {
         );
       }
       const internalDependency = packagesByName.get(dependency);
-      // The declared range must admit the version this workspace publishes.
-      // Equality is not required: a caret range on a package that keeps a
-      // semantic-versioning promise holds one installed copy across additive
-      // minors, and an exact pin pulls a second copy into the same tree.
-      if (
-        internalDependency !== undefined &&
-        field !== "peerDependencies" &&
-        !satisfies(internalDependency.manifest.version, specifier)
-      ) {
-        throw new Error(
-          `${name} ${field}.${dependency} must admit workspace version ${internalDependency.manifest.version}, received ${specifier}`,
-        );
+      if (internalDependency !== undefined && field !== "peerDependencies") {
+        // The declared range must admit the version this workspace publishes
+        // and must stop at the next major. Equality is not required: a caret
+        // range holds one installed copy across additive minors, and an exact
+        // pin pulls a second copy into a tree that already holds another.
+        // An open range such as ">=0.9.0" is still refused, because it admits
+        // a future major whose removals this package has never compiled against.
+        const version = internalDependency.manifest.version;
+        const nextMajor = inc(version, "major");
+        if (nextMajor === null) {
+          throw new Error(`${dependency} has an unreadable version ${version}`);
+        }
+        if (!satisfies(version, specifier)) {
+          throw new Error(
+            `${name} ${field}.${dependency} must admit workspace version ${version}, received ${specifier}`,
+          );
+        }
+        if (satisfies(nextMajor, specifier)) {
+          throw new Error(
+            `${name} ${field}.${dependency} must stop below ${nextMajor}, received ${specifier}`,
+          );
+        }
       }
     }
   }

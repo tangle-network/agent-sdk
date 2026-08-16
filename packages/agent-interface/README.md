@@ -162,13 +162,17 @@ The three code states are intentionally distinct:
 
 This package follows semantic versioning from 1.0.0.
 
-- A minor release is additive. A new export, a new optional field, and a widened union are minor.
+- A minor release is additive. A new export, a new optional field, and a new member on an exported union are minor.
 - A patch release is a fix. A behaviour correction that keeps every declared type is patch.
 - A major release removes or narrows. A deleted export, a removed member, a narrowed type, and a new required field are major.
 
-Declare this package as `^1.0.0`.
-A caret range admits every additive minor without a consumer release.
+Declare this package with a caret range, and set the floor to the lowest minor you actually use.
+A package that reads an export added in 1.4.0 declares `^1.4.0`, because `^1.0.0` lets a resolver keep 1.0.0.
+A caret range admits every later additive minor without a consumer release.
 Do not declare a single-generation window such as `>=1.4.0 <1.5.0`; that shape forces a coordinated release across every repository on each minor.
+
+Write a `default` branch in every `switch` over an exported union.
+An exhaustiveness check that assigns the remaining case to `never` fails when a minor adds a member, and this promise does not cover it.
 
 ## License
 
