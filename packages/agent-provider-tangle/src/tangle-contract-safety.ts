@@ -254,3 +254,35 @@ export async function awaitWithSignal<T>(
     if (listener) signal.removeEventListener("abort", listener);
   }
 }
+
+/** Await an operation and clean its result if abort wins before it resolves. */
+export async function awaitWithSignalAndCleanup<T>(
+  operation: () => Promise<T> | T,
+  signal: AbortSignal | undefined,
+  cleanup: (value: T) => Promise<void> | void,
+): Promise<T> {
+  signal?.throwIfAborted();
+  if (!signal) return await operation();
+
+  let aborted = false;
+  let listener: (() => void) | undefined;
+  const observed = Promise.resolve().then(operation).then(async (value) => {
+    if (aborted) await cleanup(value);
+    return value;
+  });
+
+  try {
+    return await Promise.race([
+      observed,
+      new Promise<T>((_, reject) => {
+        listener = () => {
+          aborted = true;
+          reject(new DOMException("The operation was aborted", "AbortError"));
+        };
+        signal.addEventListener("abort", listener, { once: true });
+      }),
+    ]);
+  } finally {
+    if (listener) signal.removeEventListener("abort", listener);
+  }
+}

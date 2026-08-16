@@ -9,6 +9,15 @@ import type {
 import type {
   AgentRunCancellationAcknowledgement,
   AgentRunCancellationRequest,
+  AgentExecutionPreparationReceipt,
+  AgentInteractiveSessionControlClaim,
+  AgentInteractiveSessionControlClaimAcknowledgement,
+  AgentInteractiveSessionControlClaimRequest,
+  AgentInteractiveSessionPromptAcknowledgement,
+  AgentInteractiveSessionPromptCommand,
+  AgentInteractiveSessionStopAcknowledgement,
+  AgentInteractiveSessionStopCommand,
+  AgentProfile,
   InputPart,
   InteractionRequest,
   InteractionResponseCommand,
@@ -124,6 +133,20 @@ export interface SandboxRuntimeCapabilityDocument {
      * image that predates the flag, which is unknown and never a claim.
      */
     responseDedupe?: boolean;
+  };
+  interactiveAgent?: {
+    /** Start binds one native TUI to the requested session id. */
+    start?: boolean;
+    /** Status returns durable running, exited, stopped, or lost state. */
+    status?: boolean;
+    /** Attach reaches the existing TUI and never creates a shell. */
+    attach?: boolean;
+    /** The deployment owns exact control claims and generation fencing. */
+    control?: boolean;
+    /** Prompt input is sent to that existing TUI. */
+    sendPrompt?: boolean;
+    /** Stop reaps the exact TUI and records its terminal state. */
+    stop?: boolean;
   };
 }
 
@@ -257,6 +280,69 @@ export interface SandboxTerminalsLike {
   ): Promise<SandboxTerminalStreamLike>;
 }
 
+/** Identity returned by the Sandbox exact interactive-session route. */
+export interface SandboxInteractiveSessionIdentityLike {
+  sessionId: string;
+  harness: BackendType;
+  startedAt: string;
+  /** Provider-issued process incarnation. Replays return this exact value. */
+  incarnationId: string;
+  /** Canonical provider admission receipt for the effective route. */
+  preparationReceipt: AgentExecutionPreparationReceipt;
+}
+
+/** Start acknowledgement from the canonical Sandbox interactive API. */
+export interface SandboxInteractiveSessionInfoLike
+  extends SandboxInteractiveSessionIdentityLike {
+  streamUrl: string;
+}
+
+/** Lifecycle returned by the Sandbox exact interactive-session route. */
+export type SandboxInteractiveSessionStatusLike =
+  | (SandboxInteractiveSessionInfoLike & { state: "running" })
+  | (SandboxInteractiveSessionIdentityLike & {
+      state: "exited";
+      endedAt: string;
+      exitCode?: number;
+      exitSignal?: string;
+      reason: "exited" | "stopped" | "lost";
+    });
+
+/** Existing Sandbox SDK handle for one coding harness's native TUI. */
+export interface SandboxInteractiveSessionLike {
+  start(options: {
+    harness: BackendType;
+    model?: string;
+    cwd?: string;
+    cols?: number;
+    rows?: number;
+    profile: AgentProfile;
+    initialPrompt?: string;
+    /** Derived from the exact run; owned by the Sandbox creation ledger. */
+    idempotencyKey: string;
+    /** Exact request digest paired with the idempotency key. */
+    requestDigest: `sha256:${string}`;
+  }): Promise<SandboxInteractiveSessionInfoLike>;
+  claimControl(
+    request: AgentInteractiveSessionControlClaimRequest,
+  ): Promise<AgentInteractiveSessionControlClaimAcknowledgement>;
+  status(): Promise<SandboxInteractiveSessionStatusLike | null>;
+  attach(options: {
+    control: AgentInteractiveSessionControlClaim;
+    cols?: number;
+    rows?: number;
+    handlers?: SandboxTerminalHandlersLike;
+  }): Promise<SandboxTerminalStreamLike>;
+  /** Validate the current generation before each PTY mutation. */
+  validateControl(control: AgentInteractiveSessionControlClaim): Promise<void>;
+  sendPrompt(
+    command: AgentInteractiveSessionPromptCommand,
+  ): Promise<AgentInteractiveSessionPromptAcknowledgement>;
+  stop(
+    command: AgentInteractiveSessionStopCommand,
+  ): Promise<AgentInteractiveSessionStopAcknowledgement>;
+}
+
 export interface SandboxInstanceLike {
   id: string;
   name?: string;
@@ -315,11 +401,13 @@ export interface SandboxInstanceLike {
   /** Interactive terminal transport. Absent on a client that cannot serve a PTY. */
   terminals?: SandboxTerminalsLike;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
-  delete?(options?: { signal?: AbortSignal }): Promise<void>;
+  delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface SandboxSessionLike {
   readonly id: string;
+  /** Exact native coding-agent TUI bound to this session id. */
+  interactive?(): unknown;
   status(options?: { signal?: AbortSignal }): Promise<unknown | null>;
   events(options?: {
     since?: string;

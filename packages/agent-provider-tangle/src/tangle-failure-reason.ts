@@ -21,7 +21,14 @@ export type TransportRead =
   | "terminal attach"
   | "terminal acknowledgement"
   | "terminal metadata read"
-  | "terminal socket";
+  | "terminal socket"
+  | "interactive start"
+  | "interactive control"
+  | "interactive control claim"
+  | "interactive status"
+  | "interactive attach"
+  | "interactive prompt"
+  | "interactive stop";
 
 /** Name the read that failed and the cause, with nothing copied from it. */
 export function transportFailureReason(read: TransportRead, error: unknown): string {

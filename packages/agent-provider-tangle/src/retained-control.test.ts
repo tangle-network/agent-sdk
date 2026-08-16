@@ -236,6 +236,7 @@ describe("Tangle retained control", () => {
           idempotencyKey: "unproven-environment",
         },
         turn: { prompt: "never dispatched", turnId: "unproven-turn" },
+        onAdmission: async () => {},
       }),
     ).rejects.toThrow(/cannot control a retry-safe retained run/);
     expect(create).not.toHaveBeenCalled();
@@ -399,6 +400,7 @@ describe("Tangle retained control", () => {
       },
       turn: { prompt: "run this exact task", turnId: "runtime-contract-turn" },
       identity: { sessionId, executionId },
+      onAdmission: async () => {},
     });
 
     expect(run.controlRef).toMatchObject({

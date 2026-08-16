@@ -41,6 +41,8 @@
     "dist/exact-process-conformance.js",
     "dist/exact-process-helpers.d.ts",
     "dist/exact-process-helpers.js",
+    "dist/interactive-conformance.d.ts",
+    "dist/interactive-conformance.js",
     "dist/interaction-conformance.d.ts",
     "dist/interaction-conformance.js",
     "dist/portable-context-conformance.d.ts",

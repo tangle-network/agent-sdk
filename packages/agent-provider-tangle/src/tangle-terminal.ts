@@ -7,6 +7,8 @@ import {
   terminalSessionUsable,
 } from "@tangle-network/agent-interface";
 import type {
+  AgentInteractiveSessionControlClaim,
+  AgentInteractiveTerminalSession,
   AgentTerminalSession,
   TerminalAttachRequest,
   TerminalAttachResult,
@@ -21,9 +23,14 @@ import type {
   SandboxTerminalInfoLike,
   SandboxTerminalReadyLike,
   SandboxTerminalStreamLike,
+  SandboxTerminalsLike,
 } from "./tangle-types.js";
 import { TerminalFrameLog } from "./tangle-terminal-frames.js";
-import { awaitWithSignal, MAX_STRING_LENGTH } from "./tangle-contract-safety.js";
+import {
+  awaitWithSignal,
+  awaitWithSignalAndCleanup,
+  MAX_STRING_LENGTH,
+} from "./tangle-contract-safety.js";
 import { transportFailureReason } from "./tangle-failure-reason.js";
 import { assertOptionKeys } from "./tangle-environment-validation.js";
 
@@ -81,6 +88,233 @@ interface AttachedTerminal {
   stream: SandboxTerminalStreamLike;
 }
 
+/** Stream state captured from handlers that are installed before attach. */
+export interface TangleTerminalStreamCapture {
+  readonly handlers: {
+    onReady(info: SandboxTerminalReadyLike): void;
+    onData(data: Uint8Array): void;
+    onExit(info: { exitCode?: number; exitSignal?: string }): void;
+    onError(error: Error): void;
+    onClose(): void;
+  };
+  readonly log: TerminalFrameLog;
+  readonly activity: { localMs: number };
+  readonly exit: { exitCode?: number; exitSignal?: string; seen: boolean };
+  readonly ready: SandboxTerminalReadyLike | undefined;
+}
+
+/** A live stream after its exact identity and runtime metadata are checked. */
+export type PreparedTangleTerminal =
+  | {
+      status: "ready";
+      session: AgentTerminalSession;
+      stream: SandboxTerminalStreamLike;
+      acknowledgement: SandboxTerminalReadyLike;
+    }
+  | {
+      status: "unknown";
+      message: string;
+      retryable: boolean;
+    };
+
+/**
+ * Install one ordered capture before a terminal socket opens.
+ *
+ * Both generic shells and exact coding-agent sessions use this capture. This
+ * keeps replay, resize, exit, and transport ordering identical on both paths.
+ */
+export function createTangleTerminalStreamCapture(
+  geometry?: { cols?: number; rows?: number },
+): TangleTerminalStreamCapture {
+  const log = new TerminalFrameLog();
+  const activity = { localMs: Date.now() };
+  const exit: { exitCode?: number; exitSignal?: string; seen: boolean } = {
+    seen: false,
+  };
+  const decoder = new TextDecoder();
+  let ready: SandboxTerminalReadyLike | undefined;
+  return {
+    log,
+    activity,
+    exit,
+    get ready() {
+      return ready;
+    },
+    handlers: {
+      onReady(info) {
+        ready = info;
+        log.append({
+          type: "ready",
+          ...(geometry?.cols === undefined ? {} : { cols: geometry.cols }),
+          ...(geometry?.rows === undefined ? {} : { rows: geometry.rows }),
+        });
+      },
+      onData(data) {
+        activity.localMs = Date.now();
+        log.appendOutput(decoder.decode(data, { stream: true }));
+      },
+      onExit(info) {
+        exit.seen = true;
+        exit.exitCode = info.exitCode;
+        exit.exitSignal = info.exitSignal;
+        log.append({
+          type: "exit",
+          ...(Number.isSafeInteger(info.exitCode)
+            ? { exitCode: info.exitCode as number }
+            : {}),
+          ...(typeof info.exitSignal === "string" && info.exitSignal.length > 0
+            ? { exitSignal: info.exitSignal }
+            : {}),
+        });
+        log.end();
+      },
+      onError(error) {
+        log.append({ type: "error", message: socketErrorFrame(error) });
+      },
+      onClose() {
+        log.end();
+      },
+    },
+  };
+}
+
+/**
+ * Validate one attached socket and adapt it to the shared terminal contract.
+ *
+ * The runtime acknowledgement and metadata are authoritative. A missing or
+ * different session id closes the socket and returns no usable handle.
+ */
+export async function prepareTangleTerminalAttachment(input: {
+  stream: SandboxTerminalStreamLike;
+  capture: TangleTerminalStreamCapture;
+  terminals: SandboxTerminalsLike;
+  parentExecutionId: string;
+  expectedSessionId?: string;
+  signal?: AbortSignal;
+  beforeMutation?: (
+    operation: "input" | "resize" | "detach" | "close",
+  ) => Promise<void>;
+  attachCount?: (terminalSessionId: string) => number;
+  release?: (
+    terminalSessionId: string,
+    stream: SandboxTerminalStreamLike,
+  ) => void;
+}): Promise<PreparedTangleTerminal> {
+  let streamClosed = false;
+  const closePreparedStream = async (): Promise<void> => {
+    if (streamClosed) return;
+    streamClosed = true;
+    await closeQuietly(input.stream);
+  };
+
+  let handedOff = false;
+  try {
+    input.signal?.throwIfAborted();
+
+    let acknowledgement: SandboxTerminalReadyLike | undefined;
+    try {
+      acknowledgement = input.capture.ready ?? input.stream.ready;
+    } catch (error) {
+      await closePreparedStream();
+      return {
+        status: "unknown",
+        message: transportFailureReason("terminal acknowledgement", error),
+        retryable: true,
+      };
+    }
+    if (
+      acknowledgement === undefined ||
+      typeof acknowledgement.sessionId !== "string" ||
+      acknowledgement.sessionId.length === 0
+    ) {
+      await closePreparedStream();
+      return {
+        status: "unknown",
+        message: "the Tangle terminal transport attached without a session id",
+        retryable: false,
+      };
+    }
+    if (
+      input.expectedSessionId !== undefined &&
+      acknowledgement.sessionId !== input.expectedSessionId
+    ) {
+      await closePreparedStream();
+      return {
+        status: "unknown",
+        message: "the Tangle terminal transport attached a different terminal session",
+        retryable: false,
+      };
+    }
+    if (
+      !Number.isSafeInteger(acknowledgement.detachTimeoutMs) ||
+      acknowledgement.detachTimeoutMs <= 0
+    ) {
+      await closePreparedStream();
+      return {
+        status: "unknown",
+        message: "the Tangle terminal transport reported no detach window",
+        retryable: false,
+      };
+    }
+    let info: SandboxTerminalInfoLike | null;
+    try {
+      info = await awaitWithSignal(
+        input.terminals.get(acknowledgement.sessionId),
+        input.signal,
+      );
+    } catch (error) {
+      await closePreparedStream();
+      input.signal?.throwIfAborted();
+      return {
+        status: "unknown",
+        message: transportFailureReason("terminal metadata read", error),
+        retryable: true,
+      };
+    }
+    input.signal?.throwIfAborted();
+    if (info === null || info === undefined) {
+      await closePreparedStream();
+      return {
+        status: "unknown",
+        message: "the Tangle runtime reported no metadata for the attached terminal",
+        retryable: true,
+      };
+    }
+    const state = terminalStateFromInfo(
+      info,
+      acknowledgement,
+      input.parentExecutionId,
+      input.capture.activity.localMs,
+    );
+    if (typeof state === "string") {
+      await closePreparedStream();
+      return { status: "unknown", message: state, retryable: false };
+    }
+    state.attachCount = input.attachCount?.(state.terminalSessionId) ?? 1;
+    const session = createTangleTerminalSession(
+      input.stream,
+      input.capture.log,
+      state,
+      input.capture.activity,
+      input.capture.exit,
+      () => input.release?.(state.terminalSessionId, input.stream),
+      input.beforeMutation,
+    );
+    input.signal?.throwIfAborted();
+    handedOff = true;
+    return {
+      status: "ready",
+      session,
+      stream: input.stream,
+      acknowledgement,
+    };
+  } catch (error) {
+    if (!handedOff) await closePreparedStream();
+    input.signal?.throwIfAborted();
+    throw error;
+  }
+}
+
 export function createTangleTerminalRegistry(
   box: SandboxInstanceLike,
 ): TangleTerminalRegistry {
@@ -117,63 +351,24 @@ export function createTangleTerminalRegistry(
       }
       const connectionId =
         exactRequest.connectionId ?? exactRequest.terminalSessionId ?? randomUUID();
-      const log = new TerminalFrameLog();
-      const activity = { localMs: Date.now() };
-      const exit: { exitCode?: number; exitSignal?: string; seen: boolean } = {
-        seen: false,
-      };
-      const decoder = new TextDecoder();
-      let ready: SandboxTerminalReadyLike | undefined;
+      const capture = createTangleTerminalStreamCapture({
+        cols: exactRequest.cols,
+        rows: exactRequest.rows,
+      });
       let stream: SandboxTerminalStreamLike;
       try {
-        stream = await awaitWithSignal(
-          terminals.attach(connectionId, {
+        stream = await awaitWithSignalAndCleanup(
+          () => terminals.attach(connectionId, {
             ...(exactRequest.cols === undefined ? {} : { cols: exactRequest.cols }),
             ...(exactRequest.rows === undefined ? {} : { rows: exactRequest.rows }),
             ...(exactRequest.command === undefined
               ? {}
               : { command: exactRequest.command }),
             ...(exactRequest.cwd === undefined ? {} : { cwd: exactRequest.cwd }),
-            handlers: {
-              onReady: (info) => {
-                ready = info;
-                log.append({
-                  type: "ready",
-                  ...(exactRequest.cols === undefined ? {} : { cols: exactRequest.cols }),
-                  ...(exactRequest.rows === undefined ? {} : { rows: exactRequest.rows }),
-                });
-              },
-              onData: (data) => {
-                activity.localMs = Date.now();
-                log.appendOutput(decoder.decode(data, { stream: true }));
-              },
-              onExit: (info) => {
-                exit.seen = true;
-                exit.exitCode = info.exitCode;
-                exit.exitSignal = info.exitSignal;
-                log.append({
-                  type: "exit",
-                  ...(Number.isSafeInteger(info.exitCode)
-                    ? { exitCode: info.exitCode as number }
-                    : {}),
-                  ...(typeof info.exitSignal === "string" && info.exitSignal.length > 0
-                    ? { exitSignal: info.exitSignal }
-                    : {}),
-                });
-                log.end();
-              },
-              onError: (error) => {
-                // A frame belongs to the PTY stream, which carries whatever the
-                // terminal itself produced, so the socket error is carried as
-                // the terminal reports it and only its length is bounded.
-                log.append({ type: "error", message: socketErrorFrame(error) });
-              },
-              onClose: () => {
-                log.end();
-              },
-            },
+            handlers: capture.handlers,
           }),
           options?.signal,
+          closeQuietly,
         );
       } catch (error) {
         options?.signal?.throwIfAborted();
@@ -183,121 +378,43 @@ export function createTangleTerminalRegistry(
           retryable: true,
         };
       }
-      options?.signal?.throwIfAborted();
-      let acknowledgement: SandboxTerminalReadyLike | undefined;
-      try {
-        // `ready` is an accessor on the SDK stream that throws until the
-        // runtime's acknowledgement arrives. Read outside a guard it would
-        // replace this attach's result with a raw transport error and abandon
-        // the socket the attach opened.
-        acknowledgement = ready ?? stream.ready;
-      } catch (error) {
+      if (options?.signal?.aborted) {
         await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: transportFailureReason("terminal acknowledgement", error),
-          retryable: true,
-        };
+        options.signal.throwIfAborted();
       }
-      if (
-        acknowledgement === undefined ||
-        typeof acknowledgement.sessionId !== "string" ||
-        acknowledgement.sessionId.length === 0
-      ) {
-        await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: "the Tangle terminal transport attached without a session id",
-          retryable: false,
-        };
-      }
-      if (
-        exactRequest.terminalSessionId !== undefined &&
-        acknowledgement.sessionId !== exactRequest.terminalSessionId
-      ) {
-        await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: "the Tangle terminal transport attached a different terminal session",
-          retryable: false,
-        };
-      }
-      if (
-        !Number.isSafeInteger(acknowledgement.detachTimeoutMs) ||
-        acknowledgement.detachTimeoutMs <= 0
-      ) {
-        // The detach window is the only bound on how long the runtime keeps
-        // this PTY, so without it the reference cannot state an expiry and
-        // every later call would be unbounded.
-        await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: "the Tangle terminal transport reported no detach window",
-          retryable: false,
-        };
-      }
-      let info: SandboxTerminalInfoLike | null;
-      try {
-        info = await awaitWithSignal(
-          terminals.get(acknowledgement.sessionId),
-          options?.signal,
-        );
-      } catch (error) {
-        options?.signal?.throwIfAborted();
-        await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: transportFailureReason("terminal metadata read", error),
-          retryable: true,
-        };
-      }
-      if (info === null || info === undefined) {
-        await closeQuietly(stream);
-        return {
-          status: "unknown",
-          message: "the Tangle runtime reported no metadata for the attached terminal",
-          retryable: true,
-        };
-      }
-      const state = terminalStateFromInfo(
-        info,
-        acknowledgement,
-        exactRequest.parentExecutionId,
-        activity.localMs,
-      );
-      if (typeof state === "string") {
-        await closeQuietly(stream);
-        return { status: "unknown", message: state, retryable: false };
-      }
-      const previous = attached.get(state.terminalSessionId);
-      state.attachCount =
-        previous === undefined ? 1 : previous.session.ref.attachCount + 1;
-      // A handle drops only the entry it still owns, matched by the socket it
-      // was built on. A later attach replaces that entry with its own socket,
-      // so a stale handle's detach cannot evict the terminal now held.
-      const release = (): void => {
-        if (attached.get(state.terminalSessionId)?.stream === stream) {
-          attached.delete(state.terminalSessionId);
-        }
-      };
-      const session = createTangleTerminalSession(
+      const prepared = await prepareTangleTerminalAttachment({
         stream,
-        log,
-        state,
-        activity,
-        exit,
-        release,
-      );
-      attached.set(state.terminalSessionId, { session, stream });
+        capture,
+        terminals,
+        parentExecutionId: exactRequest.parentExecutionId,
+        expectedSessionId: exactRequest.terminalSessionId,
+        signal: options?.signal,
+        attachCount: (terminalSessionId) => {
+          const previous = attached.get(terminalSessionId);
+          return previous === undefined ? 1 : previous.session.ref.attachCount + 1;
+        },
+        release: (terminalSessionId, heldStream) => {
+          if (attached.get(terminalSessionId)?.stream === heldStream) {
+            attached.delete(terminalSessionId);
+          }
+        },
+      });
+      if (prepared.status === "unknown") return prepared;
+      const previous = attached.get(prepared.session.ref.terminalSessionId);
+      attached.set(prepared.session.ref.terminalSessionId, {
+        session: prepared.session,
+        stream: prepared.stream,
+      });
       // The registry holds one socket per terminal. The socket this attach
       // replaces stays open on the runtime until its own close, so it is
       // closed here rather than abandoned with the handle that owned it.
       if (previous !== undefined) await closeQuietly(previous.stream);
       return {
-        status: acknowledgement.restored === true ? "reattached" : "attached",
+        status:
+          prepared.acknowledgement.restored === true ? "reattached" : "attached",
         mode: "attach",
-        ref: session.ref,
-        attachCount: state.attachCount,
+        ref: prepared.session.ref,
+        attachCount: prepared.session.ref.attachCount,
       };
     },
     get(terminalSessionId: string): AgentTerminalSession {
@@ -375,6 +492,9 @@ function createTangleTerminalSession(
   activity: { localMs: number },
   exit: { exitCode?: number; exitSignal?: string; seen: boolean },
   release: () => void,
+  beforeMutation?: (
+    operation: "input" | "resize" | "detach" | "close",
+  ) => Promise<void>,
 ): AgentTerminalSession {
   // A reference describes what this handle can do with its own socket. The
   // runtime keeps a detached PTY alive, but a closed socket carries no input
@@ -433,6 +553,8 @@ function createTangleTerminalSession(
       assertOptionKeys(options, ["signal"], "Tangle terminal input");
       const exactInput = TerminalInputSchema.parse(input);
       options?.signal?.throwIfAborted();
+      await beforeMutation?.("input");
+      options?.signal?.throwIfAborted();
       assertUsable("input");
       stream.write(exactInput.data);
       activity.localMs = Date.now();
@@ -440,6 +562,8 @@ function createTangleTerminalSession(
     async resize(resize: TerminalResize, options?: { signal?: AbortSignal }): Promise<void> {
       assertOptionKeys(options, ["signal"], "Tangle terminal resize");
       const exactResize = TerminalResizeSchema.parse(resize);
+      options?.signal?.throwIfAborted();
+      await beforeMutation?.("resize");
       options?.signal?.throwIfAborted();
       assertUsable("resize");
       stream.resize(exactResize.cols, exactResize.rows);
@@ -454,6 +578,8 @@ function createTangleTerminalSession(
     async detach(options?: { signal?: AbortSignal }): Promise<TerminalDetachAck> {
       assertOptionKeys(options, ["signal"], "Tangle terminal detach");
       options?.signal?.throwIfAborted();
+      await beforeMutation?.("detach");
+      options?.signal?.throwIfAborted();
       detached = true;
       release();
       await awaitWithSignal(stream.close(), options?.signal);
@@ -466,6 +592,8 @@ function createTangleTerminalSession(
     },
     async close(options?: { signal?: AbortSignal }): Promise<TerminalDetachAck> {
       assertOptionKeys(options, ["signal"], "Tangle terminal close");
+      options?.signal?.throwIfAborted();
+      await beforeMutation?.("close");
       options?.signal?.throwIfAborted();
       detached = true;
       release();
@@ -513,6 +641,28 @@ async function closeQuietly(stream: SandboxTerminalStreamLike): Promise<void> {
     // The attach already failed, and the socket is being abandoned. The
     // caller's failure is reported from the attach result it receives.
   }
+}
+
+/** Close a stream that has not been handed to a caller. */
+export async function closeTangleStreamQuietly(
+  stream: SandboxTerminalStreamLike,
+): Promise<void> {
+  await closeQuietly(stream);
+}
+
+/** Add the exact claim identity without replacing the terminal implementation. */
+export function bindTangleInteractiveControl(
+  session: AgentTerminalSession,
+  control: AgentInteractiveSessionControlClaim,
+): AgentInteractiveTerminalSession {
+  return Object.create(session, {
+    control: {
+      configurable: false,
+      enumerable: true,
+      value: Object.freeze({ ...control }),
+      writable: false,
+    },
+  }) as AgentInteractiveTerminalSession;
 }
 
 function boundedLabel(value: unknown): string | undefined {
