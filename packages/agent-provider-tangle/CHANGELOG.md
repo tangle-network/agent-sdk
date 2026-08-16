@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.12.1
+
+### Patch Changes
+
+- 09a4304: Reject mismatched or replaced Tangle interactive processes before control, status, or terminal operations.
+  Test providers whose launch reserves the first control generation.
+
 ## 0.12.0
 
 ### Minor Changes
