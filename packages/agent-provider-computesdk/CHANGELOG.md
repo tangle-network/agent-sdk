@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-computesdk
 
+## 0.3.12
+
+### Patch Changes
+
+- Updated dependencies [986ef57]
+  - @tangle-network/agent-interface@0.55.0
+
 ## 0.3.11
 
 ### Patch Changes
