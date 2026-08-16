@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.8.1
+
+### Patch Changes
+
+- 09a4304: Reject mismatched or replaced Tangle interactive processes before control, status, or terminal operations.
+  Test providers whose launch reserves the first control generation.
+
 ## 0.8.0
 
 ### Minor Changes
