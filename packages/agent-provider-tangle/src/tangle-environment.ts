@@ -12,6 +12,9 @@ import type {
   AgentEnvironmentEvent,
   AgentEnvironmentObservation,
   AgentEnvironmentStatus,
+  AgentInteractiveSession,
+  AgentInteractiveSessionRef,
+  AgentInteractiveSessionStart,
   AgentSession,
   AgentTerminalSession,
   AgentTurnInput,
@@ -63,6 +66,7 @@ import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import { createExecutionUsageLog } from "./tangle-usage-log.js";
 import { observeTangleEnvironment } from "./tangle-observation.js";
 import { createTangleTerminalRegistry } from "./tangle-terminal.js";
+import { createTangleInteractiveAgentRegistry } from "./tangle-interactive.js";
 
 /**
  * Compose one concrete sandbox into an environment.
@@ -118,6 +122,11 @@ export async function sandboxInstanceAsEnvironment(
   const terminals =
     capabilities.interactiveTerminal?.attach === true
       ? createTangleTerminalRegistry(box)
+      : undefined;
+  const interactiveAgents =
+    capabilities.interactiveAgent?.start === true &&
+    capabilities.interactiveAgent.control === true
+      ? createTangleInteractiveAgentRegistry(box, providerName, environmentId)
       : undefined;
   const dispatch =
     capabilities.streaming.detach && box.dispatchPrompt
@@ -372,6 +381,21 @@ export async function sandboxInstanceAsEnvironment(
             assertOptionKeys(options, ["signal"], "Tangle terminal");
             options?.signal?.throwIfAborted();
             return terminals.get(terminalSessionId);
+          },
+        }
+      : {}),
+    ...(interactiveAgents
+      ? {
+          async startInteractive(
+            interactiveRequest: AgentInteractiveSessionStart,
+            options?: { signal?: AbortSignal },
+          ): Promise<AgentInteractiveSessionRef> {
+            return await interactiveAgents.start(interactiveRequest, options);
+          },
+          interactive(
+            ref: AgentInteractiveSessionRef,
+          ): AgentInteractiveSession {
+            return interactiveAgents.get(ref);
           },
         }
       : {}),

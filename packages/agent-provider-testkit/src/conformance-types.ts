@@ -1,5 +1,8 @@
 import type {
   AgentExactRunControlRef,
+  AgentInteractiveSession,
+  AgentInteractiveSessionRef,
+  AgentInteractiveSessionStart,
   AgentWorkspaceBranching,
   ContextTransferResult,
   ContextTransferRequest,
@@ -51,6 +54,26 @@ export interface ProviderConformanceReport {
    */
   environmentCapabilities: AgentEnvironmentCapabilities;
   events: number;
+  checked: string[];
+}
+
+export interface InteractiveSessionConformanceOptions {
+  name: string;
+  request: AgentInteractiveSessionStart;
+  /** Same exact run with changed start material. It must be rejected. */
+  changedRequest: AgentInteractiveSessionStart;
+  start(request: AgentInteractiveSessionStart): Promise<AgentInteractiveSessionRef>;
+  interactive(ref: AgentInteractiveSessionRef): AgentInteractiveSession;
+  /** Number of native TUI processes started by the adapter. */
+  startCount(): number | Promise<number>;
+  prompt?: string;
+  changedPrompt?: string;
+}
+
+export interface InteractiveSessionConformanceReport {
+  name: string;
+  ref: AgentInteractiveSessionRef;
+  promptOperationId: string;
   checked: string[];
 }
 

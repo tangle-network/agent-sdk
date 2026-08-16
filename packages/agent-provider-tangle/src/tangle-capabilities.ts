@@ -11,6 +11,7 @@ import type {
 } from "./tangle-types.js";
 import {
   ADAPTER_CEILING_DEPLOYMENT,
+  deploymentBacksInteractiveAgent,
   deploymentBacksRetainedControl,
 } from "./tangle-deployment-capabilities.js";
 import type { DeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
@@ -21,6 +22,7 @@ import {
   type ObservationSurfaceSupport,
 } from "./tangle-observation.js";
 import { sandboxBacksInteractiveTerminal } from "./tangle-terminal.js";
+import { sandboxBacksInteractiveAgent } from "./tangle-interactive.js";
 
 /**
  * The full capability document this adapter supports when the Sandbox client
@@ -121,6 +123,17 @@ export function defaultTangleSandboxCapabilities(
       resize: true,
       reattach: true,
     },
+    interactiveAgent: {
+      start: true,
+      status: true,
+      attach: true,
+      reattach: true,
+      control: true,
+      sendPrompt: true,
+      input: true,
+      resize: true,
+      stop: true,
+    },
   };
 }
 
@@ -148,6 +161,8 @@ export interface SandboxCapabilitySupport {
   observation: ObservationSurfaceSupport;
   /** The sandbox serves the PTY socket and reports terminal metadata. */
   interactiveTerminal: boolean;
+  /** The SDK can drive the existing native TUI and read its terminal metadata. */
+  interactiveAgent: boolean;
 }
 
 // One reserved id names both probe handles; neither ever reaches the service.
@@ -181,6 +196,7 @@ export function sandboxCapabilitySupport(
     respondToInteraction: typeof session?.respondToInteraction === "function",
     observation: observationSurfaceSupport(box, client, requestedResources),
     interactiveTerminal: sandboxBacksInteractiveTerminal(box),
+    interactiveAgent: sandboxBacksInteractiveAgent(box),
   };
 }
 
@@ -246,6 +262,7 @@ export function clientCapabilitySupport(
     respondToInteraction: false,
     observation,
     interactiveTerminal: true,
+    interactiveAgent: false,
   };
 }
 
@@ -300,6 +317,19 @@ export function tangleInteractionResponsesSupported(
     deployment.interactionResponses &&
     support.session &&
     support.respondToInteraction
+  );
+}
+
+/** Decide whether exact native-TUI control is both callable and deployed. */
+export function tangleInteractiveAgentSupported(
+  declared: AgentEnvironmentCapabilities,
+  support: SandboxCapabilitySupport,
+  deployment: DeploymentCapabilitySupport,
+): boolean {
+  return (
+    declared.interactiveAgent !== undefined &&
+    support.interactiveAgent &&
+    deploymentBacksInteractiveAgent(deployment)
   );
 }
 
@@ -380,6 +410,14 @@ export function narrowedTangleCapabilities(
             support.interactiveTerminal,
           ),
         }),
+    ...(declared.interactiveAgent === undefined
+      ? {}
+      : {
+          interactiveAgent: narrowedInteractiveAgent(
+            declared.interactiveAgent,
+            tangleInteractiveAgentSupported(declared, support, deployment),
+          ),
+        }),
   };
   // A claimed block is passed through whole. Its sub-flags state what the
   // route carries, not what one deployment reports, and the deployment's own
@@ -428,6 +466,24 @@ function narrowedInteractiveTerminal(
     input: supported ? declared.input : false,
     resize: supported ? declared.resize : false,
     reattach: supported ? declared.reattach : false,
+  };
+}
+
+/** One fact decides the exact TUI surface because partial control is unsafe. */
+function narrowedInteractiveAgent(
+  declared: NonNullable<AgentEnvironmentCapabilities["interactiveAgent"]>,
+  supported: boolean,
+): NonNullable<AgentEnvironmentCapabilities["interactiveAgent"]> {
+  return {
+    start: supported ? declared.start : false,
+    status: supported ? declared.status : false,
+    attach: supported ? declared.attach : false,
+    reattach: supported ? declared.reattach : false,
+    control: supported ? declared.control : false,
+    sendPrompt: supported ? declared.sendPrompt : false,
+    input: supported ? declared.input : false,
+    resize: supported ? declared.resize : false,
+    stop: supported ? declared.stop : false,
   };
 }
 
