@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inc, satisfies } from "semver";
+import { Range, SemVer, satisfies } from "semver";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -352,19 +352,38 @@ for (const entry of packages) {
         // An open range such as ">=0.9.0" is still refused, because it admits
         // a future major whose removals this package has never compiled against.
         const version = internalDependency.manifest.version;
-        const nextMajor = inc(version, "major");
-        if (nextMajor === null) {
+        let parsed;
+        try {
+          parsed = new SemVer(version);
+        } catch {
           throw new Error(`${dependency} has an unreadable version ${version}`);
         }
-        if (!satisfies(version, specifier)) {
+        // Build the ceiling from the parsed major rather than semver's inc().
+        // inc("1.0.0-rc.1", "major") returns "1.0.0", the stable release of the
+        // same major, so a prerelease workspace would reject its own caret range.
+        const nextMajor = `${parsed.major + 1}.0.0`;
+        let range;
+        try {
+          range = new Range(specifier);
+        } catch {
+          throw new Error(
+            `${name} ${field}.${dependency} must declare a valid range, received ${specifier}`,
+          );
+        }
+        if (!satisfies(version, range)) {
           throw new Error(
             `${name} ${field}.${dependency} must admit workspace version ${version}, received ${specifier}`,
           );
         }
-        if (satisfies(nextMajor, specifier)) {
-          throw new Error(
-            `${name} ${field}.${dependency} must stop below ${nextMajor}, received ${specifier}`,
-          );
+        // Probe every later major, not only the next one. A disjunction such as
+        // "^1.0.0 || ^3.0.0" excludes 2.0.0 yet still admits a major this
+        // package has never compiled against.
+        for (const major of [parsed.major + 1, parsed.major + 2, 999999]) {
+          if (satisfies(`${major}.0.0`, range)) {
+            throw new Error(
+              `${name} ${field}.${dependency} must stop below ${nextMajor}, received ${specifier}`,
+            );
+          }
         }
       }
     }
