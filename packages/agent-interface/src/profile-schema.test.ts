@@ -6,13 +6,17 @@ import {
   type AgentProfileMcpServer,
 } from "./agent-profile.js";
 import { harnessTypeSchema } from "./harness.js";
-import { validateAgentProfileSecurity } from "./profile-security.js";
+import {
+  isRuntimeProcessControlEnvironmentName,
+  validateAgentProfileSecurity,
+} from "./profile-security.js";
 import {
   agentProfileDiffSchema,
   agentProfileJsonSchema,
   agentProfileModelHintsSchema,
   agentProfileSchema,
   capabilitySchema,
+  isCredentialBearingProfileConfigName,
   reasoningEffortSchema,
 } from "./profile-schema.js";
 
@@ -72,6 +76,39 @@ describe("agentProfileModelHintsSchema token ceilings", () => {
       agentProfileModelHintsSchema.safeParse({ maxTotalOutputTokens: 0 })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("shared profile environment security", () => {
+  it("identifies credential-bearing config names across common styles", () => {
+    for (const name of [
+      "apiKey",
+      "OPENAI_API_KEY",
+      "authorization",
+      "database-url",
+      "github_pat",
+    ]) {
+      expect(isCredentialBearingProfileConfigName(name), name).toBe(true);
+    }
+    for (const name of ["MODEL", "LOG_LEVEL", "COMPATIBILITY_TOKENIZER"]) {
+      expect(isCredentialBearingProfileConfigName(name), name).toBe(false);
+    }
+  });
+
+  it("identifies process controls without blocking ordinary public env", () => {
+    for (const name of [
+      "PATH",
+      "node_options",
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "GIT_CONFIG_SYSTEM",
+      "https_proxy",
+    ]) {
+      expect(isRuntimeProcessControlEnvironmentName(name), name).toBe(true);
+    }
+    for (const name of ["MODEL", "LOG_LEVEL", "PROJECT_NAME"]) {
+      expect(isRuntimeProcessControlEnvironmentName(name), name).toBe(false);
+    }
   });
 });
 

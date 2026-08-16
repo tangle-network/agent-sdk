@@ -202,6 +202,11 @@ const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 const secretCapableNamePattern =
   /(?:^|[_-])(?:api[_-]?key|access[_-]?key|private[_-]?key|token|secret|password|credentials?|authorization|cookie|database[_-]?url|dsn|pat)(?:[_-]|$)/i;
 
+/** Return true when a public config name denotes credential material. */
+export function isCredentialBearingProfileConfigName(name: string): boolean {
+  return secretCapableNamePattern.test(name);
+}
+
 const publicProfileConfigStringSchema = z
   .string()
   .refine(
@@ -255,7 +260,7 @@ function profileConfigRecordSchema(keySchema: z.ZodString) {
         }
         if (
           value.kind === "public" &&
-          secretCapableNamePattern.test(name)
+          isCredentialBearingProfileConfigName(name)
         ) {
           context.addIssue({
             code: "custom",

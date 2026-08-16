@@ -17,7 +17,8 @@ Metadata can include caller-authored values and does not prove authorization or 
 Its acknowledgement repeats the operation, digest, and run coordinates and distinguishes a known cancellation effect from conflict or unknown state.
 
 An environment advertises `interactions` only when it can originate and answer typed requests.
-`RequestedInteractions` defines the strict per-turn posture for `permission`, `question`, and `plan` requests.
+`RequestedInteractions` defines the bounded per-turn posture for well-known and namespaced provider interaction kinds.
+`permission`, `question`, and `plan` keep portable meanings across providers.
 `AgentTurnInput.interactions` and `AgentExecutionInput.interactions` carry that posture through shared execution boundaries.
 An omitted posture leaves provider defaults unchanged, while an empty object enables no interaction kind for that turn.
 `AgentEnvironmentCapabilitiesSchema` strictly validates the complete capability document at runtime, including all-or-nothing durable branching declarations.
@@ -115,6 +116,10 @@ const provider: AgentEnvironmentProvider = {
   },
 };
 ```
+
+When caller environment values merge into a bridge or harness process, reject names for which `isRuntimeProcessControlEnvironmentName(name)` returns `true`.
+Use `isCredentialBearingProfileConfigName(name)` before retaining public config.
+These checks do not apply to a replacement environment owned by caller code.
 
 ## Exact process environments
 

@@ -23,6 +23,82 @@ import type {
   AgentProfileValidationResult,
 } from "./agent-profile.js";
 
+const runtimeProcessControlEnvironmentNames = new Set([
+  "ALL_PROXY",
+  "BASH_ENV",
+  "CDPATH",
+  "COMSPEC",
+  "CURL_CA_BUNDLE",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "ENV",
+  "GEM_HOME",
+  "GEM_PATH",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_SSH_COMMAND",
+  "GIT_SSL_NO_VERIFY",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "IFS",
+  "LD_AUDIT",
+  "LD_LIBRARY_PATH",
+  "LD_PRELOAD",
+  "LOGNAME",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NO_PROXY",
+  "NVM_DIR",
+  "PATH",
+  "PERL5LIB",
+  "PERL5OPT",
+  "PNPM_HOME",
+  "PROMPT_COMMAND",
+  "PWD",
+  "PYTHONHOME",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "REQUESTS_CA_BUNDLE",
+  "RUBYLIB",
+  "RUBYOPT",
+  "SHELL",
+  "SHELLOPTS",
+  "SSH_ASKPASS",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "SSLKEYLOGFILE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERPROFILE",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+]);
+
+/**
+ * Return true when an environment name can alter its owning runtime process.
+ *
+ * Apply this check when caller values merge into a bridge, sidecar, or harness
+ * process. Do not apply it to a replacement environment for caller-owned code.
+ */
+export function isRuntimeProcessControlEnvironmentName(name: string): boolean {
+  const normalized = name.toUpperCase();
+  return (
+    runtimeProcessControlEnvironmentNames.has(normalized) ||
+    normalized.startsWith("DYLD_") ||
+    normalized.startsWith("GIT_CONFIG_") ||
+    normalized.endsWith("_PROXY")
+  );
+}
+
 /** Policy for {@link validateAgentProfileSecurity}. */
 export interface AgentProfileSecurityPolicy {
   /**
