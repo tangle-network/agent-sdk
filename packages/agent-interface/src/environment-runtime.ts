@@ -13,6 +13,11 @@ import { InputPartSchema } from "./portable-context-shared.js";
 import type { AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
 import type { AgentEnvironmentObservation } from "./environment-observation.js";
+import type {
+  AgentInteractiveSession,
+  AgentInteractiveSessionRef,
+  AgentInteractiveSessionStart,
+} from "./environment-interactive.js";
 import type { AgentTerminalSession, TerminalAttachRequest, TerminalAttachResult } from "./environment-terminal.js";
 
 export interface AgentTurnInput {
@@ -292,6 +297,13 @@ export interface AgentEnvironment {
     terminalSessionId: string,
     options?: { signal?: AbortSignal },
   ): AgentTerminalSession;
+  /** Start one native coding-agent TUI bound to an exact admitted run. */
+  startInteractive?(
+    request: AgentInteractiveSessionStart,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentInteractiveSessionRef>;
+  /** Reconstruct the exact native coding-agent TUI named by a durable reference. */
+  interactive?(ref: AgentInteractiveSessionRef): AgentInteractiveSession;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   destroy?(options?: { signal?: AbortSignal }): Promise<void>;
 }
@@ -366,6 +378,17 @@ export interface AgentEnvironmentCapabilities {
     input: boolean;
     resize: boolean;
     reattach: boolean;
+  };
+  /** Present only when the provider can start and rediscover exact agent TUIs. */
+  interactiveAgent?: {
+    start: boolean;
+    status: boolean;
+    attach: boolean;
+    reattach: boolean;
+    sendPrompt: boolean;
+    input: boolean;
+    resize: boolean;
+    stop: boolean;
   };
 }
 
@@ -446,6 +469,18 @@ export const AgentEnvironmentCapabilitiesSchema = z
         reattach: z.boolean(),
       })
       .optional(),
+    interactiveAgent: z
+      .strictObject({
+        start: z.boolean(),
+        status: z.boolean(),
+        attach: z.boolean(),
+        reattach: z.boolean(),
+        sendPrompt: z.boolean(),
+        input: z.boolean(),
+        resize: z.boolean(),
+        stop: z.boolean(),
+      })
+      .optional(),
   })
   .superRefine((capabilities, refinement) => {
     if (
@@ -516,6 +551,36 @@ export const AgentEnvironmentCapabilitiesSchema = z
         path: ["interactiveTerminal"],
         message:
           "interactive terminal input, resize, and reattach each require attach",
+      });
+    }
+    const interactiveAgent = capabilities.interactiveAgent;
+    if (
+      interactiveAgent !== undefined &&
+      (interactiveAgent.status ||
+        interactiveAgent.attach ||
+        interactiveAgent.reattach ||
+        interactiveAgent.sendPrompt ||
+        interactiveAgent.input ||
+        interactiveAgent.resize ||
+        interactiveAgent.stop) &&
+      !interactiveAgent.start
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["interactiveAgent"],
+        message:
+          "interactive agent status, attach, reattach, sendPrompt, input, resize, and stop each require start",
+      });
+    }
+    if (
+      interactiveAgent !== undefined &&
+      (interactiveAgent.reattach || interactiveAgent.input || interactiveAgent.resize) &&
+      !interactiveAgent.attach
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["interactiveAgent"],
+        message: "interactive agent reattach, input, and resize each require attach",
       });
     }
     const extensions = capabilities.profile.extensions;

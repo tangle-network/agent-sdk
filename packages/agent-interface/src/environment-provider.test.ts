@@ -232,6 +232,44 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     expect(AgentEnvironmentCapabilitiesSchema.parse(attachOnly)).toEqual(attachOnly);
   });
 
+  it("requires interactive agent controls to name the operations they depend on", () => {
+    const complete = {
+      start: true,
+      status: true,
+      attach: true,
+      reattach: true,
+      sendPrompt: true,
+      input: true,
+      resize: true,
+      stop: true,
+    };
+    expect(
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        interactiveAgent: complete,
+      }),
+    ).toMatchObject({ interactiveAgent: complete });
+
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        interactiveAgent: { ...complete, start: false },
+      }),
+    ).toThrow(/each require start/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        interactiveAgent: { ...complete, attach: false },
+      }),
+    ).toThrow(/each require attach/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        interactiveAgent: { ...complete, input: "yes" },
+      }),
+    ).toThrow();
+  });
+
   it("rejects duplicate open capability values", () => {
     expect(() =>
       AgentEnvironmentCapabilitiesSchema.parse({
