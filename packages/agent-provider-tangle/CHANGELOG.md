@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.11.1
+
+### Patch Changes
+
+- Updated dependencies [d7be4d4]
+  - @tangle-network/agent-interface@0.54.0
+
 ## 0.11.0
 
 ### Minor Changes
