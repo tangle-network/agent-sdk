@@ -64,7 +64,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "1.0.0",
+    "@tangle-network/agent-interface": "^1.0.0",
     "undici": "catalog:"
   },
   "devDependencies": {

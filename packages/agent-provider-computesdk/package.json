@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "1.0.0"
+    "@tangle-network/agent-interface": "^1.0.0"
   },
   "peerDependencies": {
     "computesdk": "^4.1.3"
