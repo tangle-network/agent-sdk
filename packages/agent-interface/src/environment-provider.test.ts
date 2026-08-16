@@ -235,6 +235,7 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
   it("requires interactive agent controls to name the operations they depend on", () => {
     const complete = {
       start: true,
+      control: true,
       status: true,
       attach: true,
       reattach: true,
@@ -262,6 +263,12 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         interactiveAgent: { ...complete, attach: false },
       }),
     ).toThrow(/each require attach/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        interactiveAgent: { ...complete, control: false },
+      }),
+    ).toThrow(/provider-issued control claims/);
     expect(() =>
       AgentEnvironmentCapabilitiesSchema.parse({
         ...capabilities,
