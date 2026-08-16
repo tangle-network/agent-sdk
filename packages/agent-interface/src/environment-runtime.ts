@@ -382,6 +382,8 @@ export interface AgentEnvironmentCapabilities {
   /** Present only when the provider can start and rediscover exact agent TUIs. */
   interactiveAgent?: {
     start: boolean;
+    /** Provider-issued generation claims fence recovered coordinators. */
+    control: boolean;
     status: boolean;
     attach: boolean;
     reattach: boolean;
@@ -472,6 +474,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
     interactiveAgent: z
       .strictObject({
         start: z.boolean(),
+        control: z.boolean(),
         status: z.boolean(),
         attach: z.boolean(),
         reattach: z.boolean(),
@@ -570,6 +573,22 @@ export const AgentEnvironmentCapabilitiesSchema = z
         path: ["interactiveAgent"],
         message:
           "interactive agent status, attach, reattach, sendPrompt, input, resize, and stop each require start",
+      });
+    }
+    if (
+      interactiveAgent !== undefined &&
+      (interactiveAgent.attach ||
+        interactiveAgent.sendPrompt ||
+        interactiveAgent.input ||
+        interactiveAgent.resize ||
+        interactiveAgent.stop) &&
+      !interactiveAgent.control
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["interactiveAgent", "control"],
+        message:
+          "interactive agent mutation requires provider-issued control claims",
       });
     }
     if (
