@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SandboxTerminalInfo, SandboxTerminals } from "@tangle-network/sandbox";
 import {
   TerminalSessionRefSchema,
@@ -15,6 +15,11 @@ import {
   type SandboxTerminalInfoLike,
   type SandboxTerminalsLike,
 } from "./index.js";
+import {
+  createTangleTerminalStreamCapture,
+  prepareTangleTerminalAttachment,
+} from "./tangle-terminal.js";
+import type { SandboxTerminalStreamLike } from "./tangle-types.js";
 
 /**
  * The published SDK terminal shapes are the wire facts this adapter reads.
@@ -40,6 +45,17 @@ const PUBLISHED_TERMINAL: SandboxTerminalInfo = {
 const PUBLISHED_TERMINAL_AS_READ: SandboxTerminalInfoLike = PUBLISHED_TERMINAL;
 
 const DETACH_TIMEOUT_MS = 300_000;
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 interface FakeTerminalTransport {
   terminals: SandboxTerminalsLike;
@@ -189,6 +205,166 @@ async function drain(
 }
 
 describe("Tangle interactive terminal", () => {
+  it("does not open an attach stream for an already-aborted caller", async () => {
+    const attach = vi.fn(async () => {
+      throw new Error("attach must not start");
+    });
+    const environment = await terminalEnvironment({
+      get: async () => PUBLISHED_TERMINAL_AS_READ,
+      attach,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      environment.attachTerminal!(
+        { parentExecutionId: "execution-1", mode: "attach" },
+        { signal: controller.signal },
+      ),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(attach).not.toHaveBeenCalled();
+  });
+
+  it("closes an attach stream that resolves after the caller aborts", async () => {
+    const pending = deferred<SandboxTerminalStreamLike>();
+    let closed = false;
+    let resolveClosed!: () => void;
+    const closedPromise = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const ready = {
+      connectionId: "connection-late",
+      sessionId: "terminal-1",
+      restored: false,
+      detachTimeoutMs: DETACH_TIMEOUT_MS,
+    };
+    const stream: SandboxTerminalStreamLike = {
+      connectionId: ready.connectionId,
+      get ready() {
+        return ready;
+      },
+      get isOpen() {
+        return !closed;
+      },
+      write: () => {},
+      resize: () => {},
+      close: async () => {
+        closed = true;
+        resolveClosed();
+      },
+    };
+    const environment = await terminalEnvironment({
+      get: async () => PUBLISHED_TERMINAL_AS_READ,
+      attach: () => pending.promise,
+    });
+    const controller = new AbortController();
+    const attaching = environment.attachTerminal!(
+      { parentExecutionId: "execution-1", mode: "attach" },
+      { signal: controller.signal },
+    );
+
+    controller.abort();
+    await expect(attaching).rejects.toThrow(/aborted/i);
+    pending.resolve(stream);
+    await closedPromise;
+
+    expect(closed).toBe(true);
+  });
+
+  it("closes a prepared stream when delayed metadata fails validation", async () => {
+    const pending = deferred<SandboxTerminalInfoLike>();
+    let closed = false;
+    const ready = {
+      connectionId: "connection-status",
+      sessionId: "terminal-1",
+      restored: false,
+      detachTimeoutMs: DETACH_TIMEOUT_MS,
+    };
+    const stream: SandboxTerminalStreamLike = {
+      connectionId: ready.connectionId,
+      get ready() {
+        return ready;
+      },
+      get isOpen() {
+        return !closed;
+      },
+      write: () => {},
+      resize: () => {},
+      close: async () => {
+        closed = true;
+      },
+    };
+    const capture = createTangleTerminalStreamCapture();
+    capture.handlers.onReady(ready);
+    const preparing = prepareTangleTerminalAttachment({
+      stream,
+      capture,
+      terminals: {
+        get: async () => await pending.promise,
+        attach: async () => {
+          throw new Error("not used");
+        },
+      },
+      parentExecutionId: "execution-1",
+    });
+
+    pending.resolve({ ...PUBLISHED_TERMINAL_AS_READ, shell: undefined });
+    await expect(preparing).resolves.toEqual({
+      status: "unknown",
+      message: "the Tangle runtime reported a terminal without a shell",
+      retryable: false,
+    });
+    expect(closed).toBe(true);
+  });
+
+  it("closes a prepared stream when delayed metadata loses an abort race", async () => {
+    const pending = deferred<SandboxTerminalInfoLike>();
+    let closed = false;
+    const ready = {
+      connectionId: "connection-abort",
+      sessionId: "terminal-1",
+      restored: false,
+      detachTimeoutMs: DETACH_TIMEOUT_MS,
+    };
+    const stream: SandboxTerminalStreamLike = {
+      connectionId: ready.connectionId,
+      get ready() {
+        return ready;
+      },
+      get isOpen() {
+        return !closed;
+      },
+      write: () => {},
+      resize: () => {},
+      close: async () => {
+        closed = true;
+      },
+    };
+    const capture = createTangleTerminalStreamCapture();
+    capture.handlers.onReady(ready);
+    const controller = new AbortController();
+    const preparing = prepareTangleTerminalAttachment({
+      stream,
+      capture,
+      terminals: {
+        get: async () => await pending.promise,
+        attach: async () => {
+          throw new Error("not used");
+        },
+      },
+      parentExecutionId: "execution-1",
+      signal: controller.signal,
+    });
+
+    controller.abort();
+    await expect(preparing).rejects.toThrow(/aborted/i);
+    pending.resolve(PUBLISHED_TERMINAL_AS_READ);
+    await Promise.resolve();
+
+    expect(closed).toBe(true);
+  });
+
   it("round-trips attach, output, input, and resize over the sandbox transport", async () => {
     const transport = fakeTerminalTransport();
     const environment = await terminalEnvironment(transport.terminals);
@@ -347,6 +523,7 @@ describe("Tangle interactive terminal", () => {
       message: "the Tangle terminal transport attached a different terminal session",
       retryable: false,
     });
+    expect(wrongSession.sockets[0]?.closed).toBe(true);
 
     // The transport states the request URL in its message, and that URL can
     // carry userinfo, so the attach result names the read and the structured

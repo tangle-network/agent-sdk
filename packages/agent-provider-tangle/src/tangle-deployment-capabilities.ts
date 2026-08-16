@@ -34,6 +34,8 @@ export interface DeploymentCapabilitySupport {
    * decides whether a response can be retried safely.
    */
   readonly interactionResponses: boolean;
+  /** Native TUI start, status, attach, prompt, stop, and profile identity. */
+  readonly interactiveAgent: boolean;
 }
 
 /**
@@ -50,6 +52,7 @@ export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
   eventReplay: false,
   executionScopedStatus: false,
   interactionResponses: false,
+  interactiveAgent: false,
 };
 
 /**
@@ -73,6 +76,7 @@ export const ADAPTER_CEILING_DEPLOYMENT: DeploymentCapabilitySupport = {
   eventReplay: true,
   executionScopedStatus: true,
   interactionResponses: true,
+  interactiveAgent: true,
 };
 
 /**
@@ -94,6 +98,13 @@ export function deploymentCapabilitySupport(
     eventReplay: document.runs?.eventReplay === true,
     executionScopedStatus: document.runs?.executionScopedStatus === true,
     interactionResponses: document.interactions?.responseDedupe === true,
+    interactiveAgent:
+      document.interactiveAgent?.start === true &&
+      document.interactiveAgent?.status === true &&
+      document.interactiveAgent?.attach === true &&
+      document.interactiveAgent?.sendPrompt === true &&
+      document.interactiveAgent?.stop === true &&
+      document.interactiveAgent?.profileDigest === true,
   };
 }
 
@@ -153,4 +164,11 @@ export function deploymentBacksRetainedControl(
     deployment.eventReplay &&
     deployment.executionScopedStatus
   );
+}
+
+/** True only when the deployment proves the complete exact native-TUI path. */
+export function deploymentBacksInteractiveAgent(
+  deployment: DeploymentCapabilitySupport,
+): boolean {
+  return deployment.interactiveAgent;
 }
