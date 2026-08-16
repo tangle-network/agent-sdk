@@ -30,8 +30,8 @@ const manifest = JSON.parse(
 const subpathLeaves = [
   { subpath: "./profile", file: "agent-profile", module: profile, symbols: ["REASONING_EFFORTS"] },
   { subpath: "./profile-snapshot", file: "agent-profile-snapshot", module: profileSnapshot, symbols: ["snapshotAgentProfile"] },
-  { subpath: "./profile-schema", file: "profile-schema", module: profileSchema, symbols: ["agentProfileSchema", "agentProfileModelHintsSchema"] },
-  { subpath: "./profile-security", file: "profile-security", module: profileSecurity, symbols: ["validateAgentProfileSecurity"] },
+  { subpath: "./profile-schema", file: "profile-schema", module: profileSchema, symbols: ["agentProfileSchema", "agentProfileModelHintsSchema", "isCredentialBearingProfileConfigName"] },
+  { subpath: "./profile-security", file: "profile-security", module: profileSecurity, symbols: ["validateAgentProfileSecurity", "isRuntimeProcessControlEnvironmentName"] },
   { subpath: "./harness", file: "harness", module: harness, symbols: ["harnessTypeSchema"] },
   { subpath: "./harness-capabilities", file: "harness-capabilities", module: harnessCapabilities, symbols: ["harnessSupportsModel", "reasoningLadder"] },
   { subpath: "./interaction", file: "interaction", module: interaction, symbols: ["InteractionFieldNameSchema", "InteractionDataSchema", "validateInteractionResponse"] },
