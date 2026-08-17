@@ -52,7 +52,17 @@ export type ModelGatewayDefaults = {
 };
 
 export const TANGLE_ROUTER_DEFAULT_ROOT_URL = "https://router.tangle.tools";
-export const TANGLE_ROUTER_DEFAULT_MODEL = "zai/glm-4.7";
+
+/**
+ * Model a managed run requests when nothing else names one.
+ *
+ * The router answers a Tangle-funded call only when it both routes the model
+ * AND holds a spend-authorizing price for it. A model that fails either test
+ * answers 503, which a CLI reads as transient and retries until its own
+ * timeout — so an unservable default hangs a run rather than failing it.
+ * Confirm both properties against the live router before changing this id.
+ */
+export const TANGLE_ROUTER_DEFAULT_MODEL = "zai/glm-5.2";
 
 export function normalizeOpenAiCompatibleBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
