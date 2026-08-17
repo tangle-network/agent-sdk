@@ -94,6 +94,7 @@ export * from "./agent-profile-improvement.js";
 export * from "./agent-profile-improvement-schema.js";
 export * from "./agent-execution-limits.js";
 export * from "./agent-profile.js";
+export * from "./agent-instance.js";
 export * from "./agent-profile-snapshot.js";
 export * from "./agent-profile-activation.js";
 export * from "./agent-profile-materialization.js";

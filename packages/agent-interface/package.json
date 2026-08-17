@@ -19,6 +19,10 @@
       "import": "./dist/agent-profile.js",
       "types": "./src/agent-profile.ts"
     },
+    "./agent-instance": {
+      "import": "./dist/agent-instance.js",
+      "types": "./src/agent-instance.ts"
+    },
     "./profile-snapshot": {
       "import": "./dist/agent-profile-snapshot.js",
       "types": "./src/agent-profile-snapshot.ts"
@@ -69,6 +73,11 @@
         "import": "./dist/agent-profile.js",
         "types": "./dist/agent-profile.d.ts",
         "default": "./dist/agent-profile.js"
+      },
+      "./agent-instance": {
+        "import": "./dist/agent-instance.js",
+        "types": "./dist/agent-instance.d.ts",
+        "default": "./dist/agent-instance.js"
       },
       "./profile-snapshot": {
         "import": "./dist/agent-profile-snapshot.js",
