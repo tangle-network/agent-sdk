@@ -27,6 +27,12 @@ import {
   type WorkspaceCheckpointRef,
   type WorkspaceForkRequest,
 } from "@tangle-network/agent-interface";
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import type {
+  AgentEnvironment,
+  AgentEnvironmentCreateIdempotencyRecord,
+  CreateAgentEnvironmentInput,
+} from "@tangle-network/agent-interface/environment-provider";
 import {
   runAgentEnvironmentProviderConformance,
   runInteractionResponseConformance,
@@ -909,17 +915,15 @@ describe("capability denial", () => {
     const provider: AgentEnvironmentProvider = {
       name: "denial-fake",
       capabilities: () => disabledCapabilities(),
-      async create() {
-        return {
-          id: "environment-1",
-          provider: "denial-fake",
-          status: async () => "running",
-          async *stream() {
-            yield { type: "result", data: { finalText: "ok" } };
-          },
-          destroy: async () => {},
-        };
-      },
+      create: conformanceCreate(async () => ({
+        id: "environment-1",
+        provider: "denial-fake",
+        status: async () => "running",
+        async *stream() {
+          yield { type: "result", data: { finalText: "ok" } };
+        },
+        destroy: async () => {},
+      })),
     };
 
     const report = await runAgentEnvironmentProviderConformance({
@@ -967,26 +971,24 @@ describe("capability denial", () => {
           requestIdempotency: true,
         },
       }),
-      async create() {
-        return {
-          id: "environment-1",
-          provider: "missing-native-continuation",
-          status: async () => "running",
-          async *stream() {
-            yield { type: "result", data: { finalText: "ok" } };
-          },
-          session: (id) => ({
-            id,
-            status: async () => null,
-            async *events() {},
-            result: async () => ({ text: "ok", success: true }),
-            prompt: async () => ({ text: "ok", success: true }),
-            contextBoundary: async () => null,
-            cancel: async () => {},
-          }),
-          destroy: async () => {},
-        };
-      },
+      create: conformanceCreate(async () => ({
+        id: "environment-1",
+        provider: "missing-native-continuation",
+        status: async () => "running",
+        async *stream() {
+          yield { type: "result", data: { finalText: "ok" } };
+        },
+        session: (id) => ({
+          id,
+          status: async () => null,
+          async *events() {},
+          result: async () => ({ text: "ok", success: true }),
+          prompt: async () => ({ text: "ok", success: true }),
+          contextBoundary: async () => null,
+          cancel: async () => {},
+        }),
+        destroy: async () => {},
+      })),
     };
 
     await expect(
@@ -1049,19 +1051,17 @@ describe("capability denial", () => {
     const provider: AgentEnvironmentProvider = {
       name: "failing-stream",
       capabilities: () => disabledCapabilities(),
-      async create() {
-        return {
-          id: "environment-1",
-          provider: "failing-stream",
-          status: async () => "running",
-          async *stream() {
-            yield { type: "status", data: { status: "processing" } };
-          },
-          destroy: async () => {
-            destroyed += 1;
-          },
-        };
-      },
+      create: conformanceCreate(async () => ({
+        id: "environment-1",
+        provider: "failing-stream",
+        status: async () => "running",
+        async *stream() {
+          yield { type: "status", data: { status: "processing" } };
+        },
+        destroy: async () => {
+          destroyed += 1;
+        },
+      })),
     };
 
     await expect(
@@ -1536,6 +1536,17 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
       };
     },
   };
+}
+
+function conformanceCreate(
+  create: () => Promise<AgentEnvironment>,
+): AgentEnvironmentProvider["create"] {
+  const records = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
+  return (input: CreateAgentEnvironmentInput) =>
+    createAgentEnvironmentWithIdempotency(records, input, create);
 }
 
 function disabledCapabilities() {

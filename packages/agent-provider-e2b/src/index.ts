@@ -1,7 +1,9 @@
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
@@ -41,16 +43,29 @@ export interface E2BProviderOptions {
 
 export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "e2b";
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    const Sandbox = options.Sandbox ?? (await loadE2BSandbox());
+    const createOptions =
+      options.mapCreateInput?.(input) ??
+      e2bCreateOptions(options, input);
+    const sandbox = await Sandbox.create(createOptions);
+    return e2bSandboxAsEnvironment(options, name, sandbox);
+  };
   return {
     name,
     capabilities: () => options.capabilities ?? defaultE2BCapabilities(),
-    async create(input) {
-      const Sandbox = options.Sandbox ?? (await loadE2BSandbox());
-      const createOptions =
-        options.mapCreateInput?.(input) ??
-        e2bCreateOptions(options, input);
-      const sandbox = await Sandbox.create(createOptions);
-      return e2bSandboxAsEnvironment(options, name, sandbox);
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        () => createEnvironment(input),
+      );
     },
     async get(id) {
       const Sandbox = options.Sandbox ?? (await loadE2BSandbox());

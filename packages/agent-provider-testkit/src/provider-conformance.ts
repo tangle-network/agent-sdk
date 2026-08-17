@@ -1,5 +1,11 @@
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
-import type { ProviderConformanceOptions, ProviderConformanceReport } from "./conformance-types.js";
+import type {
+  CreateAgentEnvironmentInput,
+} from "@tangle-network/agent-interface/environment-provider";
+import type {
+  ProviderConformanceOptions,
+  ProviderConformanceReport,
+} from "./conformance-types.js";
 import { assert, checkCapabilityExposure, checkWorkspace, collect, environmentCapabilityDocument, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
 
 export async function runAgentEnvironmentProviderConformance(
@@ -19,12 +25,16 @@ export async function runAgentEnvironmentProviderConformance(
   assert(capabilities.workspace !== undefined, "capabilities.workspace is required", checked);
   checked.push("capabilities");
 
-  const environment = await provider.create({
+  const createInput: CreateAgentEnvironmentInput = {
     profile: { name: `${options.name}-profile` },
     backend: "test",
     name: `${options.name}-environment`,
     ...(options.createInput ?? {}),
-  });
+  };
+  if (createInput.idempotencyKey === undefined) {
+    createInput.idempotencyKey = `${options.name}-environment-create`;
+  }
+  const environment = await provider.create(createInput);
   return withEnvironmentCleanup(environment, checked, async () => {
     assert(environment.id, "environment.id must be non-empty", checked);
     assert(environment.provider, "environment.provider must be non-empty", checked);
@@ -83,6 +93,41 @@ export async function runAgentEnvironmentProviderConformance(
       }
     }
     checked.push("create");
+
+    const replayInput = Object.fromEntries(
+      Object.entries(createInput).reverse(),
+    ) as CreateAgentEnvironmentInput;
+    const replay = await provider.create(replayInput);
+    assert(
+      replay.id === environment.id && replay.provider === environment.provider,
+      "same create key and canonical input must return the same environment",
+      checked,
+    );
+    checked.push("create-idempotency");
+
+    let collisionRejected = false;
+    let changedEnvironment: typeof environment | undefined;
+    try {
+      changedEnvironment = await provider.create({
+        ...createInput,
+        name: `${createInput.name ?? options.name}-changed`,
+      });
+    } catch {
+      collisionRejected = true;
+    }
+    if (
+      changedEnvironment !== undefined &&
+      (changedEnvironment.id !== environment.id ||
+        changedEnvironment.provider !== environment.provider)
+    ) {
+      await changedEnvironment.destroy?.();
+    }
+    assert(
+      collisionRejected,
+      "reusing a create key with changed input must reject",
+      checked,
+    );
+    checked.push("create-idempotency-collision");
 
     const events = await collect(
       environment.stream({

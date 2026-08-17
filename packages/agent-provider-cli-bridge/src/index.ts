@@ -1,5 +1,8 @@
+import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
 import type {
+  AgentEnvironment,
   AgentEnvironmentCapabilities,
+  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -23,6 +26,10 @@ export function createCliBridgeProvider(
 ): AgentEnvironmentProvider {
   assertCliBridgeProviderOptions(options);
   const name = options.name ?? "cli-bridge";
+  const createRecords = new Map<
+    string,
+    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+  >();
   // The observation surfaces are declared as intent and narrowed to the
   // sources this bridge can put a value on, so the environment offers the
   // operation exactly where the document claims it.
@@ -35,29 +42,38 @@ export function createCliBridgeProvider(
           observation: narrowedCliBridgeObservation(declared.observation, options),
         };
   };
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    if (typeof input.profile === "string") {
+      throw new Error(
+        `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
+      );
+    }
+    const environmentInput: CreateAgentEnvironmentInput = {
+      ...input,
+      profile: snapshotAgentProfile(input.profile),
+    };
+    const environmentId = input.idempotencyKey ?? crypto.randomUUID();
+    return createCliBridgeEnvironment({
+      options,
+      providerName: name,
+      environmentInput,
+      environmentId,
+      allowDispatch: true,
+      cancelRunsOnDestroy: true,
+      capabilities: resolveCapabilities(),
+    });
+  };
   return {
     name,
     capabilities: resolveCapabilities,
-    async create(input) {
-      if (typeof input.profile === "string") {
-        throw new Error(
-          `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
-        );
-      }
-      const environmentInput: CreateAgentEnvironmentInput = {
-        ...input,
-        profile: snapshotAgentProfile(input.profile),
-      };
-      const environmentId = input.idempotencyKey ?? crypto.randomUUID();
-      return createCliBridgeEnvironment({
-        options,
-        providerName: name,
-        environmentInput,
-        environmentId,
-        allowDispatch: true,
-        cancelRunsOnDestroy: true,
-        capabilities: resolveCapabilities(),
-      });
+    create(input) {
+      return createAgentEnvironmentWithIdempotency(
+        createRecords,
+        input,
+        () => createEnvironment(input),
+      );
     },
     async get(id) {
       if (id.length === 0 || id.trim() !== id) {

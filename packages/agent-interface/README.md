@@ -52,6 +52,13 @@ Every returned resource repeats and validates that identity, lookups recover rem
 A checkpoint with dependent forks returns `in_use` plus the blocking environment identifiers and remains recoverable until those forks are destroyed.
 The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
 
+`CreateAgentEnvironmentInput.idempotencyKey` makes generic environment creation one retry-safe operation.
+When a caller repeats that key, the provider must canonicalize every create field except the key and attempt signal.
+The same canonical input must return or reconstruct the same environment, including after an ambiguous provider response.
+The same key with any changed create field must reject before a second create effect.
+Providers backed by a remote service must forward the key and retain its canonical input through environment reconstruction.
+The existing `AgentEnvironmentProvider.create()` method carries this contract; it does not add a second create method or capability flag.
+
 All new wire values have exported Zod schemas on the package root.
 Omitting `interactions` and `nativeContinuation`, or leaving the three durable branching flags false, is the compatible declaration for existing providers.
 
