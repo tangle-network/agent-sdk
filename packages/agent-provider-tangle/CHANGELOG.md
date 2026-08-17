@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.12.3
+
+### Patch Changes
+
+- b594b96: Define and enforce canonical idempotency for generic environment creation.
+- Updated dependencies [b594b96]
+- Updated dependencies [249611e]
+  - @tangle-network/agent-interface@1.0.1
+
 ## 0.12.2
 
 ### Patch Changes

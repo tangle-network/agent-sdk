@@ -1,5 +1,16 @@
 # @tangle-network/agent-interface
 
+## 1.0.1
+
+### Patch Changes
+
+- b594b96: Define and enforce canonical idempotency for generic environment creation.
+- 249611e: Default the Tangle router to `zai/glm-5.2`, a model the router both routes and
+  holds a spend-authorizing price for. The previous default, `zai/glm-4.7`, is
+  not in the router catalog, so a managed run that named no model asked for a
+  model the router does not carry and received a 503 that a CLI retries until its
+  own timeout.
+
 ## 1.0.0
 
 ### Major Changes

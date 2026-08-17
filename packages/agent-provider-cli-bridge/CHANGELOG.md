@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.7.7
+
+### Patch Changes
+
+- b594b96: Define and enforce canonical idempotency for generic environment creation.
+- Updated dependencies [b594b96]
+- Updated dependencies [249611e]
+  - @tangle-network/agent-interface@1.0.1
+
 ## 0.7.6
 
 ### Patch Changes
