@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 1.1.0
+
+### Minor Changes
+
+- ba5e02f: Add minimal provider-neutral Agent instance contracts for optional managed Agents inside an existing execution environment, including workspace intent, public lifecycle records, profile identity, and idempotent stop acknowledgements.
+
 ## 1.0.1
 
 ### Patch Changes
