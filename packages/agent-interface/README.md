@@ -1,9 +1,33 @@
 # @tangle-network/agent-interface
 
-Shared TypeScript types and zod schemas that define the contract between Tangle
+Shared TypeScript types and Zod schemas that define the contract between Tangle
 agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
+
+## Agent instances
+
+`AgentProfile` describes behavior. `AgentInstanceSpec` describes one optional managed Agent inside an existing execution environment. The environment remains the computer and security boundary, so it may host zero, one, or many Agent instances.
+
+```ts
+import type { AgentInstanceSpec } from "@tangle-network/agent-interface/agent-instance";
+
+const planner = {
+  id: "planner",
+  profile: {
+    name: "planner",
+    harness: "opencode",
+    prompt: { systemPrompt: "Plan before editing." },
+  },
+  workspace: { mode: "shared" },
+} satisfies AgentInstanceSpec;
+```
+
+The portable contract owns only inline profile and harness selection, shared or isolated workspace intent, public lifecycle state, a provider-sanitized failure summary, and idempotent stop shapes. Credentials, HTTP routes, process identifiers, placement, billing, snapshots, local resource controls, grants, and fencing remain provider-private.
+
+`shared` means ordinary same-computer file visibility. It is not automatic merge behavior or tenant isolation. `isolated` asks the provider for a private writable view and explicit inspect or commit behavior. Providers must reject unsatisfied machine requirements rather than silently replacing or migrating a live environment.
+
+The public `AgentInstanceRecord` contains a credential-free profile identity, not the full profile or provider request. Existing session APIs can implement this contract without a new service: one instance maps to one managed session, compatible sessions may reuse a backend process, and stop maps to idempotent session deletion or process release.
 
 ## Durable runs, interactions, and context
 
@@ -65,8 +89,6 @@ Omitting `interactions` and `nativeContinuation`, or leaving the three durable b
 `profile.systemPrompt` declares two independent bits rather than one flag.
 `replace` means the provider deletes the harness's own system prompt and installs `prompt.systemPrompt`; `append` means it keeps that prompt and adds `prompt.appendSystemPrompt` to it.
 A provider that can only append must declare `replace: false` and refuse a profile carrying `systemPrompt`, because quietly appending a requested replacement leaves the instructions the caller asked to delete in force.
-
-
 
 ## Install
 
