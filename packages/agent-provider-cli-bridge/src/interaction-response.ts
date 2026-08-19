@@ -8,6 +8,8 @@ import type {
 } from "@tangle-network/agent-interface";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import {
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
   requestHeaders,
   trimSlash,
   type CliBridgeTransport,
@@ -154,7 +156,10 @@ export function cliBridgeInteractionResponder(
       response.status >= 500 || (response.status >= 200 && response.status < 300);
     try {
       acknowledgement = InteractionAcknowledgementSchema.parse(
-        JSON.parse(await response.text()),
+        JSON.parse(await readBoundedCliBridgeResponse(
+          response,
+          MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        )),
       );
     } catch (error) {
       return transportFailure(exact, error, retryableOnMalformed);

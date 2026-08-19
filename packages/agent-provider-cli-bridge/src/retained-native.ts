@@ -30,6 +30,8 @@ import {
 } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
 import {
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
   requestHeaders,
   trimSlash,
 } from "./transport.js";
@@ -105,14 +107,14 @@ export function assertCliBridgeRequestedInteractions(
 }
 
 /** Keep capability discovery and every native turn on one exact model route. */
-export function assertCliBridgeNativeTurnModel(
+export function assertCliBridgeTurnModel(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
   selectedModel: string | undefined,
 ): void {
   if (selectedModel === undefined) {
-    throw new Error("cli-bridge native interactions require an environment model");
+    throw new Error("cli-bridge retained execution requires an environment model");
   }
   const requestedModel = resolveBridgeModel(
     options,
@@ -122,7 +124,7 @@ export function assertCliBridgeNativeTurnModel(
   );
   if (requestedModel !== selectedModel) {
     throw new Error(
-      `cli-bridge native environment model is ${JSON.stringify(selectedModel)}; create another environment for ${JSON.stringify(requestedModel)}`,
+      `cli-bridge environment model is ${JSON.stringify(selectedModel)}; create another environment for ${JSON.stringify(requestedModel)}`,
     );
   }
 }
@@ -469,9 +471,17 @@ async function createCliBridgeNativeSession(
     );
   }
   if (!response.ok) {
-    throw new CliBridgeRequestRejectedError(response.status, await response.text());
+    throw new CliBridgeRequestRejectedError(
+      response.status,
+      await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    );
   }
-  return parseNativeSessionView(await response.text(), sessionId, model, createRequestDigest);
+  return parseNativeSessionView(
+    await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    sessionId,
+    model,
+    createRequestDigest,
+  );
 }
 
 async function recoverConflictingNativeSession(
@@ -481,9 +491,12 @@ async function recoverConflictingNativeSession(
   createRequestDigest: Sha256Digest,
   transport: CliBridgeTransport,
   signal: AbortSignal | undefined,
-  conflictResponse: { text(): Promise<string> },
+  conflictResponse: CliBridgeResponse,
 ): Promise<CliBridgeNativeSession> {
-  await conflictResponse.text();
+  await readBoundedCliBridgeResponse(
+    conflictResponse,
+    MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  );
   const response = await transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(sessionId)}`,
     {
@@ -495,11 +508,14 @@ async function recoverConflictingNativeSession(
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(
       response.status,
-      `session ${JSON.stringify(sessionId)} could not be recovered: ${await response.text()}`,
+      `session ${JSON.stringify(sessionId)} could not be recovered: ${await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      )}`,
     );
   }
   return parseNativeSessionView(
-    await response.text(),
+    await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
     sessionId,
     model,
     createRequestDigest,
@@ -592,10 +608,16 @@ export async function beginCliBridgeNativeTurn(
     },
   );
   if (!response.ok) {
-    throw new CliBridgeRequestRejectedError(response.status, await response.text());
+    throw new CliBridgeRequestRejectedError(
+      response.status,
+      await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    );
   }
   onAdmission?.();
-  const parsed = safeJson(await response.text());
+  const parsed = safeJson(await readBoundedCliBridgeResponse(
+    response,
+    MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  ));
   const responseSession = parsed?.session;
   const responseRun = parsed?.run;
   const responseSessionId =
@@ -620,7 +642,13 @@ export async function beginCliBridgeNativeTurn(
     ? (responseRun as Record<string, unknown>).sessionId
     : undefined;
   const executionId = responseRun && typeof responseRun === "object"
-    ? (responseRun as Record<string, unknown>).executionId
+      ? (responseRun as Record<string, unknown>).executionId
+      : undefined;
+  const responseProvider = responseRun && typeof responseRun === "object"
+    ? (responseRun as Record<string, unknown>).provider
+    : undefined;
+  const responseEnvironmentId = responseRun && typeof responseRun === "object"
+    ? (responseRun as Record<string, unknown>).environmentId
     : undefined;
   const requestDigestValue = responseRun && typeof responseRun === "object"
     ? (responseRun as Record<string, unknown>).requestDigest
@@ -641,6 +669,8 @@ export async function beginCliBridgeNativeTurn(
     responseSessionIdFromRun !== run.sessionId ||
     typeof executionId !== "string" ||
     executionId !== run.executionId ||
+    responseProvider !== providerName ||
+    responseEnvironmentId !== run.environmentId ||
     !requestDigest.success
   ) {
     throw new Error("cli-bridge retained turn returned mismatched run coordinates");
@@ -649,4 +679,5 @@ export async function beginCliBridgeNativeTurn(
     throw new Error("cli-bridge retained turn changed the admitted request digest");
   }
   run.requestDigest = requestDigest.data;
+  run.controlRef = exactControlRefForRun(run, providerName);
 }

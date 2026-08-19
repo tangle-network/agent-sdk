@@ -370,6 +370,8 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
         },
         run: {
           id: runId,
+          provider: controlRef.provider,
+          environmentId: controlRef.environmentId,
           executionId: controlRef.executionId,
           sessionId,
           requestDigest: controlRef.requestDigest,
@@ -468,6 +470,8 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
       if (!controlRef) throw new Error(`unknown run ${runId}`);
       return Response.json({
         id: runId,
+        provider: controlRef.provider,
+        environmentId: controlRef.environmentId,
         executionId: controlRef.executionId,
         sessionId: controlRef.sessionId,
         requestDigest: controlRef.requestDigest,
@@ -489,6 +493,10 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
         return Response.json({
           run: {
             id: runId,
+            provider: controlRef.provider,
+            environmentId: controlRef.environmentId,
+            sessionId: controlRef.sessionId,
+            executionId: controlRef.executionId,
             requestDigest: controlRef.requestDigest,
             status: "done",
             terminal: true,
@@ -591,6 +599,10 @@ function nativeEventsResponse(controlRef: AgentExactRunControlRef): Response {
       "content-type": "text/event-stream",
       "x-run-id": controlRef.runId,
       "x-run-request-digest": controlRef.requestDigest,
+      "x-run-provider": controlRef.provider,
+      "x-run-environment-id": controlRef.environmentId,
+      "x-run-session-id": controlRef.sessionId,
+      "x-run-execution-id": controlRef.executionId,
     },
   });
 }

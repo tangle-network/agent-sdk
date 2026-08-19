@@ -4,10 +4,23 @@ import type {
   RuntimeEventEnvelope,
   StreamEvent,
 } from "@tangle-network/agent-interface";
+import { AgentRunCancellationRequestSchema } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
-import { createCliBridgeProvider } from "./index.js";
+import {
+  createCliBridgeProvider as createProvider,
+  defaultCliBridgeCapabilities,
+} from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
+
+function createCliBridgeProvider(
+  options: Parameters<typeof createProvider>[0],
+): ReturnType<typeof createProvider> {
+  return createProvider({
+    capabilities: defaultCliBridgeCapabilities("opencode"),
+    ...options,
+  });
+}
 
 describe("retained cli-bridge safety", () => {
   it("rejects a conflicting control reference before replacing the active session", async () => {
@@ -18,7 +31,7 @@ describe("retained cli-bridge safety", () => {
       fetch: async (_url, init) => {
         calls += 1;
         const body = JSON.parse(String(init?.body)) as { run_id: string };
-        return dispatchResponse(body.run_id);
+        return dispatchResponse(body);
       },
     });
     const environment = await provider.create({
@@ -100,6 +113,52 @@ describe("retained cli-bridge safety", () => {
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     },
   );
+
+  it("bounds status recovery and exact cancellation after an aborted stream", async () => {
+    let startedResolve!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "opencode/model",
+      capabilities: defaultCliBridgeCapabilities("opencode"),
+      cancelWaitMs: 10,
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/v1/chat/completions")) {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(new ReadableStream({
+            start(controller) {
+              startedResolve();
+              init?.signal?.addEventListener("abort", () => {
+                controller.error(init.signal?.reason);
+              }, { once: true });
+            },
+          }), {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              ...exactHeaders({ body: JSON.stringify(body) }),
+            },
+          });
+        }
+        return new Promise<Response>(() => {});
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const controller = new AbortController();
+    const beganAt = performance.now();
+    const pending = consumeEvents(environment.stream({
+      prompt: "work",
+      signal: controller.signal,
+    }));
+    await started;
+
+    controller.abort(new DOMException("caller stopped work", "AbortError"));
+
+    await expect(pending).rejects.toThrow("exact cancellation was not confirmed");
+    expect(performance.now() - beganAt).toBeLessThan(500);
+  });
 
   it("keeps malformed token totals unknown while retaining an exact model-call count", async () => {
     const provider = createCliBridgeProvider({
@@ -249,30 +308,97 @@ describe("retained cli-bridge safety", () => {
   it.each([
     {
       name: "missing request digest",
-      snapshot: { id: "run-1", status: "cancelled", terminal: true },
+      mutate: (run: Record<string, unknown>) => {
+        const { requestDigest: _requestDigest, ...withoutDigest } = run;
+        return withoutDigest;
+      },
+      error: "invalid exact cancellation acknowledgement",
     },
     {
       name: "mismatched request digest",
-      snapshot: {
-        id: "run-1",
+      mutate: (run: Record<string, unknown>) => ({
+        ...run,
         requestDigest: testDigest("another-run"),
-        status: "cancelled",
-        terminal: true,
-      },
+      }),
+      error: "cancellation acknowledgement for another request",
     },
-  ])("rejects a cancellation snapshot with $name", async ({ snapshot }) => {
+  ])("rejects a cancellation acknowledgement with $name", async ({ mutate, error }) => {
     const controlRef = exactControlRef();
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      fetch: async (url) => {
+      fetch: async (url, init) => {
         expect(String(url)).toBe("http://bridge.local/v1/runs/run-1/cancel");
-        return Response.json({ run: snapshot });
+        const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          run: mutate(request.run as Record<string, unknown>),
+          status: "accepted",
+          effect: "cancelled",
+        });
       },
     });
     const environment = (await provider.get!(controlRef.environmentId))!;
     const session = environment.session!(controlRef.sessionId, { controlRef });
 
-    await expect(session.cancel()).rejects.toThrow("request digest");
+    await expect(session.cancel()).rejects.toThrow(error);
+  });
+
+  it.each([
+    ["runId", "other-run"],
+    ["provider", "other-provider"],
+    ["environmentId", "other-environment"],
+    ["sessionId", "other-session"],
+    ["executionId", "other-execution"],
+  ] as const)("rejects a cancellation acknowledgement with another %s", async (field, value) => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          run: {
+            ...(request.run as Record<string, unknown>),
+            [field]: value,
+          },
+          status: "accepted",
+          effect: "cancelled",
+        });
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.cancel()).rejects.toThrow(
+      "cancellation acknowledgement for another request",
+    );
+  });
+
+  it("sends the complete exact identity for automatic cancellation", async () => {
+    const controlRef = exactControlRef();
+    let cancellationRequest: unknown;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        cancellationRequest = JSON.parse(String(init?.body));
+        const request = AgentRunCancellationRequestSchema.parse(cancellationRequest);
+        return Response.json({
+          operationId: request.operationId,
+          requestDigest: request.requestDigest,
+          run: request.run,
+          status: "accepted",
+          effect: "cancelled",
+        });
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await session.cancel();
+
+    expect(AgentRunCancellationRequestSchema.parse(cancellationRequest).run).toEqual(controlRef);
   });
 
   it("resumes canonical events from a previously emitted event id", async () => {
@@ -448,7 +574,8 @@ async function consumeEvents(events: AsyncIterable<unknown>): Promise<void> {
   }
 }
 
-function dispatchResponse(runId: string): Response {
+function dispatchResponse(body: Record<string, unknown>): Response {
+  const runId = String(body.run_id);
   return new Response(
     new ReadableStream({
       start(controller) {
@@ -459,8 +586,7 @@ function dispatchResponse(runId: string): Response {
       status: 200,
       headers: {
         "content-type": "text/event-stream",
-        "x-run-id": runId,
-        "x-run-request-digest": testDigest(runId),
+        ...exactHeaders({ body: JSON.stringify(body) }),
       },
     },
   );
@@ -548,6 +674,10 @@ function canonicalEventHeaders(controlRef: AgentExactRunControlRef): HeadersInit
     "content-type": "text/event-stream",
     "x-run-id": controlRef.runId,
     "x-run-request-digest": controlRef.requestDigest,
+    "x-run-provider": controlRef.provider,
+    "x-run-environment-id": controlRef.environmentId,
+    "x-run-session-id": controlRef.sessionId,
+    "x-run-execution-id": controlRef.executionId,
   };
 }
 
@@ -556,7 +686,17 @@ function retainedRunResponse(
   status: "running" | "done" | "error" | "cancelled",
   terminal: boolean,
 ): Response {
-  return Response.json({ id, requestDigest: testDigest(id), status, terminal });
+  const controlRef = exactControlRef();
+  return Response.json({
+    id,
+    provider: controlRef.provider,
+    environmentId: controlRef.environmentId,
+    sessionId: controlRef.sessionId,
+    executionId: controlRef.executionId,
+    requestDigest: testDigest(id),
+    status,
+    terminal,
+  });
 }
 
 function exactControlRef(): AgentExactRunControlRef {
@@ -584,5 +724,9 @@ function exactHeaders(init: { readonly body?: unknown } | undefined) {
   return {
     "x-run-id": runId,
     "x-run-request-digest": testDigest(runId),
+    "x-run-provider": String(body.provider),
+    "x-run-environment-id": String(body.environment_id),
+    "x-run-session-id": String(body.session_id),
+    "x-run-execution-id": String(body.execution_id),
   };
 }

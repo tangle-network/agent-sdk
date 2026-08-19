@@ -9,10 +9,15 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
-import { cliBridgeRunId, toChatCompletionsBody } from "./wire.js";
+import {
+  assertCliBridgeRunId,
+  cliBridgeRunId,
+  toChatCompletionsBody,
+} from "./wire.js";
 
 export interface CliBridgeRun {
   id: string;
+  readonly provider: string;
   readonly environmentId: string;
   readonly sessionId?: string;
   executionId: string;
@@ -32,6 +37,7 @@ export interface CliBridgeSessionState {
 export interface CliBridgeRunSnapshot {
   readonly id: string;
   readonly requestDigest?: Sha256Digest;
+  readonly controlRef?: AgentExactRunControlRef;
   readonly status: "running" | "done" | "error" | "cancelled" | "unknown";
   readonly terminal: boolean;
 }
@@ -65,6 +71,7 @@ export function exactControlRefForSession(
   sessionId: string,
 ): AgentExactRunControlRef {
   const controlRef = Object.freeze(AgentExactRunControlRefSchema.parse(value));
+  assertCliBridgeRunId(controlRef.runId);
   if (
     controlRef.provider !== providerName ||
     controlRef.environmentId !== environmentId ||
@@ -78,6 +85,7 @@ export function exactControlRefForSession(
 export function runFromControlRef(controlRef: AgentExactRunControlRef): CliBridgeRun {
   return {
     id: controlRef.runId,
+    provider: controlRef.provider,
     environmentId: controlRef.environmentId,
     sessionId: controlRef.sessionId,
     executionId: controlRef.executionId,
@@ -95,6 +103,7 @@ export function assertRunMatchesControlRef(
 ): void {
   if (
     run.id !== controlRef.runId ||
+    run.provider !== controlRef.provider ||
     run.environmentId !== controlRef.environmentId ||
     run.sessionId !== controlRef.sessionId ||
     run.executionId !== controlRef.executionId ||
@@ -139,35 +148,43 @@ export function prepareCliBridgeRun(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   originalTurn: AgentTurnInput,
+  providerName: string,
   environmentId: string,
-  requireSession: boolean,
+  requireStableIdentity = false,
 ): PreparedCliBridgeRun {
   if (
-    requireSession &&
+    requireStableIdentity &&
     (originalTurn.turnId === undefined || originalTurn.executionId === undefined)
   ) {
-    throw new Error(
-      "cli-bridge native retained turns require stable turnId and executionId values",
-    );
+    throw new Error("native cli-bridge turns require stable turnId and executionId");
   }
   const turnId = originalTurn.turnId ?? crypto.randomUUID();
   const runId = cliBridgeRunId(environmentId, originalTurn, turnId);
-  const sessionId = originalTurn.sessionId ?? (requireSession ? runId : undefined);
+  const sessionId = originalTurn.sessionId ?? runId;
+  const executionId = originalTurn.executionId ?? runId;
   const turn = {
     ...originalTurn,
     turnId,
-    ...(sessionId ? { sessionId } : {}),
+    sessionId,
+    executionId,
   };
   return {
     turn,
     run: {
       id: runId,
+      provider: providerName,
       environmentId,
-      ...(sessionId ? { sessionId } : {}),
-      executionId: originalTurn.executionId ?? runId,
+      sessionId,
+      executionId,
       turnId,
       requestBody: JSON.stringify(
-        toChatCompletionsBody(options, environmentInput, turn, runId),
+        toChatCompletionsBody(options, environmentInput, turn, {
+          runId,
+          provider: providerName,
+          environmentId,
+          sessionId,
+          executionId,
+        }),
       ),
       readers: new Set<AbortController>(),
     },

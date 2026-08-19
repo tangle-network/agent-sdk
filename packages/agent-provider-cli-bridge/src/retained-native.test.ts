@@ -4,6 +4,7 @@ import {
   canonicalCandidateDigest,
   interactionRequestDigest,
   permissionAnswerSpec,
+  type AgentExactRunControlRef,
 } from "@tangle-network/agent-interface";
 import {
   agentEnvironmentCreateInputDigest,
@@ -102,6 +103,8 @@ function interactionRequest() {
 function nativeRunResponse(status = "running", terminal = false): Response {
   return Response.json({
     id: nativeRunId,
+    provider: "cli-bridge",
+    environmentId: retainedEnvironmentId,
     executionId: nativeRunId,
     sessionId,
     requestDigest: runDigest,
@@ -147,6 +150,8 @@ function createNativeFetch(
         session: sessionView(createRequestDigest),
         run: {
           id: turnRunId,
+          provider: String(parsedBody?.provider),
+          environmentId: String(parsedBody?.environment_id),
           executionId: turnExecutionId,
           sessionId,
           requestDigest: runDigest,
@@ -165,6 +170,10 @@ function createNativeFetch(
           "content-type": "text/event-stream",
           "x-run-id": nativeRunId,
           "x-run-request-digest": runDigest,
+          "x-run-provider": "cli-bridge",
+          "x-run-environment-id": retainedEnvironmentId,
+          "x-run-session-id": sessionId,
+          "x-run-execution-id": nativeRunId,
         },
       });
     }
@@ -242,6 +251,8 @@ describe("cli-bridge native retained sessions", () => {
 
     expect(replayed.map((event) => event.id)).toEqual(["1"]);
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/v1/capabilities",
+      "/v1/capabilities",
       "/v1/capabilities",
       `/v1/runs/${nativeRunId}/events`,
       `/v1/runs/${nativeRunId}`,
@@ -329,6 +340,43 @@ describe("cli-bridge native retained sessions", () => {
       executionId: "session-model-bound-run",
     })).rejects.toThrow("create another environment");
     expect(called).toBe(false);
+  });
+
+  it.each([
+    { field: "provider", value: undefined },
+    { field: "provider", value: "other-provider" },
+    { field: "environmentId", value: undefined },
+    { field: "environmentId", value: "other-environment" },
+  ] as const)("rejects native admission with $field=$value", async ({ field, value }) => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const delegate = createNativeFetch(requests);
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async (url, init) => {
+        const response = await delegate(url, init);
+        if (!new URL(String(url)).pathname.endsWith("/turns")) return response;
+        const body = await response.json() as {
+          session: Record<string, unknown>;
+          run: Record<string, unknown>;
+        };
+        if (value === undefined) delete body.run[field];
+        else body.run[field] = value;
+        return Response.json(body, { status: response.status });
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "keep exact identity",
+      sessionId,
+      turnId: "forged-native-turn",
+      executionId: nativeRunId,
+    })).rejects.toThrow("mismatched run coordinates");
   });
 
   it("intersects Bridge truth with methods implemented by this provider", async () => {
@@ -629,6 +677,8 @@ describe("cli-bridge native retained sessions", () => {
             session: sessionView(createRequestDigest!),
             run: {
               id: "wrong-run-after-admission",
+              provider: String(body?.provider),
+              environmentId: String(body?.environment_id),
               executionId: "wrong-execution",
               sessionId,
               requestDigest: runDigest,
@@ -638,13 +688,17 @@ describe("cli-bridge native retained sessions", () => {
           }, { status: 202 });
         }
         if (target.pathname === `/v1/runs/${nativeRunId}/cancel`) {
+          const request = body as {
+            operationId: string;
+            requestDigest: string;
+            run: AgentExactRunControlRef;
+          };
           return Response.json({
-            run: {
-              id: nativeRunId,
-              requestDigest: runDigest,
-              status: "running",
-              terminal: false,
-            },
+            operationId: request.operationId,
+            requestDigest: request.requestDigest,
+            run: request.run,
+            status: "accepted",
+            effect: "cancel_requested",
           });
         }
         if (target.pathname === `/v1/runs/${nativeRunId}`) {
@@ -669,11 +723,11 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests).toEqual([
       "POST /v1/sessions",
       "POST /v1/sessions/native-session/turns",
+      "GET /v1/runs/native-execution",
       "POST /v1/runs/native-execution/cancel",
       expect.stringMatching(/^GET \/v1\/runs\/native-execution\?wait_ms=\d+$/),
-      expect.stringMatching(/^GET \/v1\/runs\/native-execution\?wait_ms=\d+$/),
     ]);
-    for (const request of requests.slice(3)) {
+    for (const request of requests.slice(4)) {
       const waitMs = Number(
         new URL(request.slice(4), baseUrl).searchParams.get("wait_ms"),
       );
@@ -1012,6 +1066,56 @@ describe("cli-bridge native retained sessions", () => {
       }
     }).rejects.toThrow("response omitted X-Run-Id");
   });
+
+  it.each(["x-run-provider", "x-run-environment-id"])(
+    "rejects a native replay response without %s",
+    async (omittedHeader) => {
+      const requests: Array<{
+        url: string;
+        method: string;
+        body?: Record<string, unknown>;
+        since?: string;
+      }> = [];
+      const delegate = createNativeFetch(
+        requests,
+        [nativeEnvelope(1, { type: "status", status: "completed" })],
+      );
+      const provider = createCliBridgeProvider({
+        baseUrl,
+        defaultModel: model,
+        capabilities: defaultCliBridgeCapabilities("pi"),
+        fetch: async (url, init) => {
+          const response = await delegate(url, init);
+          if (!new URL(String(url)).pathname.endsWith("/events")) return response;
+          const headers = new Headers(response.headers);
+          headers.delete(omittedHeader);
+          return new Response(await response.text(), {
+            status: response.status,
+            headers,
+          });
+        },
+      });
+      const environment = await provider.create({
+        idempotencyKey: `partial-native-replay-${omittedHeader}`,
+        profile: { name: "native-pi", harness: "pi" },
+      });
+      const reference = await environment.dispatch!({
+        prompt: "retain exact identity",
+        sessionId,
+        turnId: `partial-${omittedHeader}`,
+        executionId: nativeRunId,
+      });
+      const session = environment.session!(sessionId, {
+        controlRef: reference.controlRef,
+      });
+
+      await expect(async () => {
+        for await (const _event of session.events({ since: "0" })) {
+          // The response must fail before any event reaches the caller.
+        }
+      }).rejects.toThrow("response omitted exact run coordinates");
+    },
+  );
 
   it.each([
     { permission: true },

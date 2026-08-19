@@ -40,6 +40,8 @@ Persist the returned `controlRef` before treating dispatch as accepted.
 It contains the exact provider, environment, session, execution, run, and request digest needed after a process restart.
 Reconstruct the environment with `provider.get(controlRef.environmentId)`, then call `environment.session(controlRef.sessionId, { controlRef })`.
 The provider rejects any coordinate or digest mismatch instead of attaching to a different run.
+If the caller crashes before saving `controlRef`, call `provider.lookupRun()` with the planned run coordinates.
+The lookup returns the server-issued digest only when all five planned coordinates match the retained run.
 
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
 Execution fails before network use when none is present.
@@ -69,8 +71,11 @@ The provider stores the selected harness, exact model route, and canonical creat
 This identifier lets `provider.get()` reconstruct profile-selected routes after process death without a cache or repeated configuration.
 The create digest prevents an altered profile or workspace from reusing the previous retained identity.
 `provider.get()` accepts only identifiers created by this provider and rejects plain caller identifiers.
-The provider queries `/v1/capabilities` for the retained Pi route.
-The provider caches the valid response and enables native interactions only when the running Bridge proves the complete retained contract.
+The provider queries `/v1/capabilities` for each retained route restored through `provider.get()`.
+`provider.capabilities()` queries the configured default route before the Runtime selects retained execution.
+The provider shares concurrent discovery requests and refreshes every later query.
+It enables retained control only when the running Bridge proves the complete contract.
+It enables native interactions only when the running Bridge proves the Pi contract.
 Every native turn stays on the model route used for that discovery; another model requires another environment.
 An explicit capability document remains available for a caller that already performed the same discovery.
 That capability selects cli-bridge's native `/v1/sessions` and `/turns` transport; it never sends an interactive turn to `/v1/chat/completions`.

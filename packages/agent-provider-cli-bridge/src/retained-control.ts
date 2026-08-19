@@ -2,18 +2,34 @@ import {
   AgentExactRunControlRefSchema,
   AgentRunCancellationAcknowledgementSchema,
   AgentRunCancellationRequestSchema,
+  agentRunCancellationRequestDigest,
   agentRunCancellationAcknowledgementMatchesRequest,
   type AgentExactRunControlRef,
   type AgentRunCancellationAcknowledgement,
   type AgentRunCancellationRequest,
-  type Sha256Digest,
 } from "@tangle-network/agent-interface";
 import type { AgentSessionStatus } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
-import { requestHeaders, trimSlash } from "./transport.js";
-import { cancelSnapshot, runSnapshot } from "./wire.js";
+import {
+  createCliBridgeTransport,
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
+  requestHeaders,
+  trimSlash,
+} from "./transport.js";
+import { assertCliBridgeRunId, runSnapshot } from "./wire.js";
+
+const DEFAULT_CANCELLATION_WAIT_MS = 30_000;
+
+export function cliBridgeCancellationSignal(
+  options: CliBridgeProviderOptions,
+): AbortSignal {
+  return AbortSignal.timeout(
+    options.cancelWaitMs ?? DEFAULT_CANCELLATION_WAIT_MS,
+  );
+}
 
 export function captureCliBridgeRunIdentity(
   response: CliBridgeResponse,
@@ -50,7 +66,36 @@ export function captureCliBridgeRunIdentity(
       `cli-bridge replay response omitted X-Run-Request-Digest for run "${run.id}"`,
     );
   }
-  if (requestDigest !== null) run.requestDigest = requestDigest;
+  const responseProvider = response.headers.get("x-run-provider");
+  const responseEnvironmentId = response.headers.get("x-run-environment-id");
+  const responseSessionId = response.headers.get("x-run-session-id");
+  const responseExecutionId = response.headers.get("x-run-execution-id");
+  const completeCoordinates = [
+    responseRunId,
+    requestDigest,
+    responseProvider,
+    responseEnvironmentId,
+    responseSessionId,
+    responseExecutionId,
+  ].every((value) => value !== null);
+  if ((required || run.controlRef !== undefined) && !completeCoordinates) {
+    throw new Error("cli-bridge response omitted exact run coordinates");
+  }
+  if (completeCoordinates) {
+    bindExactControlRef(
+      run,
+      AgentExactRunControlRefSchema.parse({
+        runId: responseRunId,
+        requestDigest,
+        provider: responseProvider,
+        environmentId: responseEnvironmentId,
+        sessionId: responseSessionId,
+        executionId: responseExecutionId,
+      }),
+    );
+  } else if (requestDigest !== null) {
+    run.requestDigest = requestDigest;
+  }
 }
 
 export async function detachCliBridgeReader(
@@ -92,22 +137,53 @@ async function performCliBridgeCancellation(
   transport: CliBridgeTransport,
   run: CliBridgeRun,
 ): Promise<CliBridgeRunSnapshot> {
-  const response = await transport.fetch(
+  const waitBudgetMs = options.cancelWaitMs ?? DEFAULT_CANCELLATION_WAIT_MS;
+  const deadline = Date.now() + waitBudgetMs;
+  const signal = cliBridgeCancellationSignal(options);
+  let snapshot: CliBridgeRunSnapshot | null = null;
+  if (run.controlRef === undefined) {
+    snapshot = await getCliBridgeRun(options, transport, run, undefined, signal);
+    if (snapshot === null) {
+      throw new Error(
+        `cli-bridge cannot safely cancel unknown run "${run.id}"`,
+      );
+    }
+    if (snapshot.terminal) return snapshot;
+  }
+  const exactRequest = automaticCancellationRequest(run);
+  const response = await waitForOperation(transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(run.id)}/cancel`,
     {
       method: "POST",
       headers: requestHeaders(options),
-      body: "{}",
+      body: JSON.stringify(exactRequest),
+      signal,
     },
+  ), signal);
+  const responseText = await waitForOperation(
+    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    signal,
   );
-  if (!response.ok) {
-    throw new Error(`cli-bridge cancel ${response.status}: ${await response.text()}`);
+  const acknowledgement = parseExactCancellationAcknowledgement(
+    exactRequest,
+    response.status,
+    responseText,
+  );
+  if (
+    acknowledgement.status === "conflict" ||
+    acknowledgement.status === "unknown" ||
+    acknowledgement.effect === "unknown"
+  ) {
+    throw new Error(
+      `cli-bridge did not prove cancellation for run "${run.id}": ${acknowledgement.status}`,
+    );
   }
-  let snapshot: CliBridgeRunSnapshot | null = cancelSnapshot(await response.text());
-  assertCliBridgeRunSnapshotIdentity(snapshot, run.id, run.requestDigest);
-  const waitBudgetMs = options.cancelWaitMs ?? 30_000;
-  const deadline = Date.now() + waitBudgetMs;
-  while (!snapshot.terminal) {
+  if (acknowledgement.effect === "cancelled") {
+    snapshot = exactTerminalCancellationSnapshot(run, "cancelled");
+  } else if (acknowledgement.effect === "not_live") {
+    snapshot = exactTerminalCancellationSnapshot(run, "unknown");
+  }
+  while (snapshot === null || !snapshot.terminal) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
     snapshot = await getCliBridgeRun(
@@ -115,6 +191,7 @@ async function performCliBridgeCancellation(
       transport,
       run,
       Math.min(remainingMs, 30_000),
+      signal,
     );
     if (snapshot === null) {
       throw new Error(`cli-bridge lost run "${run.id}" before confirming cancellation`);
@@ -131,6 +208,39 @@ async function performCliBridgeCancellation(
   return snapshot;
 }
 
+function exactTerminalCancellationSnapshot(
+  run: CliBridgeRun,
+  status: "cancelled" | "unknown",
+): CliBridgeRunSnapshot {
+  if (run.controlRef === undefined) {
+    throw new Error("cli-bridge exact cancellation lost its bound run identity");
+  }
+  return {
+    id: run.id,
+    requestDigest: run.controlRef.requestDigest,
+    controlRef: run.controlRef,
+    status,
+    terminal: true,
+  };
+}
+
+function automaticCancellationRequest(run: CliBridgeRun): AgentRunCancellationRequest {
+  if (run.controlRef === undefined) {
+    throw new Error(
+      `cli-bridge cannot safely cancel run "${run.id}" without complete exact coordinates`,
+    );
+  }
+  const material = {
+    operationId: `cancel-${run.controlRef.requestDigest.slice("sha256:".length)}`,
+    run: run.controlRef,
+    reason: "provider cleanup",
+  };
+  return AgentRunCancellationRequestSchema.parse({
+    ...material,
+    requestDigest: agentRunCancellationRequestDigest(material),
+  });
+}
+
 function clearCancellation(
   run: CliBridgeRun,
   cancellation: Promise<CliBridgeRunSnapshot>,
@@ -140,7 +250,10 @@ function clearCancellation(
 
 function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
-  signal.throwIfAborted();
+  if (signal.aborted) {
+    void operation.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
@@ -168,18 +281,37 @@ export async function cancelExactCliBridgeRun(
   if (!run.controlRef || !sameControlRef(run.controlRef, exactRequest.run)) {
     throw new Error("cli-bridge cancellation targets another retained run");
   }
-  const response = await transport.fetch(
+  const timeoutSignal = cliBridgeCancellationSignal(options);
+  const operationSignal = signal === undefined
+    ? timeoutSignal
+    : AbortSignal.any([signal, timeoutSignal]);
+  const response = await waitForOperation(transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(run.id)}/cancel`,
     {
       method: "POST",
       headers: requestHeaders(options),
       body: JSON.stringify(exactRequest),
-      ...(signal ? { signal } : {}),
+      signal: operationSignal,
     },
+  ), operationSignal);
+  const responseText = await waitForOperation(
+    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    operationSignal,
   );
-  const responseText = await response.text();
-  if (!response.ok && response.status !== 409) {
-    throw new Error(`cli-bridge cancel ${response.status}: ${responseText}`);
+  return parseExactCancellationAcknowledgement(
+    exactRequest,
+    response.status,
+    responseText,
+  );
+}
+
+function parseExactCancellationAcknowledgement(
+  request: AgentRunCancellationRequest,
+  status: number,
+  responseText: string,
+): AgentRunCancellationAcknowledgement {
+  if ((status < 200 || status >= 300) && status !== 409) {
+    throw new Error(`cli-bridge cancel ${status}: ${responseText}`);
   }
   let acknowledgement: AgentRunCancellationAcknowledgement;
   try {
@@ -191,7 +323,7 @@ export async function cancelExactCliBridgeRun(
       cause: error,
     });
   }
-  if (!agentRunCancellationAcknowledgementMatchesRequest(exactRequest, acknowledgement)) {
+  if (!agentRunCancellationAcknowledgementMatchesRequest(request, acknowledgement)) {
     throw new Error("cli-bridge returned a cancellation acknowledgement for another request");
   }
   return acknowledgement;
@@ -217,40 +349,95 @@ export async function getCliBridgeRun(
   signal?: AbortSignal,
 ): Promise<CliBridgeRunSnapshot | null> {
   const query = waitMs === undefined ? "" : `?wait_ms=${waitMs}`;
-  const response = await transport.fetch(
+  const response = await waitForOperation(transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(run.id)}${query}`,
     {
       method: "GET",
       headers: requestHeaders(options),
       ...(signal ? { signal } : {}),
     },
+  ), signal);
+  const responseText = await waitForOperation(
+    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    signal,
   );
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`cli-bridge run status ${response.status}: ${await response.text()}`);
+    throw new Error(`cli-bridge run status ${response.status}: ${responseText}`);
   }
-  const snapshot = runSnapshot(await response.text());
-  assertCliBridgeRunSnapshotIdentity(snapshot, run.id, run.requestDigest);
+  const snapshot = runSnapshot(responseText);
+  bindCliBridgeRunSnapshot(run, snapshot);
   return snapshot;
 }
 
-function assertCliBridgeRunSnapshotIdentity(
-  snapshot: CliBridgeRunSnapshot,
-  expectedRunId: string,
-  expectedRequestDigest?: Sha256Digest,
-): void {
-  if (snapshot.id !== expectedRunId) {
-    throw new Error(
-      `cli-bridge returned run "${snapshot.id}" for requested run "${expectedRunId}"`,
-    );
+function bindCliBridgeRunSnapshot(run: CliBridgeRun, snapshot: CliBridgeRunSnapshot): void {
+  if (snapshot.controlRef === undefined) {
+    throw new Error("cli-bridge run status omitted exact run coordinates");
   }
+  bindExactControlRef(run, snapshot.controlRef);
+}
+
+function bindExactControlRef(run: CliBridgeRun, controlRef: AgentExactRunControlRef): void {
   if (
-    expectedRequestDigest !== undefined &&
-    snapshot.requestDigest !== expectedRequestDigest
+    controlRef.runId !== run.id ||
+    controlRef.provider !== run.provider ||
+    controlRef.environmentId !== run.environmentId ||
+    controlRef.sessionId !== run.sessionId ||
+    controlRef.executionId !== run.executionId ||
+    (run.requestDigest !== undefined && controlRef.requestDigest !== run.requestDigest)
   ) {
-    throw new Error(
-      `cli-bridge returned request digest "${snapshot.requestDigest}" for run "${expectedRunId}"`,
+    throw new Error("cli-bridge returned another retained run identity");
+  }
+  run.requestDigest = controlRef.requestDigest;
+  run.controlRef = Object.freeze(controlRef);
+}
+
+export interface CliBridgeRunLookupInput {
+  readonly runId: string;
+  readonly environmentId: string;
+  readonly sessionId: string;
+  readonly executionId: string;
+  readonly signal?: AbortSignal;
+}
+
+/** Recover one exact Bridge run after dispatch succeeded but local admission did not. */
+export async function lookupExactCliBridgeRun(
+  options: CliBridgeProviderOptions,
+  providerName: string,
+  input: CliBridgeRunLookupInput,
+): Promise<AgentExactRunControlRef | null> {
+  const runId = assertCliBridgeRunId(
+    AgentExactRunControlRefSchema.shape.runId.parse(input.runId),
+  );
+  const environmentId = AgentExactRunControlRefSchema.shape.environmentId.parse(
+    input.environmentId,
+  );
+  const sessionId = AgentExactRunControlRefSchema.shape.sessionId.parse(input.sessionId);
+  const executionId = AgentExactRunControlRefSchema.shape.executionId.parse(
+    input.executionId,
+  );
+  const transport = createCliBridgeTransport(options);
+  const run: CliBridgeRun = {
+    id: runId,
+    provider: providerName,
+    environmentId,
+    sessionId,
+    executionId,
+    turnId: executionId,
+    requestBody: "",
+    readers: new Set<AbortController>(),
+  };
+  try {
+    const snapshot = await getCliBridgeRun(
+      options,
+      transport,
+      run,
+      undefined,
+      input.signal,
     );
+    return snapshot?.controlRef ?? null;
+  } finally {
+    await transport.close();
   }
 }
 

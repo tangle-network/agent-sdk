@@ -20,7 +20,13 @@ export function toChatCompletionsBody(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
-  runId: string,
+  coordinates: {
+    readonly runId: string;
+    readonly provider: string;
+    readonly environmentId: string;
+    readonly sessionId: string;
+    readonly executionId: string;
+  },
 ): Record<string, unknown> {
   const profile = inlineProfile(environmentInput.profile);
   const execution = executionFromInput(options, environmentInput);
@@ -31,8 +37,11 @@ export function toChatCompletionsBody(
     model: resolveBridgeModel(options, environmentInput, turn, profile),
     messages: messagesFromTurn(turn),
     stream: true,
-    ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
-    run_id: runId,
+    session_id: coordinates.sessionId,
+    run_id: coordinates.runId,
+    provider: coordinates.provider,
+    environment_id: coordinates.environmentId,
+    execution_id: coordinates.executionId,
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
     ...(profile ? { agent_profile: profile } : {}),
     ...(profile?.model?.reasoningEffort
@@ -363,11 +372,7 @@ export function cliBridgeRunId(
   turn: AgentTurnInput,
   turnId: string,
 ): string {
-  if (
-    turn.executionId &&
-    turn.executionId.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(turn.executionId)
-  ) {
+  if (turn.executionId && isCliBridgeRunId(turn.executionId)) {
     return turn.executionId;
   }
   const digest = createHash("sha256")
@@ -380,6 +385,19 @@ export function cliBridgeRunId(
   return `agent-${digest}`;
 }
 
+export function assertCliBridgeRunId(value: string): string {
+  if (!isCliBridgeRunId(value)) {
+    throw new Error(
+      "cli-bridge run id must be 1-128 URL-safe characters",
+    );
+  }
+  return value;
+}
+
+function isCliBridgeRunId(value: string): boolean {
+  return value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value);
+}
+
 export function runSnapshot(value: string): CliBridgeRunSnapshot {
   const parsed = safeJson(value);
   if (!parsed) throw new Error("cli-bridge run status returned invalid JSON");
@@ -389,6 +407,14 @@ export function runSnapshot(value: string): CliBridgeRunSnapshot {
     : AgentExactRunControlRefSchema.shape.requestDigest.safeParse(parsed.requestDigest);
   const status = parsed.status;
   const terminal = parsed.terminal;
+  const controlRef = AgentExactRunControlRefSchema.safeParse({
+    runId: id,
+    provider: parsed.provider,
+    environmentId: parsed.environmentId,
+    sessionId: parsed.sessionId,
+    executionId: parsed.executionId,
+    requestDigest: requestDigest?.success ? requestDigest.data : undefined,
+  });
   if (
     typeof id !== "string" ||
     (requestDigest !== undefined && !requestDigest.success) ||
@@ -400,6 +426,7 @@ export function runSnapshot(value: string): CliBridgeRunSnapshot {
   return {
     id,
     ...(requestDigest?.success ? { requestDigest: requestDigest.data } : {}),
+    ...(controlRef.success ? { controlRef: controlRef.data } : {}),
     status: status as CliBridgeRunSnapshot["status"],
     terminal,
   };
