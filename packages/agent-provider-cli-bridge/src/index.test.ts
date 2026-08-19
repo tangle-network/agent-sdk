@@ -4,6 +4,7 @@ import {
   CanonicalStreamEventSchema,
   agentRunCancellationRequestDigest,
   canonicalCandidateDigest,
+  harnessTypeSchema,
   interactionRequestDigest,
   permissionAnswerSpec,
   RuntimeEventEnvelopeSchema,
@@ -353,7 +354,7 @@ describe("createCliBridgeProvider", () => {
     });
   });
 
-  it("reconstructs the created backend instead of the provider default", async () => {
+  it("supports generic retained start, reconnect, status, result, and cancellation", async () => {
     const runId = "restart-run";
     const sessionId = "restart-session";
     const environmentId = "restart-environment";
@@ -361,8 +362,10 @@ describe("createCliBridgeProvider", () => {
     let status: "running" | "done" = "running";
     let dispatches = 0;
     let cancellations = 0;
+    const requests: string[] = [];
     const bridgeFetch: typeof fetch = async (url, init) => {
       const target = String(url);
+      requests.push(target);
       if (new URL(target).pathname === "/v1/capabilities") {
         return Response.json(defaultCliBridgeCapabilities("pi"));
       }
@@ -428,6 +431,16 @@ describe("createCliBridgeProvider", () => {
       profile: { name: "worker", harness: "codex" },
       idempotencyKey: environmentId,
     });
+    expect(startedEnvironment.capabilities).toMatchObject({
+      sessions: { continue: true },
+      retainedControl: {
+        exactRunIdentity: true,
+        resultIdentity: true,
+        eventIdentity: true,
+        cancellationIdempotency: true,
+      },
+    });
+    expect(startedEnvironment.capabilities?.nativeContinuation).toBeUndefined();
     const reference = await startedEnvironment.dispatch?.({
       prompt: "keep working after restart",
       sessionId,
@@ -436,6 +449,8 @@ describe("createCliBridgeProvider", () => {
       detach: true,
     });
     const controlRef = reference?.controlRef as AgentExactRunControlRef;
+    expect(requests).toContain("http://bridge.local/v1/chat/completions");
+    expect(requests).not.toContain("http://bridge.local/v1/sessions");
 
     const restarted = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
@@ -444,6 +459,13 @@ describe("createCliBridgeProvider", () => {
     });
     const recoveredEnvironment = await restarted.get?.(startedEnvironment.id);
     expect(recoveredEnvironment?.capabilities?.interactions).toBeUndefined();
+    expect(recoveredEnvironment?.capabilities?.nativeContinuation).toBeUndefined();
+    expect(recoveredEnvironment?.capabilities?.retainedControl).toEqual({
+      exactRunIdentity: true,
+      resultIdentity: true,
+      eventIdentity: true,
+      cancellationIdempotency: true,
+    });
     expect(recoveredEnvironment?.respondToInteraction).toBeUndefined();
     const recovered = recoveredEnvironment?.session?.(sessionId, { controlRef });
     await expect(recovered?.status()).resolves.toBe("running");
@@ -2263,6 +2285,40 @@ describe("createCliBridgeProvider", () => {
       replace: false,
       append: false,
     });
+  });
+
+  it.each(
+    harnessTypeSchema.options.map((harness) => ({
+      harness,
+      native: harness === "pi",
+      interactions: harness === "pi",
+    })),
+  )("projects $harness capabilities without overclaiming native controls", ({ harness, native, interactions }) => {
+    const capabilities = defaultCliBridgeCapabilities(harness);
+
+    expect(capabilities.sessions).toEqual({ continue: true, list: false, messages: false });
+    expect(capabilities.retainedControl).toEqual({
+      exactRunIdentity: true,
+      resultIdentity: true,
+      eventIdentity: true,
+      cancellationIdempotency: true,
+    });
+    expect(capabilities.nativeContinuation).toEqual(
+      native ? { atomicBoundary: true, requestIdempotency: true } : undefined,
+    );
+    expect(capabilities.interactions).toEqual(
+      interactions
+        ? {
+            kinds: ["permission"],
+            answerFieldTypes: ["select"],
+            responseScopes: ["interaction"],
+            secretAnswers: false,
+            concurrentRequests: false,
+            replay: true,
+            responseIdempotency: true,
+          }
+        : undefined,
+    );
   });
 });
 

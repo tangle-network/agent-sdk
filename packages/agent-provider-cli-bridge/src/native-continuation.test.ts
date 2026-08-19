@@ -18,7 +18,7 @@ import {
 const baseUrl = "http://bridge.local";
 
 describe("cli-bridge native continuation", () => {
-  it("does not claim continuation when the narrowed Bridge contract omits its guarantees", async () => {
+  it("keeps generic retained control when the Bridge omits native continuation", async () => {
     const { nativeContinuation: _nativeContinuation, ...withoutNativeContinuation } =
       defaultCliBridgeCapabilities("pi");
     const provider = createCliBridgeProvider({
@@ -35,7 +35,13 @@ describe("cli-bridge native continuation", () => {
 
     const capabilities = environment.capabilities;
     if (!capabilities) throw new Error("the provider omitted capabilities");
-    expect(capabilities.sessions.continue).toBe(false);
+    expect(capabilities.sessions.continue).toBe(true);
+    expect(capabilities.retainedControl).toEqual({
+      exactRunIdentity: true,
+      resultIdentity: true,
+      eventIdentity: true,
+      cancellationIdempotency: true,
+    });
     expect(capabilities.nativeContinuation).toBeUndefined();
     expect(environment.session!("session").contextBoundary).toBeUndefined();
     expect(environment.session!("session").continueNative).toBeUndefined();

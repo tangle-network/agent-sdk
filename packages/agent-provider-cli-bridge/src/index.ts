@@ -220,19 +220,15 @@ export function defaultCliBridgeCapabilities(
       validation: false,
     },
     streaming: { live: true, replay: true, detach: true, turnIdempotency: true },
-    sessions: {
-      continue: harness === "pi",
-      list: false,
-      messages: false,
+    sessions: { continue: true, list: false, messages: false },
+    retainedControl: {
+      exactRunIdentity: true,
+      resultIdentity: true,
+      eventIdentity: true,
+      cancellationIdempotency: true,
     },
     ...(harness === "pi"
       ? {
-          retainedControl: {
-            exactRunIdentity: true,
-            resultIdentity: true,
-            eventIdentity: true,
-            cancellationIdempotency: true,
-          },
           nativeContinuation: {
             atomicBoundary: true,
             requestIdempotency: true,
