@@ -92,16 +92,12 @@ export function narrowCliBridgeCapabilities(
       ? { atomicBoundary: true, requestIdempotency: true }
       : undefined;
   const sessions = {
-    continue:
-      nativeContinuation !== undefined &&
-      adapter.sessions.continue &&
-      reported.sessions.continue,
+    continue: adapter.sessions.continue && reported.sessions.continue,
     // The Bridge can list and inspect sessions, but this adapter exposes neither method.
     list: false,
     messages: false,
   };
   const retainedControl =
-    sessions.continue &&
     supportsRetainedControl(adapter) &&
     supportsRetainedControl(reported)
       ? {
