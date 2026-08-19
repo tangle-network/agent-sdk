@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import type {
+  AgentExactRunControlRef,
+  RuntimeEventEnvelope,
+  StreamEvent,
+} from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "./index.js";
@@ -161,6 +165,144 @@ describe("retained cli-bridge safety", () => {
       consumeEvents(environment.stream({ prompt: "work" })),
     ).rejects.toThrow("without the [DONE] protocol marker");
   });
+
+  it("reads retained canonical events without an OpenAI protocol marker", async () => {
+    const controlRef = exactControlRef();
+    let replayCursor: string | null = null;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url, init) => {
+        if (!String(url).endsWith("/events")) {
+          return retainedRunResponse(controlRef.runId, "done", true);
+        }
+        replayCursor = new Headers(init?.headers).get("last-event-id");
+        return canonicalEventsResponse(controlRef, canonicalEvents());
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+    const events: AgentEnvironmentEvent[] = [];
+
+    for await (const event of session.events({
+      since: "0",
+      executionId: controlRef.executionId,
+    })) {
+      events.push(event);
+    }
+
+    expect(replayCursor).toBe("0");
+    expect(events.map((event) => event.type)).toEqual([
+      "message.part.updated",
+      "raw",
+      "status",
+    ]);
+    expect(events[0]).toMatchObject({
+      id: "run-1:event:1",
+      data: {
+        cursor: "1",
+        sequence: 1,
+        runId: "run-1",
+        sessionId: "session-1",
+        executionId: "run-1",
+        delta: "done",
+      },
+      normalized: { type: "message.part.updated", delta: "done" },
+    });
+    expect(events[1]).toMatchObject({
+      id: "run-1:event:2",
+      usage: {
+        inputTokens: 11,
+        outputTokens: 4,
+        reasoningTokens: 2,
+        cost: 0.005,
+      },
+    });
+    expect(events[2]).toMatchObject({
+      id: "run-1:event:3",
+      normalized: { type: "status", status: "completed" },
+    });
+  });
+
+  it("collects canonical text and usage from a retained result", async () => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => String(url).endsWith("/events")
+        ? canonicalEventsResponse(controlRef, canonicalEvents())
+        : retainedRunResponse(controlRef.runId, "done", true),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.result()).resolves.toMatchObject({
+      text: "done",
+      success: true,
+      usage: {
+        inputTokens: 11,
+        outputTokens: 4,
+        reasoningTokens: 2,
+        cost: 0.005,
+      },
+      metadata: { runId: "run-1", executionId: "run-1", status: "done" },
+    });
+  });
+
+  it("rejects canonical events whose wire identity does not match", async () => {
+    const controlRef = exactControlRef();
+    const wrongRun = { ...controlRef, runId: "another-run" };
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async () => canonicalEventsResponse(
+        controlRef,
+        canonicalEvents(),
+        wrongRun.runId,
+      ),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(consumeEvents(session.events({ since: "0" }))).rejects.toThrow(
+      "belongs to another retained run",
+    );
+  });
+
+  it("rejects a canonical cursor that does not match its sequence", async () => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async () => canonicalEventsResponse(
+        controlRef,
+        [{ type: "status", status: "completed" }],
+        controlRef.runId,
+        () => 2,
+      ),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(consumeEvents(session.events({ since: "0" }))).rejects.toThrow(
+      "cursor does not match its sequence",
+    );
+  });
+
+  it("rejects a stream that changes format after a canonical event", async () => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async () => new Response(
+        canonicalEventsBody(controlRef, [canonicalEvents()[0]!]) +
+          'data: {"choices":[{"delta":{"content":"wrong"},"finish_reason":"stop"}]}\n\n' +
+          "data: [DONE]\n\n",
+        { status: 200, headers: canonicalEventHeaders(controlRef) },
+      ),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(consumeEvents(session.events({ since: "0" }))).rejects.toThrow(
+      "mixed canonical and OpenAI stream formats",
+    );
+  });
 });
 
 async function consumeEvents(events: AsyncIterable<unknown>): Promise<void> {
@@ -185,6 +327,91 @@ function dispatchResponse(runId: string): Response {
       },
     },
   );
+}
+
+function canonicalEvents(): StreamEvent[] {
+  return [
+    {
+      type: "message.part.updated",
+      part: {
+        id: "run-1:part:1",
+        sessionID: "session-1",
+        messageID: "run-1:message:1",
+        type: "text",
+        text: "done",
+      },
+      delta: "done",
+    },
+    {
+      type: "raw",
+      backend: "pi",
+      event: {
+        type: "usage",
+        data: {},
+        usage: {
+          inputTokens: 11,
+          outputTokens: 4,
+          reasoningTokens: 2,
+          cost: 0.005,
+        },
+      },
+    },
+    { type: "status", status: "completed" },
+  ];
+}
+
+function canonicalEventsResponse(
+  controlRef: AgentExactRunControlRef,
+  events: StreamEvent[],
+  envelopeRunId = controlRef.runId,
+  frameSequence: (sequence: number) => number = (sequence) => sequence,
+): Response {
+  return new Response(
+    canonicalEventsBody(controlRef, events, envelopeRunId, frameSequence),
+    { status: 200, headers: canonicalEventHeaders(controlRef) },
+  );
+}
+
+function canonicalEventsBody(
+  controlRef: AgentExactRunControlRef,
+  events: StreamEvent[],
+  envelopeRunId = controlRef.runId,
+  frameSequence: (sequence: number) => number = (sequence) => sequence,
+): string {
+  const receivedAt = "2026-08-18T12:00:00.000Z";
+  return events.map((event, index) => {
+    const sequence = index + 1;
+    const envelope: RuntimeEventEnvelope = {
+      runId: envelopeRunId,
+      eventId: `${controlRef.runId}:event:${sequence}`,
+      sequence,
+      receivedAt,
+      event,
+    };
+    return [
+      `id: ${frameSequence(sequence)}`,
+      `event: ${event.type}`,
+      `data: ${JSON.stringify(envelope)}`,
+      "",
+      "",
+    ].join("\n");
+  }).join("");
+}
+
+function canonicalEventHeaders(controlRef: AgentExactRunControlRef): HeadersInit {
+  return {
+    "content-type": "text/event-stream",
+    "x-run-id": controlRef.runId,
+    "x-run-request-digest": controlRef.requestDigest,
+  };
+}
+
+function retainedRunResponse(
+  id: string,
+  status: "running" | "done" | "error" | "cancelled",
+  terminal: boolean,
+): Response {
+  return Response.json({ id, requestDigest: testDigest(id), status, terminal });
 }
 
 function exactControlRef(): AgentExactRunControlRef {

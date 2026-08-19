@@ -51,6 +51,9 @@ The returned `AgentSession` exposes status, cursor-based event replay, the termi
 Cancellation returns only after cli-bridge confirms the run is terminal.
 A direct stream treats a finish frame as provisional until cli-bridge returns the same run's aggregate result.
 A retained replay confirms its terminal state from the retained run endpoint.
+Retained native runs use canonical runtime envelopes and finish with a terminal status event.
+Legacy runs keep the OpenAI chunk format and its `[DONE]` marker.
+The provider uses the explicit SSE event field to select the format and rejects mixed streams.
 The provider rejects a terminal response when its run id or request digest does not match the accepted stream.
 Usage events and terminal result metadata include `modelRequests` only when the bridge measured an exact non-negative integer count.
 Missing, malformed, partial, or estimated request counts remain unknown.
