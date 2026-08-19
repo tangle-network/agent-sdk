@@ -43,7 +43,10 @@ export function retainedCanonicalEvent(
   const usage = usageFromCanonicalEvent(event);
   return {
     type: event.type,
-    id: envelope.eventId,
+    // AgentSession.events({ since }) accepts a previously emitted event id.
+    // The bridge replays by its numeric SSE cursor, while eventId identifies
+    // the canonical envelope and is not a replay cursor.
+    id: frame.id,
     data: {
       ...eventPayload(event),
       eventId: envelope.eventId,

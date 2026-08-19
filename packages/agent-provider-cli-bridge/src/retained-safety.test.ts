@@ -197,7 +197,7 @@ describe("retained cli-bridge safety", () => {
       "status",
     ]);
     expect(events[0]).toMatchObject({
-      id: "run-1:event:1",
+      id: "1",
       data: {
         cursor: "1",
         sequence: 1,
@@ -209,7 +209,7 @@ describe("retained cli-bridge safety", () => {
       normalized: { type: "message.part.updated", delta: "done" },
     });
     expect(events[1]).toMatchObject({
-      id: "run-1:event:2",
+      id: "2",
       usage: {
         inputTokens: 11,
         outputTokens: 4,
@@ -218,9 +218,46 @@ describe("retained cli-bridge safety", () => {
       },
     });
     expect(events[2]).toMatchObject({
-      id: "run-1:event:3",
+      id: "3",
       normalized: { type: "status", status: "completed" },
     });
+  });
+
+  it("resumes canonical events from a previously emitted event id", async () => {
+    const controlRef = exactControlRef();
+    const replayCursors: Array<string | null> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url, init) => {
+        if (!String(url).endsWith("/events")) {
+          return retainedRunResponse(controlRef.runId, "done", true);
+        }
+        const cursor = new Headers(init?.headers).get("last-event-id");
+        replayCursors.push(cursor);
+        return cursor === "1"
+          ? canonicalEventsResponse(controlRef, canonicalEvents().slice(1), 1)
+          : canonicalEventsResponse(controlRef, canonicalEvents());
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+    const firstRead: AgentEnvironmentEvent[] = [];
+
+    for await (const event of session.events({ since: "0" })) {
+      firstRead.push(event);
+    }
+    const firstEventId = firstRead[0]?.id;
+    expect(firstEventId).toBe("1");
+
+    const resumed: AgentEnvironmentEvent[] = [];
+    for await (const event of session.events({ since: firstEventId })) {
+      resumed.push(event);
+    }
+
+    expect(replayCursors).toEqual(["0", "1"]);
+    expect(resumed.map((event) => event.id)).toEqual(["2", "3"]);
+    expect(resumed.map((event) => event.type)).toEqual(["raw", "status"]);
+    expect(resumed[0]?.data.eventId).toBe("run-1:event:2");
   });
 
   it("collects canonical text and usage from a retained result", async () => {
@@ -255,6 +292,7 @@ describe("retained cli-bridge safety", () => {
       fetch: async () => canonicalEventsResponse(
         controlRef,
         canonicalEvents(),
+        0,
         wrongRun.runId,
       ),
     });
@@ -273,6 +311,7 @@ describe("retained cli-bridge safety", () => {
       fetch: async () => canonicalEventsResponse(
         controlRef,
         [{ type: "status", status: "completed" }],
+        0,
         controlRef.runId,
         () => 2,
       ),
@@ -363,11 +402,18 @@ function canonicalEvents(): StreamEvent[] {
 function canonicalEventsResponse(
   controlRef: AgentExactRunControlRef,
   events: StreamEvent[],
+  sequenceOffset = 0,
   envelopeRunId = controlRef.runId,
   frameSequence: (sequence: number) => number = (sequence) => sequence,
 ): Response {
   return new Response(
-    canonicalEventsBody(controlRef, events, envelopeRunId, frameSequence),
+    canonicalEventsBody(
+      controlRef,
+      events,
+      sequenceOffset,
+      envelopeRunId,
+      frameSequence,
+    ),
     { status: 200, headers: canonicalEventHeaders(controlRef) },
   );
 }
@@ -375,12 +421,13 @@ function canonicalEventsResponse(
 function canonicalEventsBody(
   controlRef: AgentExactRunControlRef,
   events: StreamEvent[],
+  sequenceOffset = 0,
   envelopeRunId = controlRef.runId,
   frameSequence: (sequence: number) => number = (sequence) => sequence,
 ): string {
   const receivedAt = "2026-08-18T12:00:00.000Z";
   return events.map((event, index) => {
-    const sequence = index + 1;
+    const sequence = sequenceOffset + index + 1;
     const envelope: RuntimeEventEnvelope = {
       runId: envelopeRunId,
       eventId: `${controlRef.runId}:event:${sequence}`,
