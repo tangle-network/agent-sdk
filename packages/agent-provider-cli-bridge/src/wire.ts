@@ -5,13 +5,16 @@ import type {
   InputPart,
   TokenUsage,
 } from "@tangle-network/agent-interface";
-import { AgentExactRunControlRefSchema } from "@tangle-network/agent-interface";
+import {
+  AgentExactRunControlRefSchema,
+  RequestedInteractionsSchema,
+} from "@tangle-network/agent-interface";
 import type {
   AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
-import type { CliBridgeRunSnapshot } from "./retained-run-state.js";
+import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
 
 export function toChatCompletionsBody(
   options: CliBridgeProviderOptions,
@@ -21,6 +24,9 @@ export function toChatCompletionsBody(
 ): Record<string, unknown> {
   const profile = inlineProfile(environmentInput.profile);
   const execution = executionFromInput(options, environmentInput);
+  const interactions = turn.interactions === undefined
+    ? undefined
+    : RequestedInteractionsSchema.parse(turn.interactions);
   return {
     model: resolveBridgeModel(options, environmentInput, turn, profile),
     messages: messagesFromTurn(turn),
@@ -35,6 +41,7 @@ export function toChatCompletionsBody(
     ...(environmentInput.env ? { env: environmentInput.env } : {}),
     ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
     ...(execution ? { execution } : {}),
+    ...(interactions === undefined ? {} : { interactions }),
     metadata: {
       ...(environmentInput.metadata ?? {}),
       ...(turn.context ?? {}),
@@ -43,7 +50,7 @@ export function toChatCompletionsBody(
   };
 }
 
-function resolveBridgeModel(
+export function resolveBridgeModel(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   turn: AgentTurnInput,
@@ -65,6 +72,67 @@ function resolveBridgeModel(
   return `${harness}/${model}`;
 }
 
+export function toRetainedSessionBody(
+  options: CliBridgeProviderOptions,
+  environmentInput: CreateAgentEnvironmentInput,
+  profile: AgentProfile | undefined,
+  sessionId: string,
+  model: string,
+): Record<string, unknown> {
+  return {
+    id: sessionId,
+    model,
+    interaction_policy: "interactive",
+    ...(options.defaultMode ? { mode: options.defaultMode } : {}),
+    ...(environmentInput.workspace?.cwd
+      ? { cwd: environmentInput.workspace.cwd }
+      : {}),
+    ...(profile ? { agent_profile: profile } : {}),
+  };
+}
+
+/** Encode the exact retained turn contract without moving posture into metadata. */
+export function toRetainedTurnBody(
+  turn: AgentTurnInput,
+  run: CliBridgeRun,
+  providerName: string,
+): Record<string, unknown> {
+  const interactions = RequestedInteractionsSchema.parse(turn.interactions ?? {});
+  const content: Record<string, unknown> = {};
+  if (turn.parts === undefined) {
+    const message = turn.prompt ?? "";
+    if (message.length === 0) {
+      throw new Error("cli-bridge retained sessions require a non-empty text turn");
+    }
+    content.message = message;
+  } else {
+    const parts = turn.parts.map((part) => retainedTextPart(part));
+    if (parts.length === 0) {
+      throw new Error("cli-bridge retained sessions require a non-empty text turn");
+    }
+    content.parts = parts;
+  }
+  return {
+    ...content,
+    turn_id: run.turnId,
+    execution_id: run.executionId,
+    run_id: run.id,
+    provider: providerName,
+    environment_id: run.environmentId,
+    ...(turn.interactions === undefined ? {} : { interactions }),
+  };
+}
+
+function retainedTextPart(part: NonNullable<AgentTurnInput["parts"]>[number]): {
+  type: "text";
+  text: string;
+} {
+  if (part.type !== "text" || part.text.length === 0) {
+    throw new Error("cli-bridge retained sessions support text input parts only");
+  }
+  return { type: "text", text: part.text };
+}
+
 /** Keep task messages separate from the profile's harness-owned prompt controls. */
 function messagesFromTurn(turn: AgentTurnInput): Array<Record<string, unknown>> {
   return [{ role: "user", content: contentFromTurn(turn) }];
@@ -75,7 +143,7 @@ function contentFromTurn(turn: AgentTurnInput): string | InputPart[] {
   return turn.prompt ?? "";
 }
 
-function inlineProfile(profile: AgentProfileRef): AgentProfile | undefined {
+export function inlineProfile(profile: AgentProfileRef): AgentProfile | undefined {
   return typeof profile === "string" ? undefined : profile;
 }
 
@@ -274,7 +342,7 @@ export function runSnapshot(value: string): CliBridgeRunSnapshot {
   if (
     typeof id !== "string" ||
     (requestDigest !== undefined && !requestDigest.success) ||
-    !["running", "done", "error", "cancelled"].includes(String(status)) ||
+    !["running", "done", "error", "cancelled", "unknown"].includes(String(status)) ||
     typeof terminal !== "boolean"
   ) {
     throw new Error("cli-bridge run status returned an invalid snapshot");

@@ -27,6 +27,11 @@ import {
   CliBridgeRequestRejectedError,
   streamCliBridgeTurn,
 } from "./retained-stream.js";
+import {
+  beginCliBridgeNativeTurn,
+  streamCliBridgeNativeRunEvents,
+  type CliBridgeNativeSessionCache,
+} from "./retained-native.js";
 import type { CliBridgeTransport } from "./transport.js";
 import { requestHeaders, trimSlash } from "./transport.js";
 import { modelRequestCount } from "./wire.js";
@@ -34,11 +39,14 @@ import { modelRequestCount } from "./wire.js";
 export async function* streamTrackedCliBridgeTurn(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
+  providerName: string,
   prepared: PreparedCliBridgeRun,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
   sessions: Map<string, CliBridgeSessionState>,
   readers: Set<AbortController>,
+  nativeSessions: CliBridgeNativeSessionCache,
+  useNativeInteractions: boolean,
 ): AsyncIterable<AgentEnvironmentEvent> {
   const originalTurn = prepared.turn;
   if (originalTurn.detach) {
@@ -63,25 +71,52 @@ export async function* streamTrackedCliBridgeTurn(
 
   let drained = false;
   let threw = false;
+  let admitted = false;
   try {
-    for await (const event of streamCliBridgeTurn(
-      options,
-      turn,
-      run.requestBody,
-      transport,
-      run.id,
-      originalTurn.lastEventId,
-      signal,
-      (response) => captureCliBridgeRunIdentity(response, run, true),
-      () => getCliBridgeRun(options, transport, run, 30_000, signal),
-    )) {
-      yield event;
+    if (useNativeInteractions) {
+      await beginCliBridgeNativeTurn(
+        options,
+        providerName,
+        environmentInput,
+        turn,
+        run,
+        transport,
+        nativeSessions,
+        signal,
+      );
+      admitted = true;
+      for await (const event of streamCliBridgeNativeRunEvents(
+        options,
+        providerName,
+        run,
+        transport,
+        { since: originalTurn.lastEventId, signal },
+      )) {
+        yield event;
+      }
+    } else {
+      for await (const event of streamCliBridgeTurn(
+        options,
+        turn,
+        run.requestBody,
+        transport,
+        run.id,
+        originalTurn.lastEventId,
+        signal,
+        (response) => {
+          admitted = true;
+          captureCliBridgeRunIdentity(response, run, true);
+        },
+        () => getCliBridgeRun(options, transport, run, 30_000, signal),
+      )) {
+        yield event;
+      }
     }
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } catch (error) {
     threw = true;
-    if (error instanceof CliBridgeRequestRejectedError) {
+    if (error instanceof CliBridgeRequestRejectedError && !admitted) {
       restoreCliBridgeRun(run, previousRun, runs);
       restoreCliBridgeSession(run, previousSessionRun, sessions);
       throw error;
@@ -117,6 +152,8 @@ export async function dispatchCliBridgeTurn(
   providerName: string,
   runs: Map<string, CliBridgeRun>,
   sessions: Map<string, CliBridgeSessionState>,
+  nativeSessions: CliBridgeNativeSessionCache,
+  useNativeInteractions: boolean,
 ): Promise<AgentSessionRef> {
   const run = prepared.run;
   const previousRun = bindCliBridgeRun(run, runs);
@@ -129,36 +166,52 @@ export async function dispatchCliBridgeTurn(
   let accepted = false;
   let responseBody: AsyncIterable<Uint8Array> | undefined;
   try {
-    const response = await transport.fetch(
-      `${trimSlash(options.baseUrl)}/v1/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          ...requestHeaders(options),
-          accept: "text/event-stream",
-          ...(run.sessionId ? { "x-session-id": run.sessionId } : {}),
+    if (useNativeInteractions) {
+      await beginCliBridgeNativeTurn(
+        options,
+        providerName,
+        environmentInput,
+        prepared.turn,
+        run,
+        transport,
+        nativeSessions,
+        signal,
+      );
+      accepted = true;
+    } else {
+      const response = await transport.fetch(
+        `${trimSlash(options.baseUrl)}/v1/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            ...requestHeaders(options),
+            accept: "text/event-stream",
+            ...(run.sessionId ? { "x-session-id": run.sessionId } : {}),
+          },
+          body: run.requestBody,
+          ...(signal ? { signal } : {}),
         },
-        body: run.requestBody,
-        ...(signal ? { signal } : {}),
-      },
-    );
-    if (!response.ok) {
-      let detail = "request rejected";
-      try {
-        detail = await response.text();
-      } catch {
-        // The HTTP status already proves this request was rejected.
+      );
+      if (!response.ok) {
+        let detail = "request rejected";
+        try {
+          detail = await response.text();
+        } catch {
+          // The HTTP status already proves this request was rejected.
+        }
+        throw new CliBridgeRequestRejectedError(response.status, detail);
       }
-      throw new CliBridgeRequestRejectedError(response.status, detail);
+      accepted = true;
+      if (!response.body) throw new Error("cli-bridge response body is empty");
+      responseBody = response.body;
+      captureCliBridgeRunIdentity(response, run, true);
     }
-    accepted = true;
-    if (!response.body) throw new Error("cli-bridge response body is empty");
-    responseBody = response.body;
-    captureCliBridgeRunIdentity(response, run, true);
     const controlRef = exactControlRefForRun(run, providerName);
     run.controlRef = controlRef;
-    await detachCliBridgeReader(responseBody);
-    responseBody = undefined;
+    if (responseBody) {
+      await detachCliBridgeReader(responseBody);
+      responseBody = undefined;
+    }
     return {
       id: run.sessionId!,
       provider: providerName,
@@ -206,10 +259,13 @@ export async function dispatchCliBridgeTurn(
 export async function* streamCliBridgeSessionEvents(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
+  providerName: string,
   run: CliBridgeRun,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
   readers: Set<AbortController>,
+  nativeSessions: CliBridgeNativeSessionCache,
+  useNativeInteractions: boolean,
   eventOptions?: { since?: string; executionId?: string; signal?: AbortSignal },
 ): AsyncIterable<AgentEnvironmentEvent> {
   if (
@@ -229,21 +285,31 @@ export async function* streamCliBridgeSessionEvents(
   readers.add(controller);
   let drained = false;
   try {
-    yield* streamCliBridgeTurn(
-      options,
-      {
-        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-        executionId: run.executionId,
-        turnId: run.turnId,
-      },
-      undefined,
-      transport,
-      run.id,
-      eventOptions?.since ?? "0",
-      signal,
-      (response) => captureCliBridgeRunIdentity(response, run, false),
-      () => getCliBridgeRun(options, transport, run, 30_000, signal),
-    );
+    if (useNativeInteractions) {
+      yield* streamCliBridgeNativeRunEvents(
+        options,
+        providerName,
+        run,
+        transport,
+        { since: eventOptions?.since, signal },
+      );
+    } else {
+      yield* streamCliBridgeTurn(
+        options,
+        {
+          ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+          executionId: run.executionId,
+          turnId: run.turnId,
+        },
+        undefined,
+        transport,
+        run.id,
+        eventOptions?.since ?? "0",
+        signal,
+        (response) => captureCliBridgeRunIdentity(response, run, false),
+        () => getCliBridgeRun(options, transport, run, 30_000, signal),
+      );
+    }
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } finally {

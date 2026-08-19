@@ -21,3 +21,34 @@ jobs:
       - run: pnpm -r test
       - run: pnpm check:package-artifacts
       - run: pnpm check:control-artifacts
+
+  cli-bridge-integration:
+    name: CLI Bridge integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: drewstone/cli-bridge
+          ref: 0ac764dd47a758e675ed9138c0fb31cd7ed2e2dd
+          path: cli-bridge
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            cli-bridge/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: cli-bridge
+      - run: pnpm rebuild better-sqlite3
+        working-directory: cli-bridge
+      - run: pnpm build
+        working-directory: cli-bridge
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tangle-network/agent-provider-cli-bridge test:integration
+        env:
+          CLI_BRIDGE_INTEGRATION_ROOT: ${{ github.workspace }}/cli-bridge

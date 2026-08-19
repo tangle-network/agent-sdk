@@ -8,10 +8,16 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   type HarnessType,
+  harnessTypeSchema,
   harnessSystemPromptIntents,
   snapshotAgentProfile,
 } from "@tangle-network/agent-interface";
-import { createCliBridgeEnvironment } from "./retained-environment.js";
+import {
+  createCliBridgeEnvironment,
+} from "./retained-environment.js";
+import {
+  supportsCliBridgeNativeInteractions,
+} from "./retained-native.js";
 import {
   assertCliBridgeProviderOptions,
   type CliBridgeProviderOptions,
@@ -30,17 +36,28 @@ export function createCliBridgeProvider(
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
+  const configuredBackend = selectedBackendFromRoute(options.defaultModel);
   // The observation surfaces are declared as intent and narrowed to the
   // sources this bridge can put a value on, so the environment offers the
   // operation exactly where the document claims it.
-  const resolveCapabilities = (): AgentEnvironmentCapabilities => {
-    const declared = options.capabilities ?? defaultCliBridgeCapabilities();
-    return declared.observation === undefined
+  const resolveCapabilities = (
+    selectedBackend?: string,
+  ): AgentEnvironmentCapabilities => {
+    const parsedHarness = harnessTypeSchema.safeParse(selectedBackend);
+    const declared =
+      options.capabilities ??
+      defaultCliBridgeCapabilities(parsedHarness.success ? parsedHarness.data : undefined);
+    const narrowed = declared.observation === undefined
       ? declared
       : {
           ...declared,
           observation: narrowedCliBridgeObservation(declared.observation, options),
         };
+    if (selectedBackend !== undefined && supportsCliBridgeNativeInteractions(narrowed, selectedBackend)) {
+      return narrowed;
+    }
+    const { interactions: _interactions, ...withoutInteractions } = narrowed;
+    return withoutInteractions;
   };
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
@@ -55,6 +72,10 @@ export function createCliBridgeProvider(
       profile: snapshotAgentProfile(input.profile),
     };
     const environmentId = input.idempotencyKey ?? crypto.randomUUID();
+    const selectedBackend = selectedBackendFromInput(
+      environmentInput,
+      configuredBackend,
+    );
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -62,12 +83,13 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
-      capabilities: resolveCapabilities(),
+      capabilities: resolveCapabilities(selectedBackend),
+      selectedBackend,
     });
   };
   return {
     name,
-    capabilities: resolveCapabilities,
+    capabilities: () => resolveCapabilities(configuredBackend),
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
@@ -79,6 +101,12 @@ export function createCliBridgeProvider(
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
+      const selectedBackend = configuredBackend ?? (
+        options.capabilities !== undefined &&
+        supportsCliBridgeNativeInteractions(options.capabilities, "pi")
+          ? "pi"
+          : undefined
+      );
       return createCliBridgeEnvironment({
         options,
         providerName: name,
@@ -86,10 +114,28 @@ export function createCliBridgeProvider(
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
-        capabilities: resolveCapabilities(),
+        capabilities: resolveCapabilities(selectedBackend),
+        selectedBackend,
       });
     },
   };
+}
+
+function selectedBackendFromInput(
+  input: CreateAgentEnvironmentInput,
+  configuredBackend?: string,
+): string | undefined {
+  if (input.backend !== undefined) return input.backend;
+  if (typeof input.profile !== "string" && input.profile.harness !== undefined) {
+    return input.profile.harness;
+  }
+  return configuredBackend;
+}
+
+function selectedBackendFromRoute(route: string | undefined): HarnessType | undefined {
+  const candidate = route?.split("/", 1)[0];
+  const parsed = harnessTypeSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -130,6 +176,19 @@ export function defaultCliBridgeCapabilities(
       eventIdentity: true,
       cancellationIdempotency: true,
     },
+    ...(harness === "pi"
+      ? {
+          interactions: {
+            kinds: ["permission"],
+            answerFieldTypes: ["select"],
+            responseScopes: ["interaction"],
+            secretAnswers: false,
+            concurrentRequests: false,
+            replay: true,
+            responseIdempotency: true,
+          },
+        }
+      : {}),
     workspace: {
       read: false,
       write: false,

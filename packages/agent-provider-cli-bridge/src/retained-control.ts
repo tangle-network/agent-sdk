@@ -260,5 +260,6 @@ export function agentSessionStatusFromRun(
   if (snapshot.status === "done") return "completed";
   if (snapshot.status === "error") return "failed";
   if (snapshot.status === "cancelled") return "cancelled";
+  if (snapshot.status === "unknown") return "unknown";
   return "running";
 }

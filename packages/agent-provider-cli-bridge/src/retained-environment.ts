@@ -33,6 +33,12 @@ import {
   type ExecutionUsageLog,
 } from "./observation.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
+import { cliBridgeInteractionResponder } from "./interaction-response.js";
+import {
+  assertCliBridgeRequestedInteractions,
+  supportsCliBridgeNativeInteractions,
+  type CliBridgeNativeSessionCache,
+} from "./retained-native.js";
 import {
   assertRunMatchesControlRef,
   exactControlRefForSession,
@@ -57,6 +63,7 @@ export interface CreateCliBridgeEnvironmentArgs {
    * action the document did not carry.
    */
   readonly capabilities: AgentEnvironmentCapabilities;
+  readonly selectedBackend?: string;
 }
 
 export function createCliBridgeEnvironment(
@@ -66,8 +73,21 @@ export function createCliBridgeEnvironment(
   const transport = createCliBridgeTransport(options);
   const runs = new Map<string, CliBridgeRun>();
   const sessions = new Map<string, CliBridgeSessionState>();
+  const nativeSessions: CliBridgeNativeSessionCache = new Map();
   const readers = new Set<AbortController>();
   const usageLog = createExecutionUsageLog();
+  const useNativeInteractions = supportsCliBridgeNativeInteractions(
+    args.capabilities,
+    args.selectedBackend,
+  );
+  const respondToInteraction = useNativeInteractions
+    ? cliBridgeInteractionResponder({
+        options,
+        transport,
+        providerName,
+        environmentId,
+      })
+    : undefined;
   let destroyed = false;
   let closePromise: Promise<void> | undefined;
   const stream = async function* (
@@ -77,12 +97,13 @@ export function createCliBridgeEnvironment(
     if (!args.allowDispatch) {
       throw new Error("a reconstructed cli-bridge environment can only control an existing run");
     }
+    assertCliBridgeRequestedInteractions(args.capabilities, turn.interactions);
     const prepared = prepareCliBridgeRun(
       options,
       environmentInput,
       turn,
       environmentId,
-      false,
+      useNativeInteractions,
     );
     // A streamed run reports usage across its events, so the totals are summed
     // here and recorded as one execution's measurement.
@@ -90,11 +111,14 @@ export function createCliBridgeEnvironment(
     for await (const event of streamTrackedCliBridgeTurn(
       options,
       environmentInput,
+      providerName,
       prepared,
       transport,
       runs,
       sessions,
       readers,
+      nativeSessions,
+      useNativeInteractions,
     )) {
       streamedUsage = addTokenUsage(streamedUsage, event.usage);
       usageLog.record(prepared.run.executionId, streamedUsage);
@@ -104,6 +128,7 @@ export function createCliBridgeEnvironment(
   return {
     id: environmentId,
     provider: providerName,
+    capabilities: args.capabilities,
     ...(environmentInput.name ? { name: environmentInput.name } : {}),
     status: async (statusOptions) => {
       statusOptions?.signal?.throwIfAborted();
@@ -115,6 +140,7 @@ export function createCliBridgeEnvironment(
       if (!args.allowDispatch) {
         throw new Error("a reconstructed cli-bridge environment cannot dispatch new work");
       }
+      assertCliBridgeRequestedInteractions(args.capabilities, turn.interactions);
       const prepared = prepareCliBridgeRun(
         options,
         environmentInput,
@@ -130,6 +156,8 @@ export function createCliBridgeEnvironment(
         providerName,
         runs,
         sessions,
+        nativeSessions,
+        useNativeInteractions,
       );
     },
     session(id, sessionOptions) {
@@ -144,12 +172,17 @@ export function createCliBridgeEnvironment(
         runs,
         sessions,
         readers,
+        nativeSessions,
         allowPrompt: args.allowDispatch,
         requestedControlRef: sessionOptions?.controlRef,
         isDestroyed: () => destroyed,
         usageLog,
+        capabilities: args.capabilities,
+        interactionsEnabled: respondToInteraction !== undefined,
+        useNativeInteractions,
       });
     },
+    ...(respondToInteraction ? { respondToInteraction } : {}),
     ...(args.capabilities.observation
       ? {
           async observe(observeOptions): Promise<AgentEnvironmentObservation> {
@@ -206,6 +239,7 @@ export function createCliBridgeEnvironment(
         }
         await transport.close();
         sessions.clear();
+        nativeSessions.clear();
         runs.clear();
       })();
       closePromise = attempt;
@@ -230,10 +264,14 @@ interface CreateCliBridgeSessionArgs {
   readonly runs: Map<string, CliBridgeRun>;
   readonly sessions: Map<string, CliBridgeSessionState>;
   readonly readers: Set<AbortController>;
+  readonly nativeSessions: CliBridgeNativeSessionCache;
   readonly allowPrompt: boolean;
   readonly requestedControlRef?: AgentRunControlRef;
   readonly isDestroyed: () => boolean;
   readonly usageLog: ExecutionUsageLog;
+  readonly capabilities: AgentEnvironmentCapabilities;
+  readonly interactionsEnabled: boolean;
+  readonly useNativeInteractions: boolean;
 }
 
 function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession {
@@ -273,6 +311,15 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
     if (!run) throw new Error(`cli-bridge session "${args.id}" has no run`);
     return run;
   };
+  const respondToInteraction = args.interactionsEnabled
+    ? cliBridgeInteractionResponder({
+        sessionId: args.id,
+        options: args.options,
+        transport: args.transport,
+        providerName: args.providerName,
+        environmentId: args.environmentId,
+      })
+    : undefined;
 
   return {
     id: args.id,
@@ -297,10 +344,13 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       yield* streamCliBridgeSessionEvents(
         args.options,
         args.environmentInput,
+        args.providerName,
         run,
         args.transport,
         args.runs,
         args.readers,
+        args.nativeSessions,
+        args.useNativeInteractions,
         eventOptions,
       );
     },
@@ -310,10 +360,13 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         streamCliBridgeSessionEvents(
           args.options,
           args.environmentInput,
+          args.providerName,
           run,
           args.transport,
           args.runs,
           args.readers,
+          args.nativeSessions,
+          args.useNativeInteractions,
           { since: "0", signal: resultOptions?.signal },
         ),
         run,
@@ -333,6 +386,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           `cli-bridge session "${args.id}" cannot prompt session "${input.sessionId}"`,
         );
       }
+      assertCliBridgeRequestedInteractions(args.capabilities, input.interactions);
       const prepared = prepareCliBridgeRun(
         args.options,
         args.environmentInput,
@@ -341,17 +395,20 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           sessionId: args.id,
         },
         args.environmentId,
-        false,
+        args.useNativeInteractions,
       );
       const result = await collectCliBridgeTurnResult(
         streamTrackedCliBridgeTurn(
           args.options,
           args.environmentInput,
+          args.providerName,
           prepared,
           args.transport,
           args.runs,
           args.sessions,
           args.readers,
+          args.nativeSessions,
+          args.useNativeInteractions,
         ),
         prepared.run,
         args.options,
@@ -380,5 +437,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         cancelOptions?.signal,
       );
     },
+    ...(respondToInteraction ? { respondToInteraction } : {}),
   };
 }

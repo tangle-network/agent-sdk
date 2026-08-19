@@ -32,7 +32,7 @@ export interface CliBridgeSessionState {
 export interface CliBridgeRunSnapshot {
   readonly id: string;
   readonly requestDigest?: Sha256Digest;
-  readonly status: "running" | "done" | "error" | "cancelled";
+  readonly status: "running" | "done" | "error" | "cancelled" | "unknown";
   readonly terminal: boolean;
 }
 
@@ -112,6 +112,14 @@ export function prepareCliBridgeRun(
   environmentId: string,
   requireSession: boolean,
 ): PreparedCliBridgeRun {
+  if (
+    requireSession &&
+    (originalTurn.turnId === undefined || originalTurn.executionId === undefined)
+  ) {
+    throw new Error(
+      "cli-bridge native retained turns require stable turnId and executionId values",
+    );
+  }
   const turnId = originalTurn.turnId ?? crypto.randomUUID();
   const runId = cliBridgeRunId(environmentId, originalTurn, turnId);
   const sessionId = originalTurn.sessionId ?? (requireSession ? runId : undefined);

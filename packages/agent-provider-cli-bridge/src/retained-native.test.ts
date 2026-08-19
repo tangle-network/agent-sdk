@@ -1,0 +1,524 @@
+import {
+  CanonicalStreamEventSchema,
+  RuntimeEventEnvelopeSchema,
+  canonicalCandidateDigest,
+  interactionRequestDigest,
+  permissionAnswerSpec,
+} from "@tangle-network/agent-interface";
+import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
+import { describe, expect, it } from "vitest";
+import {
+  createCliBridgeProvider,
+  defaultCliBridgeCapabilities,
+} from "./index.js";
+
+const baseUrl = "http://bridge.local";
+const environmentId = "native-environment";
+const sessionId = "native-session";
+const model = "pi/model";
+const nativeRunId = "native-execution";
+const runDigest = canonicalCandidateDigest("native-turn");
+
+function sessionView(createRequestDigest: string) {
+  return {
+    id: sessionId,
+    object: "session",
+    create_request_digest: createRequestDigest,
+    backend: "pi",
+    model,
+    status: "running",
+    run_id: null,
+    internal_session_id: null,
+    turns: 0,
+    created_at: "2026-08-15T16:00:00.000Z",
+    updated_at: "2026-08-15T16:00:00.000Z",
+    capabilities: defaultCliBridgeCapabilities("pi"),
+    profile_materialization_receipt: null,
+    context_boundary: null,
+  };
+}
+
+function sse(events: readonly Record<string, unknown>[]): string {
+  return events
+    .map((event) => {
+      const sequence = String(event.sequence);
+      return `id: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`;
+    })
+    .join("");
+}
+
+function nativeEnvelope(
+  sequence: number,
+  event: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    runId: nativeRunId,
+    eventId: `native-event-${sequence}`,
+    sequence,
+    cursor: String(sequence),
+    occurredAt: "2026-08-15T16:00:00.000Z",
+    receivedAt: "2026-08-15T16:00:00.010Z",
+    event,
+  };
+}
+
+function interactionRequest() {
+  const material = {
+    id: "native-interaction",
+    kind: "permission",
+    title: "Allow the command?",
+    answerSpec: permissionAnswerSpec({ allowFeedback: false }),
+    responseScopes: ["interaction" as const],
+    binding: {
+      runId: nativeRunId,
+      provider: "cli-bridge",
+      environmentId,
+      sessionId,
+      executionId: nativeRunId,
+      interactionId: "native-interaction",
+    },
+  };
+  return {
+    ...material,
+    requestDigest: interactionRequestDigest(material),
+  };
+}
+
+function nativeRunResponse(status = "running", terminal = false): Response {
+  return Response.json({
+    id: nativeRunId,
+    executionId: nativeRunId,
+    sessionId,
+    requestDigest: runDigest,
+    status,
+    terminal,
+  });
+}
+
+function createNativeFetch(
+  requests: Array<{ url: string; method: string; body?: Record<string, unknown>; since?: string }>,
+  events: readonly Record<string, unknown>[] = [],
+): typeof fetch {
+  let createRequestDigest: string | undefined;
+  return async (url, init) => {
+    const target = String(url);
+    const pathname = new URL(target).pathname;
+    const parsedBody = init?.body === undefined
+      ? undefined
+      : JSON.parse(String(init.body)) as Record<string, unknown>;
+    requests.push({
+      url: target,
+      method: init?.method ?? "GET",
+      ...(parsedBody ? { body: parsedBody } : {}),
+      ...(new Headers(init?.headers).get("last-event-id")
+        ? { since: new Headers(init?.headers).get("last-event-id")! }
+        : {}),
+    });
+    if (pathname === "/v1/sessions") {
+      const digest = canonicalCandidateDigest(parsedBody!);
+      createRequestDigest = digest;
+      return Response.json(sessionView(digest), { status: 201 });
+    }
+    if (pathname === `/v1/sessions/${sessionId}/turns`) {
+      if (createRequestDigest === undefined) {
+        throw new Error("turn arrived before native session creation");
+      }
+      const turnRunId = String(parsedBody?.run_id);
+      const turnExecutionId = String(parsedBody?.execution_id);
+      return Response.json({
+        session: sessionView(createRequestDigest),
+        run: {
+          id: turnRunId,
+          executionId: turnExecutionId,
+          sessionId,
+          requestDigest: runDigest,
+          status: "running",
+          terminal: false,
+        },
+        context_boundary: null,
+      }, { status: 202 });
+    }
+    if (pathname === `/v1/runs/${nativeRunId}/events`) {
+      const since = Number(new Headers(init?.headers).get("last-event-id") ?? "0");
+      const body = sse(events.filter((event) => Number(event.sequence) > since));
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    if (pathname === `/v1/runs/${nativeRunId}`) {
+      return nativeRunResponse("done", true);
+    }
+    throw new Error(`unexpected cli-bridge route: ${target}`);
+  };
+}
+
+describe("cli-bridge native retained sessions", () => {
+  it("recovers Pi capabilities and native replay from the configured route", async () => {
+    const events = [
+      nativeEnvelope(1, { type: "status", status: "completed" }),
+    ].map((event) => RuntimeEventEnvelopeSchema.parse(event));
+    const requests: Array<{ url: string; method: string; since?: string }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: createNativeFetch(requests, events),
+    });
+
+    expect((await provider.capabilities()).interactions?.responseIdempotency).toBe(true);
+    const environment = await provider.get!(environmentId);
+    expect(environment?.capabilities?.interactions?.responseIdempotency).toBe(true);
+    const session = environment!.session!(sessionId, {
+      controlRef: {
+        runId: nativeRunId,
+        provider: "cli-bridge",
+        environmentId,
+        sessionId,
+        executionId: nativeRunId,
+        requestDigest: runDigest,
+      },
+    });
+    const replayed: AgentEnvironmentEvent[] = [];
+    for await (const event of session.events({ since: "0" })) replayed.push(event);
+
+    expect(replayed.map((event) => event.id)).toEqual(["1"]);
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      `/v1/runs/${nativeRunId}/events`,
+      `/v1/runs/${nativeRunId}`,
+    ]);
+  });
+
+  it("uses the select-only permission answer contract", () => {
+    const request = interactionRequest();
+
+    expect(defaultCliBridgeCapabilities("pi").interactions?.answerFieldTypes).toEqual(["select"]);
+    expect(request.answerSpec.fields).toHaveLength(1);
+    expect(request.answerSpec.fields[0]).toMatchObject({
+      type: "select",
+      name: "grant",
+    });
+    expect(request.answerSpec.fields.every((field) => field.type === "select")).toBe(true);
+  });
+
+  it.each([
+    { ids: { executionId: nativeRunId }, missing: "turnId" },
+    { ids: { turnId: "stable-turn" }, missing: "executionId" },
+  ] as const)("rejects a native turn without stable $missing", async ({ ids }) => {
+    let calls = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: async () => {
+        calls += 1;
+        throw new Error("native request should not start");
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "must be retry safe",
+      sessionId,
+      ...ids,
+    })).rejects.toThrow(`stable turnId and executionId`);
+    expect(calls).toBe(0);
+  });
+
+  it("derives interaction capability from the selected backend instead of static options", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: "codex/model",
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async (_url, init) => new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-run-id": "codex-run",
+          "x-run-request-digest": canonicalCandidateDigest("codex-run"),
+        },
+      }),
+    });
+    expect((await provider.capabilities()).interactions).toBeUndefined();
+    const pi = await provider.create({
+      idempotencyKey: "pi-environment",
+      profile: { name: "pi", harness: "pi" },
+    });
+    expect(pi.capabilities?.interactions).toEqual({
+      kinds: ["permission"],
+      answerFieldTypes: ["select"],
+      responseScopes: ["interaction"],
+      secretAnswers: false,
+      concurrentRequests: false,
+      replay: true,
+      responseIdempotency: true,
+    });
+    const codex = await provider.create({
+      idempotencyKey: "codex-environment",
+      profile: { name: "codex", harness: "codex" },
+    });
+    expect(codex.capabilities?.interactions).toBeUndefined();
+    expect(codex.respondToInteraction).toBeUndefined();
+  });
+
+  it("uses native session turns and forwards exact interaction posture, including empty maps", async () => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    const first = await environment.dispatch!({
+      prompt: "start safely",
+      sessionId,
+      turnId: "turn-1",
+      executionId: "native-execution",
+      interactions: { permission: true },
+    });
+    await environment.dispatch!({
+      prompt: "continue safely",
+      sessionId,
+      turnId: "turn-2",
+      executionId: "native-execution-2",
+      interactions: {},
+    });
+    await environment.dispatch!({
+      prompt: "deny safely",
+      sessionId,
+      turnId: "turn-3",
+      executionId: "native-execution-3",
+      interactions: { permission: false },
+    });
+    await environment.dispatch!({
+      prompt: "omit posture",
+      sessionId,
+      turnId: "turn-4",
+      executionId: "native-execution-4",
+    });
+
+    expect(first.controlRef).toMatchObject({
+      runId: nativeRunId,
+      provider: "cli-bridge",
+      environmentId,
+      sessionId,
+      executionId: nativeRunId,
+      requestDigest: runDigest,
+    });
+    expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "POST /v1/sessions",
+      "POST /v1/sessions/native-session/turns",
+      "POST /v1/sessions/native-session/turns",
+      "POST /v1/sessions/native-session/turns",
+      "POST /v1/sessions/native-session/turns",
+    ]);
+    expect(requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
+    expect(requests[1]?.body).toMatchObject({
+      message: "start safely",
+      turn_id: "turn-1",
+      execution_id: "native-execution",
+      run_id: "native-execution",
+      provider: "cli-bridge",
+      environment_id: environmentId,
+      interactions: { permission: true },
+    });
+    expect(requests[2]?.body).toMatchObject({
+      message: "continue safely",
+      turn_id: "turn-2",
+      execution_id: "native-execution-2",
+      run_id: "native-execution-2",
+      interactions: {},
+    });
+    expect(requests[3]?.body).toMatchObject({ interactions: { permission: false } });
+    expect(requests[4]?.body).not.toHaveProperty("interactions");
+    expect(requests[1]?.body).not.toHaveProperty("metadata.interactions");
+  });
+
+  it("defines the companion cli-bridge request shape for retained interaction turns", async () => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await environment.dispatch!({
+      prompt: "contract test",
+      sessionId,
+      turnId: "contract-turn",
+      executionId: "contract-execution",
+      interactions: { permission: true },
+    });
+
+    const turnBody = requests[1]?.body;
+    expect(turnBody).toEqual({
+      message: "contract test",
+      turn_id: "contract-turn",
+      execution_id: "contract-execution",
+      run_id: "contract-execution",
+      provider: "cli-bridge",
+      environment_id: environmentId,
+      interactions: { permission: true },
+    });
+    expect(turnBody).not.toHaveProperty("metadata");
+  });
+
+  it("replays canonical events, usage, plans, cancellations, and unknown provider events", async () => {
+    const request = interactionRequest();
+    const part = {
+      id: "native-part",
+      sessionID: sessionId,
+      messageID: "native-message",
+      type: "text" as const,
+      text: "finished",
+    };
+    const events = [
+      nativeEnvelope(1, { type: "status", status: "started" }),
+      nativeEnvelope(2, { type: "interaction", request }),
+      nativeEnvelope(3, {
+        type: "raw",
+        backend: "pi",
+        event: {
+          type: "usage",
+          data: {},
+          usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5, cost: 0.01 },
+        },
+      }),
+      nativeEnvelope(4, { type: "message.part.updated", part, delta: "finished" }),
+      nativeEnvelope(5, {
+        type: "plan.submitted",
+        plan: {
+          id: "plan-1",
+          revision: 1,
+          body: "inspect the result",
+          submittedAt: "2026-08-15T16:00:00.000Z",
+        },
+      }),
+      nativeEnvelope(6, {
+        type: "interaction.cancel",
+        id: request.id,
+        reason: "turn completed",
+      }),
+      nativeEnvelope(7, {
+        type: "raw",
+        backend: "pi",
+        event: { type: "future-provider-event", payload: { retained: true } },
+      }),
+      nativeEnvelope(8, { type: "status", status: "completed" }),
+    ].map((event) => RuntimeEventEnvelopeSchema.parse(event));
+    const requests: Array<{ url: string; method: string; since?: string }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests, events),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+    const reference = await environment.dispatch!({
+      prompt: "run the native turn",
+      sessionId,
+      turnId: "native-turn",
+      executionId: "native-execution",
+    });
+    const session = environment.session!(reference.id);
+    const replayed: AgentEnvironmentEvent[] = [];
+    for await (const event of session.events({ since: "0" })) replayed.push(event);
+
+    expect(replayed.map((event) => event.id)).toEqual([
+      "1", "2", "3", "4", "5", "6", "7", "8",
+    ]);
+    for (const event of replayed) {
+      expect(() => CanonicalStreamEventSchema.parse(event.normalized)).not.toThrow();
+      expect(() => RuntimeEventEnvelopeSchema.parse(event.providerEvent)).not.toThrow();
+    }
+    expect(replayed[1]).toMatchObject({
+      type: "interaction",
+      normalized: {
+        type: "interaction",
+        request: {
+          binding: {
+            provider: "cli-bridge",
+            environmentId,
+            sessionId,
+            executionId: nativeRunId,
+            interactionId: "native-interaction",
+          },
+          requestDigest: request.requestDigest,
+        },
+      },
+    });
+    expect(replayed[2]?.usage).toEqual({
+      inputTokens: 3,
+      outputTokens: 2,
+      totalTokens: 5,
+      cost: 0.01,
+    });
+    expect(replayed[4]?.normalized).toMatchObject({ type: "plan.submitted" });
+    expect(replayed[5]?.normalized).toMatchObject({
+      type: "interaction.cancel",
+      id: "native-interaction",
+    });
+    expect(replayed[6]?.data).toMatchObject({
+      backend: "pi",
+      event: { type: "future-provider-event", payload: { retained: true } },
+    });
+    expect(requests.find((request) => request.url.endsWith("/events"))?.since).toBe("0");
+
+    const afterThree: AgentEnvironmentEvent[] = [];
+    for await (const event of session.events({ since: "3" })) afterThree.push(event);
+    expect(afterThree.map((event) => event.id)).toEqual(["4", "5", "6", "7", "8"]);
+    expect(requests.filter((request) => request.url.endsWith("/events")).at(-1)?.since).toBe("3");
+  });
+
+  it.each([
+    { permission: true },
+    { permission: false },
+    { question: false },
+  ] as Readonly<Record<string, boolean>>[])("rejects unsupported interaction posture before the one-shot chat route: %j", async (interactions) => {
+    const requests: string[] = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: "codex/model",
+      fetch: async (url, init) => {
+        requests.push(`${init?.method ?? "GET"} ${String(url)}`);
+        return new Response("data: [DONE]\n\n", {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-run-id": "unsupported-run",
+            "x-run-request-digest": canonicalCandidateDigest("unsupported-run"),
+          },
+        });
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: "unsupported-environment",
+      profile: { name: "codex", harness: "codex" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "one shot",
+      sessionId: "unsupported-session",
+      executionId: "unsupported-run",
+      turnId: "unsupported-turn",
+      interactions,
+    })).rejects.toThrow(/does not advertise requested interaction kind/);
+
+    expect(requests).toHaveLength(0);
+    expect(environment.respondToInteraction).toBeUndefined();
+  });
+});

@@ -13,7 +13,7 @@ describe("retained cli-bridge safety", () => {
     let calls = 0;
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => {
         calls += 1;
         const body = JSON.parse(String(init?.body)) as { run_id: string };
@@ -27,6 +27,7 @@ describe("retained cli-bridge safety", () => {
     const reference = await environment.dispatch?.({
       prompt: "work",
       sessionId: "session-1",
+      turnId: "turn-1",
       executionId: "run-1",
     });
     const original = reference?.controlRef as AgentExactRunControlRef;
@@ -102,7 +103,7 @@ describe("retained cli-bridge safety", () => {
   it("keeps malformed token totals unknown while retaining an exact model-call count", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         const headers = exactHeaders(init);
@@ -150,7 +151,7 @@ describe("retained cli-bridge safety", () => {
   it("rejects a terminal-looking stream without the protocol end marker", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => new Response(
         'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n',
         {
