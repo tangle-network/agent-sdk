@@ -161,7 +161,11 @@ export async function readCliBridgeNativeContextBoundary(
       ...(signal ? { signal } : {}),
     },
   );
-  const responseText = await readBoundedResponseText(response, signal);
+  const responseText = await readBoundedCliBridgeResponse(
+    response,
+    MAX_NATIVE_CONTINUATION_RESPONSE_BYTES,
+    signal,
+  );
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(response.status, responseText);
   }
@@ -216,7 +220,11 @@ export async function continueCliBridgeNative(
         ...(operation.signal ? { signal: operation.signal } : {}),
       },
     );
-    const responseText = await readBoundedResponseText(response, operation.signal);
+    const responseText = await readBoundedCliBridgeResponse(
+      response,
+      MAX_NATIVE_CONTINUATION_RESPONSE_BYTES,
+      operation.signal,
+    );
     const outcome = parseNativeContinuationResult(responseText);
     assertContinuationAcknowledgementBinding(exactRequest, outcome);
     if (
@@ -345,53 +353,6 @@ function continuationSignal(options: AgentNativeContextContinuationOptions): {
     signal,
     dispose: () => clearTimeout(timer),
   };
-}
-
-async function readBoundedResponseText(
-  response: CliBridgeResponse,
-  signal?: AbortSignal,
-): Promise<string> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength !== null) {
-    const parsedLength = Number(contentLength);
-    if (
-      Number.isSafeInteger(parsedLength) &&
-      parsedLength > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES
-    ) {
-      throw new Error("cli-bridge native continuation response exceeds its byte limit");
-    }
-  }
-  if (response.body === null) {
-    signal?.throwIfAborted();
-    const text = await response.text();
-    if (new TextEncoder().encode(text).byteLength > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES) {
-      throw new Error("cli-bridge native continuation response exceeds its byte limit");
-    }
-    return text;
-  }
-  const iterator = response.body[Symbol.asyncIterator]();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-  let complete = false;
-  try {
-    while (true) {
-      signal?.throwIfAborted();
-      const next = await iterator.next();
-      if (next.done) break;
-      bytes += next.value.byteLength;
-      if (bytes > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES) {
-        throw new Error("cli-bridge native continuation response exceeds its byte limit");
-      }
-      text += decoder.decode(next.value, { stream: true });
-    }
-    complete = true;
-    return text + decoder.decode();
-  } finally {
-    if (!complete) {
-      await iterator.return?.();
-    }
-  }
 }
 
 interface NativeSessionView extends CliBridgeNativeSession {}
