@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.8.1
+
+### Patch Changes
+
+- ca6e7e9: Accept Runtime's detached dispatch control on native retained turns.
+
+  The provider keeps this local control out of the CLI Bridge request body.
+  Direct streamed turns still reject detached execution.
+
 ## 0.8.0
 
 ### Minor Changes
