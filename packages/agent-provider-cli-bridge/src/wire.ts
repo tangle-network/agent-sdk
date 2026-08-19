@@ -95,6 +95,7 @@ function executionFromInput(
 export interface CliBridgeSseFrame {
   readonly data: string;
   readonly id?: string;
+  readonly event?: string;
 }
 
 export async function* parseSse(
@@ -136,7 +137,11 @@ function dataFromFrame(frame: string): CliBridgeSseFrame | undefined {
     .join("\n");
   if (!data) return undefined;
   const id = lines.find((line) => line.startsWith("id:"))?.slice("id:".length).trim();
-  return { data, ...(id ? { id } : {}) };
+  const event = lines
+    .find((line) => line.startsWith("event:"))
+    ?.slice("event:".length)
+    .trim();
+  return { data, ...(id ? { id } : {}), ...(event ? { event } : {}) };
 }
 
 export function toolCallsFromDelta(

@@ -37,6 +37,8 @@
     "dist/observation.js",
     "dist/provider-options.d.ts",
     "dist/provider-options.js",
+    "dist/retained-canonical-event.d.ts",
+    "dist/retained-canonical-event.js",
     "dist/retained-control.d.ts",
     "dist/retained-control.js",
     "dist/retained-environment.d.ts",

@@ -12,6 +12,10 @@ import {
   retainedEventsWithIdentity,
   retainedReplayRequest,
 } from "./retained-event-cursor.js";
+import {
+  isTerminalCanonicalEvent,
+  retainedCanonicalEvent,
+} from "./retained-canonical-event.js";
 import { detachCliBridgeReader } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRunSnapshot } from "./retained-run-state.js";
@@ -107,6 +111,8 @@ export async function* streamCliBridgeTurn(
   let systemFingerprint: string | undefined;
   let textBoundaryPending = false;
   let sawProtocolEnd = false;
+  let protocol: "unknown" | "openai" | "canonical" = "unknown";
+  let canonicalTerminalSeen = false;
   let terminalFrameSeen = false;
   let cancelledTerminalSeen = false;
   let terminalFrame:
@@ -118,9 +124,39 @@ export async function* streamCliBridgeTurn(
     | undefined;
   for await (const frame of parseSse(response.body)) {
     if (frame.data === "[DONE]") {
+      if (protocol === "canonical") {
+        throw new Error("cli-bridge mixed canonical and OpenAI stream formats");
+      }
+      protocol = "openai";
       sawProtocolEnd = true;
       continue;
     }
+    if (frame.event !== undefined) {
+      if (protocol === "openai") {
+        throw new Error("cli-bridge mixed canonical and OpenAI stream formats");
+      }
+      protocol = "canonical";
+      if (canonicalTerminalSeen) {
+        throw new Error("cli-bridge emitted an event after canonical terminal status");
+      }
+      const event = retainedCanonicalEvent(frame, {
+        runId,
+        sessionId,
+        ...(turn.executionId === undefined
+          ? {}
+          : { executionId: turn.executionId }),
+      });
+      if (!event) {
+        throw new Error("cli-bridge emitted an empty canonical event");
+      }
+      canonicalTerminalSeen = isTerminalCanonicalEvent(event);
+      yield event;
+      continue;
+    }
+    if (protocol === "canonical") {
+      throw new Error("cli-bridge mixed canonical and OpenAI stream formats");
+    }
+    protocol = "openai";
     if (terminalFrameSeen) continue;
     const parsed = safeJson(frame.data);
     if (!parsed) continue;
@@ -266,6 +302,12 @@ export async function* streamCliBridgeTurn(
       turn.executionId,
       replay.anchor,
     );
+  }
+  if (protocol === "canonical") {
+    if (!canonicalTerminalSeen) {
+      throw new Error("cli-bridge canonical stream ended without terminal status");
+    }
+    return;
   }
   if (!sawProtocolEnd) {
     throw new Error("cli-bridge stream ended without the [DONE] protocol marker");
