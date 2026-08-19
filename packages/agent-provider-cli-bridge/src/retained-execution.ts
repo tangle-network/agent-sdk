@@ -459,7 +459,7 @@ export async function collectCliBridgeTurnResult(
 }
 
 /** Keep reasoning and tool updates out of the assistant's visible result text. */
-function visibleTextDelta(event: AgentEnvironmentEvent): string | undefined {
+export function visibleTextDelta(event: AgentEnvironmentEvent): string | undefined {
   if (event.normalized?.type === "message.part.updated") {
     if (
       event.normalized.part.type === "text" &&
@@ -468,6 +468,14 @@ function visibleTextDelta(event: AgentEnvironmentEvent): string | undefined {
       return event.normalized.delta;
     }
     return undefined;
+  }
+  const part = event.data.part;
+  if (typeof part === "object" && part !== null && !Array.isArray(part)) {
+    return "type" in part &&
+      part.type === "text" &&
+      typeof event.data.delta === "string"
+      ? event.data.delta
+      : undefined;
   }
   return typeof event.data.delta === "string" ? event.data.delta : undefined;
 }

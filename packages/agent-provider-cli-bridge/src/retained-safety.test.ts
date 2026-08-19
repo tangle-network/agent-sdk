@@ -12,6 +12,7 @@ import {
   defaultCliBridgeCapabilities,
 } from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
+import { visibleTextDelta } from "./retained-execution.js";
 
 function createCliBridgeProvider(
   options: Parameters<typeof createProvider>[0],
@@ -23,6 +24,23 @@ function createCliBridgeProvider(
 }
 
 describe("retained cli-bridge safety", () => {
+  it("rejects unnormalized reasoning from visible result text", () => {
+    expect(visibleTextDelta({
+      type: "message.part.updated",
+      data: {
+        part: { type: "reasoning", text: "private analysis" },
+        delta: "private analysis",
+      },
+    })).toBeUndefined();
+    expect(visibleTextDelta({
+      type: "message.part.updated",
+      data: {
+        part: { type: "text", text: "visible answer" },
+        delta: "visible answer",
+      },
+    })).toBe("visible answer");
+  });
+
   it("rejects a conflicting control reference before replacing the active session", async () => {
     let calls = 0;
     const provider = createCliBridgeProvider({
