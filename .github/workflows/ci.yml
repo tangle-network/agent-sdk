@@ -49,6 +49,7 @@ jobs:
       - run: pnpm build
         working-directory: cli-bridge
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tangle-network/agent-provider-cli-bridge... build
       - run: pnpm --filter @tangle-network/agent-provider-cli-bridge test:integration
         env:
           CLI_BRIDGE_INTEGRATION_ROOT: ${{ github.workspace }}/cli-bridge
