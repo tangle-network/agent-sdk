@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.7.8
+
+### Patch Changes
+
+- 32e7341: Decode retained canonical runtime events with exact run, event, sequence, and replay identities.
+  Make every emitted event id valid as the next exclusive replay cursor.
+  Keep legacy OpenAI chunk streams and reject malformed or mixed stream formats.
+
 ## 0.7.7
 
 ### Patch Changes
