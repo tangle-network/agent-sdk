@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.1
+
+### Patch Changes
+
+- 48656f3: Advertise generic retained run control for every CLI Bridge harness route.
+  Keep native context continuation and permission interactions limited to Pi, where the adapter implements those protocols.
+
 ## 0.9.0
 
 ### Minor Changes
