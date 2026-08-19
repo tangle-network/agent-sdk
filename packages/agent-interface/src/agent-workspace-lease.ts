@@ -8,6 +8,16 @@ import {
   omitTopLevelDigest,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import {
+  agentWorkspacePublicIdentifierSchema as publicIdentifierSchema,
+  agentWorkspaceSourceSnapshotPolicySchema,
+  type AgentWorkspaceSourceSnapshotPolicy,
+} from "./agent-workspace-source-snapshot.js";
+
+export {
+  agentWorkspaceSourceSnapshotPolicySchema,
+  type AgentWorkspaceSourceSnapshotPolicy,
+} from "./agent-workspace-source-snapshot.js";
 
 export const AGENT_WORKSPACE_LEASE_PHASES = [
   "copy-ready",
@@ -20,18 +30,6 @@ export const AGENT_WORKSPACE_LEASE_PHASES = [
 
 export type AgentWorkspaceLeasePhase =
   (typeof AGENT_WORKSPACE_LEASE_PHASES)[number];
-
-/**
- * Public identity of the provider-owned rules used to capture workspace state.
- * The digest binds the exact canonical policy document retained by the provider;
- * this descriptor does not claim that every provider captures the same fields.
- */
-export interface AgentWorkspaceSourceSnapshotPolicy {
-  kind: "provider-declared";
-  name: string;
-  version: number;
-  digest: Sha256Digest;
-}
 
 /** Public allocation identity. `root` locates bytes; it grants no authority. */
 export interface AgentWorkspaceAllocationIdentity {
@@ -181,19 +179,6 @@ export interface AgentWorkspaceLeaseRenewalRequest
 
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 
-const publicIdentifierSchema = z
-  .string()
-  .min(1)
-  .max(500)
-  .refine(
-    (value) =>
-      value.trim().length > 0 &&
-      isWellFormedUnicode(value) &&
-      !controlCharacterPattern.test(value) &&
-      !looksLikeCredential(value),
-    "public workspace identity cannot carry credential-like material",
-  );
-
 const publicLocatorSchema = z
   .string()
   .min(1)
@@ -229,13 +214,6 @@ const timestampSchema = z
 export const agentWorkspaceLeasePhaseSchema = z.enum(
   AGENT_WORKSPACE_LEASE_PHASES,
 );
-
-export const agentWorkspaceSourceSnapshotPolicySchema = z.strictObject({
-  kind: z.literal("provider-declared"),
-  name: publicIdentifierSchema,
-  version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  digest: sha256DigestSchema,
-}) satisfies z.ZodType<AgentWorkspaceSourceSnapshotPolicy>;
 
 export const agentWorkspaceAllocationIdentitySchema = z.strictObject({
   provider: publicIdentifierSchema,
