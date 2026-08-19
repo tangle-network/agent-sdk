@@ -346,7 +346,10 @@ describe("cli-bridge native retained sessions", () => {
     expect(capabilities.profile.validation).toBe(false);
     expect(capabilities.profile.extensions).toBeUndefined();
     expect(capabilities.sessions).toEqual({ continue: true, list: false, messages: false });
-    expect(capabilities.nativeContinuation).toBeUndefined();
+    expect(capabilities.nativeContinuation).toEqual({
+      atomicBoundary: true,
+      requestIdempotency: true,
+    });
     expect(capabilities.workspace).toEqual({
       read: false,
       write: false,

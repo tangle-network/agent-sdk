@@ -14,6 +14,11 @@ import type {
   AgentRunControlRef,
   TokenUsage,
 } from "@tangle-network/agent-interface";
+import type {
+  AgentNativeContextContinuationOptions,
+  AgentNativeContextContinuationResult,
+  NativeContextContinuationRequest,
+} from "@tangle-network/agent-interface";
 import {
   agentSessionStatusFromRun,
   cancelCliBridgeRun,
@@ -37,6 +42,9 @@ import { cliBridgeInteractionResponder } from "./interaction-response.js";
 import {
   assertCliBridgeRequestedInteractions,
   assertCliBridgeNativeTurnModel,
+  continueCliBridgeNative,
+  readCliBridgeNativeContextBoundary,
+  supportsCliBridgeNativeContinuation,
   supportsCliBridgeNativeInteractions,
   type CliBridgeNativeSessionCache,
 } from "./retained-native.js";
@@ -461,6 +469,37 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         cancelOptions?.signal,
       );
     },
+    ...(supportsCliBridgeNativeContinuation(args.capabilities)
+      ? {
+          async contextBoundary(boundaryOptions?: { signal?: AbortSignal }) {
+            return readCliBridgeNativeContextBoundary(
+              args.options,
+              args.providerName,
+              args.transport,
+              requireCurrentRun(),
+              boundaryOptions?.signal,
+            );
+          },
+          async continueNative(
+            request: NativeContextContinuationRequest,
+            continuationOptions: AgentNativeContextContinuationOptions,
+          ): Promise<AgentNativeContextContinuationResult> {
+            const result = await continueCliBridgeNative(
+              args.options,
+              args.providerName,
+              args.transport,
+              requireCurrentRun(),
+              request,
+              continuationOptions,
+              args.runs,
+            );
+            if ("result" in result && result.result.usage !== undefined) {
+              args.usageLog.record(result.controlRef.executionId, result.result.usage);
+            }
+            return result;
+          },
+        }
+      : {}),
     ...(respondToInteraction ? { respondToInteraction } : {}),
   };
 }
