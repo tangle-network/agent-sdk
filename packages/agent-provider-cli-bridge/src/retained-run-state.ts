@@ -12,11 +12,11 @@ import type { CliBridgeProviderOptions } from "./provider-options.js";
 import { cliBridgeRunId, toChatCompletionsBody } from "./wire.js";
 
 export interface CliBridgeRun {
-  readonly id: string;
+  id: string;
   readonly environmentId: string;
   readonly sessionId?: string;
-  readonly executionId: string;
-  readonly turnId: string;
+  executionId: string;
+  turnId: string;
   readonly requestBody: string;
   readonly readers: Set<AbortController>;
   requestDigest?: Sha256Digest;
@@ -103,6 +103,36 @@ export function assertRunMatchesControlRef(
     throw new Error("cli-bridge control reference conflicts with the retained run");
   }
   run.controlRef = controlRef;
+}
+
+/** Advance one session object to the exact run returned by native continuation. */
+export function advanceCliBridgeRun(
+  run: CliBridgeRun,
+  controlRef: AgentExactRunControlRef,
+  providerName: string,
+  runs: Map<string, CliBridgeRun>,
+): void {
+  if (
+    controlRef.provider !== providerName ||
+    controlRef.environmentId !== run.environmentId ||
+    controlRef.sessionId !== run.sessionId
+  ) {
+    throw new Error("cli-bridge native continuation returned a run for another session");
+  }
+  const existing = runs.get(controlRef.runId);
+  if (existing !== undefined && existing !== run) {
+    throw new Error("cli-bridge native continuation returned a run already owned by another session");
+  }
+  const previousId = run.id;
+  if (runs.get(previousId) === run && previousId !== controlRef.runId) {
+    runs.delete(previousId);
+  }
+  run.id = controlRef.runId;
+  run.executionId = controlRef.executionId;
+  run.turnId = controlRef.executionId;
+  run.requestDigest = controlRef.requestDigest;
+  run.controlRef = Object.freeze(AgentExactRunControlRefSchema.parse(controlRef));
+  runs.set(run.id, run);
 }
 
 export function prepareCliBridgeRun(

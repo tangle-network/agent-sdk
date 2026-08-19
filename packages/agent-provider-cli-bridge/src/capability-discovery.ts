@@ -3,7 +3,10 @@ import {
   type AgentEnvironmentCapabilities,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
-import { supportsCliBridgeNativeInteractions } from "./retained-native.js";
+import {
+  supportsCliBridgeNativeContinuation,
+  supportsCliBridgeNativeInteractions,
+} from "./retained-native.js";
 import {
   createCliBridgeTransport,
   requestHeaders,
@@ -83,14 +86,24 @@ export function narrowCliBridgeCapabilities(
     turnIdempotency:
       adapter.streaming.turnIdempotency && reported.streaming.turnIdempotency,
   };
+  const nativeContinuation =
+    supportsCliBridgeNativeContinuation(adapter) &&
+    supportsCliBridgeNativeContinuation(reported)
+      ? { atomicBoundary: true, requestIdempotency: true }
+      : undefined;
   const sessions = {
-    continue: adapter.sessions.continue && reported.sessions.continue,
+    continue:
+      nativeContinuation !== undefined &&
+      adapter.sessions.continue &&
+      reported.sessions.continue,
     // The Bridge can list and inspect sessions, but this adapter exposes neither method.
     list: false,
     messages: false,
   };
   const retainedControl =
-    supportsRetainedControl(adapter) && supportsRetainedControl(reported)
+    sessions.continue &&
+    supportsRetainedControl(adapter) &&
+    supportsRetainedControl(reported)
       ? {
           exactRunIdentity: true,
           resultIdentity: true,
@@ -141,6 +154,7 @@ export function narrowCliBridgeCapabilities(
     streaming,
     sessions,
     ...(retainedControl === undefined ? {} : { retainedControl }),
+    ...(nativeContinuation === undefined ? {} : { nativeContinuation }),
     ...(interactions === undefined ? {} : { interactions }),
     // Remote workspace support cannot create absent adapter methods.
     workspace: {

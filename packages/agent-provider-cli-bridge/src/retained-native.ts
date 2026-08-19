@@ -4,17 +4,31 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
+  AgentNativeContextContinuationResultSchema,
   AgentExactRunControlRefSchema,
+  NativeContextBoundaryProofSchema,
+  NativeContextContinuationRequestSchema,
   RequestedInteractionsSchema,
+  agentNativeContextContinuationResultMatchesRequest,
   canonicalCandidateDigest,
+  nativeContextContinuationTurnDigest,
+  type AgentExactRunControlRef,
+  type AgentNativeContextContinuationOptions,
+  type AgentNativeContextContinuationResult,
   type AgentProfile,
   type Sha256Digest,
+  type NativeContextBoundaryProof,
+  type NativeContextContinuationRequest,
   type RequestedInteractions,
 } from "@tangle-network/agent-interface";
 import { CliBridgeRequestRejectedError } from "./retained-stream.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun } from "./retained-run-state.js";
-import type { CliBridgeTransport } from "./transport.js";
+import {
+  advanceCliBridgeRun,
+  exactControlRefForRun,
+} from "./retained-run-state.js";
+import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
 import {
   requestHeaders,
   trimSlash,
@@ -39,6 +53,8 @@ export type CliBridgeNativeSessionCache = Map<
   Promise<CliBridgeNativeSession>
 >;
 
+const MAX_NATIVE_CONTINUATION_RESPONSE_BYTES = 1_048_576;
+
 /** Interactions are valid only for the native retained Pi contract. */
 export function supportsCliBridgeNativeInteractions(
   capabilities: AgentEnvironmentCapabilities,
@@ -58,6 +74,17 @@ export function supportsCliBridgeNativeInteractions(
       retainedControl.resultIdentity &&
       retainedControl.eventIdentity &&
       retainedControl.cancellationIdempotency,
+  );
+}
+
+/** Native continuation is exposed only when the Bridge proves both guarantees. */
+export function supportsCliBridgeNativeContinuation(
+  capabilities: AgentEnvironmentCapabilities,
+): boolean {
+  return Boolean(
+    capabilities.sessions.continue &&
+      capabilities.nativeContinuation?.atomicBoundary === true &&
+      capabilities.nativeContinuation.requestIdempotency === true,
   );
 }
 
@@ -113,6 +140,256 @@ function piInteractionCapabilitiesMatch(
       interactions.replay === true &&
       interactions.responseIdempotency === true,
   );
+}
+
+/** Read the Bridge-owned exact boundary for the current retained run. */
+export async function readCliBridgeNativeContextBoundary(
+  options: CliBridgeProviderOptions,
+  providerName: string,
+  transport: CliBridgeTransport,
+  run: CliBridgeRun,
+  signal?: AbortSignal,
+): Promise<NativeContextBoundaryProof | null> {
+  const controlRef = currentCliBridgeControlRef(run, providerName);
+  const response = await transport.fetch(
+    `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(controlRef.sessionId)}`,
+    {
+      method: "GET",
+      headers: requestHeaders(options),
+      ...(signal ? { signal } : {}),
+    },
+  );
+  const responseText = await readBoundedResponseText(response, signal);
+  if (!response.ok) {
+    throw new CliBridgeRequestRejectedError(response.status, responseText);
+  }
+  const parsed = safeJson(responseText);
+  if (!parsed) {
+    throw new Error("cli-bridge native session boundary response is not a JSON object");
+  }
+  if (parsed.id !== undefined && parsed.id !== controlRef.sessionId) {
+    throw new Error("cli-bridge native session boundary response targets another session");
+  }
+  if (parsed.context_boundary === null) return null;
+  const proof = NativeContextBoundaryProofSchema.safeParse(parsed.context_boundary);
+  if (!proof.success) {
+    throw new Error("cli-bridge native session returned an invalid context boundary", {
+      cause: proof.error,
+    });
+  }
+  assertBoundaryControlRef(proof.data, controlRef);
+  return proof.data;
+}
+
+/** Send one canonical same-session continuation and advance the live run identity. */
+export async function continueCliBridgeNative(
+  options: CliBridgeProviderOptions,
+  providerName: string,
+  transport: CliBridgeTransport,
+  run: CliBridgeRun,
+  request: NativeContextContinuationRequest,
+  continuationOptions: AgentNativeContextContinuationOptions,
+  runs: Map<string, CliBridgeRun>,
+): Promise<AgentNativeContextContinuationResult> {
+  const exactRequest = NativeContextContinuationRequestSchema.parse(request);
+  const current = currentCliBridgeControlRef(run, providerName);
+  if (!sameControlRef(current, exactRequest.run)) {
+    throw new Error("cli-bridge native continuation targets another retained run");
+  }
+  if (
+    nativeContextContinuationTurnDigest(continuationOptions.turn) !==
+    exactRequest.turnDigest
+  ) {
+    throw new Error("cli-bridge native continuation turn does not match its request digest");
+  }
+  const operation = continuationSignal(continuationOptions);
+  try {
+    operation.signal?.throwIfAborted();
+    const response = await transport.fetch(
+      `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(exactRequest.run.sessionId)}/continue`,
+      {
+        method: "POST",
+        headers: requestHeaders(options),
+        body: JSON.stringify({ request: exactRequest, turn: continuationOptions.turn }),
+        ...(operation.signal ? { signal: operation.signal } : {}),
+      },
+    );
+    const responseText = await readBoundedResponseText(response, operation.signal);
+    const outcome = parseNativeContinuationResult(responseText);
+    assertContinuationAcknowledgementBinding(exactRequest, outcome);
+    if (
+      outcome.acknowledgement.status === "accepted" ||
+      outcome.acknowledgement.status === "replayed"
+    ) {
+      if (
+        !agentNativeContextContinuationResultMatchesRequest(exactRequest, outcome)
+      ) {
+        throw new Error(
+          "cli-bridge native continuation returned an acknowledgement for another request",
+        );
+      }
+      if (!response.ok) {
+        throw new Error(
+          `cli-bridge native continuation returned HTTP ${response.status} for an accepted result`,
+        );
+      }
+      if (!("controlRef" in outcome)) {
+        throw new Error("cli-bridge native continuation omitted its current control reference");
+      }
+      advanceCliBridgeRun(run, outcome.controlRef, providerName, runs);
+    }
+    return outcome;
+  } finally {
+    operation.dispose();
+  }
+}
+
+function currentCliBridgeControlRef(
+  run: CliBridgeRun,
+  providerName: string,
+): AgentExactRunControlRef {
+  if (run.controlRef !== undefined) {
+    const controlRef = AgentExactRunControlRefSchema.parse(run.controlRef);
+    if (!sameControlRef(controlRef, exactControlRefForRun(run, providerName))) {
+      throw new Error("cli-bridge retained run has a conflicting control reference");
+    }
+    return controlRef;
+  }
+  const controlRef = exactControlRefForRun(run, providerName);
+  run.controlRef = controlRef;
+  return controlRef;
+}
+
+function sameControlRef(
+  left: AgentExactRunControlRef,
+  right: AgentExactRunControlRef,
+): boolean {
+  return left.runId === right.runId &&
+    left.provider === right.provider &&
+    left.environmentId === right.environmentId &&
+    left.sessionId === right.sessionId &&
+    left.executionId === right.executionId &&
+    left.requestDigest === right.requestDigest;
+}
+
+function assertBoundaryControlRef(
+  proof: NativeContextBoundaryProof,
+  controlRef: AgentExactRunControlRef,
+): void {
+  if (
+    proof.runId !== controlRef.runId ||
+    proof.provider !== controlRef.provider ||
+    proof.environmentId !== controlRef.environmentId ||
+    proof.sessionId !== controlRef.sessionId ||
+    proof.executionId !== controlRef.executionId ||
+    proof.requestDigest !== controlRef.requestDigest
+  ) {
+    throw new Error("cli-bridge native session boundary does not bind to the retained run");
+  }
+}
+
+function parseNativeContinuationResult(
+  value: string,
+): AgentNativeContextContinuationResult {
+  const parsed = safeJson(value);
+  try {
+    return AgentNativeContextContinuationResultSchema.parse(parsed);
+  } catch (error) {
+    throw new Error("cli-bridge native continuation returned an invalid result", {
+      cause: error,
+    });
+  }
+}
+
+function assertContinuationAcknowledgementBinding(
+  request: NativeContextContinuationRequest,
+  outcome: AgentNativeContextContinuationResult,
+): void {
+  const acknowledgement = outcome.acknowledgement;
+  if (
+    acknowledgement.operationId !== request.operationId ||
+    acknowledgement.requestDigest !== request.requestDigest ||
+    acknowledgement.historyMessagesSent !== 0
+  ) {
+    throw new Error("cli-bridge native continuation acknowledgement is not bound to the request");
+  }
+  if (acknowledgement.actualBoundary !== undefined) {
+    assertBoundaryControlRef(acknowledgement.actualBoundary, request.run);
+  }
+}
+
+function continuationSignal(options: AgentNativeContextContinuationOptions): {
+  signal?: AbortSignal;
+  dispose: () => void;
+} {
+  const timeoutMs = options.timeoutMs;
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647)
+  ) {
+    throw new Error("native continuation timeoutMs must be an integer from 0 through 2147483647");
+  }
+  if (timeoutMs === undefined) {
+    return { signal: options.signal, dispose: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("native continuation timed out", "TimeoutError"));
+  }, timeoutMs);
+  const signal = options.signal === undefined
+    ? controller.signal
+    : AbortSignal.any([options.signal, controller.signal]);
+  return {
+    signal,
+    dispose: () => clearTimeout(timer),
+  };
+}
+
+async function readBoundedResponseText(
+  response: CliBridgeResponse,
+  signal?: AbortSignal,
+): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsedLength = Number(contentLength);
+    if (
+      Number.isSafeInteger(parsedLength) &&
+      parsedLength > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES
+    ) {
+      throw new Error("cli-bridge native continuation response exceeds its byte limit");
+    }
+  }
+  if (response.body === null) {
+    signal?.throwIfAborted();
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES) {
+      throw new Error("cli-bridge native continuation response exceeds its byte limit");
+    }
+    return text;
+  }
+  const iterator = response.body[Symbol.asyncIterator]();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  let complete = false;
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const next = await iterator.next();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > MAX_NATIVE_CONTINUATION_RESPONSE_BYTES) {
+        throw new Error("cli-bridge native continuation response exceeds its byte limit");
+      }
+      text += decoder.decode(next.value, { stream: true });
+    }
+    complete = true;
+    return text + decoder.decode();
+  } finally {
+    if (!complete) {
+      await iterator.return?.();
+    }
+  }
 }
 
 interface NativeSessionView extends CliBridgeNativeSession {}
