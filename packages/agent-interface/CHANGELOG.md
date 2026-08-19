@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 1.3.0
+
+### Minor Changes
+
+- cc281ff: Add a focused interactive control entry that excludes profile preparation builders.
+
 ## 1.2.0
 
 ### Minor Changes
