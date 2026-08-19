@@ -15,6 +15,10 @@
       "import": "./dist/environment-provider.js",
       "types": "./src/environment-provider.ts"
     },
+    "./environment-interactive": {
+      "import": "./dist/environment-interactive.js",
+      "types": "./src/environment-interactive.ts"
+    },
     "./profile": {
       "import": "./dist/agent-profile.js",
       "types": "./src/agent-profile.ts"
@@ -68,6 +72,11 @@
         "import": "./dist/environment-provider.js",
         "types": "./dist/environment-provider.d.ts",
         "default": "./dist/environment-provider.js"
+      },
+      "./environment-interactive": {
+        "import": "./dist/environment-interactive.js",
+        "types": "./dist/environment-interactive.d.ts",
+        "default": "./dist/environment-interactive.js"
       },
       "./profile": {
         "import": "./dist/agent-profile.js",
