@@ -1,5 +1,4 @@
 import type {
-  AgentEnvironmentEvent,
   AgentEnvironmentCapabilities,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
@@ -11,11 +10,8 @@ import {
   type AgentProfile,
   type Sha256Digest,
   type RequestedInteractions,
-  type StreamEvent,
 } from "@tangle-network/agent-interface";
 import { CliBridgeRequestRejectedError } from "./retained-stream.js";
-import { retainedCanonicalEvent } from "./retained-canonical-event.js";
-import { getCliBridgeRun } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun } from "./retained-run-state.js";
 import type { CliBridgeTransport } from "./transport.js";
@@ -25,7 +21,6 @@ import {
 } from "./transport.js";
 import {
   inlineProfile,
-  parseSse,
   safeJson,
   resolveBridgeModel,
   toRetainedSessionBody,
@@ -356,91 +351,4 @@ export async function beginCliBridgeNativeTurn(
     throw new Error("cli-bridge retained turn changed the admitted request digest");
   }
   run.requestDigest = requestDigest.data;
-}
-
-/** Replay native canonical events from one retained run. */
-export async function* streamCliBridgeNativeRunEvents(
-  options: CliBridgeProviderOptions,
-  providerName: string,
-  run: CliBridgeRun,
-  transport: CliBridgeTransport,
-  eventOptions?: { since?: string; signal?: AbortSignal },
-): AsyncIterable<AgentEnvironmentEvent> {
-  const since = nativeReplayCursor(eventOptions?.since ?? "0");
-  const response = await transport.fetch(
-    `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(run.id)}/events`,
-    {
-      method: "GET",
-      headers: {
-        ...requestHeaders(options),
-        accept: "text/event-stream",
-        "last-event-id": since,
-      },
-      ...(eventOptions?.signal ? { signal: eventOptions.signal } : {}),
-    },
-  );
-  if (!response.ok) {
-    throw new CliBridgeRequestRejectedError(response.status, await response.text());
-  }
-  if (!response.body) throw new Error("cli-bridge native event response body is empty");
-  for await (const frame of parseSse(response.body)) {
-    if (frame.data === "[DONE]") {
-      throw new Error("cli-bridge native event stream used the one-shot [DONE] protocol");
-    }
-    if (!run.sessionId) {
-      throw new Error("cli-bridge native event stream requires a retained session id");
-    }
-    const event = retainedCanonicalEvent(frame, {
-      runId: run.id,
-      sessionId: run.sessionId,
-      executionId: run.executionId,
-    });
-    if (!event?.normalized) {
-      throw new Error("cli-bridge native event stream requires a typed canonical event");
-    }
-    assertCanonicalEventBinding(event.normalized, run, providerName);
-    yield event;
-  }
-
-  const snapshot = await getCliBridgeRun(
-    options,
-    transport,
-    run,
-    30_000,
-    eventOptions?.signal,
-  );
-  if (!snapshot) throw new Error(`cli-bridge lost run "${run.id}" after native replay`);
-  if (!snapshot.terminal && snapshot.status !== "unknown") {
-    throw new Error(`cli-bridge native run "${run.id}" remained active after its event stream ended`);
-  }
-}
-
-function nativeReplayCursor(value: string): string {
-  if (!/^(0|[1-9][0-9]*)$/u.test(value)) {
-    throw new Error("cli-bridge native replay cursor must be a non-negative sequence number");
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error("cli-bridge native replay cursor exceeds the supported range");
-  }
-  return value;
-}
-
-function assertCanonicalEventBinding(
-  event: StreamEvent,
-  run: CliBridgeRun,
-  providerName: string,
-): void {
-  if (event.type !== "interaction") return;
-  const binding = event.request.binding;
-  if (
-    binding.runId !== run.id ||
-    binding.provider !== providerName ||
-    binding.environmentId !== run.environmentId ||
-    binding.sessionId !== run.sessionId ||
-    binding.executionId !== run.executionId ||
-    binding.interactionId !== event.request.id
-  ) {
-    throw new Error("cli-bridge interaction event does not bind to the retained run");
-  }
 }

@@ -349,8 +349,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.transport,
         args.runs,
         args.readers,
-        args.nativeSessions,
-        args.useNativeInteractions,
         eventOptions,
       );
     },
@@ -365,8 +363,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           args.transport,
           args.runs,
           args.readers,
-          args.nativeSessions,
-          args.useNativeInteractions,
           { since: "0", signal: resultOptions?.signal },
         ),
         run,

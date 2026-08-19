@@ -15,7 +15,10 @@ import {
 import {
   createCliBridgeEnvironment,
 } from "./retained-environment.js";
-import { cachedCliBridgeCapabilityDiscovery } from "./capability-discovery.js";
+import {
+  cachedCliBridgeCapabilityDiscovery,
+  narrowCliBridgeCapabilities,
+} from "./capability-discovery.js";
 import {
   supportsCliBridgeNativeInteractions,
 } from "./retained-native.js";
@@ -47,18 +50,19 @@ export function createCliBridgeProvider(
     selectedBackend?: string,
   ): AgentEnvironmentCapabilities => {
     const parsedHarness = harnessTypeSchema.safeParse(selectedBackend);
-    const declared =
-      options.capabilities ??
-      defaultCliBridgeCapabilities(parsedHarness.success ? parsedHarness.data : undefined);
+    const adapter = defaultCliBridgeCapabilities(
+      parsedHarness.success ? parsedHarness.data : undefined,
+    );
+    const declared = options.capabilities === undefined
+      ? adapter
+      : narrowCliBridgeCapabilities(adapter, options.capabilities, selectedBackend);
     const narrowed = declared.observation === undefined
       ? declared
       : {
           ...declared,
           observation: narrowedCliBridgeObservation(declared.observation, options),
         };
-    if (selectedBackend !== undefined && supportsCliBridgeNativeInteractions(narrowed, selectedBackend)) {
-      return narrowed;
-    }
+    if (supportsCliBridgeNativeInteractions(narrowed, selectedBackend)) return narrowed;
     const { interactions: _interactions, ...withoutInteractions } = narrowed;
     return withoutInteractions;
   };
@@ -74,11 +78,10 @@ export function createCliBridgeProvider(
     ) {
       return local;
     }
-    return discoverCapabilities(model).then((reported) => {
-      if (supportsCliBridgeNativeInteractions(reported, selectedBackend)) return local;
-      const { interactions: _interactions, ...withoutInteractions } = local;
-      return withoutInteractions;
-    });
+    return discoverCapabilities(model).then((reported) =>
+      narrowCliBridgeCapabilities(local, reported, selectedBackend, {
+        preserveAdapterObservation: true,
+      }));
   };
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,

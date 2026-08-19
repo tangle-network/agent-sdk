@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@tangle-network/agent-interface";
+import type { StreamEvent, TokenUsage } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironmentEvent,
   AgentSessionRef,
@@ -29,7 +29,6 @@ import {
 } from "./retained-stream.js";
 import {
   beginCliBridgeNativeTurn,
-  streamCliBridgeNativeRunEvents,
   type CliBridgeNativeSessionCache,
 } from "./retained-native.js";
 import type { CliBridgeTransport } from "./transport.js";
@@ -85,12 +84,17 @@ export async function* streamTrackedCliBridgeTurn(
         signal,
       );
       admitted = true;
-      for await (const event of streamCliBridgeNativeRunEvents(
+      for await (const event of streamCliBridgeTurn(
         options,
-        providerName,
-        run,
+        turn,
+        undefined,
         transport,
-        { since: originalTurn.lastEventId, signal },
+        run.id,
+        originalTurn.lastEventId,
+        signal,
+        undefined,
+        () => getCliBridgeRun(options, transport, run, 30_000, signal),
+        (event) => assertCanonicalEventBinding(event.normalized, run, providerName),
       )) {
         yield event;
       }
@@ -264,8 +268,6 @@ export async function* streamCliBridgeSessionEvents(
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
   readers: Set<AbortController>,
-  nativeSessions: CliBridgeNativeSessionCache,
-  useNativeInteractions: boolean,
   eventOptions?: { since?: string; executionId?: string; signal?: AbortSignal },
 ): AsyncIterable<AgentEnvironmentEvent> {
   if (
@@ -285,31 +287,22 @@ export async function* streamCliBridgeSessionEvents(
   readers.add(controller);
   let drained = false;
   try {
-    if (useNativeInteractions) {
-      yield* streamCliBridgeNativeRunEvents(
-        options,
-        providerName,
-        run,
-        transport,
-        { since: eventOptions?.since, signal },
-      );
-    } else {
-      yield* streamCliBridgeTurn(
-        options,
-        {
-          ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-          executionId: run.executionId,
-          turnId: run.turnId,
-        },
-        undefined,
-        transport,
-        run.id,
-        eventOptions?.since ?? "0",
-        signal,
-        (response) => captureCliBridgeRunIdentity(response, run, false),
-        () => getCliBridgeRun(options, transport, run, 30_000, signal),
-      );
-    }
+    yield* streamCliBridgeTurn(
+      options,
+      {
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        executionId: run.executionId,
+        turnId: run.turnId,
+      },
+      undefined,
+      transport,
+      run.id,
+      eventOptions?.since ?? "0",
+      signal,
+      (response) => captureCliBridgeRunIdentity(response, run, false),
+      () => getCliBridgeRun(options, transport, run, 30_000, signal),
+      (event) => assertCanonicalEventBinding(event.normalized, run, providerName),
+    );
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } finally {
@@ -320,6 +313,25 @@ export async function* streamCliBridgeSessionEvents(
     }
     run.readers.delete(controller);
     readers.delete(controller);
+  }
+}
+
+function assertCanonicalEventBinding(
+  event: StreamEvent | undefined,
+  run: CliBridgeRun,
+  providerName: string,
+): void {
+  if (event?.type !== "interaction") return;
+  const binding = event.request.binding;
+  if (
+    binding.runId !== run.id ||
+    binding.provider !== providerName ||
+    binding.environmentId !== run.environmentId ||
+    binding.sessionId !== run.sessionId ||
+    binding.executionId !== run.executionId ||
+    binding.interactionId !== event.request.id
+  ) {
+    throw new Error("cli-bridge interaction event does not bind to the retained run");
   }
 }
 

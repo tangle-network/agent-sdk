@@ -83,17 +83,19 @@ interface RunningBridge {
   readonly baseUrl: string;
   readonly projectDir: string;
   readonly logs: () => string;
+  readonly restart: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
 describeActualBridge("actual cli-bridge native interaction contract", () => {
-  it("dispatches, replays, responds, reconnects, and retries idempotently through the real Bridge app", async () => {
+  it("dispatches, replays from a nonzero cursor, survives Bridge restart, and retries idempotently", async () => {
     const bridge = await startActualBridge();
-    const requests: Array<{ method: string; pathname: string }> = [];
+    const requests: Array<{ method: string; pathname: string; lastEventId: string | null }> = [];
     const bridgeFetch: typeof fetch = async (url, init) => {
       requests.push({
         method: init?.method ?? "GET",
         pathname: new URL(String(url)).pathname,
+        lastEventId: new Headers(init?.headers).get("last-event-id"),
       });
       return fetch(url, init);
     };
@@ -105,6 +107,20 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
         baseUrl: bridge.baseUrl,
         defaultModel: "pi/tangle-router/sdk-integration-model",
         fetch: bridgeFetch,
+      });
+      const capabilities = await provider.capabilities();
+      expect(capabilities.profile.resources.files).toBe(false);
+      expect(capabilities.profile.resources.tools).toBe(false);
+      expect(capabilities.profile.validation).toBe(false);
+      expect(capabilities.sessions).toEqual({ continue: true, list: false, messages: false });
+      expect(capabilities.nativeContinuation).toBeUndefined();
+      expect(capabilities.workspace).toEqual({
+        read: false,
+        write: false,
+        exec: false,
+        git: false,
+        upload: false,
+        download: false,
       });
       const environment = await provider.create({
         idempotencyKey: environmentId,
@@ -204,9 +220,26 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       expect(replayed.map((event) => event.id)).toEqual(firstEvents.map((event) => event.id));
       expect(replayed.some((event) => event.normalized?.type === "interaction")).toBe(true);
 
-      const reconnectRequests: string[] = [];
+      expect(firstEvents.length).toBeGreaterThan(1);
+      const replayCursor = firstEvents[0]?.id;
+      if (!replayCursor) throw new Error("the actual Bridge did not assign an event cursor");
+      expect(Number(replayCursor)).toBeGreaterThan(0);
+      const resumed: AgentEnvironmentEvent[] = [];
+      for await (const event of session.events({ since: replayCursor })) resumed.push(event);
+      expect(resumed.map((event) => event.id)).toEqual(firstEvents.slice(1).map((event) => event.id));
+      expect(
+        requests.filter((request) => request.pathname === `/v1/runs/${controlRef.runId}/events`).at(-1),
+      ).toMatchObject({ lastEventId: replayCursor });
+
+      await bridge.restart();
+
+      const reconnectRequests: Array<{ method: string; url: string; lastEventId: string | null }> = [];
       const reconnectFetch: typeof fetch = async (url, init) => {
-        reconnectRequests.push(`${init?.method ?? "GET"} ${String(url)}`);
+        reconnectRequests.push({
+          method: init?.method ?? "GET",
+          url: String(url),
+          lastEventId: new Headers(init?.headers).get("last-event-id"),
+        });
         return fetch(url, init);
       };
       const reconnectedProvider = createCliBridgeProvider({
@@ -217,10 +250,18 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       const reconnectedEnvironment = await reconnectedProvider.get!(environmentId);
       if (!reconnectedEnvironment) throw new Error("the actual Bridge did not retain the environment");
       const reconnectedSession = reconnectedEnvironment.session!(sessionId, { controlRef });
+      expect(reconnectedSession.controlRef).toEqual(controlRef);
+      await expect(reconnectedSession.status()).resolves.toBe("completed");
       const reconnectedEvents: AgentEnvironmentEvent[] = [];
-      for await (const event of reconnectedSession.events({ since: "0" })) reconnectedEvents.push(event);
-      expect(reconnectedEvents.map((event) => event.id)).toEqual(firstEvents.map((event) => event.id));
-      expect(reconnectRequests.some((request) => request.includes(`/v1/runs/${controlRef.runId}/events`))).toBe(true);
+      for await (const event of reconnectedSession.events({ since: replayCursor })) reconnectedEvents.push(event);
+      expect(reconnectedEvents.map((event) => event.id)).toEqual(resumed.map((event) => event.id));
+      expect(
+        reconnectRequests.some((request) =>
+          request.method === "GET" &&
+          request.url.endsWith(`/v1/runs/${controlRef.runId}/events`) &&
+          request.lastEventId === replayCursor
+        ),
+      ).toBe(true);
 
       const retry = await reconnectedEnvironment.respondToInteraction!(command);
       expect(retry).toEqual(acknowledgement);
@@ -263,7 +304,7 @@ async function startActualBridge(): Promise<RunningBridge> {
     { encoding: "utf8", mode: 0o600 },
   );
   const port = await freePort();
-  const child = spawn(BRIDGE_TSX, ["src/server.ts"], {
+  const spawnBridge = (): ReturnType<typeof spawn> => spawn(BRIDGE_TSX, ["src/server.ts"], {
     cwd: BRIDGE_ROOT,
     env: {
       ...process.env,
@@ -281,13 +322,25 @@ async function startActualBridge(): Promise<RunningBridge> {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  let child = spawnBridge();
   let output = "";
   const append = (chunk: Buffer): void => {
     output = `${output}${chunk.toString()}`.slice(-30_000);
   };
   child.stdout?.on("data", append);
   child.stderr?.on("data", append);
+  let stopped = false;
+  const restart = async (): Promise<void> => {
+    if (stopped) throw new Error("cannot restart a stopped actual Bridge fixture");
+    await stopChild(child);
+    child = spawnBridge();
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    await waitForBridge(child, `http://127.0.0.1:${port}`, () => output);
+  };
   const stop = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
     await stopChild(child);
     rmSync(fixtureRoot, { recursive: true, force: true });
   };
@@ -309,6 +362,7 @@ async function startActualBridge(): Promise<RunningBridge> {
     baseUrl: `http://127.0.0.1:${port}`,
     projectDir,
     logs,
+    restart,
     stop,
   };
 }

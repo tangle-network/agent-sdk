@@ -328,7 +328,7 @@ describe("createCliBridgeProvider", () => {
     });
   });
 
-  it("reconstructs one retained run from exact coordinates in a new provider", async () => {
+  it("reconstructs a legacy retained run when restart configuration selects native Pi", async () => {
     const runId = "restart-run";
     const sessionId = "restart-session";
     const environmentId = "restart-environment";
@@ -338,6 +338,9 @@ describe("createCliBridgeProvider", () => {
     let cancellations = 0;
     const bridgeFetch: typeof fetch = async (url, init) => {
       const target = String(url);
+      if (new URL(target).pathname === "/v1/capabilities") {
+        return Response.json(defaultCliBridgeCapabilities("pi"));
+      }
       if (target.endsWith("/events")) {
         status = "done";
         return new Response(
@@ -393,11 +396,11 @@ describe("createCliBridgeProvider", () => {
     };
     const starter = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "opencode/model",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: bridgeFetch,
     });
     const startedEnvironment = await starter.create({
-      profile: { name: "worker" },
+      profile: { name: "worker", harness: "codex" },
       idempotencyKey: environmentId,
     });
     const reference = await startedEnvironment.dispatch?.({
@@ -411,7 +414,7 @@ describe("createCliBridgeProvider", () => {
 
     const restarted = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "opencode/model",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: bridgeFetch,
     });
     const recoveredEnvironment = await restarted.get?.(environmentId);
@@ -2386,7 +2389,11 @@ function createNativePiFixture(options: NativePiFixtureOptions = {}): NativePiFi
       const replay = run.events.filter((event) => Number(event.sequence) > cursor);
       return new Response(nativePiSse(replay), {
         status: 200,
-        headers: { "content-type": "text/event-stream" },
+        headers: {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": run.requestDigest,
+        },
       });
     }
 

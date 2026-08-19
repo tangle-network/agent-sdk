@@ -68,7 +68,13 @@ export function retainedCanonicalEvent(
   };
 }
 
-export function isTerminalCanonicalEvent(event: AgentEnvironmentEvent): boolean {
+export function isTerminalCanonicalEvent(
+  event: AgentEnvironmentEvent,
+): event is AgentEnvironmentEvent & {
+  normalized: Extract<StreamEvent, { type: "status" }> & {
+    status: "completed" | "failed" | "cancelled";
+  };
+} {
   return event.normalized?.type === "status" &&
     ["completed", "failed", "cancelled"].includes(event.normalized.status);
 }

@@ -5,7 +5,11 @@ import {
   interactionRequestDigest,
   permissionAnswerSpec,
 } from "@tangle-network/agent-interface";
-import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
+import type {
+  AgentEnvironmentCapabilities,
+  AgentEnvironmentEvent,
+  CreateAgentEnvironmentInput,
+} from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import {
   createCliBridgeProvider,
@@ -147,13 +151,44 @@ function createNativeFetch(
       const body = sse(events.filter((event) => Number(event.sequence) > since));
       return new Response(body, {
         status: 200,
-        headers: { "content-type": "text/event-stream" },
+        headers: {
+          "content-type": "text/event-stream",
+          "x-run-id": nativeRunId,
+          "x-run-request-digest": runDigest,
+        },
       });
     }
     if (pathname === `/v1/runs/${nativeRunId}`) {
       return nativeRunResponse("done", true);
     }
     throw new Error(`unexpected cli-bridge route: ${target}`);
+  };
+}
+
+function reportedPiCapabilities(): AgentEnvironmentCapabilities {
+  const { observation: _observation, ...reported } = defaultCliBridgeCapabilities("pi");
+  return {
+    ...reported,
+    profile: {
+      ...reported.profile,
+      resources: {
+        ...reported.profile.resources,
+        files: false,
+        tools: false,
+      },
+      validation: true,
+      extensions: ["pi"],
+    },
+    sessions: { continue: true, list: true, messages: true },
+    nativeContinuation: { atomicBoundary: true, requestIdempotency: true },
+    workspace: {
+      read: true,
+      write: true,
+      exec: true,
+      git: true,
+      upload: false,
+      download: false,
+    },
   };
 }
 
@@ -220,6 +255,43 @@ describe("cli-bridge native retained sessions", () => {
       `${baseUrl}/v1/capabilities?model=${encodeURIComponent(exactModel)}`,
     ]);
     expect(new URL(requests[0]!).searchParams.get("model")).toBe(exactModel);
+  });
+
+  it("intersects Bridge truth with methods implemented by this provider", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: async () => Response.json(reportedPiCapabilities()),
+    });
+
+    const capabilities = await provider.capabilities();
+    expect(capabilities.profile.resources).toMatchObject({
+      files: false,
+      tools: false,
+    });
+    expect(capabilities.profile.validation).toBe(false);
+    expect(capabilities.profile.extensions).toBeUndefined();
+    expect(capabilities.sessions).toEqual({ continue: true, list: false, messages: false });
+    expect(capabilities.nativeContinuation).toBeUndefined();
+    expect(capabilities.workspace).toEqual({
+      read: false,
+      write: false,
+      exec: false,
+      git: false,
+      upload: false,
+      download: false,
+    });
+    expect(capabilities.interactions?.kinds).toEqual(["permission"]);
+    expect(capabilities.observation?.modelUsage).toBe(true);
+
+    const environment = await provider.create({
+      idempotencyKey: "narrowed-capability-environment",
+      profile: { name: "native-pi", harness: "pi" },
+    });
+    expect(environment.capabilities).toEqual(capabilities);
+    expect(environment.read).toBeUndefined();
+    expect(environment.write).toBeUndefined();
+    expect(environment.exec).toBeUndefined();
   });
 
   it("fails closed when Bridge capability discovery is unavailable", async () => {
@@ -438,6 +510,149 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests[3]?.body).toMatchObject({ interactions: { permission: false } });
     expect(requests[4]?.body).not.toHaveProperty("interactions");
     expect(requests[1]?.body).not.toHaveProperty("metadata.interactions");
+  });
+
+  it("forwards every retained Bridge control without collapsing it into metadata", async () => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      defaultExecution: { kind: "host" },
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+      workspace: { cwd: "" },
+      env: { BRIDGE_TEST_MODE: "retained" },
+      metadata: { source: "focused-test" },
+      providerOptions: { route: "native" },
+    });
+
+    await environment.dispatch!({
+      prompt: "inspect the attachment",
+      parts: [{ type: "file", filename: "README.md", path: "README.md" }],
+      sessionId,
+      turnId: "wire-turn",
+      executionId: "wire-execution",
+      interactions: { permission: true },
+      context: {},
+      providerOptions: {},
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      id: sessionId,
+      model,
+      interaction_policy: "interactive",
+      cwd: "",
+      execution: { kind: "host" },
+      env: { BRIDGE_TEST_MODE: "retained" },
+      metadata: { source: "focused-test" },
+      provider_options: { route: "native" },
+    });
+    expect(requests[1]?.body).toEqual({
+      message: "inspect the attachment",
+      parts: [{ type: "file", filename: "README.md", path: "README.md" }],
+      turn_id: "wire-turn",
+      execution_id: "wire-execution",
+      run_id: "wire-execution",
+      provider: "cli-bridge",
+      environment_id: environmentId,
+      interactions: { permission: true },
+      context: {},
+      provider_options: {},
+    });
+    expect(requests[0]?.body).not.toHaveProperty("metadata.route");
+    expect(requests[1]?.body).not.toHaveProperty("metadata.route");
+  });
+
+  it("rejects retained inputs that Bridge cannot represent before network use", async () => {
+    const unsupported: Array<{
+      label: string;
+      input: Partial<CreateAgentEnvironmentInput>;
+    }> = [
+      { label: "workspace.repoUrl", input: { workspace: { repoUrl: "https://example.com/repo.git" } } },
+      { label: "workspace.gitRef", input: { workspace: { gitRef: "main" } } },
+      { label: "workspace.image", input: { workspace: { image: "node:22" } } },
+      { label: "workspace.providerOptions", input: { workspace: { providerOptions: { size: "large" } } } },
+      { label: "resources", input: { resources: { cpu: 2 } } },
+      { label: "secrets", input: { secrets: ["router-key"] } },
+    ];
+
+    for (const [index, testCase] of unsupported.entries()) {
+      const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+      const provider = createCliBridgeProvider({
+        baseUrl,
+        defaultModel: model,
+        capabilities: defaultCliBridgeCapabilities("pi"),
+        fetch: createNativeFetch(requests),
+      });
+      const environment = await provider.create({
+        profile: { name: "native-pi", harness: "pi" },
+        idempotencyKey: `${environmentId}-${index}`,
+        ...testCase.input,
+      });
+
+      await expect(environment.dispatch!({
+        prompt: "must fail before Bridge",
+        sessionId,
+        turnId: `unsupported-turn-${index}`,
+        executionId: `unsupported-execution-${index}`,
+      })).rejects.toThrow(new RegExp(testCase.label.replace(".", "\\."), "u"));
+      expect(requests, testCase.label).toEqual([]);
+    }
+  });
+
+  it("rejects a retained turn timeout before the retained turn request", async () => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "must fail before Bridge",
+      sessionId,
+      turnId: "unsupported-turn",
+      executionId: "unsupported-execution",
+      timeoutMs: 1_000,
+    })).rejects.toThrow(/timeoutMs/);
+    expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "POST /v1/sessions",
+    ]);
+  });
+
+  it("rejects sandbox execution before creating a retained session", async () => {
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      defaultExecution: {
+        kind: "sandbox",
+        repoUrl: "https://example.com/repo.git",
+      },
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch(requests),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "must fail before Bridge",
+      sessionId,
+      turnId: "sandbox-turn",
+      executionId: "sandbox-execution",
+    })).rejects.toThrow(/cannot execute in a sandbox/);
+    expect(requests).toEqual([]);
   });
 
   it("defines the companion cli-bridge request shape for retained interaction turns", async () => {
