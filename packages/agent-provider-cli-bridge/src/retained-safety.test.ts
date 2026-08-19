@@ -543,6 +543,37 @@ describe("retained cli-bridge safety", () => {
     });
   });
 
+  it("keeps canonical reasoning out of retained result text", async () => {
+    const controlRef = exactControlRef();
+    const events: StreamEvent[] = [
+      {
+        type: "message.part.updated",
+        part: {
+          id: "run-1:part:reasoning",
+          sessionID: "session-1",
+          messageID: "run-1:message:1",
+          type: "reasoning",
+          text: "private analysis",
+        },
+        delta: "private analysis",
+      },
+      ...canonicalEvents(),
+    ];
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => String(url).endsWith("/events")
+        ? canonicalEventsResponse(controlRef, events)
+        : retainedRunResponse(controlRef.runId, "done", true),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.result()).resolves.toMatchObject({
+      text: "done",
+      success: true,
+    });
+  });
+
   it("rejects canonical events whose wire identity does not match", async () => {
     const controlRef = exactControlRef();
     const wrongRun = { ...controlRef, runId: "another-run" };

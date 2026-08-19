@@ -394,8 +394,9 @@ export async function collectCliBridgeTurnResult(
       const finalText = event.data.finalText;
       if (typeof finalText === "string") {
         text = finalText;
-      } else if (typeof event.data.delta === "string") {
-        text += event.data.delta;
+      } else {
+        const delta = visibleTextDelta(event);
+        if (delta !== undefined) text += delta;
       }
       usage = addTokenUsage(usage, event.usage);
       const eventModel = event.data.model;
@@ -455,6 +456,20 @@ export async function collectCliBridgeTurnResult(
     },
     events,
   };
+}
+
+/** Keep reasoning and tool updates out of the assistant's visible result text. */
+function visibleTextDelta(event: AgentEnvironmentEvent): string | undefined {
+  if (event.normalized?.type === "message.part.updated") {
+    if (
+      event.normalized.part.type === "text" &&
+      typeof event.normalized.delta === "string"
+    ) {
+      return event.normalized.delta;
+    }
+    return undefined;
+  }
+  return typeof event.data.delta === "string" ? event.data.delta : undefined;
 }
 
 /** Sum the usage a run reported across its events into one total. */
