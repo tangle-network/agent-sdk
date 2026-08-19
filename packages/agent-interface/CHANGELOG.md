@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 1.2.0
+
+### Minor Changes
+
+- 4a5509a: Add a narrow environment-interactive entry for browser and control clients.
+
+  The entry uses the canonical interactive schemas without loading the full provider surface.
+
 ## 1.1.0
 
 ### Minor Changes
