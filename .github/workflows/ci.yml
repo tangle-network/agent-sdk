@@ -49,8 +49,18 @@ jobs:
       - name: Enable CLI Bridge filesystem jail
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes bubblewrap
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i \
+              's#http://azure.archive.ubuntu.com/ubuntu/#https://archive.ubuntu.com/ubuntu/#g' \
+              /etc/apt/apt-mirrors.txt
+          fi
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 120s apt-get \
+            -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 60s apt-get \
+            install --yes --no-install-recommends bubblewrap
           if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
