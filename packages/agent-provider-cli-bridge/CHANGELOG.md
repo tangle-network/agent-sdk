@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.2
+
+### Patch Changes
+
+- 218203f: Bind retained dispatch, status, replay, result, and cancellation to the complete run identity.
+  Expose exact run lookup for recovery after a caller loses the dispatch response.
+
 ## 0.9.1
 
 ### Patch Changes
