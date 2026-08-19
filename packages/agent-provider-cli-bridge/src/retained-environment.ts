@@ -198,6 +198,7 @@ export function createCliBridgeEnvironment(
         capabilities: args.capabilities,
         interactionsEnabled: respondToInteraction !== undefined,
         useNativeInteractions,
+        selectedModel: args.selectedModel,
       });
     },
     ...(respondToInteraction ? { respondToInteraction } : {}),
@@ -290,6 +291,7 @@ interface CreateCliBridgeSessionArgs {
   readonly capabilities: AgentEnvironmentCapabilities;
   readonly interactionsEnabled: boolean;
   readonly useNativeInteractions: boolean;
+  readonly selectedModel?: string;
 }
 
 function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession {
@@ -398,6 +400,14 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       if (input.sessionId && input.sessionId !== args.id) {
         throw new Error(
           `cli-bridge session "${args.id}" cannot prompt session "${input.sessionId}"`,
+        );
+      }
+      if (args.useNativeInteractions) {
+        assertCliBridgeNativeTurnModel(
+          args.options,
+          args.environmentInput,
+          input,
+          args.selectedModel,
         );
       }
       assertCliBridgeRequestedInteractions(args.capabilities, input.interactions);

@@ -305,6 +305,32 @@ describe("cli-bridge native retained sessions", () => {
     expect(called).toBe(false);
   });
 
+  it("rejects a native session prompt outside the environment model before network use", async () => {
+    let called = false;
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async () => {
+        called = true;
+        return new Response();
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: "session-model-bound-environment",
+      profile: { name: "native-pi", harness: "pi" },
+    });
+    const session = environment.session!(sessionId);
+
+    await expect(session.prompt({
+      prompt: "keep the retained route",
+      model: "pi/another-model",
+      turnId: "session-model-bound-turn",
+      executionId: "session-model-bound-run",
+    })).rejects.toThrow("create another environment");
+    expect(called).toBe(false);
+  });
+
   it("intersects Bridge truth with methods implemented by this provider", async () => {
     const provider = createCliBridgeProvider({
       baseUrl,
