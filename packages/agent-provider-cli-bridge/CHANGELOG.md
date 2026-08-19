@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.3
+
+### Patch Changes
+
+- 8ad10d4: Exclude reasoning parts from retained assistant result text.
+
 ## 0.9.2
 
 ### Patch Changes
