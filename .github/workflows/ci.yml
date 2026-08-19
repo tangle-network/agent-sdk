@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -34,6 +37,7 @@ jobs:
           ref: f51a06fedf312bee825941a1e5d30e037c602d0b
           path: cli-bridge
           fetch-depth: 1
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
