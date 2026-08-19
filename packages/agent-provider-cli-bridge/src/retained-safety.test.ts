@@ -12,6 +12,7 @@ import {
   defaultCliBridgeCapabilities,
 } from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
+import { visibleTextDelta } from "./retained-execution.js";
 
 function createCliBridgeProvider(
   options: Parameters<typeof createProvider>[0],
@@ -23,6 +24,23 @@ function createCliBridgeProvider(
 }
 
 describe("retained cli-bridge safety", () => {
+  it("rejects unnormalized reasoning from visible result text", () => {
+    expect(visibleTextDelta({
+      type: "message.part.updated",
+      data: {
+        part: { type: "reasoning", text: "private analysis" },
+        delta: "private analysis",
+      },
+    })).toBeUndefined();
+    expect(visibleTextDelta({
+      type: "message.part.updated",
+      data: {
+        part: { type: "text", text: "visible answer" },
+        delta: "visible answer",
+      },
+    })).toBe("visible answer");
+  });
+
   it("rejects a conflicting control reference before replacing the active session", async () => {
     let calls = 0;
     const provider = createCliBridgeProvider({
@@ -540,6 +558,37 @@ describe("retained cli-bridge safety", () => {
         cost: 0.005,
       },
       metadata: { runId: "run-1", executionId: "run-1", status: "done" },
+    });
+  });
+
+  it("keeps canonical reasoning out of retained result text", async () => {
+    const controlRef = exactControlRef();
+    const events: StreamEvent[] = [
+      {
+        type: "message.part.updated",
+        part: {
+          id: "run-1:part:reasoning",
+          sessionID: "session-1",
+          messageID: "run-1:message:1",
+          type: "reasoning",
+          text: "private analysis",
+        },
+        delta: "private analysis",
+      },
+      ...canonicalEvents(),
+    ];
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => String(url).endsWith("/events")
+        ? canonicalEventsResponse(controlRef, events)
+        : retainedRunResponse(controlRef.runId, "done", true),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.result()).resolves.toMatchObject({
+      text: "done",
+      success: true,
     });
   });
 
