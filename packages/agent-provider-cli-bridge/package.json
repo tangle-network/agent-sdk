@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-cli-bridge",
-  "version": "0.7.8",
+  "version": "0.8.0",
   "description": "AgentEnvironmentProvider adapter for cli-bridge retained sessions and one-shot turns",
   "type": "module",
   "license": "MIT",
