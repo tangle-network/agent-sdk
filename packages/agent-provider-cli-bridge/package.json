@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/agent-provider-cli-bridge",
   "version": "0.7.8",
-  "description": "AgentEnvironmentProvider adapter for cli-bridge /v1/chat/completions",
+  "description": "AgentEnvironmentProvider adapter for cli-bridge retained sessions and one-shot turns",
   "type": "module",
   "license": "MIT",
   "main": "dist/index.js",
@@ -33,6 +33,12 @@
   "files": [
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/environment-identity.d.ts",
+    "dist/environment-identity.js",
+    "dist/capability-discovery.d.ts",
+    "dist/capability-discovery.js",
+    "dist/interaction-response.d.ts",
+    "dist/interaction-response.js",
     "dist/observation.d.ts",
     "dist/observation.js",
     "dist/provider-options.d.ts",
@@ -47,6 +53,8 @@
     "dist/retained-event-cursor.js",
     "dist/retained-execution.d.ts",
     "dist/retained-execution.js",
+    "dist/retained-native.d.ts",
+    "dist/retained-native.js",
     "dist/retained-run-state.d.ts",
     "dist/retained-run-state.js",
     "dist/retained-stream.d.ts",
@@ -59,11 +67,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run"
+    "test": "vitest run src",
+    "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; vitest run tests/cli-bridge.integration.test.ts"
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^1.0.1",

@@ -1,4 +1,7 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  agentEnvironmentCreateInputDigest,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -8,15 +11,30 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   type HarnessType,
+  harnessTypeSchema,
   harnessSystemPromptIntents,
   snapshotAgentProfile,
 } from "@tangle-network/agent-interface";
-import { createCliBridgeEnvironment } from "./retained-environment.js";
+import {
+  createCliBridgeEnvironment,
+} from "./retained-environment.js";
+import {
+  cachedCliBridgeCapabilityDiscovery,
+  narrowCliBridgeCapabilities,
+} from "./capability-discovery.js";
+import {
+  supportsCliBridgeNativeInteractions,
+} from "./retained-native.js";
 import {
   assertCliBridgeProviderOptions,
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
 import { narrowedCliBridgeObservation } from "./observation.js";
+import {
+  cliBridgeEnvironmentId,
+  cliBridgeEnvironmentRoute,
+} from "./environment-identity.js";
+import { resolveBridgeModel } from "./wire.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
 export { safeEndpointFromBaseUrl } from "./observation.js";
@@ -30,17 +48,55 @@ export function createCliBridgeProvider(
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
+  const configuredBackend = selectedBackendFromRoute(options.defaultModel);
+  const discoverCapabilities = cachedCliBridgeCapabilityDiscovery(options);
   // The observation surfaces are declared as intent and narrowed to the
   // sources this bridge can put a value on, so the environment offers the
   // operation exactly where the document claims it.
-  const resolveCapabilities = (): AgentEnvironmentCapabilities => {
-    const declared = options.capabilities ?? defaultCliBridgeCapabilities();
-    return declared.observation === undefined
+  const localCapabilities = (
+    selectedBackend?: string,
+    allowNativeInteractions = false,
+  ): AgentEnvironmentCapabilities => {
+    const parsedHarness = harnessTypeSchema.safeParse(selectedBackend);
+    const adapter = defaultCliBridgeCapabilities(
+      parsedHarness.success ? parsedHarness.data : undefined,
+    );
+    const declared = options.capabilities === undefined
+      ? adapter
+      : narrowCliBridgeCapabilities(adapter, options.capabilities, selectedBackend);
+    const narrowed = declared.observation === undefined
       ? declared
       : {
           ...declared,
           observation: narrowedCliBridgeObservation(declared.observation, options),
         };
+    if (
+      allowNativeInteractions &&
+      supportsCliBridgeNativeInteractions(narrowed, selectedBackend)
+    ) {
+      return narrowed;
+    }
+    const { interactions: _interactions, ...withoutInteractions } = narrowed;
+    return withoutInteractions;
+  };
+  const resolveCapabilities = (
+    selectedBackend?: string,
+    model?: string,
+    allowNativeInteractions = false,
+  ): AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities> => {
+    const local = localCapabilities(selectedBackend, allowNativeInteractions);
+    if (
+      !allowNativeInteractions ||
+      options.capabilities !== undefined ||
+      selectedBackend !== "pi" ||
+      model === undefined
+    ) {
+      return local;
+    }
+    return discoverCapabilities(model).then((reported) =>
+      narrowCliBridgeCapabilities(local, reported, selectedBackend, {
+        preserveAdapterObservation: true,
+      }));
   };
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
@@ -50,11 +106,26 @@ export function createCliBridgeProvider(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
       );
     }
+    const profile = snapshotAgentProfile(input.profile);
     const environmentInput: CreateAgentEnvironmentInput = {
       ...input,
-      profile: snapshotAgentProfile(input.profile),
+      profile,
     };
-    const environmentId = input.idempotencyKey ?? crypto.randomUUID();
+    const selectedBackend = selectedBackendFromInput(
+      environmentInput,
+      configuredBackend,
+    );
+    const hasEnvironmentModel = selectedBackend !== undefined ||
+      options.defaultModel !== undefined ||
+      profile.model?.default !== undefined;
+    const model = hasEnvironmentModel
+      ? resolveBridgeModel(options, environmentInput, {}, profile)
+      : undefined;
+    const environmentId = cliBridgeEnvironmentId(
+      { backend: selectedBackend, model },
+      agentEnvironmentCreateInputDigest(environmentInput),
+      input.idempotencyKey,
+    );
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -62,12 +133,14 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
-      capabilities: resolveCapabilities(),
+      capabilities: await resolveCapabilities(selectedBackend, model, true),
+      selectedBackend,
+      selectedModel: model,
     });
   };
   return {
     name,
-    capabilities: resolveCapabilities,
+    capabilities: () => resolveCapabilities(configuredBackend, options.defaultModel, true),
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
@@ -79,17 +152,41 @@ export function createCliBridgeProvider(
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
+      const route = cliBridgeEnvironmentRoute(id);
       return createCliBridgeEnvironment({
         options,
         providerName: name,
-        environmentInput: { profile: { name: "reconnected" }, idempotencyKey: id },
+        environmentInput: {
+          profile: { name: "reconnected" },
+          ...(route.backend === undefined ? {} : { backend: route.backend }),
+          idempotencyKey: id,
+        },
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
-        capabilities: resolveCapabilities(),
+        capabilities: await resolveCapabilities(route.backend, route.model, true),
+        selectedBackend: route.backend,
+        selectedModel: route.model,
       });
     },
   };
+}
+
+function selectedBackendFromInput(
+  input: CreateAgentEnvironmentInput,
+  configuredBackend?: string,
+): string | undefined {
+  if (input.backend !== undefined) return input.backend;
+  if (typeof input.profile !== "string" && input.profile.harness !== undefined) {
+    return input.profile.harness;
+  }
+  return configuredBackend;
+}
+
+function selectedBackendFromRoute(route: string | undefined): HarnessType | undefined {
+  const candidate = route?.split("/", 1)[0];
+  const parsed = harnessTypeSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -130,6 +227,19 @@ export function defaultCliBridgeCapabilities(
       eventIdentity: true,
       cancellationIdempotency: true,
     },
+    ...(harness === "pi"
+      ? {
+          interactions: {
+            kinds: ["permission"],
+            answerFieldTypes: ["select"],
+            responseScopes: ["interaction"],
+            secretAnswers: false,
+            concurrentRequests: false,
+            replay: true,
+            responseIdempotency: true,
+          },
+        }
+      : {}),
     workspace: {
       read: false,
       write: false,

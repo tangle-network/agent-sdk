@@ -64,6 +64,42 @@ Replay and result reads fail loudly after cli-bridge's configured replay retenti
 Stopping a `session.events()` reader detaches only that replay observer.
 Stopping a direct `environment.stream()` reader or destroying the environment cancels its active bridge runs and waits for terminal confirmation.
 
+Pi retained sessions also expose typed permission interactions.
+The provider stores the selected harness, exact model route, and canonical create digest inside its opaque environment identifier.
+This identifier lets `provider.get()` reconstruct profile-selected routes after process death without a cache or repeated configuration.
+The create digest prevents an altered profile or workspace from reusing the previous retained identity.
+`provider.get()` accepts only identifiers created by this provider and rejects plain caller identifiers.
+The provider queries `/v1/capabilities` for the retained Pi route.
+The provider caches the valid response and enables native interactions only when the running Bridge proves the complete retained contract.
+Every native turn stays on the model route used for that discovery; another model requires another environment.
+An explicit capability document remains available for a caller that already performed the same discovery.
+That capability selects cli-bridge's native `/v1/sessions` and `/turns` transport; it never sends an interactive turn to `/v1/chat/completions`.
+The environment and session then expose `respondToInteraction()` for exact response commands.
+Each command carries its run, session, execution, request digest, and stable operation identifier.
+Native turns require caller-stable `turnId` and `executionId` values so an ambiguous admission cannot create another run.
+The bridge records repeated operations and rejects a different answer for an existing operation.
+The provider reports an unconfirmed network result as retryable and never reports it as accepted.
+Native replay reads `/v1/runs/:runId/events` and validates each canonical envelope through Agent Interface before exposing it.
+When a turn supplies `interactions`, the provider carries its exact map, including an explicit `{}`; an omitted map remains omitted.
+Every requested key must be advertised by the selected environment, including keys set to `false`; an unsupported key fails before transport use.
+One-shot requests keep this posture as a top-level `interactions` field rather than moving it into `metadata`.
+The cli-bridge turn schema must accept that top-level field and include it in its request digest.
+Other runners stay disabled until cli-bridge proves the same replay and response behavior for them.
+
+To run the real cross-repository contract, point the test at an installed cli-bridge source checkout:
+
+```sh
+CLI_BRIDGE_INTEGRATION_ROOT=/path/to/cli-bridge pnpm test -- tests/cli-bridge.integration.test.ts
+```
+
+Use `pnpm test:integration` for the fail-closed form of this command.
+It exits before Vitest when `CLI_BRIDGE_INTEGRATION_ROOT` is missing.
+The regular `pnpm test` command remains portable and skips this cross-repository test when no checkout is configured.
+
+The test launches the actual Bridge server and a jailed Pi RPC process.
+It proves dispatch, permission response, completion, reconnect, replay, and idempotent response retry.
+CI runs this test in a separate job against a pinned Bridge checkout, rebuilds its native SQLite binding, and fails if the checkout cannot build or the integration test is skipped.
+
 Response headers and streamed bodies have no transport timeout by default.
 For unattended runs, set `headersTimeoutMs`, `bodyTimeoutMs`, or an `AbortSignal` so an unresponsive bridge cannot wait forever.
 

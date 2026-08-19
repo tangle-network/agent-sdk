@@ -104,7 +104,7 @@ async function performCliBridgeCancellation(
     throw new Error(`cli-bridge cancel ${response.status}: ${await response.text()}`);
   }
   let snapshot: CliBridgeRunSnapshot | null = cancelSnapshot(await response.text());
-  assertCliBridgeRunSnapshotIdentity(snapshot, run.id);
+  assertCliBridgeRunSnapshotIdentity(snapshot, run.id, run.requestDigest);
   const waitBudgetMs = options.cancelWaitMs ?? 30_000;
   const deadline = Date.now() + waitBudgetMs;
   while (!snapshot.terminal) {
@@ -260,5 +260,6 @@ export function agentSessionStatusFromRun(
   if (snapshot.status === "done") return "completed";
   if (snapshot.status === "error") return "failed";
   if (snapshot.status === "cancelled") return "cancelled";
+  if (snapshot.status === "unknown") return "unknown";
   return "running";
 }

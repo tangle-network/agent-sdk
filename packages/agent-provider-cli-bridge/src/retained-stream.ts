@@ -54,6 +54,7 @@ export async function* streamCliBridgeTurn(
   signal?: AbortSignal,
   onResponse?: (response: CliBridgeResponse) => void,
   readAuthoritativeRun?: () => Promise<CliBridgeRunSnapshot | null>,
+  validateCanonicalEvent?: (event: AgentEnvironmentEvent) => void,
 ): AsyncIterable<AgentEnvironmentEvent> {
   const reconnect = requestBody === undefined;
   const replay = retainedReplayRequest(lastEventId);
@@ -112,7 +113,8 @@ export async function* streamCliBridgeTurn(
   let textBoundaryPending = false;
   let sawProtocolEnd = false;
   let protocol: "unknown" | "openai" | "canonical" = "unknown";
-  let canonicalTerminalSeen = false;
+  let canonicalTerminalStatus: "completed" | "failed" | "cancelled" | undefined;
+  let canonicalTerminalEvent: AgentEnvironmentEvent | undefined;
   let terminalFrameSeen = false;
   let cancelledTerminalSeen = false;
   let terminalFrame:
@@ -136,7 +138,7 @@ export async function* streamCliBridgeTurn(
         throw new Error("cli-bridge mixed canonical and OpenAI stream formats");
       }
       protocol = "canonical";
-      if (canonicalTerminalSeen) {
+      if (canonicalTerminalStatus !== undefined) {
         throw new Error("cli-bridge emitted an event after canonical terminal status");
       }
       const event = retainedCanonicalEvent(frame, {
@@ -149,8 +151,13 @@ export async function* streamCliBridgeTurn(
       if (!event) {
         throw new Error("cli-bridge emitted an empty canonical event");
       }
-      canonicalTerminalSeen = isTerminalCanonicalEvent(event);
-      yield event;
+      validateCanonicalEvent?.(event);
+      if (isTerminalCanonicalEvent(event)) {
+        canonicalTerminalStatus = event.normalized.status;
+        canonicalTerminalEvent = event;
+      } else {
+        yield event;
+      }
       continue;
     }
     if (protocol === "canonical") {
@@ -304,9 +311,33 @@ export async function* streamCliBridgeTurn(
     );
   }
   if (protocol === "canonical") {
-    if (!canonicalTerminalSeen) {
+    if (canonicalTerminalStatus === undefined) {
       throw new Error("cli-bridge canonical stream ended without terminal status");
     }
+    const snapshot = await terminalRunSnapshot(runId, readAuthoritativeRun);
+    const expectedStatus = canonicalTerminalStatus === "completed"
+      ? "done"
+      : canonicalTerminalStatus === "failed"
+        ? "error"
+        : "cancelled";
+    if (snapshot.status !== expectedStatus) {
+      throw new Error(
+        `cli-bridge canonical terminal status ${JSON.stringify(canonicalTerminalStatus)} contradicts retained run status ${JSON.stringify(snapshot.status)}`,
+      );
+    }
+    if (!canonicalTerminalEvent) {
+      throw new Error("cli-bridge canonical terminal event was not retained");
+    }
+    yield canonicalTerminalEvent;
+    return;
+  }
+  if (
+    !sawProtocolEnd &&
+    reconnect &&
+    lastEventId !== undefined &&
+    protocol === "unknown"
+  ) {
+    await terminalRunSnapshot(runId, readAuthoritativeRun);
     return;
   }
   if (!sawProtocolEnd) {

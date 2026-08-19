@@ -3,12 +3,18 @@ import { createHash } from "node:crypto";
 import {
   CanonicalStreamEventSchema,
   agentRunCancellationRequestDigest,
+  canonicalCandidateDigest,
+  interactionRequestDigest,
+  permissionAnswerSpec,
+  RuntimeEventEnvelopeSchema,
   type AgentExactRunControlRef,
   type AgentProfile,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
+import { cliBridgeEnvironmentId } from "./environment-identity.js";
+import { toChatCompletionsBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
   it("rejects a named profile before network use", async () => {
@@ -30,6 +36,7 @@ describe("createCliBridgeProvider", () => {
   it("reuses a keyed generic create and rejects changed input", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
+      capabilities: defaultCliBridgeCapabilities("pi"),
       fetch: async () => new Response(),
     });
     const input = {
@@ -54,8 +61,29 @@ describe("createCliBridgeProvider", () => {
     ).rejects.toThrow(/conflicts with a different create input/);
   });
 
-  it("keeps profile authority separate from the task and forwards it unchanged", async () => {
-    let body: Record<string, unknown> | undefined;
+  it("binds a configured non-Pi model into durable environment identity", async () => {
+    const firstProvider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex/first-model",
+      fetch: async () => new Response(),
+    });
+    const secondProvider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex/second-model",
+      fetch: async () => new Response(),
+    });
+    const input = {
+      profile: { name: "worker", harness: "codex" as const },
+      idempotencyKey: "shared-model-key",
+    };
+
+    const first = await firstProvider.create(input);
+    const second = await secondProvider.create(input);
+
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("keeps profile authority separate from the task and forwards it unchanged through retained Pi", async () => {
     const profile: AgentProfile = {
       name: "scientist",
       harness: "pi",
@@ -73,15 +101,11 @@ describe("createCliBridgeProvider", () => {
       },
     };
     const expectedProfile = structuredClone(profile);
+    const fixture = createNativePiFixture();
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      fetch: async (_url, init) => {
-        body = JSON.parse(String(init?.body));
-        return exactCompletionResponse(
-          init,
-          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-        );
-      },
+      defaultModel: "pi/tangle-router/glm-5.2",
+      fetch: fixture.fetch,
     });
     const environment = await provider.create({ profile });
     await expect(environment.session?.("missing").status()).resolves.toBeNull();
@@ -95,15 +119,81 @@ describe("createCliBridgeProvider", () => {
       executionId: "profile-run",
     });
 
-    expect(body).toMatchObject({
-      model: "pi/tangle-router/glm-5.2",
-      effort: "xhigh",
-      messages: [{ role: "user", content: "run the task" }],
+    expect(fixture.sessionBodies).toEqual([
+      expect.objectContaining({
+        id: "profile-session",
+        model: "pi/tangle-router/glm-5.2",
+        interaction_policy: "interactive",
+        agent_profile: expectedProfile,
+      }),
+    ]);
+    expect(fixture.turnBodies).toEqual([
+      expect.objectContaining({
+        message: "run the task",
+        turn_id: "profile-turn",
+        execution_id: "profile-run",
+        run_id: "profile-run",
+        provider: "cli-bridge",
+        environment_id: expect.any(String),
+      }),
+    ]);
+    expect(fixture.requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "GET /v1/capabilities",
+      "POST /v1/sessions",
+      "POST /v1/sessions/profile-session/turns",
+      "GET /v1/runs/profile-run/events",
+      "GET /v1/runs/profile-run",
+    ]);
+    expect(fixture.requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
+    expect(fixture.sessionBodies[0]?.agent_profile).toEqual(expectedProfile);
+    expect(fixture.turnBodies[0]).not.toHaveProperty("agent_profile");
+    expect(fixture.turnBodies[0]).toMatchObject({
+      provider: "cli-bridge",
+      environment_id: expect.any(String),
     });
-    expect(body?.agent_profile).toEqual(expectedProfile);
   });
 
-  it("maps durable dispatch, replay, result, and continuation into one exact session", async () => {
+  it("uses a pi default model when create input omits backend and profile harness", async () => {
+    const fixture = createNativePiFixture();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi/tangle-router/glm-5.2",
+      fetch: fixture.fetch,
+    });
+
+    const environment = await provider.create({
+      idempotencyKey: "default-backend-environment",
+      profile: { name: "worker" },
+    });
+    expect(environment.capabilities?.interactions?.kinds).toEqual(["permission"]);
+
+    await consumeTurn(environment, {
+      prompt: "use the configured native backend",
+      sessionId: "default-backend-session",
+      turnId: "default-backend-turn",
+      executionId: "default-backend-run",
+    });
+
+    expect(fixture.sessionBodies[0]).toMatchObject({
+      id: "default-backend-session",
+      model: "pi/tangle-router/glm-5.2",
+    });
+    expect(fixture.requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
+  });
+
+  it("keeps interaction posture top-level if a one-shot body is constructed", () => {
+    const body = toChatCompletionsBody(
+      { baseUrl: "http://bridge.local", defaultModel: "opencode/model" },
+      { profile: { name: "worker" } },
+      { prompt: "preserve posture", interactions: { permission: true } },
+      "one-shot-run",
+    );
+
+    expect(body.interactions).toEqual({ permission: true });
+    expect(body.metadata).not.toHaveProperty("interactions");
+  });
+
+  it("maps durable dispatch, replay, result, and continuation into one exact retained Pi session", async () => {
     const profile: AgentProfile = {
       name: "research-leader",
       harness: "pi",
@@ -114,111 +204,17 @@ describe("createCliBridgeProvider", () => {
       },
       prompt: { systemPrompt: "Lead the research." },
     };
-    const requests: Array<{
-      body: Record<string, unknown>;
-      cursor: string | null;
-    }> = [];
-    const statuses = new Map<string, "running" | "done">();
-    let dispatchReaderDetached = false;
+    const fixture = createNativePiFixture({
+      includeInteractionForRun: (runId) => runId === "run-1",
+      textForRun: (runId) => runId === "run-2" ? "continued" : `complete-${runId}`,
+      usageForRun: (runId) => runId === "run-2"
+        ? { inputTokens: 5, outputTokens: 2, cost: 0.01 }
+        : { inputTokens: 11, outputTokens: 7, totalTokens: 18, reasoningTokens: 3, cost: 0.04 },
+    });
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      fetch: async (url, init) => {
-        const target = String(url);
-        if (init?.method === "GET") {
-          if (target.endsWith("/events")) {
-            const runId = decodeURIComponent(target.split("/").at(-2) ?? "");
-            statuses.set(runId, "done");
-            const headers = {
-              "content-type": "text/event-stream",
-              "x-run-id": runId,
-              "x-run-request-digest": testDigest(runId),
-            };
-            return new Response(
-              [
-                `id: 2\ndata: {"choices":[{"delta":{"content":"complete-${runId}"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
-                "data: [DONE]\n\n",
-              ].join(""),
-              { status: 200, headers },
-            );
-          }
-          const runId = decodeURIComponent(target.split("/").at(-1)?.split("?")[0] ?? "");
-          const status = statuses.get(runId) ?? "running";
-          return runResponse(runId, status, status === "done");
-        }
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        const runId = String(body.run_id);
-        const cursor = new Headers(init?.headers).get("last-event-id");
-        requests.push({ body, cursor });
-        const headers = {
-          "content-type": "text/event-stream",
-          "x-run-id": runId,
-          "x-run-request-digest": testDigest(runId),
-        };
-        if (body.stream === false) {
-          const continued = runId === "run-2";
-          return Response.json(
-            {
-              choices: [{
-                message: {
-                  role: "assistant",
-                  content: continued ? "continued" : `complete-${runId}`,
-                },
-                finish_reason: "stop",
-              }],
-              usage: continued
-                ? {
-                  model_requests: 1,
-                  prompt_tokens: 5,
-                  completion_tokens: 2,
-                  cost: 0.01,
-                }
-                : {
-                  model_requests: 2,
-                  prompt_tokens: 11,
-                  completion_tokens: 7,
-                  total_tokens: 18,
-                  reasoning_tokens: 3,
-                  cost: 0.04,
-                },
-            },
-            {
-              headers: {
-                "x-run-id": runId,
-                "x-run-request-digest": testDigest(runId),
-              },
-            },
-          );
-        }
-        if (cursor !== null) {
-          statuses.set(runId, "done");
-          return new Response(
-            [
-              `id: 2\ndata: {"choices":[{"delta":{"content":"replayed-${runId}"},"finish_reason":"stop"}],"usage":{"model_requests":2,"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
-              "data: [DONE]\n\n",
-            ].join(""),
-            { status: 200, headers },
-          );
-        }
-        if (runId === "run-2") {
-          statuses.set(runId, "done");
-          return new Response(
-            `id: 1\ndata: {"choices":[{"delta":{"content":"continued"},"finish_reason":"stop"}],"usage":{"model_requests":1,"prompt_tokens":5,"completion_tokens":2,"cost":0.01}}\n\ndata: [DONE]\n\n`,
-            { status: 200, headers },
-          );
-        }
-        statuses.set(runId, "running");
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(": connected\n\n"));
-            },
-            cancel() {
-              dispatchReaderDetached = true;
-            },
-          }),
-          { status: 200, headers },
-        );
-      },
+      defaultModel: "pi/tangle-router/glm-5.2",
+      fetch: fixture.fetch,
     });
     const environment = await provider.create({ profile });
 
@@ -245,15 +241,21 @@ describe("createCliBridgeProvider", () => {
         requestDigest: testDigest("run-1"),
       },
     });
-    expect(dispatchReaderDetached).toBe(true);
+    expect(fixture.requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
+    expect(fixture.turnBodies[0]).toMatchObject({
+      run_id: reference!.controlRef!.runId,
+      provider: reference!.controlRef!.provider,
+      environment_id: reference!.controlRef!.environmentId,
+    });
     const session = environment.session?.(reference!.id);
     await expect(session?.status()).resolves.toBe("running");
     const replayed = [];
     for await (const event of session!.events({ since: "1" })) replayed.push(event);
     expect(replayed.map((event) => event.type)).toEqual([
-      "usage",
+      "raw",
+      "interaction",
       "message.part.updated",
-      "result",
+      "status",
     ]);
     expect(replayed[0]?.usage).toEqual({
       inputTokens: 11,
@@ -262,14 +264,22 @@ describe("createCliBridgeProvider", () => {
       reasoningTokens: 3,
       cost: 0.04,
     });
-    expect(replayed[0]?.data).toMatchObject({ modelRequests: 2 });
-    expect(replayed.at(-1)).toMatchObject({
-      id: "2:2",
-      data: {
-        finalText: "complete-run-1",
-        modelRequests: 2,
-        status: "completed",
+    expect(replayed[0]?.data).toMatchObject({ backend: "pi" });
+    expect(replayed[1]?.normalized).toMatchObject({
+      type: "interaction",
+      request: {
+        binding: {
+          runId: reference!.controlRef!.runId,
+          provider: reference!.controlRef!.provider,
+          environmentId: reference!.controlRef!.environmentId,
+          sessionId: reference!.controlRef!.sessionId,
+          executionId: reference!.controlRef!.executionId,
+        },
       },
+    });
+    expect(replayed.at(-1)).toMatchObject({
+      id: "5",
+      data: { status: "completed" },
     });
     await expect(session?.result()).resolves.toMatchObject({
       text: "complete-run-1",
@@ -287,7 +297,6 @@ describe("createCliBridgeProvider", () => {
         executionId: "run-1",
         status: "done",
         requestDigest: testDigest("run-1"),
-        modelRequests: 2,
       },
     });
     await expect(session?.prompt({
@@ -307,7 +316,6 @@ describe("createCliBridgeProvider", () => {
         runId: "run-2",
         executionId: "run-2",
         status: "done",
-        modelRequests: 1,
       },
     });
     await expect(session?.prompt({
@@ -315,37 +323,37 @@ describe("createCliBridgeProvider", () => {
       sessionId: "other-session",
     })).rejects.toThrow(/cannot prompt session/);
 
-    const wireBodies = requests
-      .filter(({ body }) => body.stream !== false)
-      .map(({ body }) => body);
-    expect(wireBodies).toEqual([
+    expect(fixture.turnBodies).toEqual([
       expect.objectContaining({
         run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
+        message: "initial task",
+        turn_id: "turn-1",
+        execution_id: "run-1",
+        provider: "cli-bridge",
+        environment_id: reference!.controlRef!.environmentId,
       }),
       expect.objectContaining({
         run_id: "run-2",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "new direction" }],
+        message: "new direction",
+        turn_id: "turn-2",
+        execution_id: "run-2",
+        provider: "cli-bridge",
+        environment_id: reference!.controlRef!.environmentId,
       }),
     ]);
-    expect(requests.filter(({ body }) => body.stream !== false).map(({ cursor }) => cursor))
-      .toEqual([null, null]);
-    for (const { body } of requests) {
-      expect(body.messages).not.toEqual(
-        expect.arrayContaining([{ role: "system", content: "Lead the research." }]),
-      );
-    }
-    expect(provider.capabilities()).toMatchObject({
+    expect(fixture.sessionBodies[0]).toMatchObject({
+      id: "research-session",
+      model: "pi/tangle-router/glm-5.2",
+      agent_profile: profile,
+    });
+    expect(fixture.turnBodies.every((body) => !Object.hasOwn(body, "agent_profile"))).toBe(true);
+    expect(await provider.capabilities()).toMatchObject({
       streaming: { detach: true, replay: true },
       sessions: { continue: true },
     });
   });
 
-  it("reconstructs one retained run from exact coordinates in a new provider", async () => {
+  it("reconstructs the created backend instead of the provider default", async () => {
     const runId = "restart-run";
     const sessionId = "restart-session";
     const environmentId = "restart-environment";
@@ -355,6 +363,9 @@ describe("createCliBridgeProvider", () => {
     let cancellations = 0;
     const bridgeFetch: typeof fetch = async (url, init) => {
       const target = String(url);
+      if (new URL(target).pathname === "/v1/capabilities") {
+        return Response.json(defaultCliBridgeCapabilities("pi"));
+      }
       if (target.endsWith("/events")) {
         status = "done";
         return new Response(
@@ -410,11 +421,11 @@ describe("createCliBridgeProvider", () => {
     };
     const starter = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/model",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: bridgeFetch,
     });
     const startedEnvironment = await starter.create({
-      profile: { name: "worker" },
+      profile: { name: "worker", harness: "codex" },
       idempotencyKey: environmentId,
     });
     const reference = await startedEnvironment.dispatch?.({
@@ -428,10 +439,12 @@ describe("createCliBridgeProvider", () => {
 
     const restarted = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/model",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: bridgeFetch,
     });
-    const recoveredEnvironment = await restarted.get?.(environmentId);
+    const recoveredEnvironment = await restarted.get?.(startedEnvironment.id);
+    expect(recoveredEnvironment?.capabilities?.interactions).toBeUndefined();
+    expect(recoveredEnvironment?.respondToInteraction).toBeUndefined();
     const recovered = recoveredEnvironment?.session?.(sessionId, { controlRef });
     await expect(recovered?.status()).resolves.toBe("running");
     const events = [];
@@ -459,7 +472,7 @@ describe("createCliBridgeProvider", () => {
       ...cancellationMaterial,
       requestDigest: agentRunCancellationRequestDigest(cancellationMaterial),
     };
-    const controlEnvironment = await restarted.get?.(environmentId);
+    const controlEnvironment = await restarted.get?.(startedEnvironment.id);
     const controlSession = controlEnvironment?.session?.(sessionId, { controlRef });
     await expect(controlSession?.cancelRun?.(cancellationRequest)).resolves.toMatchObject({
       operationId: "restart-cancel",
@@ -511,6 +524,7 @@ describe("createCliBridgeProvider", () => {
     const reference = await environment.dispatch?.({
       prompt: "long task",
       sessionId: "cancel-session",
+      turnId: "cancel-turn",
       executionId: "cancel-run",
     });
 
@@ -567,6 +581,7 @@ describe("createCliBridgeProvider", () => {
     const reference = await environment.dispatch?.({
       prompt: "task",
       sessionId: "digest-session",
+      turnId: "digest-turn",
       executionId: "digest-run",
     });
 
@@ -745,7 +760,7 @@ describe("createCliBridgeProvider", () => {
   it("keeps text after tool activity as a separate transcript paragraph", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) =>
         exactCompletionResponse(
           init,
@@ -1317,6 +1332,7 @@ describe("createCliBridgeProvider", () => {
       const reference = await environment.dispatch?.({
         prompt: "work",
         sessionId: "retained-cancel",
+        turnId: "retained-cancel-turn",
         executionId: "retained-cancel",
       });
       const session = environment.session?.(reference!.id, {
@@ -1376,7 +1392,11 @@ describe("createCliBridgeProvider", () => {
     const controlRef: AgentExactRunControlRef = {
       runId: "reconnect-cancel",
       provider: "cli-bridge",
-      environmentId: "reconnect-environment",
+      environmentId: cliBridgeEnvironmentId(
+        { backend: "opencode", model: "opencode" },
+        testDigest("reconnect-environment-create"),
+        "reconnect-environment",
+      ),
       sessionId: "reconnect-session",
       executionId: "reconnect-cancel",
       requestDigest: testDigest("reconnect-cancel"),
@@ -1441,6 +1461,7 @@ describe("createCliBridgeProvider", () => {
       const reference = await environment.dispatch?.({
         prompt: "work",
         sessionId: "exact-cancel",
+        turnId: "exact-cancel-turn",
         executionId: "exact-cancel",
       });
       const session = environment.session?.(reference!.id);
@@ -1590,7 +1611,12 @@ describe("createCliBridgeProvider", () => {
             cancelled: true,
             cancel_requested: true,
             terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
+            run: {
+              id: runId,
+              requestDigest: testDigest(runId),
+              status: "cancelled",
+              terminal: true,
+            },
           }),
         );
         return;
@@ -1599,6 +1625,7 @@ describe("createCliBridgeProvider", () => {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
           id: runId,
+          requestDigest: testDigest(runId),
           status: "running",
           terminal: false,
         }));
@@ -1647,7 +1674,12 @@ describe("createCliBridgeProvider", () => {
             cancelled: true,
             cancel_requested: true,
             terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
+            run: {
+              id: runId,
+              requestDigest: testDigest(runId),
+              status: "cancelled",
+              terminal: true,
+            },
           }),
         );
         return;
@@ -1656,6 +1688,7 @@ describe("createCliBridgeProvider", () => {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
           id: runId,
+          requestDigest: testDigest(runId),
           status: "running",
           terminal: false,
         }));
@@ -1716,32 +1749,17 @@ describe("createCliBridgeProvider", () => {
     ).toThrow(`${name} must be a non-negative integer`);
   });
 
-  it("continues one bridge-owned session with profile-selected harness, provider, and model", async () => {
-    const bodies: Array<Record<string, unknown>> = [];
-    const answers = new Map<string, string>();
-    let lastRunId = "";
+  it("continues one bridge-owned retained Pi session with profile-selected harness, provider, and model", async () => {
+    const fixture = createNativePiFixture({
+      textForRun: (runId) => runId === "run-1" ? "answer-1" : "answer-2",
+    });
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      fetch: async (url, init) => {
-        if (init?.method === "GET") {
-          return runResponse(lastRunId, "done", true);
-        }
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        const runId = String(body.run_id);
-        lastRunId = runId;
-        let answer = answers.get(runId);
-        if (!answer) {
-          bodies.push(body);
-          answer = `answer-${bodies.length}`;
-          answers.set(runId, answer);
-        }
-        return terminalResponse(
-          init,
-          answer,
-        );
-      },
+      defaultModel: "pi/tangle-router/glm-5.2",
+      fetch: fixture.fetch,
     });
     const environment = await provider.create({
+      idempotencyKey: "profile-selected-environment",
       profile: {
         name: "scientist",
         harness: "pi",
@@ -1763,20 +1781,39 @@ describe("createCliBridgeProvider", () => {
       turnId: "turn-2",
       executionId: "run-2",
     });
-    expect(bodies).toHaveLength(2);
-    expect(bodies).toEqual([
+    expect(fixture.sessionBodies).toHaveLength(1);
+    expect(fixture.turnBodies).toHaveLength(2);
+    expect(fixture.sessionBodies).toEqual([
       expect.objectContaining({
+        id: "session-1",
         model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-1",
-      }),
-      expect.objectContaining({
-        model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-2",
+        agent_profile: {
+          name: "scientist",
+          harness: "pi",
+          model: { provider: "tangle-router", default: "glm-5.2" },
+        },
       }),
     ]);
-    expect(provider.capabilities()).toMatchObject({ streaming: { replay: true } });
+    expect(fixture.turnBodies).toEqual([
+      expect.objectContaining({
+        message: "first",
+        turn_id: "turn-1",
+        execution_id: "run-1",
+        run_id: "run-1",
+        provider: "cli-bridge",
+        environment_id: environment.id,
+      }),
+      expect.objectContaining({
+        message: "second",
+        turn_id: "turn-2",
+        execution_id: "run-2",
+        run_id: "run-2",
+        provider: "cli-bridge",
+        environment_id: environment.id,
+      }),
+    ]);
+    expect(fixture.requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
+    expect(await provider.capabilities()).toMatchObject({ streaming: { replay: true } });
   });
 
   it("waits through a 202 cancellation when a caller stops reading", async () => {
@@ -1785,7 +1822,7 @@ describe("createCliBridgeProvider", () => {
     const requested: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (url, init) => {
         requested.push(String(url));
         if (init?.method === "GET") {
@@ -1886,7 +1923,7 @@ describe("createCliBridgeProvider", () => {
     const requested: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (url, init) => {
         requested.push(String(url));
         if (String(url).endsWith("/cancel")) {
@@ -1919,7 +1956,7 @@ describe("createCliBridgeProvider", () => {
     const runIds: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         if (body.stream !== false) runIds.push(String(body.run_id));
@@ -1944,7 +1981,7 @@ describe("createCliBridgeProvider", () => {
     const runIds: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         if (body.stream !== false) runIds.push(String(body.run_id));
@@ -1972,7 +2009,7 @@ describe("createCliBridgeProvider", () => {
     const encoder = new TextEncoder();
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "pi/tangle-router/glm-5.2",
+      defaultModel: "opencode/model",
       fetch: async (_url, init) => {
         if (init?.method === "GET") return runResponse("run-replay", status, status === "done");
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -2248,6 +2285,269 @@ async function consumeEvents(
   for await (const _event of events) {
     // Drain the stream to its terminal condition.
   }
+}
+
+interface NativePiFixtureRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly body?: Record<string, unknown>;
+  readonly since?: string;
+}
+
+interface NativePiFixtureOptions {
+  readonly includeInteractionForRun?: (runId: string) => boolean;
+  readonly textForRun?: (runId: string) => string;
+  readonly usageForRun?: (runId: string) => Record<string, unknown>;
+}
+
+interface NativePiFixture {
+  readonly requests: NativePiFixtureRequest[];
+  readonly sessionBodies: Record<string, unknown>[];
+  readonly turnBodies: Record<string, unknown>[];
+  readonly fetch: typeof fetch;
+}
+
+interface NativePiSession {
+  readonly model: string;
+  readonly createRequestDigest: string;
+}
+
+interface NativePiRun {
+  readonly sessionId: string;
+  readonly executionId: string;
+  readonly requestDigest: string;
+  readonly events: readonly Record<string, unknown>[];
+  status: "running" | "done";
+}
+
+function createNativePiFixture(options: NativePiFixtureOptions = {}): NativePiFixture {
+  const requests: NativePiFixtureRequest[] = [];
+  const sessionBodies: Record<string, unknown>[] = [];
+  const turnBodies: Record<string, unknown>[] = [];
+  const sessions = new Map<string, NativePiSession>();
+  const runs = new Map<string, NativePiRun>();
+  const textForRun = options.textForRun ?? ((runId) => `complete-${runId}`);
+  const usageForRun = options.usageForRun ?? (() => ({
+    inputTokens: 1,
+    outputTokens: 1,
+    totalTokens: 2,
+    cost: 0.01,
+  }));
+  const fetcher: typeof fetch = async (url, init) => {
+    const target = String(url);
+    const parsedUrl = new URL(target);
+    const pathname = parsedUrl.pathname;
+    const method = init?.method ?? "GET";
+    const body = init?.body === undefined
+      ? undefined
+      : JSON.parse(String(init.body)) as Record<string, unknown>;
+    const since = new Headers(init?.headers).get("last-event-id");
+    requests.push({
+      url: target,
+      method,
+      ...(body ? { body } : {}),
+      ...(since === null ? {} : { since }),
+    });
+
+    if (method === "GET" && pathname === "/v1/capabilities") {
+      return Response.json(defaultCliBridgeCapabilities("pi"));
+    }
+
+    if (method === "POST" && pathname === "/v1/sessions") {
+      if (!body) throw new Error("native Pi session request body is missing");
+      const sessionId = String(body.id);
+      const model = String(body.model);
+      const session = {
+        model,
+        createRequestDigest: canonicalCandidateDigest(body),
+      };
+      sessions.set(sessionId, session);
+      sessionBodies.push(body);
+      return Response.json({
+        id: sessionId,
+        model,
+        create_request_digest: session.createRequestDigest,
+      }, { status: 201 });
+    }
+
+    const segments = pathname.split("/").filter((segment) => segment.length > 0);
+    if (
+      method === "POST" &&
+      segments[0] === "v1" &&
+      segments[1] === "sessions" &&
+      segments[3] === "turns"
+    ) {
+      if (!body) throw new Error("native Pi turn request body is missing");
+      const sessionId = decodeURIComponent(segments[2] ?? "");
+      const session = sessions.get(sessionId);
+      if (!session) throw new Error(`native Pi session ${sessionId} was not created`);
+      const runId = String(body.run_id);
+      const executionId = String(body.execution_id);
+      const requestDigest = testDigest(runId);
+      turnBodies.push(body);
+      runs.set(runId, {
+        sessionId,
+        executionId,
+        requestDigest,
+        status: "running",
+        events: nativePiEvents({
+          runId,
+          sessionId,
+          executionId,
+          provider: String(body.provider),
+          environmentId: String(body.environment_id),
+          text: textForRun(runId),
+          usage: usageForRun(runId),
+          includeInteraction: options.includeInteractionForRun?.(runId) ?? false,
+        }),
+      });
+      return Response.json({
+        session: {
+          id: sessionId,
+          model: session.model,
+          create_request_digest: session.createRequestDigest,
+        },
+        run: {
+          id: runId,
+          executionId,
+          sessionId,
+          requestDigest,
+          status: "running",
+          terminal: false,
+        },
+        context_boundary: null,
+      }, { status: 202 });
+    }
+
+    if (
+      method === "GET" &&
+      segments[0] === "v1" &&
+      segments[1] === "runs" &&
+      segments[3] === "events"
+    ) {
+      const runId = decodeURIComponent(segments[2] ?? "");
+      const run = runs.get(runId);
+      if (!run) throw new Error(`native Pi run ${runId} was not admitted`);
+      run.status = "done";
+      const cursor = Number(since ?? "0");
+      const replay = run.events.filter((event) => Number(event.sequence) > cursor);
+      return new Response(nativePiSse(replay), {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-run-id": runId,
+          "x-run-request-digest": run.requestDigest,
+        },
+      });
+    }
+
+    if (
+      method === "GET" &&
+      segments[0] === "v1" &&
+      segments[1] === "runs" &&
+      segments.length === 3
+    ) {
+      const runId = decodeURIComponent(segments[2] ?? "");
+      const run = runs.get(runId);
+      if (!run) throw new Error(`native Pi run ${runId} was not admitted`);
+      return Response.json({
+        id: runId,
+        executionId: run.executionId,
+        sessionId: run.sessionId,
+        requestDigest: run.requestDigest,
+        status: run.status,
+        terminal: run.status === "done",
+      });
+    }
+
+    throw new Error(`unexpected native Pi fixture route: ${target}`);
+  };
+  return { requests, sessionBodies, turnBodies, fetch: fetcher };
+}
+
+function nativePiEvents(args: {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly executionId: string;
+  readonly provider: string;
+  readonly environmentId: string;
+  readonly text: string;
+  readonly usage: Record<string, unknown>;
+  readonly includeInteraction: boolean;
+}): readonly Record<string, unknown>[] {
+  let sequence = 1;
+  const events = [
+    nativePiEnvelope(args.runId, sequence++, { type: "status", status: "started" }),
+    nativePiEnvelope(args.runId, sequence++, {
+      type: "raw",
+      backend: "pi",
+      event: { type: "usage", usage: args.usage },
+    }),
+  ];
+  if (args.includeInteraction) {
+    const material = {
+      id: `${args.runId}-interaction`,
+      kind: "permission",
+      title: "Allow the command?",
+      answerSpec: permissionAnswerSpec({ allowFeedback: false }),
+      responseScopes: ["interaction" as const],
+      binding: {
+        runId: args.runId,
+        provider: args.provider,
+        environmentId: args.environmentId,
+        sessionId: args.sessionId,
+        executionId: args.executionId,
+        interactionId: `${args.runId}-interaction`,
+      },
+    };
+    events.push(nativePiEnvelope(args.runId, sequence++, {
+      type: "interaction",
+      request: {
+        ...material,
+        requestDigest: interactionRequestDigest(material),
+      },
+    }));
+  }
+  events.push(
+    nativePiEnvelope(args.runId, sequence++, {
+      type: "message.part.updated",
+      part: {
+        id: `${args.runId}-part`,
+        sessionID: args.sessionId,
+        messageID: `${args.runId}-message`,
+        type: "text",
+        text: args.text,
+      },
+      delta: args.text,
+    }),
+    nativePiEnvelope(args.runId, sequence, { type: "status", status: "completed" }),
+  );
+  return events;
+}
+
+function nativePiEnvelope(
+  runId: string,
+  sequence: number,
+  event: Record<string, unknown>,
+): Record<string, unknown> {
+  return RuntimeEventEnvelopeSchema.parse({
+    runId,
+    eventId: `${runId}-event-${sequence}`,
+    sequence,
+    cursor: String(sequence),
+    occurredAt: "2026-08-15T16:00:00.000Z",
+    receivedAt: "2026-08-15T16:00:00.010Z",
+    event,
+  }) as Record<string, unknown>;
+}
+
+function nativePiSse(events: readonly Record<string, unknown>[]): string {
+  return events
+    .map((event) => {
+      const type = String((event.event as Record<string, unknown>).type);
+      return `id: ${String(event.sequence)}\nevent: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
+    })
+    .join("");
 }
 
 function terminalResponse(init: RequestInit | undefined, text: string): Response {
