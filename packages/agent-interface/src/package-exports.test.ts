@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import * as harness from "./harness.js";
 import * as harnessCapabilities from "./harness-capabilities.js";
 import * as interaction from "./interaction.js";
+import * as interactive from "./environment-interactive.js";
+import * as interactiveControl from "./environment-interactive-control.js";
 import * as profile from "./agent-profile.js";
 import * as profileSchema from "./profile-schema.js";
 import * as profileSecurity from "./profile-security.js";
@@ -28,6 +30,8 @@ const manifest = JSON.parse(
 // scripts/check-package-artifacts.mjs, which imports every export specifier from
 // an installed tarball. This test pins the export map and the exported symbols.
 const subpathLeaves = [
+  { subpath: "./environment-interactive", file: "environment-interactive", module: interactive, symbols: ["AgentInteractiveSessionStartSchema", "AgentInteractiveSessionRefSchema"] },
+  { subpath: "./environment-interactive-control", file: "environment-interactive-control", module: interactiveControl, symbols: ["AgentInteractiveSessionRefSchema", "AgentInteractiveSessionControlClaimSchema"] },
   { subpath: "./profile", file: "agent-profile", module: profile, symbols: ["REASONING_EFFORTS"] },
   { subpath: "./profile-snapshot", file: "agent-profile-snapshot", module: profileSnapshot, symbols: ["snapshotAgentProfile"] },
   { subpath: "./profile-schema", file: "profile-schema", module: profileSchema, symbols: ["agentProfileSchema", "agentProfileModelHintsSchema", "isCredentialBearingProfileConfigName"] },

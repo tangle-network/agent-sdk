@@ -19,6 +19,10 @@
       "import": "./dist/environment-interactive.js",
       "types": "./src/environment-interactive.ts"
     },
+    "./environment-interactive-control": {
+      "import": "./dist/environment-interactive-control.js",
+      "types": "./src/environment-interactive-control.ts"
+    },
     "./profile": {
       "import": "./dist/agent-profile.js",
       "types": "./src/agent-profile.ts"
@@ -77,6 +81,11 @@
         "import": "./dist/environment-interactive.js",
         "types": "./dist/environment-interactive.d.ts",
         "default": "./dist/environment-interactive.js"
+      },
+      "./environment-interactive-control": {
+        "import": "./dist/environment-interactive-control.js",
+        "types": "./dist/environment-interactive-control.d.ts",
+        "default": "./dist/environment-interactive-control.js"
       },
       "./profile": {
         "import": "./dist/agent-profile.js",
