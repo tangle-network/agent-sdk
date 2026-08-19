@@ -36,6 +36,7 @@ import type { CliBridgeProviderOptions } from "./provider-options.js";
 import { cliBridgeInteractionResponder } from "./interaction-response.js";
 import {
   assertCliBridgeRequestedInteractions,
+  assertCliBridgeNativeTurnModel,
   supportsCliBridgeNativeInteractions,
   type CliBridgeNativeSessionCache,
 } from "./retained-native.js";
@@ -64,6 +65,7 @@ export interface CreateCliBridgeEnvironmentArgs {
    */
   readonly capabilities: AgentEnvironmentCapabilities;
   readonly selectedBackend?: string;
+  readonly selectedModel?: string;
 }
 
 export function createCliBridgeEnvironment(
@@ -96,6 +98,14 @@ export function createCliBridgeEnvironment(
     if (destroyed) throw new Error("cli-bridge environment is destroyed");
     if (!args.allowDispatch) {
       throw new Error("a reconstructed cli-bridge environment can only control an existing run");
+    }
+    if (useNativeInteractions) {
+      assertCliBridgeNativeTurnModel(
+        options,
+        environmentInput,
+        turn,
+        args.selectedModel,
+      );
     }
     assertCliBridgeRequestedInteractions(args.capabilities, turn.interactions);
     const prepared = prepareCliBridgeRun(
@@ -139,6 +149,14 @@ export function createCliBridgeEnvironment(
       if (destroyed) throw new Error("cli-bridge environment is destroyed");
       if (!args.allowDispatch) {
         throw new Error("a reconstructed cli-bridge environment cannot dispatch new work");
+      }
+      if (useNativeInteractions) {
+        assertCliBridgeNativeTurnModel(
+          options,
+          environmentInput,
+          turn,
+          args.selectedModel,
+        );
       }
       assertCliBridgeRequestedInteractions(args.capabilities, turn.interactions);
       const prepared = prepareCliBridgeRun(

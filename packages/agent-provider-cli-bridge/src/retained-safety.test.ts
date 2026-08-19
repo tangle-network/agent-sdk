@@ -7,6 +7,7 @@ import type {
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "./index.js";
+import { cliBridgeEnvironmentId } from "./environment-identity.js";
 
 describe("retained cli-bridge safety", () => {
   it("rejects a conflicting control reference before replacing the active session", async () => {
@@ -224,6 +225,56 @@ describe("retained cli-bridge safety", () => {
     });
   });
 
+  it("does not expose a canonical terminal event before matching retained status", async () => {
+    const controlRef = exactControlRef();
+    const observed: AgentEnvironmentEvent[] = [];
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => String(url).endsWith("/events")
+        ? canonicalEventsResponse(controlRef, canonicalEvents())
+        : retainedRunResponse(controlRef.runId, "error", true),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect((async () => {
+      for await (const event of session.events({ since: "0" })) observed.push(event);
+    })()).rejects.toThrow("contradicts retained run status");
+    expect(observed.map((event) => event.type)).toEqual([
+      "message.part.updated",
+      "raw",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "missing request digest",
+      snapshot: { id: "run-1", status: "cancelled", terminal: true },
+    },
+    {
+      name: "mismatched request digest",
+      snapshot: {
+        id: "run-1",
+        requestDigest: testDigest("another-run"),
+        status: "cancelled",
+        terminal: true,
+      },
+    },
+  ])("rejects a cancellation snapshot with $name", async ({ snapshot }) => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => {
+        expect(String(url)).toBe("http://bridge.local/v1/runs/run-1/cancel");
+        return Response.json({ run: snapshot });
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.cancel()).rejects.toThrow("request digest");
+  });
+
   it("resumes canonical events from a previously emitted event id", async () => {
     const controlRef = exactControlRef();
     const replayCursors: Array<string | null> = [];
@@ -259,6 +310,52 @@ describe("retained cli-bridge safety", () => {
     expect(resumed.map((event) => event.id)).toEqual(["2", "3"]);
     expect(resumed.map((event) => event.type)).toEqual(["raw", "status"]);
     expect(resumed[0]?.data.eventId).toBe("run-1:event:2");
+  });
+
+  it("accepts an empty latest-cursor replay after terminal status proof", async () => {
+    const controlRef = exactControlRef();
+    const requests: string[] = [];
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url, init) => {
+        const target = new URL(String(url));
+        requests.push(`${init?.method ?? "GET"} ${target.pathname}${target.search}`);
+        if (target.pathname.endsWith("/events")) {
+          return new Response("", {
+            status: 200,
+            headers: canonicalEventHeaders(controlRef),
+          });
+        }
+        return retainedRunResponse(controlRef.runId, "done", true);
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(consumeEvents(session.events({ since: "3" }))).resolves.toBeUndefined();
+    expect(requests).toEqual([
+      "GET /v1/runs/run-1/events",
+      "GET /v1/runs/run-1?wait_ms=30000",
+    ]);
+  });
+
+  it("rejects an empty latest-cursor replay while the retained run is active", async () => {
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (url) => new URL(String(url)).pathname.endsWith("/events")
+        ? new Response("", {
+            status: 200,
+            headers: canonicalEventHeaders(controlRef),
+          })
+        : retainedRunResponse(controlRef.runId, "running", false),
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(consumeEvents(session.events({ since: "3" }))).rejects.toThrow(
+      "remained active after its stream ended",
+    );
   });
 
   it("collects canonical text and usage from a retained result", async () => {
@@ -466,7 +563,11 @@ function exactControlRef(): AgentExactRunControlRef {
   return {
     runId: "run-1",
     provider: "cli-bridge",
-    environmentId: "environment-1",
+    environmentId: cliBridgeEnvironmentId(
+      { model: "opencode/model" },
+      testDigest("environment-create-1"),
+      "environment-1",
+    ),
     sessionId: "session-1",
     executionId: "run-1",
     requestDigest: testDigest("run-1"),

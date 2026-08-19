@@ -5,21 +5,31 @@ import {
   interactionRequestDigest,
   permissionAnswerSpec,
 } from "@tangle-network/agent-interface";
-import type {
-  AgentEnvironmentCapabilities,
-  AgentEnvironmentEvent,
-  CreateAgentEnvironmentInput,
+import {
+  agentEnvironmentCreateInputDigest,
+  type AgentEnvironmentCapabilities,
+  type AgentEnvironmentEvent,
+  type CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import {
   createCliBridgeProvider,
   defaultCliBridgeCapabilities,
 } from "./index.js";
+import { cliBridgeEnvironmentId } from "./environment-identity.js";
 
 const baseUrl = "http://bridge.local";
 const environmentId = "native-environment";
 const sessionId = "native-session";
 const model = "pi/model";
+const retainedEnvironmentId = cliBridgeEnvironmentId(
+  { backend: "pi", model },
+  agentEnvironmentCreateInputDigest({
+    idempotencyKey: environmentId,
+    profile: { name: "native-pi", harness: "pi" },
+  }),
+  environmentId,
+);
 const nativeRunId = "native-execution";
 const runDigest = canonicalCandidateDigest("native-turn");
 
@@ -77,7 +87,7 @@ function interactionRequest() {
     binding: {
       runId: nativeRunId,
       provider: "cli-bridge",
-      environmentId,
+      environmentId: retainedEnvironmentId,
       sessionId,
       executionId: nativeRunId,
       interactionId: "native-interaction",
@@ -211,13 +221,17 @@ describe("cli-bridge native retained sessions", () => {
     });
 
     expect((await provider.capabilities()).interactions?.responseIdempotency).toBe(true);
-    const environment = await provider.get!(environmentId);
+    const created = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+    const environment = await provider.get!(created.id);
     expect(environment?.capabilities?.interactions?.responseIdempotency).toBe(true);
     const session = environment!.session!(sessionId, {
       controlRef: {
         runId: nativeRunId,
         provider: "cli-bridge",
-        environmentId,
+        environmentId: created.id,
         sessionId,
         executionId: nativeRunId,
         requestDigest: runDigest,
@@ -263,6 +277,32 @@ describe("cli-bridge native retained sessions", () => {
       `${baseUrl}/v1/capabilities?model=${encodeURIComponent(exactModel)}`,
     ]);
     expect(new URL(requests[0]!).searchParams.get("model")).toBe(exactModel);
+  });
+
+  it("rejects a native turn model outside the environment route before network use", async () => {
+    let called = false;
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async () => {
+        called = true;
+        return new Response();
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: "model-bound-environment",
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "do not change routes",
+      model: "pi/another-model",
+      sessionId,
+      turnId: "model-bound-turn",
+      executionId: "model-bound-run",
+    })).rejects.toThrow("create another environment");
+    expect(called).toBe(false);
   });
 
   it("intersects Bridge truth with methods implemented by this provider", async () => {
@@ -406,7 +446,7 @@ describe("cli-bridge native retained sessions", () => {
     expect(calls).toBe(0);
   });
 
-  it("derives interaction capability from the selected backend instead of static options", async () => {
+  it("retains a profile-selected Pi route and rejects caller-owned ids", async () => {
     const provider = createCliBridgeProvider({
       baseUrl,
       defaultModel: "codex/model",
@@ -425,15 +465,14 @@ describe("cli-bridge native retained sessions", () => {
       idempotencyKey: "pi-environment",
       profile: { name: "pi", harness: "pi" },
     });
-    expect(pi.capabilities?.interactions).toEqual({
-      kinds: ["permission"],
-      answerFieldTypes: ["select"],
-      responseScopes: ["interaction"],
-      secretAnswers: false,
-      concurrentRequests: false,
-      replay: true,
-      responseIdempotency: true,
-    });
+    expect(pi.capabilities?.interactions?.responseIdempotency).toBe(true);
+    expect(pi.respondToInteraction).toBeTypeOf("function");
+    const reconnectedPi = await provider.get!(pi.id);
+    expect(reconnectedPi?.capabilities?.interactions?.responseIdempotency).toBe(true);
+    expect(reconnectedPi?.respondToInteraction).toBeTypeOf("function");
+    await expect(provider.get!("pi-environment")).rejects.toThrow(
+      "not a provider-owned retained identity",
+    );
     const codex = await provider.create({
       idempotencyKey: "codex-environment",
       profile: { name: "codex", harness: "codex" },
@@ -486,7 +525,7 @@ describe("cli-bridge native retained sessions", () => {
     expect(first.controlRef).toMatchObject({
       runId: nativeRunId,
       provider: "cli-bridge",
-      environmentId,
+      environmentId: retainedEnvironmentId,
       sessionId,
       executionId: nativeRunId,
       requestDigest: runDigest,
@@ -505,7 +544,7 @@ describe("cli-bridge native retained sessions", () => {
       execution_id: "native-execution",
       run_id: "native-execution",
       provider: "cli-bridge",
-      environment_id: environmentId,
+      environment_id: environment.id,
       interactions: { permission: true },
     });
     expect(requests[2]?.body).toMatchObject({
@@ -518,6 +557,84 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests[3]?.body).toMatchObject({ interactions: { permission: false } });
     expect(requests[4]?.body).not.toHaveProperty("interactions");
     expect(requests[1]?.body).not.toHaveProperty("metadata.interactions");
+  });
+
+  it("cancels a native turn after a 2xx admission response loses its coordinates", async () => {
+    const requests: string[] = [];
+    let createRequestDigest: string | undefined;
+    let statusReads = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async (url, init) => {
+        const target = new URL(String(url));
+        const method = init?.method ?? "GET";
+        requests.push(`${method} ${target.pathname}${target.search}`);
+        const body = init?.body === undefined
+          ? undefined
+          : JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (target.pathname === "/v1/sessions") {
+          createRequestDigest = canonicalCandidateDigest(body);
+          return Response.json(sessionView(createRequestDigest), { status: 201 });
+        }
+        if (target.pathname === `/v1/sessions/${sessionId}/turns`) {
+          return Response.json({
+            session: sessionView(createRequestDigest!),
+            run: {
+              id: "wrong-run-after-admission",
+              executionId: "wrong-execution",
+              sessionId,
+              requestDigest: runDigest,
+              status: "running",
+              terminal: false,
+            },
+          }, { status: 202 });
+        }
+        if (target.pathname === `/v1/runs/${nativeRunId}/cancel`) {
+          return Response.json({
+            run: {
+              id: nativeRunId,
+              requestDigest: runDigest,
+              status: "running",
+              terminal: false,
+            },
+          });
+        }
+        if (target.pathname === `/v1/runs/${nativeRunId}`) {
+          statusReads += 1;
+          return nativeRunResponse(statusReads === 1 ? "running" : "cancelled", statusReads > 1);
+        }
+        throw new Error(`unexpected cli-bridge route: ${target}`);
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId,
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    await expect(environment.dispatch!({
+      prompt: "continue even if the response is dropped",
+      sessionId,
+      turnId: "dropped-response-turn",
+      executionId: nativeRunId,
+    })).rejects.toThrow("mismatched run coordinates");
+
+    expect(requests).toEqual([
+      "POST /v1/sessions",
+      "POST /v1/sessions/native-session/turns",
+      "POST /v1/runs/native-execution/cancel",
+      expect.stringMatching(/^GET \/v1\/runs\/native-execution\?wait_ms=\d+$/),
+      expect.stringMatching(/^GET \/v1\/runs\/native-execution\?wait_ms=\d+$/),
+    ]);
+    for (const request of requests.slice(3)) {
+      const waitMs = Number(
+        new URL(request.slice(4), baseUrl).searchParams.get("wait_ms"),
+      );
+      expect(waitMs).toBeGreaterThan(0);
+      expect(waitMs).toBeLessThanOrEqual(30_000);
+    }
+    expect(statusReads).toBe(2);
   });
 
   it("forwards every retained Bridge control without collapsing it into metadata", async () => {
@@ -566,7 +683,7 @@ describe("cli-bridge native retained sessions", () => {
       execution_id: "wire-execution",
       run_id: "wire-execution",
       provider: "cli-bridge",
-      environment_id: environmentId,
+      environment_id: environment.id,
       interactions: { permission: true },
       context: {},
       provider_options: {},
@@ -612,7 +729,7 @@ describe("cli-bridge native retained sessions", () => {
     }
   });
 
-  it("rejects a retained turn timeout before the retained turn request", async () => {
+  it("rejects a retained turn timeout before creating the retained session", async () => {
     const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
     const provider = createCliBridgeProvider({
       baseUrl,
@@ -632,9 +749,7 @@ describe("cli-bridge native retained sessions", () => {
       executionId: "unsupported-execution",
       timeoutMs: 1_000,
     })).rejects.toThrow(/timeoutMs/);
-    expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
-      "POST /v1/sessions",
-    ]);
+    expect(requests).toEqual([]);
   });
 
   it("rejects sandbox execution before creating a retained session", async () => {
@@ -691,7 +806,7 @@ describe("cli-bridge native retained sessions", () => {
       execution_id: "contract-execution",
       run_id: "contract-execution",
       provider: "cli-bridge",
-      environment_id: environmentId,
+      environment_id: environment.id,
       interactions: { permission: true },
     });
     expect(turnBody).not.toHaveProperty("metadata");
@@ -775,7 +890,7 @@ describe("cli-bridge native retained sessions", () => {
         request: {
           binding: {
             provider: "cli-bridge",
-            environmentId,
+            environmentId: retainedEnvironmentId,
             sessionId,
             executionId: nativeRunId,
             interactionId: "native-interaction",
@@ -805,6 +920,51 @@ describe("cli-bridge native retained sessions", () => {
     for await (const event of session.events({ since: "3" })) afterThree.push(event);
     expect(afterThree.map((event) => event.id)).toEqual(["4", "5", "6", "7", "8"]);
     expect(requests.filter((request) => request.url.endsWith("/events")).at(-1)?.since).toBe("3");
+  });
+
+  it("rejects a native replay response without the accepted run identity", async () => {
+    const requests: Array<{
+      url: string;
+      method: string;
+      body?: Record<string, unknown>;
+      since?: string;
+    }> = [];
+    const delegate = createNativeFetch(
+      requests,
+      [nativeEnvelope(1, { type: "status", status: "completed" })],
+    );
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: async (url, init) => {
+        const response = await delegate(url, init);
+        if (!new URL(String(url)).pathname.endsWith("/events")) return response;
+        return new Response(await response.text(), {
+          status: response.status,
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: "missing-native-replay-identity",
+      profile: { name: "native-pi", harness: "pi" },
+    });
+    const reference = await environment.dispatch!({
+      prompt: "retain exact identity",
+      sessionId,
+      turnId: "missing-identity-turn",
+      executionId: nativeRunId,
+    });
+    const session = environment.session!(sessionId, {
+      controlRef: reference.controlRef,
+    });
+
+    await expect(async () => {
+      for await (const _event of session.events({ since: "0" })) {
+        // The response must fail before any event reaches the caller.
+      }
+    }).rejects.toThrow("response omitted X-Run-Id");
   });
 
   it.each([

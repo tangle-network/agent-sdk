@@ -13,6 +13,7 @@ import {
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
+import { cliBridgeEnvironmentId } from "./environment-identity.js";
 import { toChatCompletionsBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
@@ -60,6 +61,28 @@ describe("createCliBridgeProvider", () => {
     ).rejects.toThrow(/conflicts with a different create input/);
   });
 
+  it("binds a configured non-Pi model into durable environment identity", async () => {
+    const firstProvider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex/first-model",
+      fetch: async () => new Response(),
+    });
+    const secondProvider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex/second-model",
+      fetch: async () => new Response(),
+    });
+    const input = {
+      profile: { name: "worker", harness: "codex" as const },
+      idempotencyKey: "shared-model-key",
+    };
+
+    const first = await firstProvider.create(input);
+    const second = await secondProvider.create(input);
+
+    expect(second.id).not.toBe(first.id);
+  });
+
   it("keeps profile authority separate from the task and forwards it unchanged through retained Pi", async () => {
     const profile: AgentProfile = {
       name: "scientist",
@@ -81,6 +104,7 @@ describe("createCliBridgeProvider", () => {
     const fixture = createNativePiFixture();
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: fixture.fetch,
     });
     const environment = await provider.create({ profile });
@@ -189,6 +213,7 @@ describe("createCliBridgeProvider", () => {
     });
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: fixture.fetch,
     });
     const environment = await provider.create({ profile });
@@ -322,13 +347,13 @@ describe("createCliBridgeProvider", () => {
       agent_profile: profile,
     });
     expect(fixture.turnBodies.every((body) => !Object.hasOwn(body, "agent_profile"))).toBe(true);
-    expect(provider.capabilities()).toMatchObject({
+    expect(await provider.capabilities()).toMatchObject({
       streaming: { detach: true, replay: true },
       sessions: { continue: true },
     });
   });
 
-  it("reconstructs a legacy retained run when restart configuration selects native Pi", async () => {
+  it("reconstructs the created backend instead of the provider default", async () => {
     const runId = "restart-run";
     const sessionId = "restart-session";
     const environmentId = "restart-environment";
@@ -417,7 +442,9 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: bridgeFetch,
     });
-    const recoveredEnvironment = await restarted.get?.(environmentId);
+    const recoveredEnvironment = await restarted.get?.(startedEnvironment.id);
+    expect(recoveredEnvironment?.capabilities?.interactions).toBeUndefined();
+    expect(recoveredEnvironment?.respondToInteraction).toBeUndefined();
     const recovered = recoveredEnvironment?.session?.(sessionId, { controlRef });
     await expect(recovered?.status()).resolves.toBe("running");
     const events = [];
@@ -445,7 +472,7 @@ describe("createCliBridgeProvider", () => {
       ...cancellationMaterial,
       requestDigest: agentRunCancellationRequestDigest(cancellationMaterial),
     };
-    const controlEnvironment = await restarted.get?.(environmentId);
+    const controlEnvironment = await restarted.get?.(startedEnvironment.id);
     const controlSession = controlEnvironment?.session?.(sessionId, { controlRef });
     await expect(controlSession?.cancelRun?.(cancellationRequest)).resolves.toMatchObject({
       operationId: "restart-cancel",
@@ -1365,7 +1392,11 @@ describe("createCliBridgeProvider", () => {
     const controlRef: AgentExactRunControlRef = {
       runId: "reconnect-cancel",
       provider: "cli-bridge",
-      environmentId: "reconnect-environment",
+      environmentId: cliBridgeEnvironmentId(
+        { backend: "opencode", model: "opencode" },
+        testDigest("reconnect-environment-create"),
+        "reconnect-environment",
+      ),
       sessionId: "reconnect-session",
       executionId: "reconnect-cancel",
       requestDigest: testDigest("reconnect-cancel"),
@@ -1580,7 +1611,12 @@ describe("createCliBridgeProvider", () => {
             cancelled: true,
             cancel_requested: true,
             terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
+            run: {
+              id: runId,
+              requestDigest: testDigest(runId),
+              status: "cancelled",
+              terminal: true,
+            },
           }),
         );
         return;
@@ -1589,6 +1625,7 @@ describe("createCliBridgeProvider", () => {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
           id: runId,
+          requestDigest: testDigest(runId),
           status: "running",
           terminal: false,
         }));
@@ -1637,7 +1674,12 @@ describe("createCliBridgeProvider", () => {
             cancelled: true,
             cancel_requested: true,
             terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
+            run: {
+              id: runId,
+              requestDigest: testDigest(runId),
+              status: "cancelled",
+              terminal: true,
+            },
           }),
         );
         return;
@@ -1646,6 +1688,7 @@ describe("createCliBridgeProvider", () => {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
           id: runId,
+          requestDigest: testDigest(runId),
           status: "running",
           terminal: false,
         }));
@@ -1712,6 +1755,7 @@ describe("createCliBridgeProvider", () => {
     });
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
+      defaultModel: "pi/tangle-router/glm-5.2",
       fetch: fixture.fetch,
     });
     const environment = await provider.create({
@@ -1757,7 +1801,7 @@ describe("createCliBridgeProvider", () => {
         execution_id: "run-1",
         run_id: "run-1",
         provider: "cli-bridge",
-        environment_id: "profile-selected-environment",
+        environment_id: environment.id,
       }),
       expect.objectContaining({
         message: "second",
@@ -1765,11 +1809,11 @@ describe("createCliBridgeProvider", () => {
         execution_id: "run-2",
         run_id: "run-2",
         provider: "cli-bridge",
-        environment_id: "profile-selected-environment",
+        environment_id: environment.id,
       }),
     ]);
     expect(fixture.requests.some((request) => request.url.endsWith("/v1/chat/completions"))).toBe(false);
-    expect(provider.capabilities()).toMatchObject({ streaming: { replay: true } });
+    expect(await provider.capabilities()).toMatchObject({ streaming: { replay: true } });
   });
 
   it("waits through a 202 cancellation when a caller stops reading", async () => {

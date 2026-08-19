@@ -1,4 +1,7 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  agentEnvironmentCreateInputDigest,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -27,6 +30,10 @@ import {
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
 import { narrowedCliBridgeObservation } from "./observation.js";
+import {
+  cliBridgeEnvironmentId,
+  cliBridgeEnvironmentRoute,
+} from "./environment-identity.js";
 import { resolveBridgeModel } from "./wire.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
@@ -48,6 +55,7 @@ export function createCliBridgeProvider(
   // operation exactly where the document claims it.
   const localCapabilities = (
     selectedBackend?: string,
+    allowNativeInteractions = false,
   ): AgentEnvironmentCapabilities => {
     const parsedHarness = harnessTypeSchema.safeParse(selectedBackend);
     const adapter = defaultCliBridgeCapabilities(
@@ -62,16 +70,23 @@ export function createCliBridgeProvider(
           ...declared,
           observation: narrowedCliBridgeObservation(declared.observation, options),
         };
-    if (supportsCliBridgeNativeInteractions(narrowed, selectedBackend)) return narrowed;
+    if (
+      allowNativeInteractions &&
+      supportsCliBridgeNativeInteractions(narrowed, selectedBackend)
+    ) {
+      return narrowed;
+    }
     const { interactions: _interactions, ...withoutInteractions } = narrowed;
     return withoutInteractions;
   };
   const resolveCapabilities = (
     selectedBackend?: string,
     model?: string,
+    allowNativeInteractions = false,
   ): AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities> => {
-    const local = localCapabilities(selectedBackend);
+    const local = localCapabilities(selectedBackend, allowNativeInteractions);
     if (
+      !allowNativeInteractions ||
       options.capabilities !== undefined ||
       selectedBackend !== "pi" ||
       model === undefined
@@ -96,14 +111,21 @@ export function createCliBridgeProvider(
       ...input,
       profile,
     };
-    const environmentId = input.idempotencyKey ?? crypto.randomUUID();
     const selectedBackend = selectedBackendFromInput(
       environmentInput,
       configuredBackend,
     );
-    const model = selectedBackend === "pi"
+    const hasEnvironmentModel = selectedBackend !== undefined ||
+      options.defaultModel !== undefined ||
+      profile.model?.default !== undefined;
+    const model = hasEnvironmentModel
       ? resolveBridgeModel(options, environmentInput, {}, profile)
       : undefined;
+    const environmentId = cliBridgeEnvironmentId(
+      { backend: selectedBackend, model },
+      agentEnvironmentCreateInputDigest(environmentInput),
+      input.idempotencyKey,
+    );
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -111,13 +133,14 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
-      capabilities: await resolveCapabilities(selectedBackend, model),
+      capabilities: await resolveCapabilities(selectedBackend, model, true),
       selectedBackend,
+      selectedModel: model,
     });
   };
   return {
     name,
-    capabilities: () => resolveCapabilities(configuredBackend, options.defaultModel),
+    capabilities: () => resolveCapabilities(configuredBackend, options.defaultModel, true),
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
@@ -129,21 +152,21 @@ export function createCliBridgeProvider(
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
-      const selectedBackend = configuredBackend ?? (
-        options.capabilities !== undefined &&
-        supportsCliBridgeNativeInteractions(options.capabilities, "pi")
-          ? "pi"
-          : undefined
-      );
+      const route = cliBridgeEnvironmentRoute(id);
       return createCliBridgeEnvironment({
         options,
         providerName: name,
-        environmentInput: { profile: { name: "reconnected" }, idempotencyKey: id },
+        environmentInput: {
+          profile: { name: "reconnected" },
+          ...(route.backend === undefined ? {} : { backend: route.backend }),
+          idempotencyKey: id,
+        },
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
-        capabilities: await resolveCapabilities(selectedBackend, options.defaultModel),
-        selectedBackend,
+        capabilities: await resolveCapabilities(route.backend, route.model, true),
+        selectedBackend: route.backend,
+        selectedModel: route.model,
       });
     },
   };

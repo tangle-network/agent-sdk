@@ -114,6 +114,7 @@ export async function* streamCliBridgeTurn(
   let sawProtocolEnd = false;
   let protocol: "unknown" | "openai" | "canonical" = "unknown";
   let canonicalTerminalStatus: "completed" | "failed" | "cancelled" | undefined;
+  let canonicalTerminalEvent: AgentEnvironmentEvent | undefined;
   let terminalFrameSeen = false;
   let cancelledTerminalSeen = false;
   let terminalFrame:
@@ -153,8 +154,10 @@ export async function* streamCliBridgeTurn(
       validateCanonicalEvent?.(event);
       if (isTerminalCanonicalEvent(event)) {
         canonicalTerminalStatus = event.normalized.status;
+        canonicalTerminalEvent = event;
+      } else {
+        yield event;
       }
-      yield event;
       continue;
     }
     if (protocol === "canonical") {
@@ -322,6 +325,19 @@ export async function* streamCliBridgeTurn(
         `cli-bridge canonical terminal status ${JSON.stringify(canonicalTerminalStatus)} contradicts retained run status ${JSON.stringify(snapshot.status)}`,
       );
     }
+    if (!canonicalTerminalEvent) {
+      throw new Error("cli-bridge canonical terminal event was not retained");
+    }
+    yield canonicalTerminalEvent;
+    return;
+  }
+  if (
+    !sawProtocolEnd &&
+    reconnect &&
+    lastEventId !== undefined &&
+    protocol === "unknown"
+  ) {
+    await terminalRunSnapshot(runId, readAuthoritativeRun);
     return;
   }
   if (!sawProtocolEnd) {

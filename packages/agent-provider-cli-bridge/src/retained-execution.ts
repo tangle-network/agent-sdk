@@ -71,6 +71,7 @@ export async function* streamTrackedCliBridgeTurn(
   let drained = false;
   let threw = false;
   let admitted = false;
+  let admissionValidated = false;
   try {
     if (useNativeInteractions) {
       await beginCliBridgeNativeTurn(
@@ -82,8 +83,11 @@ export async function* streamTrackedCliBridgeTurn(
         transport,
         nativeSessions,
         signal,
+        () => {
+          admitted = true;
+        },
       );
-      admitted = true;
+      admissionValidated = true;
       for await (const event of streamCliBridgeTurn(
         options,
         turn,
@@ -92,7 +96,7 @@ export async function* streamTrackedCliBridgeTurn(
         run.id,
         originalTurn.lastEventId,
         signal,
-        undefined,
+        (response) => captureCliBridgeRunIdentity(response, run, false),
         () => getCliBridgeRun(options, transport, run, 30_000, signal),
         (event) => assertCanonicalEventBinding(event.normalized, run, providerName),
       )) {
@@ -110,6 +114,7 @@ export async function* streamTrackedCliBridgeTurn(
         (response) => {
           admitted = true;
           captureCliBridgeRunIdentity(response, run, true);
+          admissionValidated = true;
         },
         () => getCliBridgeRun(options, transport, run, 30_000, signal),
       )) {
@@ -133,8 +138,15 @@ export async function* streamTrackedCliBridgeTurn(
     }
     if (snapshot?.terminal) {
       if (runs.get(run.id) === run) runs.delete(run.id);
-    } else if (originalTurn.signal?.aborted || environmentInput.signal?.aborted) {
-      await cancelCliBridgeRun(options, transport, run);
+    } else if (
+      (admitted && !admissionValidated) ||
+      originalTurn.signal?.aborted ||
+      environmentInput.signal?.aborted
+    ) {
+      const cancellation = await cancelCliBridgeRun(options, transport, run);
+      if (cancellation.requestDigest !== undefined) {
+        run.requestDigest = cancellation.requestDigest;
+      }
       if (runs.get(run.id) === run) runs.delete(run.id);
     }
     throw error;
@@ -180,8 +192,10 @@ export async function dispatchCliBridgeTurn(
         transport,
         nativeSessions,
         signal,
+        () => {
+          accepted = true;
+        },
       );
-      accepted = true;
     } else {
       const response = await transport.fetch(
         `${trimSlash(options.baseUrl)}/v1/chat/completions`,

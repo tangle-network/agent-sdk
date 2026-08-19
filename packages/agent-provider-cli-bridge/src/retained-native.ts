@@ -77,6 +77,29 @@ export function assertCliBridgeRequestedInteractions(
   }
 }
 
+/** Keep capability discovery and every native turn on one exact model route. */
+export function assertCliBridgeNativeTurnModel(
+  options: CliBridgeProviderOptions,
+  environmentInput: CreateAgentEnvironmentInput,
+  turn: AgentTurnInput,
+  selectedModel: string | undefined,
+): void {
+  if (selectedModel === undefined) {
+    throw new Error("cli-bridge native interactions require an environment model");
+  }
+  const requestedModel = resolveBridgeModel(
+    options,
+    environmentInput,
+    turn,
+    inlineProfile(environmentInput.profile),
+  );
+  if (requestedModel !== selectedModel) {
+    throw new Error(
+      `cli-bridge native environment model is ${JSON.stringify(selectedModel)}; create another environment for ${JSON.stringify(requestedModel)}`,
+    );
+  }
+}
+
 function piInteractionCapabilitiesMatch(
   interactions: AgentEnvironmentCapabilities["interactions"],
 ): boolean {
@@ -267,10 +290,12 @@ export async function beginCliBridgeNativeTurn(
   transport: CliBridgeTransport,
   sessions: CliBridgeNativeSessionCache,
   signal?: AbortSignal,
+  onAdmission?: () => void,
 ): Promise<void> {
   if (!run.sessionId) {
     throw new Error("cli-bridge native retained turns require a session id");
   }
+  const body = toRetainedTurnBody(turn, run, providerName);
   const nativeSession = await ensureCliBridgeNativeSession(
     options,
     environmentInput,
@@ -280,7 +305,6 @@ export async function beginCliBridgeNativeTurn(
     sessions,
     signal,
   );
-  const body = toRetainedTurnBody(turn, run, providerName);
   const response = await transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(run.sessionId)}/turns`,
     {
@@ -293,6 +317,7 @@ export async function beginCliBridgeNativeTurn(
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(response.status, await response.text());
   }
+  onAdmission?.();
   const parsed = safeJson(await response.text());
   const responseSession = parsed?.session;
   const responseRun = parsed?.run;

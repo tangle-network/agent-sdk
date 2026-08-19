@@ -16,7 +16,6 @@ import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider } from "../src/index.js";
 
 const BRIDGE_ROOT = process.env.CLI_BRIDGE_INTEGRATION_ROOT?.trim();
-const BRIDGE_TSX = BRIDGE_ROOT ? join(BRIDGE_ROOT, "node_modules", ".bin", "tsx") : "";
 const describeActualBridge = BRIDGE_ROOT ? describe : describe.skip;
 
 /** A real child speaking the Pi JSONL RPC protocol through the actual bridge app. */
@@ -247,7 +246,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
         defaultModel: "pi/tangle-router/sdk-integration-model",
         fetch: reconnectFetch,
       });
-      const reconnectedEnvironment = await reconnectedProvider.get!(environmentId);
+      const reconnectedEnvironment = await reconnectedProvider.get!(environment.id);
       if (!reconnectedEnvironment) throw new Error("the actual Bridge did not retain the environment");
       const reconnectedSession = reconnectedEnvironment.session!(sessionId, { controlRef });
       expect(reconnectedSession.controlRef).toEqual(controlRef);
@@ -279,6 +278,7 @@ async function startActualBridge(): Promise<RunningBridge> {
   if (!BRIDGE_ROOT) {
     throw new Error("CLI_BRIDGE_INTEGRATION_ROOT must name an installed cli-bridge source checkout");
   }
+  const bridgeTsx = join(BRIDGE_ROOT, "node_modules", ".bin", "tsx");
   const fixtureRoot = mkdtempSync(join(homedir(), ".cache", "agent-sdk-cli-bridge-"));
   const dataDir = join(fixtureRoot, "data");
   const agentDir = join(fixtureRoot, "pi-agent");
@@ -304,7 +304,7 @@ async function startActualBridge(): Promise<RunningBridge> {
     { encoding: "utf8", mode: 0o600 },
   );
   const port = await freePort();
-  const spawnBridge = (): ReturnType<typeof spawn> => spawn(BRIDGE_TSX, ["src/server.ts"], {
+  const spawnBridge = (): ReturnType<typeof spawn> => spawn(bridgeTsx, ["src/server.ts"], {
     cwd: BRIDGE_ROOT,
     env: {
       ...process.env,

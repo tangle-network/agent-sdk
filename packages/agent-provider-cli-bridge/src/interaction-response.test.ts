@@ -6,13 +6,23 @@ import type {
   InteractionResponseCommand,
   InteractionResponse,
 } from "@tangle-network/agent-interface";
+import { agentEnvironmentCreateInputDigest } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import {
   createCliBridgeProvider,
   defaultCliBridgeCapabilities,
 } from "./index.js";
+import { cliBridgeEnvironmentId } from "./environment-identity.js";
 
 const environmentId = "cli-environment";
+const retainedEnvironmentId = cliBridgeEnvironmentId(
+  { backend: "pi", model: "pi" },
+  agentEnvironmentCreateInputDigest({
+    idempotencyKey: environmentId,
+    profile: { name: "pi-agent", harness: "pi" },
+  }),
+  environmentId,
+);
 const sessionId = "cli-session";
 
 function command(
@@ -21,7 +31,7 @@ function command(
   const binding = {
     runId: "cli-run",
     provider: "cli-bridge",
-    environmentId,
+    environmentId: retainedEnvironmentId,
     sessionId,
     executionId: "cli-execution",
     interactionId: "cli-interaction",
