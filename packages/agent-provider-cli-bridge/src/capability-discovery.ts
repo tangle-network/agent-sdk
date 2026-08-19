@@ -9,6 +9,8 @@ import {
 } from "./retained-native.js";
 import {
   createCliBridgeTransport,
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
   requestHeaders,
   trimSlash,
 } from "./transport.js";
@@ -27,14 +29,18 @@ export async function discoverCliBridgeCapabilities(
         headers: requestHeaders(options),
       },
     );
+    const responseText = await readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+    );
     if (!response.ok) {
       throw new Error(
-        `cli-bridge capability discovery returned HTTP ${response.status}: ${await response.text()}`,
+        `cli-bridge capability discovery returned HTTP ${response.status}: ${responseText}`,
       );
     }
     let value: unknown;
     try {
-      value = JSON.parse(await response.text());
+      value = JSON.parse(responseText);
     } catch (error) {
       throw new Error("cli-bridge capability discovery returned invalid JSON", { cause: error });
     }
@@ -50,7 +56,7 @@ export async function discoverCliBridgeCapabilities(
   }
 }
 
-/** Share one readiness request between capability checks and environment creation. */
+/** Share concurrent readiness requests without retaining stale model truth. */
 export function cachedCliBridgeCapabilityDiscovery(
   options: CliBridgeProviderOptions,
 ): (model: string) => Promise<AgentEnvironmentCapabilities> {
@@ -60,9 +66,9 @@ export function cachedCliBridgeCapabilityDiscovery(
     if (existing) return existing;
     const pending = discoverCliBridgeCapabilities(options, model);
     cache.set(model, pending);
-    void pending.catch(() => {
+    void pending.finally(() => {
       if (cache.get(model) === pending) cache.delete(model);
-    });
+    }).catch(() => {});
     return pending;
   };
 }

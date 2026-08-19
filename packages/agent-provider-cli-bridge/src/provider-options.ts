@@ -1,5 +1,7 @@
 import type { AgentEnvironmentCapabilities } from "@tangle-network/agent-interface/environment-provider";
 
+export const MAX_CLI_BRIDGE_TIMEOUT_MS = 2_147_483_647;
+
 export interface CliBridgeProviderOptions {
   baseUrl: string;
   bearerToken?: string;
@@ -32,5 +34,10 @@ export function assertCliBridgeProviderOptions(options: CliBridgeProviderOptions
 function assertTimeout(value: number | undefined, name: string): void {
   if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
     throw new Error(`createCliBridgeProvider ${name} must be a non-negative integer`);
+  }
+  if (value !== undefined && value > MAX_CLI_BRIDGE_TIMEOUT_MS) {
+    throw new Error(
+      `createCliBridgeProvider ${name} must be no greater than ${MAX_CLI_BRIDGE_TIMEOUT_MS}`,
+    );
   }
 }

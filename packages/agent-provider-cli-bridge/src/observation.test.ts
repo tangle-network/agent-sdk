@@ -17,6 +17,10 @@ function usageStreamProvider(baseUrl: string, bearerToken?: string) {
       const headers = {
         "x-run-id": runId,
         "x-run-request-digest": testDigest(runId),
+        "x-run-provider": String(body.provider),
+        "x-run-environment-id": String(body.environment_id),
+        "x-run-session-id": String(body.session_id),
+        "x-run-execution-id": String(body.execution_id),
       };
       if (body.stream === false) {
         return Response.json({

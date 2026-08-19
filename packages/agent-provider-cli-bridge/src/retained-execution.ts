@@ -8,6 +8,7 @@ import type {
 import {
   cancelCliBridgeRun,
   captureCliBridgeRunIdentity,
+  cliBridgeCancellationSignal,
   detachCliBridgeReader,
   getCliBridgeRun,
 } from "./retained-control.js";
@@ -32,7 +33,12 @@ import {
   type CliBridgeNativeSessionCache,
 } from "./retained-native.js";
 import type { CliBridgeTransport } from "./transport.js";
-import { requestHeaders, trimSlash } from "./transport.js";
+import {
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
+  requestHeaders,
+  trimSlash,
+} from "./transport.js";
 import { modelRequestCount } from "./wire.js";
 
 export async function* streamTrackedCliBridgeTurn(
@@ -114,7 +120,7 @@ export async function* streamTrackedCliBridgeTurn(
         (response) => {
           admitted = true;
           captureCliBridgeRunIdentity(response, run, true);
-          admissionValidated = true;
+          admissionValidated = response.body !== null;
         },
         () => getCliBridgeRun(options, transport, run, 30_000, signal),
       )) {
@@ -132,7 +138,13 @@ export async function* streamTrackedCliBridgeTurn(
     }
     let snapshot: CliBridgeRunSnapshot | null | undefined;
     try {
-      snapshot = await getCliBridgeRun(options, transport, run);
+      snapshot = await getCliBridgeRun(
+        options,
+        transport,
+        run,
+        undefined,
+        cliBridgeCancellationSignal(options),
+      );
     } catch {
       snapshot = undefined;
     }
@@ -143,11 +155,18 @@ export async function* streamTrackedCliBridgeTurn(
       originalTurn.signal?.aborted ||
       environmentInput.signal?.aborted
     ) {
-      const cancellation = await cancelCliBridgeRun(options, transport, run);
-      if (cancellation.requestDigest !== undefined) {
-        run.requestDigest = cancellation.requestDigest;
+      try {
+        const cancellation = await cancelCliBridgeRun(options, transport, run);
+        if (cancellation.requestDigest !== undefined) {
+          run.requestDigest = cancellation.requestDigest;
+        }
+        if (runs.get(run.id) === run) runs.delete(run.id);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `cli-bridge stream "${run.id}" failed and exact cancellation was not confirmed`,
+        );
       }
-      if (runs.get(run.id) === run) runs.delete(run.id);
     }
     throw error;
   } finally {
@@ -213,7 +232,11 @@ export async function dispatchCliBridgeTurn(
       if (!response.ok) {
         let detail = "request rejected";
         try {
-          detail = await response.text();
+          detail = await readBoundedCliBridgeResponse(
+            response,
+            MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+            signal,
+          );
         } catch {
           // The HTTP status already proves this request was rejected.
         }

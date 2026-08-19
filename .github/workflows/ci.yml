@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: drewstone/cli-bridge
-          ref: 4f9ee2710623eb97336d82b782e5e6e400ab6705
+          ref: fe57c8b4365aaec9abcb58f86941a3aa25c53196
           path: cli-bridge
           fetch-depth: 1
           persist-credentials: false

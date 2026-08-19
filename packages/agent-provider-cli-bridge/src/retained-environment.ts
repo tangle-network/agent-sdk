@@ -41,7 +41,7 @@ import type { CliBridgeProviderOptions } from "./provider-options.js";
 import { cliBridgeInteractionResponder } from "./interaction-response.js";
 import {
   assertCliBridgeRequestedInteractions,
-  assertCliBridgeNativeTurnModel,
+  assertCliBridgeTurnModel,
   continueCliBridgeNative,
   readCliBridgeNativeContextBoundary,
   supportsCliBridgeNativeContinuation,
@@ -107,8 +107,11 @@ export function createCliBridgeEnvironment(
     if (!args.allowDispatch) {
       throw new Error("a reconstructed cli-bridge environment can only control an existing run");
     }
-    if (useNativeInteractions) {
-      assertCliBridgeNativeTurnModel(
+    if (
+      args.selectedModel !== undefined &&
+      args.capabilities.retainedControl !== undefined
+    ) {
+      assertCliBridgeTurnModel(
         options,
         environmentInput,
         turn,
@@ -120,6 +123,7 @@ export function createCliBridgeEnvironment(
       options,
       environmentInput,
       turn,
+      providerName,
       environmentId,
       useNativeInteractions,
     );
@@ -158,8 +162,11 @@ export function createCliBridgeEnvironment(
       if (!args.allowDispatch) {
         throw new Error("a reconstructed cli-bridge environment cannot dispatch new work");
       }
-      if (useNativeInteractions) {
-        assertCliBridgeNativeTurnModel(
+      if (
+        args.selectedModel !== undefined &&
+        args.capabilities.retainedControl !== undefined
+      ) {
+        assertCliBridgeTurnModel(
           options,
           environmentInput,
           turn,
@@ -171,8 +178,9 @@ export function createCliBridgeEnvironment(
         options,
         environmentInput,
         turn,
+        providerName,
         environmentId,
-        true,
+        useNativeInteractions,
       );
       return dispatchCliBridgeTurn(
         options,
@@ -410,8 +418,11 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           `cli-bridge session "${args.id}" cannot prompt session "${input.sessionId}"`,
         );
       }
-      if (args.useNativeInteractions) {
-        assertCliBridgeNativeTurnModel(
+      if (
+        args.selectedModel !== undefined &&
+        args.capabilities.retainedControl !== undefined
+      ) {
+        assertCliBridgeTurnModel(
           args.options,
           args.environmentInput,
           input,
@@ -426,6 +437,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           ...input,
           sessionId: args.id,
         },
+        args.providerName,
         args.environmentId,
         args.useNativeInteractions,
       );

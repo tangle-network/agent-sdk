@@ -20,7 +20,13 @@ import { detachCliBridgeReader } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
-import { requestHeaders, trimSlash } from "./transport.js";
+import {
+  MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+  MAX_CLI_BRIDGE_RESULT_RESPONSE_BYTES,
+  readBoundedCliBridgeResponse,
+  requestHeaders,
+  trimSlash,
+} from "./transport.js";
 import {
   modelRequestsFromOpenAi,
   parseSse,
@@ -79,26 +85,32 @@ export async function* streamCliBridgeTurn(
   if (!response.ok) {
     let detail = "request rejected";
     try {
-      detail = await response.text();
+      detail = await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
+      );
     } catch {
       // The HTTP status already proves this request was rejected.
     }
     throw new CliBridgeRequestRejectedError(response.status, detail);
   }
-  if (!response.body) throw new Error("cli-bridge response body is empty");
   try {
     onResponse?.(response);
   } catch (error) {
-    try {
-      await detachCliBridgeReader(response.body);
-    } catch (detachError) {
-      throw new AggregateError(
-        [error, detachError],
-        `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
-      );
+    if (response.body) {
+      try {
+        await detachCliBridgeReader(response.body);
+      } catch (detachError) {
+        throw new AggregateError(
+          [error, detachError],
+          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+        );
+      }
     }
     throw error;
   }
+  if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
   const sessionId = turn.sessionId ?? runId;
@@ -522,7 +534,11 @@ async function readFullCliBridgeResult(
     body: JSON.stringify({ ...body, stream: false }),
     ...(signal ? { signal } : {}),
   });
-  const responseText = await response.text();
+  const responseText = await readBoundedCliBridgeResponse(
+    response,
+    MAX_CLI_BRIDGE_RESULT_RESPONSE_BYTES,
+    signal,
+  );
   onResponse?.(response);
   if (!response.ok) {
     const error = cliBridgeError(safeJson(responseText));

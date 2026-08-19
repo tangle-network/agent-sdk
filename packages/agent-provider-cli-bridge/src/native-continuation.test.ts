@@ -131,6 +131,107 @@ describe("cli-bridge native continuation", () => {
     ).toEqual(["/v1/runs/continued-run/cancel"]);
   });
 
+  it("aborts a stalled context-boundary reader and closes its iterator", async () => {
+    const fixture = createNativeContinuationFixture();
+    let readStartedResolve!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      readStartedResolve = resolve;
+    });
+    let readerClosed = false;
+    const provider = createProvider(async (url, init) => {
+      if (new URL(String(url)).pathname === "/v1/sessions/stalled-boundary-session") {
+        return stalledResponse(readStartedResolve, () => {
+          readerClosed = true;
+        });
+      }
+      return fixture.fetch(url, init);
+    });
+    const environment = await provider.create({ profile: { name: "worker", harness: "pi" } });
+    const reference = await environment.dispatch!({
+      prompt: "start the task",
+      sessionId: "stalled-boundary-session",
+      turnId: "initial-turn",
+      executionId: "initial-run",
+    });
+    const session = environment.session!(reference.id, {
+      controlRef: exactControlRef(reference.controlRef),
+    });
+    const controller = new AbortController();
+    const pending = session.contextBoundary!({ signal: controller.signal });
+    await readStarted;
+    const abortTimer = setTimeout(() => {
+      controller.abort(new DOMException("caller stopped boundary read", "AbortError"));
+    }, 10);
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        setTimeout(() => resolve({ kind: "timeout" }), 500);
+      }),
+    ]);
+    clearTimeout(abortTimer);
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") throw new Error("stalled boundary read did not reject");
+    expect(outcome.error).toMatchObject({ name: "AbortError" });
+    expect(readerClosed).toBe(true);
+  });
+
+  it("aborts a stalled continuation reader and closes its iterator", async () => {
+    const fixture = createNativeContinuationFixture();
+    let readStartedResolve!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      readStartedResolve = resolve;
+    });
+    let readerClosed = false;
+    const provider = createProvider(async (url, init) => {
+      if (new URL(String(url)).pathname === "/v1/sessions/stalled-continuation-session/continue") {
+        return stalledResponse(readStartedResolve, () => {
+          readerClosed = true;
+        });
+      }
+      return fixture.fetch(url, init);
+    });
+    const environment = await provider.create({ profile: { name: "worker", harness: "pi" } });
+    const reference = await environment.dispatch!({
+      prompt: "start the task",
+      sessionId: "stalled-continuation-session",
+      turnId: "initial-turn",
+      executionId: "initial-run",
+    });
+    const initialControlRef = exactControlRef(reference.controlRef);
+    const session = environment.session!(initialControlRef.sessionId, {
+      controlRef: initialControlRef,
+    });
+    const boundary = await session.contextBoundary!();
+    if (!boundary) throw new Error("the fixture did not return a context boundary");
+    const turn: NativeContextContinuationTurn = { prompt: "continue the task" };
+    const request = continuationRequest(initialControlRef, boundary, "stalled-continue", turn);
+    const controller = new AbortController();
+    const pending = session.continueNative!(request, { turn, signal: controller.signal });
+    await readStarted;
+    const abortTimer = setTimeout(() => {
+      controller.abort(new DOMException("caller stopped continuation", "AbortError"));
+    }, 10);
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ kind: "resolved" as const }),
+        (error) => ({ kind: "rejected" as const, error }),
+      ),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        setTimeout(() => resolve({ kind: "timeout" }), 500);
+      }),
+    ]);
+    clearTimeout(abortTimer);
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") throw new Error("stalled continuation did not reject");
+    expect(outcome.error).toMatchObject({ name: "AbortError" });
+    expect(readerClosed).toBe(true);
+  });
+
   it("reconstructs without dispatch, replays the same operation, and maps a conflict", async () => {
     const fixture = createNativeContinuationFixture();
     const provider = createProvider(fixture.fetch);
@@ -248,6 +349,34 @@ function createProvider(fetch: typeof globalThis.fetch) {
     defaultModel: "pi/test-model",
     fetch,
   });
+}
+
+function stalledResponse(onRead: () => void, onClose: () => void): Response {
+  let readReported = false;
+  const body: AsyncIterable<Uint8Array> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: (): Promise<IteratorResult<Uint8Array>> => {
+          if (!readReported) {
+            readReported = true;
+            onRead();
+          }
+          return new Promise(() => {});
+        },
+        return: async (): Promise<IteratorResult<Uint8Array>> => {
+          onClose();
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+  return {
+    ok: true,
+    status: 200,
+    body,
+    headers: { get: () => null },
+    text: async () => "",
+  } as unknown as Response;
 }
 
 function exactControlRef(value: unknown): AgentExactRunControlRef {
@@ -370,6 +499,8 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
         },
         run: {
           id: runId,
+          provider: controlRef.provider,
+          environmentId: controlRef.environmentId,
           executionId: controlRef.executionId,
           sessionId,
           requestDigest: controlRef.requestDigest,
@@ -468,6 +599,8 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
       if (!controlRef) throw new Error(`unknown run ${runId}`);
       return Response.json({
         id: runId,
+        provider: controlRef.provider,
+        environmentId: controlRef.environmentId,
         executionId: controlRef.executionId,
         sessionId: controlRef.sessionId,
         requestDigest: controlRef.requestDigest,
@@ -489,6 +622,10 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
         return Response.json({
           run: {
             id: runId,
+            provider: controlRef.provider,
+            environmentId: controlRef.environmentId,
+            sessionId: controlRef.sessionId,
+            executionId: controlRef.executionId,
             requestDigest: controlRef.requestDigest,
             status: "done",
             terminal: true,
@@ -591,6 +728,10 @@ function nativeEventsResponse(controlRef: AgentExactRunControlRef): Response {
       "content-type": "text/event-stream",
       "x-run-id": controlRef.runId,
       "x-run-request-digest": controlRef.requestDigest,
+      "x-run-provider": controlRef.provider,
+      "x-run-environment-id": controlRef.environmentId,
+      "x-run-session-id": controlRef.sessionId,
+      "x-run-execution-id": controlRef.executionId,
     },
   });
 }

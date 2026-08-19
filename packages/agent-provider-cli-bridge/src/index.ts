@@ -10,6 +10,7 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
+  type AgentExactRunControlRef,
   type HarnessType,
   harnessTypeSchema,
   harnessSystemPromptIntents,
@@ -18,6 +19,10 @@ import {
 import {
   createCliBridgeEnvironment,
 } from "./retained-environment.js";
+import {
+  lookupExactCliBridgeRun,
+  type CliBridgeRunLookupInput,
+} from "./retained-control.js";
 import {
   cachedCliBridgeCapabilityDiscovery,
   narrowCliBridgeCapabilities,
@@ -37,11 +42,17 @@ import {
 import { resolveBridgeModel } from "./wire.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
+export type { CliBridgeRunLookupInput } from "./retained-control.js";
 export { safeEndpointFromBaseUrl } from "./observation.js";
+
+export interface CliBridgeProvider extends AgentEnvironmentProvider {
+  /** Recover the server-issued digest for one pre-dispatch retained admission. */
+  lookupRun(input: CliBridgeRunLookupInput): Promise<AgentExactRunControlRef | null>;
+}
 
 export function createCliBridgeProvider(
   options: CliBridgeProviderOptions,
-): AgentEnvironmentProvider {
+): CliBridgeProvider {
   assertCliBridgeProviderOptions(options);
   const name = options.name ?? "cli-bridge";
   const createRecords = new Map<
@@ -50,6 +61,7 @@ export function createCliBridgeProvider(
   >();
   const configuredBackend = selectedBackendFromRoute(options.defaultModel);
   const discoverCapabilities = cachedCliBridgeCapabilityDiscovery(options);
+  const remotelyVerifiedRoutes = new Set<string>();
   // The observation surfaces are declared as intent and narrowed to the
   // sources this bridge can put a value on, so the environment offers the
   // operation exactly where the document claims it.
@@ -83,20 +95,17 @@ export function createCliBridgeProvider(
     selectedBackend?: string,
     model?: string,
     allowNativeInteractions = false,
+    discoverRemote = false,
   ): AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities> => {
     const local = localCapabilities(selectedBackend, allowNativeInteractions);
-    if (
-      !allowNativeInteractions ||
-      options.capabilities !== undefined ||
-      selectedBackend !== "pi" ||
-      model === undefined
-    ) {
-      return local;
-    }
-    return discoverCapabilities(model).then((reported) =>
-      narrowCliBridgeCapabilities(local, reported, selectedBackend, {
+    if (options.capabilities !== undefined) return local;
+    if (model === undefined) return withoutRemoteRetainedCapabilities(local);
+    if (!discoverRemote) return withoutRemoteRetainedCapabilities(local);
+    return discoverCapabilities(model).then((reported) => {
+      return narrowCliBridgeCapabilities(local, reported, selectedBackend, {
         preserveAdapterObservation: true,
-      }));
+      });
+    });
   };
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
@@ -133,14 +142,26 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
-      capabilities: await resolveCapabilities(selectedBackend, model, true),
+      capabilities: await resolveCapabilities(
+        selectedBackend,
+        model,
+        true,
+        selectedBackend === "pi" ||
+          (model !== undefined && remotelyVerifiedRoutes.has(model)),
+      ),
       selectedBackend,
       selectedModel: model,
     });
   };
   return {
     name,
-    capabilities: () => resolveCapabilities(configuredBackend, options.defaultModel, true),
+    lookupRun: (input) => lookupExactCliBridgeRun(options, name, input),
+    capabilities: () => {
+      if (options.defaultModel !== undefined) {
+        remotelyVerifiedRoutes.add(options.defaultModel);
+      }
+      return resolveCapabilities(configuredBackend, options.defaultModel, true, true);
+    },
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
@@ -164,12 +185,29 @@ export function createCliBridgeProvider(
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
-        capabilities: await resolveCapabilities(route.backend, route.model, true),
+        capabilities: await resolveCapabilities(
+          route.backend,
+          route.model,
+          true,
+          true,
+        ),
         selectedBackend: route.backend,
         selectedModel: route.model,
       });
     },
   };
+}
+
+function withoutRemoteRetainedCapabilities(
+  capabilities: AgentEnvironmentCapabilities,
+): AgentEnvironmentCapabilities {
+  const {
+    retainedControl: _retainedControl,
+    nativeContinuation: _nativeContinuation,
+    interactions: _interactions,
+    ...local
+  } = capabilities;
+  return local;
 }
 
 function selectedBackendFromInput(
