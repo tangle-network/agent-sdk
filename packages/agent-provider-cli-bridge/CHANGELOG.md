@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.0
+
+### Minor Changes
+
+- 2cd50ba: Implement Agent Interface native context boundary reads and retry-safe same-session continuation through CLI Bridge.
+
 ## 0.8.1
 
 ### Patch Changes
