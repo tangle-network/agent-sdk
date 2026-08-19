@@ -42,7 +42,8 @@ function sse(events: readonly Record<string, unknown>[]): string {
   return events
     .map((event) => {
       const sequence = String(event.sequence);
-      return `id: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`;
+      const type = String((event.event as Record<string, unknown>).type);
+      return `id: ${sequence}\nevent: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
     })
     .join("");
 }
@@ -114,6 +115,9 @@ function createNativeFetch(
         ? { since: new Headers(init?.headers).get("last-event-id")! }
         : {}),
     });
+    if (pathname === "/v1/capabilities") {
+      return Response.json(defaultCliBridgeCapabilities("pi"));
+    }
     if (pathname === "/v1/sessions") {
       const digest = canonicalCandidateDigest(parsedBody!);
       createRequestDigest = digest;
@@ -183,9 +187,104 @@ describe("cli-bridge native retained sessions", () => {
 
     expect(replayed.map((event) => event.id)).toEqual(["1"]);
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/v1/capabilities",
       `/v1/runs/${nativeRunId}/events`,
       `/v1/runs/${nativeRunId}`,
     ]);
+  });
+
+  it("discovers the exact model route once across provider and environment intake", async () => {
+    const exactModel = "pi/tangle-router/glm-5.2@latest";
+    const requests: string[] = [];
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: exactModel,
+      fetch: async (url) => {
+        requests.push(String(url));
+        await Promise.resolve();
+        return Response.json(defaultCliBridgeCapabilities("pi"));
+      },
+    });
+
+    const [capabilities, environment] = await Promise.all([
+      provider.capabilities(),
+      provider.create({
+        idempotencyKey: "shared-discovery-environment",
+        profile: { name: "native-pi", harness: "pi" },
+      }),
+    ]);
+
+    expect(capabilities.interactions?.kinds).toEqual(["permission"]);
+    expect(environment.capabilities?.interactions?.kinds).toEqual(["permission"]);
+    expect(requests).toEqual([
+      `${baseUrl}/v1/capabilities?model=${encodeURIComponent(exactModel)}`,
+    ]);
+    expect(new URL(requests[0]!).searchParams.get("model")).toBe(exactModel);
+  });
+
+  it("fails closed when Bridge capability discovery is unavailable", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: async () => new Response("backend unavailable", { status: 503 }),
+    });
+
+    await expect(provider.capabilities()).rejects.toThrow(
+      /capability discovery returned HTTP 503: backend unavailable/,
+    );
+    await expect(provider.create({
+      idempotencyKey: "unavailable-discovery-environment",
+      profile: { name: "native-pi", harness: "pi" },
+    })).rejects.toThrow(/capability discovery returned HTTP 503/);
+  });
+
+  it("rejects invalid capability documents and retries discovery", async () => {
+    let requests = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: async () => {
+        requests += 1;
+        if (requests === 1) return Response.json({ interactions: {} });
+        return Response.json(defaultCliBridgeCapabilities("pi"));
+      },
+    });
+
+    await expect(provider.capabilities()).rejects.toThrow(
+      /invalid capability document/,
+    );
+    await expect(provider.capabilities()).resolves.toMatchObject({
+      interactions: { kinds: ["permission"] },
+    });
+    expect(requests).toBe(2);
+  });
+
+  it("does not expose native interactions unless Bridge proves the complete contract", async () => {
+    const requests: string[] = [];
+    const { interactions: _interactions, ...incomplete } = defaultCliBridgeCapabilities("pi");
+    const provider = createCliBridgeProvider({
+      baseUrl,
+      defaultModel: model,
+      fetch: async (url) => {
+        requests.push(String(url));
+        return Response.json(incomplete);
+      },
+    });
+    const environment = await provider.create({
+      idempotencyKey: "incomplete-contract-environment",
+      profile: { name: "native-pi", harness: "pi" },
+    });
+
+    expect(environment.capabilities?.interactions).toBeUndefined();
+    expect(environment.respondToInteraction).toBeUndefined();
+    await expect(environment.dispatch!({
+      prompt: "do not route this as a native interaction",
+      sessionId,
+      turnId: "incomplete-contract-turn",
+      executionId: "incomplete-contract-execution",
+      interactions: { permission: true },
+    })).rejects.toThrow(/does not advertise requested interaction kind/);
+    expect(requests).toEqual([`${baseUrl}/v1/capabilities?model=${encodeURIComponent(model)}`]);
   });
 
   it("uses the select-only permission answer contract", () => {
@@ -208,6 +307,7 @@ describe("cli-bridge native retained sessions", () => {
     const provider = createCliBridgeProvider({
       baseUrl,
       defaultModel: model,
+      capabilities: defaultCliBridgeCapabilities("pi"),
       fetch: async () => {
         calls += 1;
         throw new Error("native request should not start");

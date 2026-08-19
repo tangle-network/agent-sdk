@@ -3,3 +3,4 @@
 ---
 
 Route retry-safe retained Pi interaction turns through cli-bridge's native session API, preserve exact replay bindings, and expose idempotent permission responses through the Agent Environment interaction contract.
+Discover the complete interaction contract from the exact running Bridge model route before enabling native control.

@@ -65,8 +65,9 @@ Stopping a `session.events()` reader detaches only that replay observer.
 Stopping a direct `environment.stream()` reader or destroying the environment cancels its active bridge runs and waits for terminal confirmation.
 
 Pi retained sessions also expose typed permission interactions.
-Pass `defaultCliBridgeCapabilities('pi')` as the provider capability document.
-Alternatively, configure a `pi/...` default model so reconstruction derives the same capability document after restart.
+Configure a `pi/...` default model so the provider can query `/v1/capabilities` for that exact route.
+The provider caches the valid response and enables native interactions only when the running Bridge proves the complete retained contract.
+An explicit capability document remains available for a caller that already performed the same discovery.
 That capability selects cli-bridge's native `/v1/sessions` and `/turns` transport; it never sends an interactive turn to `/v1/chat/completions`.
 The environment and session then expose `respondToInteraction()` for exact response commands.
 Each command carries its run, session, execution, request digest, and stable operation identifier.

@@ -35,6 +35,7 @@ describe("createCliBridgeProvider", () => {
   it("reuses a keyed generic create and rejects changed input", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
+      capabilities: defaultCliBridgeCapabilities("pi"),
       fetch: async () => new Response(),
     });
     const input = {
@@ -113,6 +114,7 @@ describe("createCliBridgeProvider", () => {
       }),
     ]);
     expect(fixture.requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "GET /v1/capabilities",
       "POST /v1/sessions",
       "POST /v1/sessions/profile-session/turns",
       "GET /v1/runs/profile-run/events",
@@ -2300,6 +2302,10 @@ function createNativePiFixture(options: NativePiFixtureOptions = {}): NativePiFi
       ...(since === null ? {} : { since }),
     });
 
+    if (method === "GET" && pathname === "/v1/capabilities") {
+      return Response.json(defaultCliBridgeCapabilities("pi"));
+    }
+
     if (method === "POST" && pathname === "/v1/sessions") {
       if (!body) throw new Error("native Pi session request body is missing");
       const sessionId = String(body.id);
@@ -2486,7 +2492,10 @@ function nativePiEnvelope(
 
 function nativePiSse(events: readonly Record<string, unknown>[]): string {
   return events
-    .map((event) => `id: ${String(event.sequence)}\ndata: ${JSON.stringify(event)}\n\n`)
+    .map((event) => {
+      const type = String((event.event as Record<string, unknown>).type);
+      return `id: ${String(event.sequence)}\nevent: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
+    })
     .join("");
 }
 

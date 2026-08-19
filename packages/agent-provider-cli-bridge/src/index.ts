@@ -15,6 +15,7 @@ import {
 import {
   createCliBridgeEnvironment,
 } from "./retained-environment.js";
+import { cachedCliBridgeCapabilityDiscovery } from "./capability-discovery.js";
 import {
   supportsCliBridgeNativeInteractions,
 } from "./retained-native.js";
@@ -23,6 +24,7 @@ import {
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
 import { narrowedCliBridgeObservation } from "./observation.js";
+import { resolveBridgeModel } from "./wire.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
 export { safeEndpointFromBaseUrl } from "./observation.js";
@@ -37,10 +39,11 @@ export function createCliBridgeProvider(
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
   const configuredBackend = selectedBackendFromRoute(options.defaultModel);
+  const discoverCapabilities = cachedCliBridgeCapabilityDiscovery(options);
   // The observation surfaces are declared as intent and narrowed to the
   // sources this bridge can put a value on, so the environment offers the
   // operation exactly where the document claims it.
-  const resolveCapabilities = (
+  const localCapabilities = (
     selectedBackend?: string,
   ): AgentEnvironmentCapabilities => {
     const parsedHarness = harnessTypeSchema.safeParse(selectedBackend);
@@ -59,6 +62,24 @@ export function createCliBridgeProvider(
     const { interactions: _interactions, ...withoutInteractions } = narrowed;
     return withoutInteractions;
   };
+  const resolveCapabilities = (
+    selectedBackend?: string,
+    model?: string,
+  ): AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities> => {
+    const local = localCapabilities(selectedBackend);
+    if (
+      options.capabilities !== undefined ||
+      selectedBackend !== "pi" ||
+      model === undefined
+    ) {
+      return local;
+    }
+    return discoverCapabilities(model).then((reported) => {
+      if (supportsCliBridgeNativeInteractions(reported, selectedBackend)) return local;
+      const { interactions: _interactions, ...withoutInteractions } = local;
+      return withoutInteractions;
+    });
+  };
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -67,15 +88,19 @@ export function createCliBridgeProvider(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
       );
     }
+    const profile = snapshotAgentProfile(input.profile);
     const environmentInput: CreateAgentEnvironmentInput = {
       ...input,
-      profile: snapshotAgentProfile(input.profile),
+      profile,
     };
     const environmentId = input.idempotencyKey ?? crypto.randomUUID();
     const selectedBackend = selectedBackendFromInput(
       environmentInput,
       configuredBackend,
     );
+    const model = selectedBackend === "pi"
+      ? resolveBridgeModel(options, environmentInput, {}, profile)
+      : undefined;
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -83,13 +108,13 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
-      capabilities: resolveCapabilities(selectedBackend),
+      capabilities: await resolveCapabilities(selectedBackend, model),
       selectedBackend,
     });
   };
   return {
     name,
-    capabilities: () => resolveCapabilities(configuredBackend),
+    capabilities: () => resolveCapabilities(configuredBackend, options.defaultModel),
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
@@ -114,7 +139,7 @@ export function createCliBridgeProvider(
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
-        capabilities: resolveCapabilities(selectedBackend),
+        capabilities: await resolveCapabilities(selectedBackend, options.defaultModel),
         selectedBackend,
       });
     },

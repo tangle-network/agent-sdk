@@ -7,15 +7,14 @@ import type {
 import {
   AgentExactRunControlRefSchema,
   RequestedInteractionsSchema,
-  RuntimeEventEnvelopeSchema,
   canonicalCandidateDigest,
   type AgentProfile,
   type Sha256Digest,
   type RequestedInteractions,
   type StreamEvent,
-  type TokenUsage,
 } from "@tangle-network/agent-interface";
 import { CliBridgeRequestRejectedError } from "./retained-stream.js";
+import { retainedCanonicalEvent } from "./retained-canonical-event.js";
 import { getCliBridgeRun } from "./retained-control.js";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun } from "./retained-run-state.js";
@@ -388,19 +387,19 @@ export async function* streamCliBridgeNativeRunEvents(
     if (frame.data === "[DONE]") {
       throw new Error("cli-bridge native event stream used the one-shot [DONE] protocol");
     }
-    const parsed = safeJson(frame.data);
-    if (!parsed) throw new Error("cli-bridge native event was not valid JSON");
-    const envelope = RuntimeEventEnvelopeSchema.parse(parsed);
-    if (envelope.runId !== run.id) {
-      throw new Error(
-        `cli-bridge replay returned run ${JSON.stringify(envelope.runId)} for requested run ${JSON.stringify(run.id)}`,
-      );
+    if (!run.sessionId) {
+      throw new Error("cli-bridge native event stream requires a retained session id");
     }
-    if (frame.id !== undefined && frame.id !== String(envelope.sequence)) {
-      throw new Error("cli-bridge native event id does not match its canonical sequence");
+    const event = retainedCanonicalEvent(frame, {
+      runId: run.id,
+      sessionId: run.sessionId,
+      executionId: run.executionId,
+    });
+    if (!event?.normalized) {
+      throw new Error("cli-bridge native event stream requires a typed canonical event");
     }
-    assertCanonicalEventBinding(envelope.event, run, providerName);
-    yield nativeEvent(envelope, run);
+    assertCanonicalEventBinding(event.normalized, run, providerName);
+    yield event;
   }
 
   const snapshot = await getCliBridgeRun(
@@ -444,89 +443,4 @@ function assertCanonicalEventBinding(
   ) {
     throw new Error("cli-bridge interaction event does not bind to the retained run");
   }
-}
-
-function nativeEvent(
-  envelope: {
-    runId: string;
-    eventId: string;
-    sequence: number;
-    cursor?: string;
-    occurredAt?: string;
-    receivedAt: string;
-    event: StreamEvent;
-  },
-  run: CliBridgeRun,
-): AgentEnvironmentEvent {
-  const { type: _type, ...eventData } = envelope.event;
-  const id = String(envelope.sequence);
-  const data = {
-    runId: run.id,
-    ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-    executionId: run.executionId,
-    cursor: id,
-    ...eventData,
-  } as Record<string, unknown>;
-  const usage = usageFromCanonicalRaw(envelope.event);
-  return {
-    type: envelope.event.type,
-    data,
-    id,
-    normalized: envelope.event,
-    providerEvent: envelope,
-    ...(usage ? { usage } : {}),
-  };
-}
-
-function usageFromCanonicalRaw(event: StreamEvent): TokenUsage | undefined {
-  if (event.type !== "raw" || !event.event || typeof event.event !== "object") {
-    return undefined;
-  }
-  const nested = event.event as Record<string, unknown>;
-  const data = recordValue(nested.data);
-  const usage = recordValue(nested.usage) ?? recordValue(data?.usage);
-  if (!usage) return undefined;
-  const inputTokens = integerValue(
-    usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens,
-  );
-  const outputTokens = integerValue(
-    usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens,
-  );
-  if (inputTokens === undefined || outputTokens === undefined) return undefined;
-  const totalTokens = integerValue(usage.totalTokens ?? usage.total_tokens);
-  const cacheReadInputTokens = integerValue(
-    usage.cacheReadInputTokens ?? usage.cache_read_input_tokens,
-  );
-  const cacheCreationInputTokens = integerValue(
-    usage.cacheCreationInputTokens ?? usage.cache_creation_input_tokens,
-  );
-  const reasoningTokens = integerValue(usage.reasoningTokens ?? usage.reasoning_tokens);
-  const cost = finiteNonNegative(usage.cost);
-  return {
-    inputTokens,
-    outputTokens,
-    ...(totalTokens === undefined ? {} : { totalTokens }),
-    ...(cacheReadInputTokens === undefined ? {} : { cacheReadInputTokens }),
-    ...(cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
-    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-    ...(cost === undefined ? {} : { cost }),
-  };
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function integerValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : undefined;
-}
-
-function finiteNonNegative(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
 }

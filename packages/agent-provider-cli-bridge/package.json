@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/agent-provider-cli-bridge",
   "version": "0.7.8",
-  "description": "AgentEnvironmentProvider adapter for cli-bridge /v1/chat/completions",
+  "description": "AgentEnvironmentProvider adapter for cli-bridge retained sessions and one-shot turns",
   "type": "module",
   "license": "MIT",
   "main": "dist/index.js",
@@ -33,6 +33,8 @@
   "files": [
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/capability-discovery.d.ts",
+    "dist/capability-discovery.js",
     "dist/interaction-response.d.ts",
     "dist/interaction-response.js",
     "dist/observation.d.ts",
