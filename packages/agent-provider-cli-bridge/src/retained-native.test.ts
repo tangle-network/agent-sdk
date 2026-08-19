@@ -169,6 +169,12 @@ function reportedPiCapabilities(): AgentEnvironmentCapabilities {
   const { observation: _observation, ...reported } = defaultCliBridgeCapabilities("pi");
   return {
     ...reported,
+    interactions: {
+      ...reported.interactions!,
+      kinds: ["permission", "question"],
+      answerFieldTypes: ["select", "text"],
+      responseScopes: ["interaction", "session"],
+    },
     profile: {
       ...reported.profile,
       resources: {
@@ -250,6 +256,8 @@ describe("cli-bridge native retained sessions", () => {
     ]);
 
     expect(capabilities.interactions?.kinds).toEqual(["permission"]);
+    expect(capabilities.interactions?.answerFieldTypes).toEqual(["select"]);
+    expect(capabilities.interactions?.responseScopes).toEqual(["interaction"]);
     expect(environment.capabilities?.interactions?.kinds).toEqual(["permission"]);
     expect(requests).toEqual([
       `${baseUrl}/v1/capabilities?model=${encodeURIComponent(exactModel)}`,

@@ -82,18 +82,14 @@ function piInteractionCapabilitiesMatch(
 ): boolean {
   return Boolean(
     interactions &&
-      arrayEquals(interactions.kinds, ["permission"]) &&
-      arrayEquals(interactions.answerFieldTypes, ["select"]) &&
-      arrayEquals(interactions.responseScopes, ["interaction"]) &&
+      interactions.kinds.includes("permission") &&
+      interactions.answerFieldTypes.includes("select") &&
+      interactions.responseScopes.includes("interaction") &&
       interactions.secretAnswers === false &&
       interactions.concurrentRequests === false &&
       interactions.replay === true &&
       interactions.responseIdempotency === true,
   );
-}
-
-function arrayEquals(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 interface NativeSessionView extends CliBridgeNativeSession {}
