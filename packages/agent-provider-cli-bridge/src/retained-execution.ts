@@ -120,7 +120,7 @@ export async function* streamTrackedCliBridgeTurn(
         (response) => {
           admitted = true;
           captureCliBridgeRunIdentity(response, run, true);
-          admissionValidated = true;
+          admissionValidated = response.body !== null;
         },
         () => getCliBridgeRun(options, transport, run, 30_000, signal),
       )) {
@@ -235,6 +235,7 @@ export async function dispatchCliBridgeTurn(
           detail = await readBoundedCliBridgeResponse(
             response,
             MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+            signal,
           );
         } catch {
           // The HTTP status already proves this request was rejected.

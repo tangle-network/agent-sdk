@@ -1,5 +1,6 @@
 import {
   AgentExactRunControlRefSchema,
+  AgentTurnInputSchema,
   type AgentExactRunControlRef,
   type AgentRunControlRef,
   type Sha256Digest,
@@ -152,18 +153,19 @@ export function prepareCliBridgeRun(
   environmentId: string,
   requireStableIdentity = false,
 ): PreparedCliBridgeRun {
+  const validatedTurn = AgentTurnInputSchema.parse(originalTurn);
   if (
     requireStableIdentity &&
-    (originalTurn.turnId === undefined || originalTurn.executionId === undefined)
+    (validatedTurn.turnId === undefined || validatedTurn.executionId === undefined)
   ) {
     throw new Error("native cli-bridge turns require stable turnId and executionId");
   }
-  const turnId = originalTurn.turnId ?? crypto.randomUUID();
-  const runId = cliBridgeRunId(environmentId, originalTurn, turnId);
-  const sessionId = originalTurn.sessionId ?? runId;
-  const executionId = originalTurn.executionId ?? runId;
+  const turnId = validatedTurn.turnId ?? crypto.randomUUID();
+  const runId = cliBridgeRunId(environmentId, validatedTurn, turnId);
+  const sessionId = validatedTurn.sessionId ?? runId;
+  const executionId = validatedTurn.executionId ?? runId;
   const turn = {
-    ...originalTurn,
+    ...validatedTurn,
     turnId,
     sessionId,
     executionId,

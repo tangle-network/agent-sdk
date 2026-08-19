@@ -9,7 +9,10 @@ import {
   type AgentRunCancellationRequest,
 } from "@tangle-network/agent-interface";
 import type { AgentSessionStatus } from "@tangle-network/agent-interface/environment-provider";
-import type { CliBridgeProviderOptions } from "./provider-options.js";
+import {
+  assertCliBridgeProviderOptions,
+  type CliBridgeProviderOptions,
+} from "./provider-options.js";
 import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
 import {
@@ -26,6 +29,7 @@ const DEFAULT_CANCELLATION_WAIT_MS = 30_000;
 export function cliBridgeCancellationSignal(
   options: CliBridgeProviderOptions,
 ): AbortSignal {
+  assertCliBridgeProviderOptions(options);
   return AbortSignal.timeout(
     options.cancelWaitMs ?? DEFAULT_CANCELLATION_WAIT_MS,
   );
@@ -161,7 +165,11 @@ async function performCliBridgeCancellation(
     },
   ), signal);
   const responseText = await waitForOperation(
-    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      signal,
+    ),
     signal,
   );
   const acknowledgement = parseExactCancellationAcknowledgement(
@@ -295,7 +303,11 @@ export async function cancelExactCliBridgeRun(
     },
   ), operationSignal);
   const responseText = await waitForOperation(
-    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      operationSignal,
+    ),
     operationSignal,
   );
   return parseExactCancellationAcknowledgement(
@@ -358,7 +370,11 @@ export async function getCliBridgeRun(
     },
   ), signal);
   const responseText = await waitForOperation(
-    readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      signal,
+    ),
     signal,
   );
   if (response.status === 404) return null;

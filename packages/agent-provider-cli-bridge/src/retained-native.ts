@@ -473,11 +473,19 @@ async function createCliBridgeNativeSession(
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(
       response.status,
-      await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+      await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
+      ),
     );
   }
   return parseNativeSessionView(
-    await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    await readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      signal,
+    ),
     sessionId,
     model,
     createRequestDigest,
@@ -496,6 +504,7 @@ async function recoverConflictingNativeSession(
   await readBoundedCliBridgeResponse(
     conflictResponse,
     MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+    signal,
   );
   const response = await transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(sessionId)}`,
@@ -511,11 +520,16 @@ async function recoverConflictingNativeSession(
       `session ${JSON.stringify(sessionId)} could not be recovered: ${await readBoundedCliBridgeResponse(
         response,
         MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
       )}`,
     );
   }
   return parseNativeSessionView(
-    await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+    await readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      signal,
+    ),
     sessionId,
     model,
     createRequestDigest,
@@ -610,13 +624,18 @@ export async function beginCliBridgeNativeTurn(
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(
       response.status,
-      await readBoundedCliBridgeResponse(response, MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES),
+      await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
+      ),
     );
   }
   onAdmission?.();
   const parsed = safeJson(await readBoundedCliBridgeResponse(
     response,
     MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+    signal,
   ));
   const responseSession = parsed?.session;
   const responseRun = parsed?.run;

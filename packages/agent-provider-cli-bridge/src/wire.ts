@@ -372,15 +372,22 @@ export function cliBridgeRunId(
   turn: AgentTurnInput,
   turnId: string,
 ): string {
-  if (turn.executionId && isCliBridgeRunId(turn.executionId)) {
+  if (turnId.length === 0) {
+    throw new Error("cli-bridge turn id must be non-empty");
+  }
+  if (turn.executionId !== undefined && turn.executionId.length === 0) {
+    throw new Error("cli-bridge execution id must be non-empty");
+  }
+  if (turn.executionId !== undefined && isCliBridgeRunId(turn.executionId)) {
     return turn.executionId;
   }
+  const executionId = turn.executionId ?? turnId;
   const digest = createHash("sha256")
     .update(environmentId)
     .update("\0")
     .update(turn.sessionId ?? "")
     .update("\0")
-    .update(turn.executionId ?? turnId)
+    .update(executionId)
     .digest("hex");
   return `agent-${digest}`;
 }
@@ -419,7 +426,8 @@ export function runSnapshot(value: string): CliBridgeRunSnapshot {
     typeof id !== "string" ||
     (requestDigest !== undefined && !requestDigest.success) ||
     !["running", "done", "error", "cancelled", "unknown"].includes(String(status)) ||
-    typeof terminal !== "boolean"
+    typeof terminal !== "boolean" ||
+    (status === "running" && terminal)
   ) {
     throw new Error("cli-bridge run status returned an invalid snapshot");
   }

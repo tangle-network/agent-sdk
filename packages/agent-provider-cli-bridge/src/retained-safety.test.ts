@@ -160,6 +160,41 @@ describe("retained cli-bridge safety", () => {
     expect(performance.now() - beganAt).toBeLessThan(500);
   });
 
+  it("closes a pending cancellation response reader when its wait budget expires", async () => {
+    let bodyClosed = false;
+    const controlRef = exactControlRef();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      cancelWaitMs: 10,
+      fetch: async () => {
+        const body: AsyncIterable<Uint8Array> = {
+          [Symbol.asyncIterator]() {
+            return {
+              next: (): Promise<IteratorResult<Uint8Array>> => new Promise(() => {}),
+              return: async (): Promise<IteratorResult<Uint8Array>> => {
+                bodyClosed = true;
+                return { done: true, value: undefined };
+              },
+            };
+          },
+        };
+        return {
+          ok: true,
+          status: 200,
+          body,
+          headers: { get: () => null },
+          text: async () => "",
+        } as unknown as Response;
+      },
+    });
+    const environment = (await provider.get!(controlRef.environmentId))!;
+    const session = environment.session!(controlRef.sessionId, { controlRef });
+
+    await expect(session.cancel()).rejects.toMatchObject({ name: "TimeoutError" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(bodyClosed).toBe(true);
+  });
+
   it("keeps malformed token totals unknown while retaining an exact model-call count", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",

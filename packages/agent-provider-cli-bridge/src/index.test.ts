@@ -2107,6 +2107,18 @@ describe("createCliBridgeProvider", () => {
     ).toThrow(`${name} must be a non-negative integer`);
   });
 
+  it.each(["headersTimeoutMs", "bodyTimeoutMs", "cancelWaitMs"] as const)(
+    "rejects $name above the AbortSignal timer limit",
+    (name) => {
+      expect(() =>
+        createCliBridgeProvider({
+          baseUrl: "http://bridge.local",
+          [name]: 2_147_483_648,
+        }),
+      ).toThrow(`${name} must be no greater than 2147483647`);
+    },
+  );
+
   it("continues one bridge-owned retained Pi session with profile-selected harness, provider, and model", async () => {
     const fixture = createNativePiFixture({
       textForRun: (runId) => runId === "run-1" ? "answer-1" : "answer-2",
@@ -2366,6 +2378,29 @@ describe("createCliBridgeProvider", () => {
     expect(runIds[0]).toMatch(/^agent-[a-f0-9]{64}$/u);
   });
 
+  it.each(["executionId", "turnId"] as const)(
+    "rejects an empty %s before deriving a retained run identity",
+    async (field) => {
+      let called = false;
+      const provider = createCliBridgeProvider({
+        baseUrl: "http://bridge.local",
+        defaultModel: "opencode/model",
+        fetch: async () => {
+          called = true;
+          return new Response();
+        },
+      });
+      const environment = await provider.create({ profile: { name: "worker" } });
+
+      await expect(consumeTurn(environment, {
+        prompt: "same",
+        [field]: "",
+      })).rejects.toThrow();
+      expect(called).toBe(false);
+      await environment.destroy?.();
+    },
+  );
+
   it("reattaches after a reader failure using the server event cursor", async () => {
     let chatCalls = 0;
     let aggregateCalls = 0;
@@ -2513,6 +2548,79 @@ describe("createCliBridgeProvider", () => {
     await environment.destroy?.();
 
     expect(cancelCalls).toBe(0);
+  });
+
+  it("rejects a running terminal snapshot before automatic cancellation", async () => {
+    let runId: string | undefined;
+    let statusReads = 0;
+    let cancelCalls = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "runner/model",
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/cancel")) {
+          cancelCalls += 1;
+          return cancelResponse(init, "cancelled");
+        }
+        if (init?.method === "GET") {
+          statusReads += 1;
+          return runResponse(runId!, statusReads === 1 ? "running" : "cancelled", true);
+        }
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        runId = String(body.run_id);
+        return new Response(null, {
+          status: 200,
+          headers: exactRunHeaders(body),
+        });
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    await expect(environment.dispatch!({
+      prompt: "work",
+      executionId: "status-contradiction",
+    })).rejects.toThrow("cancellation was not confirmed");
+    expect(statusReads).toBe(1);
+    expect(cancelCalls).toBe(0);
+    await environment.destroy?.();
+  });
+
+  it("cancels a generic run admitted with an empty response body", async () => {
+    let runId: string | undefined;
+    let statusReads = 0;
+    let cancelCalls = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "runner/model",
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/cancel")) {
+          cancelCalls += 1;
+          return cancelResponse(init, "cancelled");
+        }
+        if (init?.method === "GET") {
+          statusReads += 1;
+          return runResponse(runId!, "running", false);
+        }
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        runId = String(body.run_id);
+        return new Response(null, {
+          status: 200,
+          headers: {
+            ...exactRunHeaders(body),
+            "content-type": "text/event-stream",
+          },
+        });
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    await expect(consumeTurn(environment, {
+      prompt: "work",
+      executionId: "empty-stream-body",
+    })).rejects.toThrow("cli-bridge response body is empty");
+    expect(statusReads).toBe(1);
+    expect(cancelCalls).toBe(1);
+    await environment.destroy?.();
   });
 
   it("refuses execution when no run data selects a model or harness", async () => {

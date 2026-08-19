@@ -88,26 +88,29 @@ export async function* streamCliBridgeTurn(
       detail = await readBoundedCliBridgeResponse(
         response,
         MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
       );
     } catch {
       // The HTTP status already proves this request was rejected.
     }
     throw new CliBridgeRequestRejectedError(response.status, detail);
   }
-  if (!response.body) throw new Error("cli-bridge response body is empty");
   try {
     onResponse?.(response);
   } catch (error) {
-    try {
-      await detachCliBridgeReader(response.body);
-    } catch (detachError) {
-      throw new AggregateError(
-        [error, detachError],
-        `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
-      );
+    if (response.body) {
+      try {
+        await detachCliBridgeReader(response.body);
+      } catch (detachError) {
+        throw new AggregateError(
+          [error, detachError],
+          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+        );
+      }
     }
     throw error;
   }
+  if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
   const sessionId = turn.sessionId ?? runId;
@@ -534,6 +537,7 @@ async function readFullCliBridgeResult(
   const responseText = await readBoundedCliBridgeResponse(
     response,
     MAX_CLI_BRIDGE_RESULT_RESPONSE_BYTES,
+    signal,
   );
   onResponse?.(response);
   if (!response.ok) {

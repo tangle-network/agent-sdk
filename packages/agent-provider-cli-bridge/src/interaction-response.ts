@@ -159,6 +159,7 @@ export function cliBridgeInteractionResponder(
         JSON.parse(await readBoundedCliBridgeResponse(
           response,
           MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+          operation?.signal,
         )),
       );
     } catch (error) {

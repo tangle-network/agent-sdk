@@ -66,15 +66,26 @@ export function trimSlash(value: string): string {
 export async function readBoundedCliBridgeResponse(
   response: CliBridgeResponse,
   maxBytes: number,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   if (response.body === null) return "";
   const iterator = response.body[Symbol.asyncIterator]();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
   let bytes = 0;
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closePromise === undefined) {
+      closePromise = (async () => {
+        await iterator.return?.();
+      })();
+    }
+    return closePromise;
+  };
   try {
     while (true) {
-      const next = await iterator.next();
+      const next = await nextCliBridgeResponseChunk(iterator, signal, close);
       if (next.done) break;
       bytes += next.value.byteLength;
       if (bytes > maxBytes) {
@@ -85,6 +96,52 @@ export async function readBoundedCliBridgeResponse(
     chunks.push(decoder.decode());
     return chunks.join("");
   } finally {
-    await iterator.return?.();
+    if (signal?.aborted) {
+      void close().catch(() => {});
+    } else {
+      await close();
+    }
   }
+}
+
+function nextCliBridgeResponseChunk(
+  iterator: AsyncIterator<Uint8Array>,
+  signal: AbortSignal | undefined,
+  close: () => Promise<void>,
+): Promise<IteratorResult<Uint8Array>> {
+  if (signal === undefined) return iterator.next();
+  if (signal.aborted) {
+    void close().catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<IteratorResult<Uint8Array>>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = (): void => {
+      finish(() => reject(signal.reason));
+      void close().catch(() => {});
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    let next: Promise<IteratorResult<Uint8Array>>;
+    try {
+      next = Promise.resolve(iterator.next());
+    } catch (error) {
+      finish(() => reject(error));
+      return;
+    }
+    if (settled) return;
+    void next.then(
+      (result) => finish(() => resolve(result)),
+      (error) => finish(() => reject(error)),
+    );
+  });
 }
