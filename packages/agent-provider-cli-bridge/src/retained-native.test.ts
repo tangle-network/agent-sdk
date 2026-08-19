@@ -525,6 +525,7 @@ describe("cli-bridge native retained sessions", () => {
       sessionId,
       turnId: "turn-1",
       executionId: "native-execution",
+      detach: true,
       interactions: { permission: true },
     });
     await environment.dispatch!({
@@ -583,6 +584,22 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests[3]?.body).toMatchObject({ interactions: { permission: false } });
     expect(requests[4]?.body).not.toHaveProperty("interactions");
     expect(requests[1]?.body).not.toHaveProperty("metadata.interactions");
+    expect(requests[1]?.body).not.toHaveProperty("detach");
+
+    const detachedStream = async () => {
+      for await (const _event of environment.stream({
+        prompt: "do not open a detached stream",
+        sessionId,
+        turnId: "turn-stream-detach",
+        executionId: "native-stream-detach",
+        detach: true,
+      })) {
+        // A detached stream must fail before it emits an event.
+      }
+    };
+    await expect(detachedStream()).rejects.toThrow(
+      "cli-bridge provider does not support detached turns",
+    );
   });
 
   it("cancels a native turn after a 2xx admission response loses its coordinates", async () => {

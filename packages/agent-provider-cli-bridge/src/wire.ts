@@ -145,7 +145,8 @@ function assertRetainedTurnInputSupported(turn: AgentTurnInput): void {
   if (turn.controlRef !== undefined) unsupported.push("controlRef");
   if (turn.contextTransfer !== undefined) unsupported.push("contextTransfer");
   if (turn.nativeContinuation !== undefined) unsupported.push("nativeContinuation");
-  if (turn.detach === true) unsupported.push("detach");
+  // `detach` controls the provider's response reader. The bridge request stays unchanged.
+  // The streaming path rejects detached turns before it calls this encoder.
   if (unsupported.length > 0) {
     throw new Error(
       `cli-bridge retained turns cannot represent ${unsupported.join(", ")}`,
