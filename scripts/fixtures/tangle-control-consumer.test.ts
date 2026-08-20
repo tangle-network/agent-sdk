@@ -61,7 +61,7 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.23.0");
+    expect(manifest.version).toBe("0.30.1");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
