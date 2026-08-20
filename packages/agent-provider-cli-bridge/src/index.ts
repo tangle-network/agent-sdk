@@ -42,6 +42,7 @@ import {
 import { resolveBridgeModel } from "./wire.js";
 
 export type { CliBridgeProviderOptions } from "./provider-options.js";
+export type { CliBridgeExecution } from "./provider-options.js";
 export type { CliBridgeRunLookupInput } from "./retained-control.js";
 export { safeEndpointFromBaseUrl } from "./observation.js";
 

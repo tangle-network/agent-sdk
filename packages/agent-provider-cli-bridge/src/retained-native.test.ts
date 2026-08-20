@@ -742,7 +742,7 @@ describe("cli-bridge native retained sessions", () => {
     const provider = createCliBridgeProvider({
       baseUrl,
       defaultModel: model,
-      defaultExecution: { kind: "host" },
+      defaultExecution: { kind: "host", jail: { mode: "fs-jail" } },
       capabilities: defaultCliBridgeCapabilities("pi"),
       fetch: createNativeFetch(requests),
     });
@@ -771,7 +771,7 @@ describe("cli-bridge native retained sessions", () => {
       model,
       interaction_policy: "interactive",
       cwd: "",
-      execution: { kind: "host" },
+      execution: { kind: "host", jail: { mode: "fs-jail" } },
       env: { BRIDGE_TEST_MODE: "retained" },
       metadata: { source: "focused-test" },
       provider_options: { route: "native" },
