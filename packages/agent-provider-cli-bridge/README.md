@@ -8,6 +8,10 @@ import { createCliBridgeProvider } from '@tangle-network/agent-provider-cli-brid
 const provider = createCliBridgeProvider({
   baseUrl: 'http://127.0.0.1:8787',
   bearerToken: process.env.CLI_BRIDGE_TOKEN,
+  defaultExecution: {
+    kind: 'host',
+    jail: { mode: 'fs-jail' },
+  },
 })
 
 const environment = await provider.create({
@@ -45,6 +49,15 @@ The lookup returns the server-issued digest only when all five planned coordinat
 
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
 Execution fails before network use when none is present.
+
+`defaultExecution` is the existing cli-bridge `execution` request object.
+The provider forwards it unchanged to the Bridge session or chat request.
+Host execution accepts `jail`, `netJail`, and `timeoutMs`.
+Sandbox execution accepts `repoUrl`, `gitRef`, `capability`, `ttlSeconds`, `netJail`, and `timeoutMs`.
+The Bridge validates the object and applies its operator confinement rules.
+Retained native sessions currently require `kind: 'host'`.
+The provider rejects a sandbox default before it creates the retained session; use one-shot execution for `kind: 'sandbox'`.
+The Bridge currently refuses `netJail` with `kind: 'sandbox'`; use the sandbox's own egress policy.
 
 Passing the same `sessionId` on later turns continues the same CLI conversation.
 `executionId` gives a turn stable bridge identity, and `lastEventId` reattaches after a reader failure.
