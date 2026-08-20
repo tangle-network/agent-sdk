@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.4
+
+### Patch Changes
+
+- fdb69bc: Expose cli-bridge execution options, including host jail settings, through `CliBridgeProviderOptions` and forward them unchanged.
+
 ## 0.9.3
 
 ### Patch Changes
