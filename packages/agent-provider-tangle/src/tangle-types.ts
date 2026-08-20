@@ -1,4 +1,6 @@
 import type {
+  BackendRegistryEntry,
+  BackendRegistryResponse,
   BackendType,
   CreateSandboxOptions,
   ExecResult as SandboxExecResult,
@@ -50,6 +52,10 @@ export interface SandboxClientLike {
     options?: RequestInit,
     fetchOptions?: { timeoutMs?: number },
   ): Promise<Response>;
+  /** Canonical backend catalog served by authenticated `/v1/backends`. */
+  listBackends?(): Promise<BackendRegistryResponse>;
+  /** Lookup over the same canonical backend catalog, when the SDK provides it. */
+  getBackend?(type: string): Promise<BackendRegistryEntry | undefined>;
   get?(id: string, requestOptions?: { signal?: AbortSignal }): Promise<SandboxInstanceLike | null>;
   list?(options?: {
     scope?: string;

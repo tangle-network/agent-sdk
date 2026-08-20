@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SandboxEvent, SandboxRuntimeCapabilities } from "@tangle-network/sandbox";
+import type {
+  BackendRegistryResponse,
+  SandboxEvent,
+  SandboxRuntimeCapabilities,
+} from "@tangle-network/sandbox";
 import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
 import { agentRunCancellationRequestDigest } from "@tangle-network/agent-interface";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
@@ -37,6 +41,29 @@ const PUBLISHED_DOCUMENT: SandboxRuntimeCapabilities = {
 };
 const PUBLISHED_DOCUMENT_AS_READ: SandboxRuntimeCapabilityDocument =
   PUBLISHED_DOCUMENT;
+
+const OPENCODE_BACKEND_CATALOG: BackendRegistryResponse = {
+  backends: [
+    {
+      type: "opencode",
+      name: "OpenCode",
+      description: "test backend",
+      capabilities: {
+        streaming: true,
+        toolUse: true,
+        reasoning: true,
+        multimodal: false,
+        imageInput: false,
+        contextWindow: 128_000,
+        mcp: true,
+        sessions: true,
+        configurable: true,
+        interactions: ["permission", "question", "plan"],
+      },
+    },
+  ],
+  timestamp: new Date(0).toISOString(),
+};
 
 /**
  * One capable sandbox behind one deployment. Every local method retained
@@ -143,8 +170,13 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
     fetch: async () => {
       throw new Error("the capability probe must not send a request");
     },
+    listBackends: async () => OPENCODE_BACKEND_CATALOG,
   };
-  return { provider: createTangleProvider({ client }), box, sessionId };
+  return {
+    provider: createTangleProvider({ client, defaultBackend: "opencode" }),
+    box,
+    sessionId,
+  };
 }
 
 /**
