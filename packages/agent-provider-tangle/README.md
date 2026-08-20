@@ -1,11 +1,10 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.23.0 <1.0.0`, and this package is developed and tested against 0.23.0.
-The floor is 0.23.0 because the response path needs `session.respondToInteraction`, which first shipped there.
-The adapter feature-detects that method, so an older SDK claims no interactions rather than failing to load.
-The floor stands anyway: the earlier answer path resolves the session's first outstanding question rather than the one a response names, so a response meant for one ask resolves another and reports success.
-This adapter never falls back to it.
+The peer range is `>=0.30.1 <1.0.0`, and this package is developed and tested against 0.30.1.
+The floor is 0.30.1 because interaction claims use the Sandbox backend catalog exposed by `listBackends()`.
+The provider fails closed when the configured backend or its catalog entry cannot be read.
+Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
 ```ts
 import { Sandbox } from '@tangle-network/sandbox'

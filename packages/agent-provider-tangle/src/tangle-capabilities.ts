@@ -4,6 +4,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import { harnessSystemPromptIntents } from "@tangle-network/agent-interface";
 import { SandboxInstance } from "@tangle-network/sandbox";
+import type { BackendRegistryEntry } from "@tangle-network/sandbox";
 import type {
   SandboxClientLike,
   SandboxInstanceLike,
@@ -133,6 +134,42 @@ export function defaultTangleSandboxCapabilities(
       input: true,
       resize: true,
       stop: true,
+    },
+  };
+}
+
+/**
+ * Keep only interaction kinds the selected Sandbox backend advertises.
+ *
+ * The backend catalog is the authority for harness-specific interactions.
+ * An absent entry means the provider cannot prove any interaction support.
+ */
+export function narrowTangleCapabilitiesToBackend(
+  declared: AgentEnvironmentCapabilities,
+  backend: BackendRegistryEntry | undefined,
+): AgentEnvironmentCapabilities {
+  if (declared.interactions === undefined || backend === undefined) {
+    if (declared.interactions === undefined) return declared;
+    const narrowed = { ...declared };
+    delete narrowed.interactions;
+    return narrowed;
+  }
+
+  const supportedKinds = new Set<string>(backend.capabilities.interactions);
+  const kinds = declared.interactions.kinds.filter((kind) =>
+    supportedKinds.has(kind),
+  );
+  if (kinds.length === 0) {
+    const narrowed = { ...declared };
+    delete narrowed.interactions;
+    return narrowed;
+  }
+
+  return {
+    ...declared,
+    interactions: {
+      ...declared.interactions,
+      kinds,
     },
   };
 }

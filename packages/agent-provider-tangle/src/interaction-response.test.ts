@@ -12,6 +12,7 @@ import type {
   InteractionResponse,
   InteractionResponseCommand,
 } from "@tangle-network/agent-interface";
+import type { BackendRegistryResponse } from "@tangle-network/sandbox";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
 import type {
@@ -32,6 +33,29 @@ const EXECUTION_ID = "execution-interactions";
 const RESPONSE_RECORDING_DOCUMENT: SandboxRuntimeCapabilityDocument = {
   ...RETAINED_DEPLOYMENT_DOCUMENT,
   interactions: { responseDedupe: true },
+};
+
+const OPENCODE_BACKEND_CATALOG: BackendRegistryResponse = {
+  backends: [
+    {
+      type: "opencode",
+      name: "OpenCode",
+      description: "test backend",
+      capabilities: {
+        streaming: true,
+        toolUse: true,
+        reasoning: true,
+        multimodal: false,
+        imageInput: false,
+        contextWindow: 128_000,
+        mcp: true,
+        sessions: true,
+        configurable: true,
+        interactions: ["permission", "question", "plan"],
+      },
+    },
+  ],
+  timestamp: new Date(0).toISOString(),
 };
 
 function interactionRequest(options: {
@@ -149,7 +173,9 @@ async function harness(options: {
     client: {
       create: async () => box,
       get: async (id) => (id === box.id ? box : null),
+      listBackends: async () => OPENCODE_BACKEND_CATALOG,
     },
+    defaultBackend: "opencode",
   });
   const environment = await provider.create({ profile: { name: "worker" } });
   return { environment, commands };

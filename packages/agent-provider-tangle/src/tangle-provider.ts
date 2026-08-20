@@ -17,6 +17,7 @@ import {
 import {
   capabilitiesForClient,
   defaultTangleSandboxCapabilities,
+  narrowTangleCapabilitiesToBackend,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
@@ -55,12 +56,17 @@ export function createTangleProvider(
         "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
       );
     }
+    const backend =
+      configured.interactions === undefined
+        ? undefined
+        : await resolveDefaultBackend(options.client, options.defaultBackend);
+    const narrowed = narrowTangleCapabilitiesToBackend(configured, backend);
     return exactProcess
       ? {
-          ...configured,
+          ...narrowed,
           exactProcess: { egress: ["blocked", "strict"] as const },
         }
-      : configured;
+      : narrowed;
   };
   // Provider-boundary document: client-stage facts only. It also validates
   // the configured document, so create() and get() call it before any effect.
@@ -242,6 +248,21 @@ export function createTangleProvider(
         }
       : {}),
   };
+}
+
+async function resolveDefaultBackend(
+  client: TangleProviderOptions["client"],
+  defaultBackend: TangleProviderOptions["defaultBackend"],
+) {
+  if (defaultBackend === undefined) return undefined;
+  try {
+    if (client.getBackend) return await client.getBackend(defaultBackend);
+    if (!client.listBackends) return undefined;
+    const catalog = await client.listBackends();
+    return catalog.backends.find((backend) => backend.type === defaultBackend);
+  } catch {
+    return undefined;
+  }
 }
 
 function assertProviderOperationOptions(
