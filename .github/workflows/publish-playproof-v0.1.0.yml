@@ -1,6 +1,10 @@
 name: Publish Playproof 0.1.0
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-playproof-v0.1.0.yml
   push:
     branches: [main]
     paths:
@@ -10,14 +14,106 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: write
   id-token: write
 
 concurrency:
-  group: publish-playproof-v0.1.0
+  group: publish-playproof-v0.1.0-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
+  source-access-preflight:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test organization-level user credential
+        id: user-token
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          login=$(gh api user --jq .login)
+          role=$(gh api user/memberships/orgs/tangle-network --jq .role)
+          repo=$(gh api repos/tangle-network/agent-lab --jq .full_name)
+          admin=$(gh api repos/tangle-network/agent-lab --jq '.permissions.admin')
+          package=$(gh api 'repos/tangle-network/agent-lab/contents/package.json?ref=a365cffdbdb1de63257af51912c0d37a8aab1805' --jq .content | base64 --decode)
+          test "$repo" = tangle-network/agent-lab
+          test "$(printf '%s' "$package" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).name")" = '@tangle-network/playproof'
+          test "$(printf '%s' "$package" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")" = '0.1.0'
+          can_create=$(gh api orgs/tangle-network --jq 'if .members_can_create_public_repositories == null then .members_can_create_repositories else .members_can_create_public_repositories end')
+          if [ "$role" != admin ] && [ "$can_create" != true ]; then
+            echo "credential can read source but cannot create public organization repositories"
+            exit 1
+          fi
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+          echo "role=$role" >> "$GITHUB_OUTPUT"
+          echo "agent_lab_admin=$admin" >> "$GITHUB_OUTPUT"
+          echo "can_create_public=$can_create" >> "$GITHUB_OUTPUT"
+
+      - name: Test organization GitHub App credential
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.WEBB_SPIDER_APP_ID }}
+          private-key: ${{ secrets.WEBB_SPIDER_PRIV_KEY }}
+          owner: tangle-network
+
+      - name: Inspect organization App repository access
+        id: app-access
+        if: steps.app-token.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          count=$(gh api /installation/repositories --jq .total_count)
+          source_visible=false
+          if gh api repos/tangle-network/agent-lab --jq .full_name >/dev/null 2>&1; then
+            source_visible=true
+          fi
+          echo "repository_count=$count" >> "$GITHUB_OUTPUT"
+          echo "source_visible=$source_visible" >> "$GITHUB_OUTPUT"
+
+      - name: Report credential preflight on this PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/playproof-preflight.md <<'EOF'
+          <!-- playproof-release-credential-preflight -->
+          ## Playproof release credential preflight
+
+          | Capability | Outcome |
+          |---|---|
+          | organization user credential | `${{ steps.user-token.outcome }}` |
+          | user login | `${{ steps.user-token.outputs.login || 'unavailable' }}` |
+          | organization role | `${{ steps.user-token.outputs.role || 'unavailable' }}` |
+          | agent-lab admin | `${{ steps.user-token.outputs.agent_lab_admin || 'unavailable' }}` |
+          | may create public org repos | `${{ steps.user-token.outputs.can_create_public || 'unavailable' }}` |
+          | organization App token | `${{ steps.app-token.outcome }}` |
+          | App-visible repositories | `${{ steps.app-access.outputs.repository_count || 'unavailable' }}` |
+          | App can read agent-lab | `${{ steps.app-access.outputs.source_visible || 'unavailable' }}` |
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file /tmp/playproof-preflight.md
+
+      - name: Require at least one viable relevant-repository release path
+        if: always()
+        run: |
+          if [ '${{ steps.user-token.outcome }}' != success ]; then
+            echo '::error::agent-sdk has no verified organization credential that can read agent-lab and create the public repository'
+            exit 1
+          fi
+
   publish:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
