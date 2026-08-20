@@ -9,11 +9,12 @@ on:
 
 permissions:
   contents: read
+  issues: write
   id-token: write
 
 concurrency:
   group: publish-playproof-v0.1.0
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -130,3 +131,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+      - name: Publish inspectable release receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          gh issue create --repo tangle-network/agent-sdk \
+            --title "Playproof npm publication ${JOB_STATUS}: run ${RUN_ID}.${RUN_ATTEMPT}" \
+            --body "Publication status: **${JOB_STATUS}**\n\nRun: https://github.com/tangle-network/agent-sdk/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}\n\nCommit: ${GITHUB_SHA}\n\nThis receipt is emitted even when an earlier step fails."
