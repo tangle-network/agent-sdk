@@ -1,0 +1,132 @@
+name: Publish Playproof 0.1.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-playproof-v0.1.0.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-playproof-v0.1.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PLAYPROOF_PYTHON: python
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_CONFIG_PROVENANCE: 'true'
+    steps:
+      - name: Check out immutable Playproof release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tangle-network/playproof
+          ref: v0.1.0
+          path: playproof
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: playproof/pnpm-lock.yaml
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Use known-good npm with provenance support
+        run: |
+          npm install --global npm@11.18.0
+          test "$(npm --version)" = 11.18.0
+
+      - name: Verify exact release tree
+        working-directory: playproof
+        run: |
+          test "$(git describe --tags --exact-match)" = v0.1.0
+          test "$(node -p "require('./package.json').name")" = '@tangle-network/playproof'
+          test "$(node -p "require('./package.json').version")" = '0.1.0'
+          pnpm install --frozen-lockfile
+          python -m compileall -q desktop native pyboy
+          pnpm ci
+
+      - name: Build exact package archive
+        id: package
+        working-directory: playproof
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/playproof-package"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/playproof-package"
+          mapfile -t packages < <(find "$RUNNER_TEMP/playproof-package" -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#packages[@]}" -eq 1
+          package="${packages[0]}"
+          sha256=$(sha256sum "$package" | cut -d' ' -f1)
+          echo "path=$package" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "$sha256  $(basename "$package")" > "$RUNNER_TEMP/playproof-package/SHA256SUMS"
+
+      - name: Publish exact archive if absent
+        env:
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          set -euo pipefail
+          if npm view '@tangle-network/playproof@0.1.0' version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo '@tangle-network/playproof@0.1.0 already exists; verifying only'
+          else
+            test -n "$NODE_AUTH_TOKEN"
+            npm publish "$PACKAGE" --access public --provenance --registry=https://registry.npmjs.org
+          fi
+
+      - name: Verify registry identity and clean consumer
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if version=$(npm view '@tangle-network/playproof@0.1.0' version --registry=https://registry.npmjs.org 2>/dev/null); then
+              test "$version" = 0.1.0
+              break
+            fi
+            sleep 5
+          done
+          test "$(npm view '@tangle-network/playproof@0.1.0' version --registry=https://registry.npmjs.org)" = 0.1.0
+          mkdir "$RUNNER_TEMP/playproof-consumer"
+          cd "$RUNNER_TEMP/playproof-consumer"
+          npm init -y >/dev/null
+          npm install --ignore-scripts '@tangle-network/playproof@0.1.0'
+          node --input-type=module <<'NODE'
+          const paths = [
+            '@tangle-network/playproof',
+            '@tangle-network/playproof/drivers',
+            '@tangle-network/playproof/drivers/cli',
+            '@tangle-network/playproof/drivers/openai-compatible',
+            '@tangle-network/playproof/adapters/worker-rpc',
+            '@tangle-network/playproof/adapters/native-2048',
+            '@tangle-network/playproof/adapters/native-desktop',
+            '@tangle-network/playproof/adapters/pyboy-rpc',
+            '@tangle-network/playproof/adapters/pyboy-generic',
+            '@tangle-network/playproof/adapters/pyboy-tetris',
+            '@tangle-network/playproof/platforms/steam',
+            '@tangle-network/playproof/platforms/xbox',
+          ]
+          for (const path of paths) await import(path)
+          console.log(`clean consumer imported ${paths.length} public entrypoints`)
+          NODE
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playproof-v0.1.0-package
+          path: ${{ runner.temp }}/playproof-package/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
