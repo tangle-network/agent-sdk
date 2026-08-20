@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.13.0
+
+### Minor Changes
+
+- bbc9b2e: Narrow provider interaction capabilities from the Sandbox backend catalog.
+
 ## 0.12.3
 
 ### Patch Changes
