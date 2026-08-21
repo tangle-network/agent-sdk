@@ -1,5 +1,30 @@
 # @tangle-network/agent-provider-daytona
 
+## 0.4.0
+
+### Minor Changes
+
+- bd76ed8: Refuse a command result that carries no exit status instead of reading it as exit zero.
+
+  Exit zero is the one value that means a command succeeded. A sandbox SDK that answers with captured output but no `exitCode` or `code` was read as zero, so `environment.exec()` reported success for a command whose outcome was never measured, and a turn over that command finished with `status: "completed"`. A failing build that printed to stdout and returned no status read as a build that worked.
+
+  Such a result now throws, naming the SDK call whose answer could not be read. A turn fails loudly rather than completing on evidence nobody has.
+
+### Patch Changes
+
+- e04c96c: Add `commandTurnEvents`, `execResultFromUnknown`, and `execOnlyEnvironmentCapabilities` to `@tangle-network/agent-interface/environment-provider`.
+  They own the three rules every workspace-only environment adapter needs: the order a turn's command is resolved in and the refusal when none resolves, how a sandbox SDK's untyped command result is read and the refusal when it carries no exit status, and the capability document of an adapter that runs commands and moves files but owns no agent profile, stream, session, or branch.
+
+  The ComputeSDK, Daytona, and E2B adapters now call those three instead of keeping a private copy each.
+  Their published capability documents, turn events, and refusal messages are unchanged.
+
+- Updated dependencies [22070e6]
+- Updated dependencies [e04c96c]
+- Updated dependencies [6397cbb]
+- Updated dependencies [655a60f]
+- Updated dependencies [a0d7d70]
+  - @tangle-network/agent-interface@1.5.0
+
 ## 0.3.15
 
 ### Patch Changes
