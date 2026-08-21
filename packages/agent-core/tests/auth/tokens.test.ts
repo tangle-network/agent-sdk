@@ -17,6 +17,7 @@ import {
   verifyApiKey,
   verifyReadToken,
 } from "../../src/auth/tokens.js";
+import { decodeToken as browserDecodeToken } from "../../src/auth/tokens-browser.js";
 import type {
   ProductAuthInfo,
   ReadTokenPayload,
@@ -187,6 +188,18 @@ describe("decodeToken", () => {
 
   it("returns null for invalid base64 payload", () => {
     expect(decodeToken("header.!!!invalid!!!.signature")).toBeNull();
+  });
+
+  it("recovers a non-ASCII claim as the text that was issued", () => {
+    const name = "José 中文 🙂";
+    const token = issueReadToken(
+      TEST_SIGNING_SECRET,
+      { sub: name, sid: TEST_SESSION_ID, pid: TEST_PRODUCT_ID },
+      60,
+    );
+
+    expect(decodeToken(token)?.sub).toBe(name);
+    expect(browserDecodeToken(token)?.sub).toBe(name);
   });
 
   it("decodes without verifying signature", () => {
