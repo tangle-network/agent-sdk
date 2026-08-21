@@ -12,6 +12,7 @@ import {
   agentNativeContextContinuationResultMatchesRequest,
   canonicalCandidateDigest,
   nativeContextContinuationTurnDigest,
+  sameAgentRunControlRef,
   type AgentExactRunControlRef,
   type AgentNativeContextContinuationOptions,
   type AgentNativeContextContinuationResult,
@@ -199,7 +200,7 @@ export async function continueCliBridgeNative(
 ): Promise<AgentNativeContextContinuationResult> {
   const exactRequest = NativeContextContinuationRequestSchema.parse(request);
   const current = currentCliBridgeControlRef(run, providerName);
-  if (!sameControlRef(current, exactRequest.run)) {
+  if (!sameAgentRunControlRef(current, exactRequest.run)) {
     throw new Error("cli-bridge native continuation targets another retained run");
   }
   if (
@@ -260,7 +261,7 @@ function currentCliBridgeControlRef(
 ): AgentExactRunControlRef {
   if (run.controlRef !== undefined) {
     const controlRef = AgentExactRunControlRefSchema.parse(run.controlRef);
-    if (!sameControlRef(controlRef, exactControlRefForRun(run, providerName))) {
+    if (!sameAgentRunControlRef(controlRef, exactControlRefForRun(run, providerName))) {
       throw new Error("cli-bridge retained run has a conflicting control reference");
     }
     return controlRef;
@@ -268,18 +269,6 @@ function currentCliBridgeControlRef(
   const controlRef = exactControlRefForRun(run, providerName);
   run.controlRef = controlRef;
   return controlRef;
-}
-
-function sameControlRef(
-  left: AgentExactRunControlRef,
-  right: AgentExactRunControlRef,
-): boolean {
-  return left.runId === right.runId &&
-    left.provider === right.provider &&
-    left.environmentId === right.environmentId &&
-    left.sessionId === right.sessionId &&
-    left.executionId === right.executionId &&
-    left.requestDigest === right.requestDigest;
 }
 
 function assertBoundaryControlRef(

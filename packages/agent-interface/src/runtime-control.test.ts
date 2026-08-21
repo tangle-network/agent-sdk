@@ -7,6 +7,7 @@ import {
   RuntimeEventEnvelopeSchema,
   agentRunCancellationAcknowledgementMatchesRequest,
   agentRunCancellationRequestDigest,
+  sameAgentRunControlRef,
 } from "./runtime-control.js";
 import { interactionRequestDigest } from "./interaction-envelope.js";
 
@@ -347,5 +348,51 @@ describe("child-task lifecycle event", () => {
         ["child-2", { parentChildId: "child-1", status: "completed" }],
       ],
     });
+  });
+});
+
+describe("sameAgentRunControlRef", () => {
+  const reference = {
+    runId: "run-1",
+    provider: "cli-bridge",
+    environmentId: "local-1",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    requestDigest: `sha256:${"a".repeat(64)}` as `sha256:${string}`,
+  };
+
+  it("separates two runs that differ in any single coordinate", () => {
+    const changed = {
+      runId: "run-2",
+      provider: "tangle",
+      environmentId: "local-2",
+      sessionId: "session-2",
+      executionId: "execution-2",
+      requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
+    };
+    for (const field of Object.keys(reference) as (keyof typeof reference)[]) {
+      expect(
+        sameAgentRunControlRef(reference, { ...reference, [field]: changed[field] }),
+        field,
+      ).toBe(false);
+    }
+    expect(sameAgentRunControlRef(reference, { ...reference })).toBe(true);
+  });
+
+  it("treats an absent coordinate as different from a present one", () => {
+    const { requestDigest: _omitted, ...withoutDigest } = reference;
+    expect(sameAgentRunControlRef(reference, withoutDigest)).toBe(false);
+  });
+
+  it("does not depend on the order the coordinates were written in", () => {
+    const reordered = {
+      requestDigest: reference.requestDigest,
+      executionId: reference.executionId,
+      sessionId: reference.sessionId,
+      environmentId: reference.environmentId,
+      provider: reference.provider,
+      runId: reference.runId,
+    };
+    expect(sameAgentRunControlRef(reference, reordered)).toBe(true);
   });
 });

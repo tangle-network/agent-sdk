@@ -4,6 +4,7 @@ import {
   AgentRunCancellationRequestSchema,
   agentRunCancellationRequestDigest,
   agentRunCancellationAcknowledgementMatchesRequest,
+  sameAgentRunControlRef,
   type AgentExactRunControlRef,
   type AgentRunCancellationAcknowledgement,
   type AgentRunCancellationRequest,
@@ -286,7 +287,7 @@ export async function cancelExactCliBridgeRun(
   signal?: AbortSignal,
 ): Promise<AgentRunCancellationAcknowledgement> {
   const exactRequest = AgentRunCancellationRequestSchema.parse(request);
-  if (!run.controlRef || !sameControlRef(run.controlRef, exactRequest.run)) {
+  if (!run.controlRef || !sameAgentRunControlRef(run.controlRef, exactRequest.run)) {
     throw new Error("cli-bridge cancellation targets another retained run");
   }
   const timeoutSignal = cliBridgeCancellationSignal(options);
@@ -339,18 +340,6 @@ function parseExactCancellationAcknowledgement(
     throw new Error("cli-bridge returned a cancellation acknowledgement for another request");
   }
   return acknowledgement;
-}
-
-function sameControlRef(
-  left: AgentExactRunControlRef,
-  right: AgentExactRunControlRef,
-): boolean {
-  return left.runId === right.runId &&
-    left.provider === right.provider &&
-    left.environmentId === right.environmentId &&
-    left.sessionId === right.sessionId &&
-    left.executionId === right.executionId &&
-    left.requestDigest === right.requestDigest;
 }
 
 export async function getCliBridgeRun(
