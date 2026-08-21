@@ -44,7 +44,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^1.0.1"
+    "@tangle-network/agent-interface": "^1.4.0"
   },
   "peerDependencies": {
     "e2b": "^2.31.0"

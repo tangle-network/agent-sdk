@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.5
+
+### Patch Changes
+
+- 07cc02e: State which call can add a turn to a reconstructed environment.
+  The README carries the two-tier continuation rule, one refusal replaces three near-copies of the same rule, and the message names `session.continueNative` and the capability it needs.
+  The contract test covers the `already_resolved_different`, `already_resolved_same`, and `cancelled` interaction acknowledgements against the real Bridge.
+- c1ca2fc: Report the `AgentEnvironment.creation` verdict: the Tangle provider maps the platform create receipt, the CLI Bridge provider states `created` for the call that builds the environment handle, and the provider conformance rejects a same-key replay that claims it created the environment.
+- Updated dependencies [c1ca2fc]
+  - @tangle-network/agent-interface@1.4.0
+
 ## 0.9.4
 
 ### Patch Changes
