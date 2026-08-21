@@ -8,12 +8,14 @@ import {
   harnessSupportsModel,
   harnessSystemPromptIntents,
   modelProvider,
+  nativeReasoningControl,
   preferredHarnessForModel,
   reasoningEffortsFor,
   snapHarnessToModel,
   snapModelToHarness,
 } from "./harness-capabilities.js";
 import { harnessTypeSchema } from "./harness.js";
+import { REASONING_EFFORTS } from "./agent-profile.js";
 
 const CATALOG = [
   "anthropic/claude-opus-4-6",
@@ -285,5 +287,56 @@ describe("system-prompt intents", () => {
     const appenders = harnessTypeSchema.options.filter((h) => harnessSystemPromptIntents(h).append);
     expect([...replacers].sort()).toEqual(["claude-code", "codex", "gemini", "pi", "prime"]);
     expect([...appenders].sort()).toEqual(["claude-code", "opencode", "pi", "prime"]);
+  });
+});
+
+describe("nativeReasoningControl", () => {
+  it("maps the ladder onto each harness's own control token", () => {
+    // Pinned against the argv builders that spawn each CLI. A rung renamed upstream must be
+    // changed here, where both the adapter and the receipt check read it.
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("claude-code", e))).toEqual([
+      "low", "low", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("codex", e))).toEqual([
+      "none", "minimal", "low", "medium", "high", "xhigh", "ultra",
+    ]);
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("pi", e))).toEqual([
+      "off", "minimal", "low", "medium", "high", "xhigh", "xhigh",
+    ]);
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("prime", e))).toEqual([
+      "off", "minimal", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("kimi-code", e))).toEqual([
+      "--no-thinking", "--no-thinking", "--no-thinking", null, "--thinking", "--thinking", "--thinking",
+    ]);
+    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("opencode", e))).toEqual([
+      ...REASONING_EFFORTS,
+    ]);
+  });
+
+  it("answers null for a harness that applies no native control", () => {
+    // gemini derives thinking from the model, and the rest plumb no thinking flag. Asserting a
+    // token for them refuses a legitimate run, which is why the default is `null`, not the request.
+    for (const harness of harnessTypeSchema.options) {
+      if (["claude-code", "codex", "pi", "prime", "kimi-code", "opencode"].includes(harness)) continue;
+      for (const effort of REASONING_EFFORTS) {
+        expect(nativeReasoningControl(harness, effort)).toBeNull();
+      }
+    }
+  });
+
+  it("applies no control when nothing was requested", () => {
+    for (const harness of harnessTypeSchema.options) {
+      expect(nativeReasoningControl(harness, null)).toBeNull();
+    }
+  });
+
+  it("never claims a control for a harness whose runner drops the effort", () => {
+    for (const harness of harnessTypeSchema.options) {
+      if (harnessHonorsEffort(harness)) continue;
+      for (const effort of REASONING_EFFORTS) {
+        expect(nativeReasoningControl(harness, effort)).toBeNull();
+      }
+    }
   });
 });

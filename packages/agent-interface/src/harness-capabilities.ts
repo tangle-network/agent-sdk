@@ -151,8 +151,8 @@ export function snapHarnessToModel(
  *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`; canonical `ultracode` maps to
  *     native `max`. It cannot express `none` or `minimal`, and an unsupported value is warned about
  *     and silently replaced with the default rather than rejected — so the set must not overstate.
- *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max`; canonical `none` maps to
- *     `off` and `ultracode` to `max`.
+ *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh`; canonical `none` maps to
+ *     `off` and `ultracode` clamps to `xhigh`, its top rung.
  *   - prime: the prime fork of the pi line accepts the same `--thinking` set
  *     (`off|minimal|low|medium|high|xhigh|max`); canonical `none` maps to `off` and `ultracode` to
  *     `max`.
@@ -229,6 +229,73 @@ export function reasoningEffortsFor(
       efforts = efforts.filter((e) => reasoningLadder.indexOf(e) <= cap);
   }
   return efforts;
+}
+
+// ── Native reasoning control (the exact token the harness process receives) ───
+
+/**
+ * Canonical effort → the harness's OWN control token, or `null` when the harness applies no
+ * native reasoning control for that request. This is the value a materialization receipt carries
+ * as `reasoningEffort.applied`, so a caller can check that the effort it asked for reached the
+ * process instead of trusting an echo of its own request.
+ *
+ * Read from the argv builders that actually spawn each CLI, not from help text:
+ *   - claude-code — `--effort <value>`; it cannot express `none` or `minimal`, so both clamp to
+ *     `low`, and `ultracode` becomes its ceiling `max`.
+ *   - codex — `-c model_reasoning_effort="<value>"`; it takes the canonical rungs directly and
+ *     names its ceiling `ultra`.
+ *   - pi — `--thinking <value>`; `none` becomes `off` and `ultracode` clamps to `xhigh`, the
+ *     highest rung the pi line accepts.
+ *   - prime — `--thinking <value>`; the fork carries `max` above `xhigh`, so `ultracode` reaches
+ *     `max`. This is the one rung where prime and pi differ.
+ *   - kimi-code — the control is the FLAG itself, `--thinking` or `--no-thinking`, because kimi's
+ *     thinking switch is binary. `medium` is its default and passes no flag at all.
+ *   - opencode — the router-backed variant name is the canonical rung unchanged.
+ *
+ * A harness with no entry applies NO native control: either it derives thinking from the model
+ * (gemini's `--thinking-budget`) or it plumbs no thinking flag at all (see
+ * {@link harnessHonorsEffort}). Both answer `null`, which is what their receipts carry — so an
+ * unknown harness is never asserted to have applied a control it cannot apply.
+ */
+const harnessNativeReasoningControl: Partial<
+  Record<HarnessType, (effort: ReasoningEffort) => string | null>
+> = {
+  "claude-code": (effort) => {
+    if (effort === "none" || effort === "minimal") return "low";
+    return effort === "ultracode" ? "max" : effort;
+  },
+  codex: (effort) => (effort === "ultracode" ? "ultra" : effort),
+  pi: (effort) => {
+    if (effort === "none") return "off";
+    return effort === "ultracode" ? "xhigh" : effort;
+  },
+  prime: (effort) => {
+    if (effort === "none") return "off";
+    return effort === "ultracode" ? "max" : effort;
+  },
+  "kimi-code": (effort) => {
+    if (effort === "medium") return null;
+    return effort === "none" || effort === "minimal" || effort === "low"
+      ? "--no-thinking"
+      : "--thinking";
+  },
+  opencode: (effort) => effort,
+};
+
+/**
+ * The native control token a harness applies for one canonical effort, or `null` when it applies
+ * none. `effort: null` (nothing requested) is always `null`.
+ *
+ * One owner for both sides of the check: the adapter that builds the harness argv and the caller
+ * that verifies the receipt read this function, so a CLI that renames a rung moves both at once
+ * instead of turning into a refused run.
+ */
+export function nativeReasoningControl(
+  harness: HarnessType,
+  effort: ReasoningEffort | null,
+): string | null {
+  if (effort === null) return null;
+  return harnessNativeReasoningControl[harness]?.(effort) ?? null;
 }
 
 // ── Per-turn selector support (does the harness honor the chat pickers?) ──────
