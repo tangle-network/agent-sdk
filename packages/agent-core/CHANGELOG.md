@@ -1,5 +1,25 @@
 # @tangle-network/agent-core
 
+## 0.9.5
+
+### Patch Changes
+
+- fad0d56: Re-export the `resilience`, `telemetry`, `transport`, `types`, and `utils` modules from the package root by name-forwarding instead of by hand-listing every symbol.
+  Each of those five root blocks restated its module's full export list exactly, so 152 names were maintained in two places and a symbol added to a module and not to the root list was reachable through its own subpath but silently missing from the root.
+  The names both entry points serve are unchanged.
+- b1ec6c5: Fix `decodeToken` on the `@tangle-network/agent-core/auth/browser` entry point returning mojibake for any non-ASCII claim.
+  `atob` answers one byte per code unit, so its result is the token's raw bytes and not yet text; the browser decoder returned that byte string directly, turning `José 中文` into `JosÃ© ä¸­æ`. The bytes are now decoded as UTF-8.
+
+  `tokens-browser.ts` becomes the one owner of the portable half of the token surface — base64url decoding, `decodeToken`, `getTokenTTL`, and `isTokenExpiringSoon` — and `tokens.ts` builds on it instead of keeping a second copy of each, so the `auth` and `auth/browser` entry points cannot read one token two ways.
+  The browser decoder no longer reaches for `Buffer` when `atob` is missing; it uses only `atob` and `TextDecoder`, which both a browser and Node provide.
+
+- Updated dependencies [22070e6]
+- Updated dependencies [e04c96c]
+- Updated dependencies [6397cbb]
+- Updated dependencies [655a60f]
+- Updated dependencies [a0d7d70]
+  - @tangle-network/agent-interface@1.5.0
+
 ## 0.9.4
 
 ### Patch Changes

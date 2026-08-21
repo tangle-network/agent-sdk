@@ -1,5 +1,36 @@
 # @tangle-network/agent-interface
 
+## 1.5.0
+
+### Minor Changes
+
+- e04c96c: Add `commandTurnEvents`, `execResultFromUnknown`, and `execOnlyEnvironmentCapabilities` to `@tangle-network/agent-interface/environment-provider`.
+  They own the three rules every workspace-only environment adapter needs: the order a turn's command is resolved in and the refusal when none resolves, how a sandbox SDK's untyped command result is read and the refusal when it carries no exit status, and the capability document of an adapter that runs commands and moves files but owns no agent profile, stream, session, or branch.
+
+  The ComputeSDK, Daytona, and E2B adapters now call those three instead of keeping a private copy each.
+  Their published capability documents, turn events, and refusal messages are unchanged.
+
+- 6397cbb: Add `deepFreeze` to `@tangle-network/agent-interface`.
+  It owns the rule that a validated value handed to a caller must not be writable afterwards, and it skips a value it has already visited so a self-referring value is frozen once instead of recursing until the stack runs out.
+
+  `snapshotAgentProfile`, `parseCertifiedContext`, the Tangle adapter's capability document, and the Tangle adapter's environment metadata snapshot now call it instead of keeping a private copy each.
+  Two of those copies had no such guard and exhausted the stack on a value that referred to itself.
+
+- 655a60f: Add `sameAgentRunControlRef` to `@tangle-network/agent-interface`.
+  It owns the question "do these two references name the same run", and answers it over the reference's canonical form rather than a list of field names, so a reference that gains a coordinate is compared on it without a caller having to remember.
+
+  The two cancellation and control acknowledgement matchers and the cli-bridge adapter's retained control and native continuation checks now call it instead of comparing by hand.
+
+### Patch Changes
+
+- 22070e6: Give the candidate evidence schemas one owner for the rule that a captured artifact must be the canonical bytes of its material.
+  The execution-plan and outcome schema modules each built that check by hand, so the artifact-hash and empty-artifact refusals were stated twice; they now come from one place.
+  The published schemas accept and refuse exactly the same values, with the same issue paths and messages.
+- a0d7d70: Give the durable workspace checkpoint and fork schemas one owner for the two rules they share.
+  `refuseSelfConflict` states once that a conflict answer must name a different existing request, and `operationResourceIdentityMatches` states once that the checkpoint or forked environment an answer carries must repeat the key and digest of the operation that made it.
+  The four result and lookup schemas now call them instead of restating each rule.
+  The public types, the accepted and refused values, and every issue path and message are unchanged.
+
 ## 1.4.0
 
 ### Minor Changes

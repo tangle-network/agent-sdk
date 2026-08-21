@@ -1,5 +1,21 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.9.6
+
+### Patch Changes
+
+- 655a60f: Add `sameAgentRunControlRef` to `@tangle-network/agent-interface`.
+  It owns the question "do these two references name the same run", and answers it over the reference's canonical form rather than a list of field names, so a reference that gains a coordinate is compared on it without a caller having to remember.
+
+  The two cancellation and control acknowledgement matchers and the cli-bridge adapter's retained control and native continuation checks now call it instead of comparing by hand.
+
+- Updated dependencies [22070e6]
+- Updated dependencies [e04c96c]
+- Updated dependencies [6397cbb]
+- Updated dependencies [655a60f]
+- Updated dependencies [a0d7d70]
+  - @tangle-network/agent-interface@1.5.0
+
 ## 0.9.5
 
 ### Patch Changes
