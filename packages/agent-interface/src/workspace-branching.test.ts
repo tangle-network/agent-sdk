@@ -484,3 +484,47 @@ describe("workspace cleanup acknowledgement", () => {
     ).toBe(false);
   });
 });
+
+describe("durable workspace operation answers", () => {
+  const forkMaterial = {
+    checkpoint,
+    name: "branch destination",
+    metadata: { branchId: "branch-2" },
+    placement: { kind: "sandbox" as const, sandboxId: "sandbox-2", region: "us-west" },
+  };
+  const forkRequest = {
+    ...forkMaterial,
+    idempotencyKey: "fork-operation-1",
+    requestDigest: workspaceForkRequestDigest(forkMaterial),
+  };
+
+  it("refuses a conflict that names the request it was asked about", () => {
+    for (const [name, schema, identity] of [
+      ["checkpoint result", WorkspaceCheckpointResultSchema, checkpointRequest],
+      ["checkpoint lookup", WorkspaceCheckpointLookupResultSchema, checkpointRequest],
+      ["fork result", WorkspaceForkResultSchema, forkRequest],
+      ["fork lookup", WorkspaceForkLookupResultSchema, forkRequest],
+    ] as const) {
+      const conflict = {
+        status: "conflict" as const,
+        idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
+      };
+      expect(
+        schema.parse({
+          ...conflict,
+          existingRequestDigest: `sha256:${"f".repeat(64)}`,
+        }),
+        name,
+      ).toMatchObject({ status: "conflict" });
+      expect(
+        () =>
+          schema.parse({
+            ...conflict,
+            existingRequestDigest: identity.requestDigest,
+          }),
+        name,
+      ).toThrow(/a conflict must identify a different existing request/);
+    }
+  });
+});

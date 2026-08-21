@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Sha256Digest } from "./agent-candidate.js";
 import { AgentExactRunControlRefSchema, type AgentExactRunControlRef } from "./runtime-control.js";
-import { idSchema, jsonRecordSchema, sameOptionalWireValue, sha256DigestSchema, wireDigest } from "./workspace-branching-shared.js";
+import { idSchema, jsonRecordSchema, operationIdentityShape, operationResourceIdentityMatches, refuseSelfConflict, sameOptionalWireValue, sha256DigestSchema, wireDigest } from "./workspace-branching-shared.js";
 import { boundedStringSchema } from "./contract-limits.js";
 
 export interface WorkspaceCheckpointMaterial {
@@ -87,11 +87,6 @@ export const WorkspaceCheckpointRefSchema = z
     }
   }) satisfies z.ZodType<WorkspaceCheckpointRef>;
 
-const checkpointOperationBase = {
-  idempotencyKey: idSchema,
-  requestDigest: sha256DigestSchema,
-};
-
 export type WorkspaceCheckpointResult =
   | {
       status: "created" | "replayed";
@@ -117,42 +112,32 @@ export const WorkspaceCheckpointResultSchema: z.ZodType<WorkspaceCheckpointResul
   z.discriminatedUnion("status", [
     z.strictObject({
       status: z.enum(["created", "replayed"]),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       checkpoint: WorkspaceCheckpointRefSchema,
     }),
     z.strictObject({
       status: z.literal("conflict"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       existingRequestDigest: sha256DigestSchema,
     }),
     z.strictObject({
       status: z.literal("unknown"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       message: boundedStringSchema.min(1),
       retryable: z.boolean(),
     }),
-  ]).superRefine((result, refinement) => {
+  ]).superRefine((result, ctx) => {
     if (
       (result.status === "created" || result.status === "replayed") &&
-      (result.checkpoint.idempotencyKey !== result.idempotencyKey ||
-        result.checkpoint.requestDigest !== result.requestDigest)
+      !operationResourceIdentityMatches(result, result.checkpoint)
     ) {
-      refinement.addIssue({
+      ctx.addIssue({
         code: "custom",
         path: ["checkpoint"],
         message: "checkpoint identity must match its operation",
       });
     }
-    if (
-      result.status === "conflict" &&
-      result.existingRequestDigest === result.requestDigest
-    ) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["existingRequestDigest"],
-        message: "a conflict must identify a different existing request",
-      });
-    }
+    refuseSelfConflict(result, ctx);
   });
 
 export const WorkspaceOperationLookupRequestSchema = z.strictObject({
@@ -193,46 +178,36 @@ export const WorkspaceCheckpointLookupResultSchema: z.ZodType<WorkspaceCheckpoin
   z.discriminatedUnion("status", [
     z.strictObject({
       status: z.literal("found"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       checkpoint: WorkspaceCheckpointRefSchema,
     }),
     z.strictObject({
       status: z.literal("not_found"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
     }),
     z.strictObject({
       status: z.literal("conflict"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       existingRequestDigest: sha256DigestSchema,
     }),
     z.strictObject({
       status: z.literal("unknown"),
-      ...checkpointOperationBase,
+      ...operationIdentityShape,
       message: boundedStringSchema.min(1),
       retryable: z.boolean(),
     }),
-  ]).superRefine((result, refinement) => {
+  ]).superRefine((result, ctx) => {
     if (
       result.status === "found" &&
-      (result.checkpoint.idempotencyKey !== result.idempotencyKey ||
-        result.checkpoint.requestDigest !== result.requestDigest)
+      !operationResourceIdentityMatches(result, result.checkpoint)
     ) {
-      refinement.addIssue({
+      ctx.addIssue({
         code: "custom",
         path: ["checkpoint"],
         message: "checkpoint identity must match its lookup operation",
       });
     }
-    if (
-      result.status === "conflict" &&
-      result.existingRequestDigest === result.requestDigest
-    ) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["existingRequestDigest"],
-        message: "a conflict must identify a different existing request",
-      });
-    }
+    refuseSelfConflict(result, ctx);
   });
 
 
@@ -265,10 +240,8 @@ function checkpointResultMatchesParsed(
     Extract<WorkspaceCheckpointLookupResult, { status: "found" }>,
 ): boolean {
   return (
-    result.idempotencyKey === request.idempotencyKey &&
-    result.requestDigest === request.requestDigest &&
-    result.checkpoint.idempotencyKey === request.idempotencyKey &&
-    result.checkpoint.requestDigest === request.requestDigest &&
+    operationResourceIdentityMatches(request, result) &&
+    operationResourceIdentityMatches(request, result.checkpoint) &&
     wireDigest(result.checkpoint.source) === wireDigest(request.source) &&
     sameOptionalWireValue(
       result.checkpoint.metadata,

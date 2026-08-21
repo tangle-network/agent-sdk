@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Sha256Digest } from "./agent-candidate.js";
 import type { PlacementInfo } from "./environment-requests.js";
 import { AgentExactRunControlRefSchema, type AgentExactRunControlRef } from "./runtime-control.js";
-import { idSchema, jsonRecordSchema, sameOptionalWireValue, sha256DigestSchema, wireDigest } from "./workspace-branching-shared.js";
+import { idSchema, jsonRecordSchema, operationIdentityShape, operationResourceIdentityMatches, refuseSelfConflict, sameOptionalWireValue, sha256DigestSchema, wireDigest } from "./workspace-branching-shared.js";
 import { WorkspaceCheckpointRefSchema, type WorkspaceCheckpointRef } from "./workspace-checkpoint.js";
 import {
   ConfidentialAttestationSchema,
@@ -227,11 +227,6 @@ export function forkedEnvironmentConfidentialityVerified(
   });
 }
 
-const forkOperationBase = {
-  idempotencyKey: idSchema,
-  requestDigest: sha256DigestSchema,
-};
-
 export type WorkspaceForkResult =
   | {
       status: "created" | "replayed";
@@ -257,42 +252,32 @@ export const WorkspaceForkResultSchema: z.ZodType<WorkspaceForkResult> =
   z.discriminatedUnion("status", [
     z.strictObject({
       status: z.enum(["created", "replayed"]),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       environment: ForkedEnvironmentRefSchema,
     }),
     z.strictObject({
       status: z.literal("conflict"),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       existingRequestDigest: sha256DigestSchema,
     }),
     z.strictObject({
       status: z.literal("unknown"),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       message: boundedStringSchema.min(1),
       retryable: z.boolean(),
     }),
-  ]).superRefine((result, refinement) => {
+  ]).superRefine((result, ctx) => {
     if (
       (result.status === "created" || result.status === "replayed") &&
-      (result.environment.idempotencyKey !== result.idempotencyKey ||
-        result.environment.requestDigest !== result.requestDigest)
+      !operationResourceIdentityMatches(result, result.environment)
     ) {
-      refinement.addIssue({
+      ctx.addIssue({
         code: "custom",
         path: ["environment"],
         message: "forked environment identity must match its operation",
       });
     }
-    if (
-      result.status === "conflict" &&
-      result.existingRequestDigest === result.requestDigest
-    ) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["existingRequestDigest"],
-        message: "a conflict must identify a different existing request",
-      });
-    }
+    refuseSelfConflict(result, ctx);
   });
 
 export type WorkspaceForkLookupResult =
@@ -325,43 +310,33 @@ export const WorkspaceForkLookupResultSchema: z.ZodType<WorkspaceForkLookupResul
   z.discriminatedUnion("status", [
     z.strictObject({
       status: z.literal("found"),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       environment: ForkedEnvironmentRefSchema,
     }),
-    z.strictObject({ status: z.literal("not_found"), ...forkOperationBase }),
+    z.strictObject({ status: z.literal("not_found"), ...operationIdentityShape }),
     z.strictObject({
       status: z.literal("conflict"),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       existingRequestDigest: sha256DigestSchema,
     }),
     z.strictObject({
       status: z.literal("unknown"),
-      ...forkOperationBase,
+      ...operationIdentityShape,
       message: boundedStringSchema.min(1),
       retryable: z.boolean(),
     }),
-  ]).superRefine((result, refinement) => {
+  ]).superRefine((result, ctx) => {
     if (
       result.status === "found" &&
-      (result.environment.idempotencyKey !== result.idempotencyKey ||
-        result.environment.requestDigest !== result.requestDigest)
+      !operationResourceIdentityMatches(result, result.environment)
     ) {
-      refinement.addIssue({
+      ctx.addIssue({
         code: "custom",
         path: ["environment"],
         message: "forked environment identity must match its lookup operation",
       });
     }
-    if (
-      result.status === "conflict" &&
-      result.existingRequestDigest === result.requestDigest
-    ) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["existingRequestDigest"],
-        message: "a conflict must identify a different existing request",
-      });
-    }
+    refuseSelfConflict(result, ctx);
   });
 
 export function workspaceForkResultMatchesRequest(
@@ -393,10 +368,8 @@ function forkResultMatchesParsed(
 ): boolean {
   const source = request.checkpoint.source;
   return (
-    result.idempotencyKey === request.idempotencyKey &&
-    result.requestDigest === request.requestDigest &&
-    result.environment.idempotencyKey === request.idempotencyKey &&
-    result.environment.requestDigest === request.requestDigest &&
+    operationResourceIdentityMatches(request, result) &&
+    operationResourceIdentityMatches(request, result.environment) &&
     result.environment.sourceCheckpointId === request.checkpoint.checkpointId &&
     result.environment.provider === request.checkpoint.provider &&
     result.environment.sourceEnvironmentId === source.environmentId &&
