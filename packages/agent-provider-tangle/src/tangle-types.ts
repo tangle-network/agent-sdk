@@ -30,6 +30,17 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 
+/**
+ * The platform verdict for the create call that returned a sandbox.
+ * `created` means the call allocated the sandbox; `idempotent_replay` means an
+ * earlier call with the same idempotency key allocated it; `unknown` means the
+ * platform cannot prove either outcome.
+ */
+export interface SandboxCreateReceiptLike {
+  outcome: "created" | "idempotent_replay" | "unknown";
+  idempotencyKeyApplied: boolean;
+}
+
 export interface TangleExactProcessOptions {
   teamId?: string;
 }
@@ -406,6 +417,12 @@ export interface SandboxInstanceLike {
   resourceUsage?(): Promise<SandboxResourceUsageLike | null>;
   /** Interactive terminal transport. Absent on a client that cannot serve a PTY. */
   terminals?: SandboxTerminalsLike;
+  /**
+   * The platform verdict for the create call that returned this instance.
+   * Absent on a Sandbox SDK older than 0.30.1; null for an instance resolved
+   * by id or when the platform reported no receipt.
+   */
+  createReceipt?(): SandboxCreateReceiptLike | null;
   refresh?(options?: { signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
 }

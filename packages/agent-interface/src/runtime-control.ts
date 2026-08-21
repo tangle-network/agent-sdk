@@ -11,6 +11,7 @@ import {
   boundedJsonSchema,
   boundedStringSchema,
 } from "./contract-limits.js";
+import { ModelUsageSchema } from "./environment-observation.js";
 import { InteractionRequestSchema } from "./interaction.js";
 import { DurablePlanSchema } from "./plan.js";
 
@@ -388,6 +389,72 @@ const partSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+const TERMINAL_CHILD_TASK_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const epochMillisecondsSchema = z.number().finite().nonnegative();
+
+/**
+ * Provider-native child task lifecycle. Identity comes only from `childId`,
+ * `parentChildId`, and `sourceEventId`; `raw` is opaque and bounded. A provider
+ * without a stable `childId` emits no `child-task` event.
+ */
+const ChildTaskEventSchema = z
+  .strictObject({
+    type: z.literal("child-task"),
+    childId: stableIdSchema,
+    parentChildId: stableIdSchema.optional(),
+    status: z.enum(["started", "running", "completed", "failed", "cancelled"]),
+    title: boundedStringSchema.optional(),
+    time: z.strictObject({
+      started: epochMillisecondsSchema,
+      updated: epochMillisecondsSchema,
+      ended: epochMillisecondsSchema.optional(),
+    }),
+    runner: stableIdSchema.optional(),
+    model: stableIdSchema.optional(),
+    usage: ModelUsageSchema.optional(),
+    terminalReason: boundedStringSchema.optional(),
+    sourceEventId: stableIdSchema,
+    raw: boundedJsonRecordSchema.optional(),
+  })
+  .superRefine((event, refinement) => {
+    const terminal = TERMINAL_CHILD_TASK_STATUSES.has(event.status);
+    if (!terminal && event.time.ended !== undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["time", "ended"],
+        message: "only a terminal child task status may carry an end time",
+      });
+    }
+    if (!terminal && event.terminalReason !== undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["terminalReason"],
+        message: "only a terminal child task status may carry a terminal reason",
+      });
+    }
+    if (event.time.updated < event.time.started) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["time", "updated"],
+        message: "a child task update time cannot precede its start time",
+      });
+    }
+    if (event.time.ended !== undefined && event.time.ended < event.time.started) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["time", "ended"],
+        message: "a child task end time cannot precede its start time",
+      });
+    }
+    if (event.parentChildId === event.childId) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["parentChildId"],
+        message: "a child task cannot be its own parent",
+      });
+    }
+  });
+
 /** Runtime validator for every member of the existing canonical event union. */
 export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
   z.discriminatedUnion("type", [
@@ -458,6 +525,7 @@ export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
       type: z.literal("plan.submitted"),
       plan: DurablePlanSchema,
     }),
+    ChildTaskEventSchema,
   ]);
 
 /** Ordered, replayable envelope around the existing canonical event union. */

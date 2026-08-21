@@ -37,6 +37,7 @@ import {
 } from "./tangle-prompt.js";
 import { resolveRetainedSessionControlRef } from "./tangle-session-control.js";
 import {
+  creationFromSandboxCreateReceipt,
   placementInfoFromLoopPlacement,
   statusFromUnknown,
 } from "./tangle-environment-values.js";
@@ -148,9 +149,11 @@ export async function sandboxInstanceAsEnvironment(
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
     });
+  const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
   return {
     id: environmentId,
     provider: providerName,
+    ...(creation === undefined ? {} : { creation }),
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
     ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,

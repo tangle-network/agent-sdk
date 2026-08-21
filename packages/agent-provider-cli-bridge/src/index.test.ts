@@ -53,7 +53,10 @@ describe("createCliBridgeProvider", () => {
       profile: { harness: "pi", name: "worker" },
     });
 
-    expect(replay).toBe(first);
+    expect(first.creation).toBe("created");
+    expect(replay.creation).toBe("replayed");
+    expect(replay.id).toBe(first.id);
+    expect(replay.stream).toBe(first.stream);
     await expect(
       provider.create({
         ...input,

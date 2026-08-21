@@ -1,6 +1,7 @@
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
+  AgentEnvironmentCreation,
   AgentEnvironmentEvent,
   AgentEnvironmentObservation,
   AgentSession,
@@ -66,6 +67,13 @@ export interface CreateCliBridgeEnvironmentArgs {
   readonly environmentId: string;
   readonly allowDispatch: boolean;
   readonly cancelRunsOnDestroy: boolean;
+  /**
+   * The verdict of the create call that builds this environment. The create
+   * path states `created` because it provisions the handle that tracks every
+   * run it starts; the in-process idempotency helper supplies `replayed`; a
+   * reconstruction through `get()` states nothing.
+   */
+  readonly creation?: AgentEnvironmentCreation;
   /**
    * The document this provider publishes. The environment offers an optional
    * operation only where the document claims it, so a caller never selects an
@@ -150,6 +158,7 @@ export function createCliBridgeEnvironment(
   return {
     id: environmentId,
     provider: providerName,
+    ...(args.creation === undefined ? {} : { creation: args.creation }),
     capabilities: args.capabilities,
     ...(environmentInput.name ? { name: environmentInput.name } : {}),
     status: async (statusOptions) => {

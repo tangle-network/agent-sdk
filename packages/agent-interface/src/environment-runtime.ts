@@ -239,10 +239,36 @@ export interface AgentSession {
   cancel(options?: { signal?: AbortSignal }): Promise<void>;
 }
 
+/**
+ * What one {@link AgentEnvironmentProvider.create} call did for the
+ * environment it returned.
+ *
+ * - `created`: this call provisioned the environment.
+ * - `replayed`: an existing environment that matched the idempotency key was
+ *   returned. This call provisioned nothing.
+ *
+ * Absent when the provider cannot distinguish the two. A consumer treats an
+ * absent value as unknown and fails closed: it never destroys an environment
+ * whose creation it cannot prove, because another caller can hold it.
+ */
+export type AgentEnvironmentCreation = "created" | "replayed";
+
+export const AgentEnvironmentCreationSchema = z.enum([
+  "created",
+  "replayed",
+]) satisfies z.ZodType<AgentEnvironmentCreation>;
+
 export interface AgentEnvironment {
   readonly id: string;
   readonly provider: string;
   readonly name?: string;
+  /**
+   * The verdict of the create call that returned this object. It is a
+   * per-call fact: a same-key replay returns a view of the same environment
+   * with `creation: "replayed"`. Absent on `get()` results and when the
+   * provider cannot prove which outcome happened.
+   */
+  readonly creation?: AgentEnvironmentCreation;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -663,14 +689,41 @@ export interface AgentEnvironmentCreateIdempotencyRecord<T> {
 }
 
 /**
+ * Return the per-call view of an environment that a same-key create replayed.
+ *
+ * The view shares every member of the environment, so operations act on the
+ * one environment, and it states `creation: "replayed"` because this call
+ * provisioned nothing. The copy is shallow, so the environment must be a plain
+ * object whose members do not read `this`; a class instance loses its
+ * prototype members in a copy and is rejected.
+ * @internal
+ */
+export function replayedAgentEnvironmentView<T extends object>(
+  environment: T,
+): T {
+  const prototype = Object.getPrototypeOf(environment) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(
+      "a replayed agent environment view requires a plain object environment",
+    );
+  }
+  return { ...environment, creation: "replayed" };
+}
+
+/**
  * Apply the generic create contract to one provider adapter's keyed requests.
  *
  * The provider's backing service remains responsible for retaining the key
  * across adapter reconstruction. This helper coalesces concurrent retries and
  * rejects collisions before the provider performs another create effect.
+ *
+ * The call that runs `create` receives the environment the provider built,
+ * with the creation verdict the provider could prove. Every same-key call
+ * after it, including one that awaited the same pending create, receives
+ * {@link replayedAgentEnvironmentView} of that environment.
  * @internal
  */
-export async function createAgentEnvironmentWithIdempotency<T>(
+export async function createAgentEnvironmentWithIdempotency<T extends object>(
   records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
   input: CreateAgentEnvironmentInput,
   create: () => Promise<T>,
@@ -687,7 +740,9 @@ export async function createAgentEnvironmentWithIdempotency<T>(
         "agent environment create idempotency key conflicts with a different create input",
       );
     }
-    return existing.environment ?? existing.pending;
+    return replayedAgentEnvironmentView(
+      existing.environment ?? (await existing.pending),
+    );
   }
 
   const pending = Promise.resolve().then(create);

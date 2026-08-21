@@ -25,6 +25,36 @@ describe("runAgentEnvironmentProviderConformance", () => {
     expect(report.checked).toContain("stream");
     expect(report.checked).toContain("workspace-exec");
   });
+
+  it("reports the creation verdict per call through the shared idempotency helper", async () => {
+    const provider = fakeProvider();
+    const input = {
+      profile: { name: "fake-profile" },
+      idempotencyKey: "creation-verdict-1",
+    };
+    const first = await provider.create(input);
+    const replay = await provider.create(input);
+    expect(first.creation).toBe("created");
+    expect(replay.creation).toBe("replayed");
+    expect(replay.id).toBe(first.id);
+  });
+
+  it("rejects a provider whose same-key replay claims it created the environment", async () => {
+    const base = fakeProvider();
+    const provider: AgentEnvironmentProvider = {
+      ...base,
+      async create(input) {
+        const environment = await base.create(input);
+        return { ...environment, creation: "created" };
+      },
+    };
+    await expect(
+      runAgentEnvironmentProviderConformance({
+        name: "fake",
+        createProvider: () => provider,
+      }),
+    ).rejects.toThrow(/must not claim it created the environment/);
+  });
 });
 
 describe("runAgentExactProcessProviderLifecycleChecks", () => {
@@ -109,6 +139,7 @@ function fakeProvider(): AgentEnvironmentProvider {
         async () => ({
           id: "env-1",
           provider: "fake",
+          creation: "created",
           status: async () => "running",
           async *stream(input: AgentTurnInput) {
             yield {

@@ -134,7 +134,10 @@ describe("createTangleProvider", () => {
       profile: { name: "worker" },
     });
 
-    expect(replay).toBe(first);
+    expect(first.creation).toBeUndefined();
+    expect(replay.creation).toBe("replayed");
+    expect(replay.id).toBe(first.id);
+    expect(replay.stream).toBe(first.stream);
     expect(create).toHaveBeenCalledOnce();
     expect(create.mock.calls[0]?.[0]).toMatchObject({
       idempotencyKey: input.idempotencyKey,
@@ -143,6 +146,47 @@ describe("createTangleProvider", () => {
       provider.create({ ...input, name: "different-environment" }),
     ).rejects.toThrow(/conflicts with a different create input/);
     expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("maps the platform create receipt to the environment creation verdict", async () => {
+    const boxWithReceipt = (
+      id: string,
+      receipt: { outcome: "created" | "idempotent_replay" | "unknown"; idempotencyKeyApplied: boolean } | null,
+    ): SandboxInstanceLike => ({
+      id,
+      async *streamPrompt() {},
+      createReceipt: () => receipt,
+    });
+    const environmentFor = async (box: SandboxInstanceLike) => {
+      const provider = createTangleProvider({ client: { create: async () => box } });
+      return provider.create({ profile: { name: "worker" } });
+    };
+
+    const created = await environmentFor(
+      boxWithReceipt("sbx-created", { outcome: "created", idempotencyKeyApplied: true }),
+    );
+    expect(created.creation).toBe("created");
+
+    const replayed = await environmentFor(
+      boxWithReceipt("sbx-replayed", { outcome: "idempotent_replay", idempotencyKeyApplied: true }),
+    );
+    expect(replayed.creation).toBe("replayed");
+
+    const unknown = await environmentFor(
+      boxWithReceipt("sbx-unknown", { outcome: "unknown", idempotencyKeyApplied: false }),
+    );
+    expect(unknown.creation).toBeUndefined();
+
+    const noReceipt = await environmentFor(
+      boxWithReceipt("sbx-no-receipt", null),
+    );
+    expect(noReceipt.creation).toBeUndefined();
+
+    const oldSdk = await environmentFor({
+      id: "sbx-old-sdk",
+      async *streamPrompt() {},
+    });
+    expect(oldSdk.creation).toBeUndefined();
   });
 
   it("does not let a custom mapper drop the generic create key", async () => {
