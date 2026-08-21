@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AGENT_IMPROVEMENT_SURFACES } from "./agent-candidate.js";
 import type {
   AgentCandidateExperiment,
   AgentCandidateJsonValue,
@@ -35,18 +36,7 @@ import {
   changedProfileImprovementSurfaces,
 } from "./agent-profile-improvement-schema.js";
 
-const improvementSurfaceSchema = z.enum([
-  "prompt",
-  "skills",
-  "tools",
-  "mcp",
-  "hooks",
-  "subagents",
-  "agent-profile",
-  "memory",
-  "code",
-  "knowledge",
-]);
+const improvementSurfaceSchema = z.enum(AGENT_IMPROVEMENT_SURFACES);
 
 export const agentCandidateExperimentSchema = z
   .object({

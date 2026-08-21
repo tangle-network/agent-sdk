@@ -828,17 +828,30 @@ export interface AgentCandidateRunReceipt {
   digest: Sha256Digest;
 }
 
+/**
+ * Every surface an improvement proposal can name. One owner: the validator
+ * ({@link agentCandidatePromotionSchema}'s surface enum) and every producer read this
+ * list, so a new surface cannot be proposable in one place and unnameable in another.
+ *
+ * `rollout-policy` is the inference-time structural-rollout dials
+ * (`profile.extensions['structural-rollout']`); `knowledge` is the corpus lane.
+ */
+export const AGENT_IMPROVEMENT_SURFACES = Object.freeze([
+  "prompt",
+  "skills",
+  "tools",
+  "mcp",
+  "hooks",
+  "subagents",
+  "agent-profile",
+  "memory",
+  "code",
+  "knowledge",
+  "rollout-policy",
+] as const);
+
 export type AgentImprovementSurface =
-  | "prompt"
-  | "skills"
-  | "tools"
-  | "mcp"
-  | "hooks"
-  | "subagents"
-  | "agent-profile"
-  | "memory"
-  | "code"
-  | "knowledge";
+  (typeof AGENT_IMPROVEMENT_SURFACES)[number];
 
 /** One paired Runtime execution from the exact signed experiment. */
 export interface AgentCandidateExperimentMeasurement {
