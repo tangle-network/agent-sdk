@@ -47,6 +47,25 @@ The provider rejects any coordinate or digest mismatch instead of attaching to a
 If the caller crashes before saving `controlRef`, call `provider.lookupRun()` with the planned run coordinates.
 The lookup returns the server-issued digest only when all five planned coordinates match the retained run.
 
+## Which call adds a turn
+
+Continuation has two tiers, and the tier depends on whether the environment object came from `create()` or from `get()`.
+
+In the process that created the environment, `environment.dispatch()`, `environment.stream()`, and `session.prompt()` all add a turn.
+Passing the same `sessionId` continues the same CLI conversation.
+
+After `provider.get(environmentId)` reconstructs the environment, only `session.continueNative(request, { turn })` can add a turn.
+It requires the `nativeContinuation` capability, which the provider publishes only for the Pi harness today, and only when the running Bridge proves the same contract.
+The reconstructed environment deliberately refuses every other way to start work: `environment.stream()` and `environment.dispatch()` throw "a reconstructed cli-bridge environment can only control an existing run", and `session.prompt()` throws "a reconstructed cli-bridge session cannot start another turn".
+A reconstructed environment for any other harness therefore controls its existing runs (status, cursor replay, result, cancellation, and interaction responses) but adds no turn.
+Restart-safe continuation for those harnesses needs native sessions in the Bridge server itself, which the Bridge does not have yet; it is tracked in the `drewstone/cli-bridge` repository and cannot be reached from this adapter.
+
+The capability document keeps `sessions.continue: true` on a reconstructed environment because the Agent Interface couples that flag to `retainedControl`: a document that reports `sessions.continue: false` while keeping retained run control fails `AgentEnvironmentCapabilitiesSchema` with "retained control requires exact run, result, event, cancellation, replay, detach, turn, and session identity together".
+`nativeContinuation` is the flag that states whether a reconstructed environment can add a turn: present means `continueNative` works, absent means no call on that environment starts one.
+
+A runtime caller continues a retained run with `RetainedRunHandle.continueNative`, not with `startRetainedRunInEnvironment`.
+`startRetainedRunInEnvironment` requires `provider.list` for its ownership proof, and this provider exposes no `list`; it then calls `environment.dispatch()`, which a reconstructed environment refuses.
+
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
 Execution fails before network use when none is present.
 
@@ -59,7 +78,7 @@ Retained native sessions currently require `kind: 'host'`.
 The provider rejects a sandbox default before it creates the retained session; use one-shot execution for `kind: 'sandbox'`.
 The Bridge currently refuses `netJail` with `kind: 'sandbox'`; use the sandbox's own egress policy.
 
-Passing the same `sessionId` on later turns continues the same CLI conversation.
+Passing the same `sessionId` on later turns continues the same CLI conversation while the creating process still holds the environment.
 `executionId` gives a turn stable bridge identity, and `lastEventId` reattaches after a reader failure.
 `dispatch()` starts a bridge-owned durable run and returns after detaching its HTTP reader.
 The returned `AgentSession` exposes status, cursor-based event replay, the terminal result, continuation, and cancellation.
@@ -79,7 +98,7 @@ Replay and result reads fail loudly after cli-bridge's configured replay retenti
 Stopping a `session.events()` reader detaches only that replay observer.
 Stopping a direct `environment.stream()` reader or destroying the environment cancels its active bridge runs and waits for terminal confirmation.
 
-Pi retained sessions also expose typed permission interactions.
+Pi retained sessions also expose typed permission interactions and native continuation.
 The provider stores the selected harness, exact model route, and canonical create digest inside its opaque environment identifier.
 This identifier lets `provider.get()` reconstruct profile-selected routes after process death without a cache or repeated configuration.
 The create digest prevents an altered profile or workspace from reusing the previous retained identity.
@@ -96,6 +115,8 @@ The environment and session then expose `respondToInteraction()` for exact respo
 Each command carries its run, session, execution, request digest, and stable operation identifier.
 Native turns require caller-stable `turnId` and `executionId` values so an ambiguous admission cannot create another run.
 The bridge records repeated operations and rejects a different answer for an existing operation.
+Repeating one operation identifier returns its stored acknowledgement; a new operation identifier for an interaction that is already resolved returns `already_resolved_same` when the answer matches and `already_resolved_different` when it does not, and answering an interaction that a run cancellation closed returns `cancelled`.
+The `expired` acknowledgement stays in the contract, but the Bridge never emits it, so only the unit contradiction table covers it.
 The provider reports an unconfirmed network result as retryable and never reports it as accepted.
 Native replay reads `/v1/runs/:runId/events` and validates each canonical envelope through Agent Interface before exposing it.
 When a turn supplies `interactions`, the provider carries its exact map, including an explicit `{}`; an omitted map remains omitted.

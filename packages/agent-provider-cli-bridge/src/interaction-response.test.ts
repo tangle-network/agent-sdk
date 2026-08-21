@@ -186,7 +186,10 @@ describe("CLI Bridge interaction responses", () => {
 
   it.each([
     [400, "invalid_response", false],
+    [409, "already_resolved_different", false],
     [409, "binding_mismatch", false],
+    [409, "cancelled", false],
+    [409, "expired", false],
     [429, "transport_failure", true],
     [502, "transport_failure", true],
   ] as const)("classifies HTTP %i %s as retryable=%s", async (status, acknowledgementStatus, retryable) => {

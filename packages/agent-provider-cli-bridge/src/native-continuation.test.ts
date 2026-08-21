@@ -260,14 +260,14 @@ describe("cli-bridge native continuation", () => {
     expect(environment.creation).toBe("created");
     expect(reconstructedEnvironment.creation).toBeUndefined();
     await expect(reconstructedEnvironment.dispatch!({ prompt: "must not dispatch" })).rejects.toThrow(
-      /cannot dispatch new work/,
+      /cannot start a turn through environment\.dispatch\(\)/,
     );
     const reconstructed = reconstructedEnvironment.session!(initialControlRef.sessionId, {
       controlRef: initialControlRef,
     });
     expect(reconstructed.prompt).toBeDefined();
     await expect(reconstructed.prompt!({ prompt: "must not dispatch" })).rejects.toThrow(
-      /cannot start another turn/,
+      /cannot start a turn through session\.prompt\(\)/,
     );
     await expect(reconstructed.contextBoundary!()).resolves.toEqual(boundary);
 
