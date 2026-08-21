@@ -1,4 +1,9 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  commandTurnEvents,
+  createAgentEnvironmentWithIdempotency,
+  execOnlyEnvironmentCapabilities,
+  execResultFromUnknown,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -107,28 +112,13 @@ function computeSandboxAsEnvironment(
     id,
     provider: providerName,
     status: async () => "running",
-    async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
-      const command =
-        (await options.turnCommand?.(input, environment)) ??
-        commandFromProviderOptions(input) ??
-        input.prompt;
-      if (!command) throw new Error("ComputeSDK provider requires turnCommand, providerOptions.command, or prompt");
-      const result = await environment.exec?.(command, {
-        cwd: stringOption(input.providerOptions?.cwd),
-        timeoutMs: input.timeoutMs,
-        signal: input.signal,
+    stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
+      return commandTurnEvents({
+        input,
+        environment,
+        providerLabel: "ComputeSDK",
+        turnCommand: options.turnCommand,
       });
-      const text = result?.stdout ?? "";
-      yield { type: "message.part.updated", data: { delta: text } };
-      yield {
-        type: "result",
-        data: {
-          finalText: text,
-          status: result?.exitCode === 0 ? "completed" : "failed",
-          exitCode: result?.exitCode ?? 1,
-          stderr: result?.stderr ?? "",
-        },
-      };
     },
     ...(sandbox.filesystem
       ? {
@@ -203,62 +193,19 @@ function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string
   };
 }
 
-function commandFromProviderOptions(input: AgentTurnInput): string | undefined {
-  return stringOption(input.providerOptions?.command) ?? stringOption(input.providerOptions?.agentCommand);
-}
-
-function stringOption(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function sandboxId(sandbox: ComputeSandboxLike): string {
   const id = sandbox.sandboxId ?? sandbox.id;
   if (!id) throw new Error("ComputeSDK sandbox returned no id");
   return id;
 }
 
-function execResultFromUnknown(value: unknown): ExecResult {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  return {
-    exitCode: number(record.exitCode) ?? number(record.code) ?? 0,
-    stdout: typeof record.stdout === "string" ? record.stdout : typeof record.output === "string" ? record.output : "",
-    stderr: typeof record.stderr === "string" ? record.stderr : typeof record.error === "string" ? record.error : "",
-  };
-}
-
-function number(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 export function defaultComputeSdkCapabilities(): AgentEnvironmentCapabilities {
-  return {
-    profile: {
-      namedProfiles: false,
-      systemPrompt: { replace: false, append: false },
-      instructions: false,
-      tools: false,
-      permissions: false,
-      mcp: false,
-      subagents: false,
-      resources: {
-        files: true,
-        instructions: false,
-        tools: false,
-        skills: false,
-        agents: false,
-        commands: false,
-      },
-      hooks: false,
-      modes: false,
-      runtimeUpdate: false,
-      validation: false,
-    },
-    streaming: { live: false, replay: false, detach: false, turnIdempotency: false },
-    sessions: { continue: false, list: false, messages: false },
-    workspace: { read: true, write: true, exec: true, git: false, upload: true, download: true },
-    branching: { checkpoint: false, fork: false },
-    placement: true,
-    usage: false,
-    confidential: false,
-  };
+  return execOnlyEnvironmentCapabilities({
+    read: true,
+    write: true,
+    exec: true,
+    git: false,
+    upload: true,
+    download: true,
+  });
 }
