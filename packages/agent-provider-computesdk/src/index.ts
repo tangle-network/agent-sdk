@@ -133,7 +133,7 @@ function computeSandboxAsEnvironment(
         ...(request?.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
         ...(request?.signal ? { signal: request.signal } : {}),
       });
-      return execResultFromUnknown(result);
+      return execResultFromUnknown(result, "ComputeSDK sandbox.runCommand");
     },
     ...(options.compute.snapshot?.create
       ? {

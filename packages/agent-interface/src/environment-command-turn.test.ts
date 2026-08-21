@@ -7,6 +7,8 @@ import {
 import type { AgentEnvironment, AgentEnvironmentEvent } from "./environment-runtime.js";
 import type { ExecRequest, ExecResult } from "./environment-requests.js";
 
+const SOURCE = "Test sandbox exec";
+
 function environmentRunning(
   exec: (command: string, request?: ExecRequest) => Promise<ExecResult>,
 ): { environment: AgentEnvironment; commands: string[] } {
@@ -35,31 +37,50 @@ async function drain(
 describe("execResultFromUnknown", () => {
   it("reads either name a sandbox SDK gives each of the three facts", () => {
     expect(
-      execResultFromUnknown({ exitCode: 3, stdout: "out", stderr: "err" }),
+      execResultFromUnknown({ exitCode: 3, stdout: "out", stderr: "err" }, SOURCE),
     ).toEqual({ exitCode: 3, stdout: "out", stderr: "err" });
     expect(
-      execResultFromUnknown({ code: 3, output: "out", error: "err" }),
+      execResultFromUnknown({ code: 3, output: "out", error: "err" }, SOURCE),
     ).toEqual({ exitCode: 3, stdout: "out", stderr: "err" });
   });
 
   it("prefers the primary name when a result carries both", () => {
     expect(
-      execResultFromUnknown({
-        exitCode: 1,
-        code: 9,
-        stdout: "primary",
-        output: "alias",
-        stderr: "primary-error",
-        error: "alias-error",
-      }),
+      execResultFromUnknown(
+        {
+          exitCode: 1,
+          code: 9,
+          stdout: "primary",
+          output: "alias",
+          stderr: "primary-error",
+          error: "alias-error",
+        },
+        SOURCE,
+      ),
     ).toEqual({ exitCode: 1, stdout: "primary", stderr: "primary-error" });
   });
 
-  it("ignores a value of the wrong type rather than carrying it through", () => {
+  it("reads captured output only from a string, never from another type", () => {
     expect(
-      execResultFromUnknown({ exitCode: "1", stdout: 5, stderr: null }),
+      execResultFromUnknown({ exitCode: 0, stdout: 5, stderr: null }, SOURCE),
     ).toEqual({ exitCode: 0, stdout: "", stderr: "" });
-    expect(execResultFromUnknown(undefined)).toEqual({
+  });
+
+  it("refuses a result with no exit status instead of reading it as success", () => {
+    for (const [label, value] of [
+      ["nothing at all", undefined],
+      ["output but no status", { stdout: "built ok" }],
+      ["a non-numeric status", { exitCode: "1" }],
+      ["a non-finite status", { exitCode: Number.NaN }],
+    ] as const) {
+      expect(() => execResultFromUnknown(value, SOURCE), label).toThrow(
+        `${SOURCE} returned no exit status: a command result must carry a finite exitCode or code`,
+      );
+    }
+  });
+
+  it("accepts a zero exit status, which is a measured success", () => {
+    expect(execResultFromUnknown({ exitCode: 0 }, SOURCE)).toEqual({
       exitCode: 0,
       stdout: "",
       stderr: "",
