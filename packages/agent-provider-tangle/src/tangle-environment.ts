@@ -1,4 +1,4 @@
-import { AgentTurnInputSchema } from "@tangle-network/agent-interface";
+import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentExactRunControlRef,
@@ -426,11 +426,4 @@ function snapshotMetadata(
   metadata: Record<string, unknown>,
 ): Readonly<Record<string, unknown>> {
   return deepFreeze(structuredClone(metadata));
-}
-
-function deepFreeze<T>(value: T, seen = new Set<object>()): T {
-  if (value === null || typeof value !== "object" || seen.has(value)) return value;
-  seen.add(value);
-  for (const child of Object.values(value)) deepFreeze(child, seen);
-  return Object.freeze(value);
 }
