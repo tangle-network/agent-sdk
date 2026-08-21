@@ -144,7 +144,7 @@ function daytonaSandboxAsEnvironment(
         ["executeCommand", "execute", "exec", "run"],
         [command, { cwd: request?.cwd, timeoutMs: request?.timeoutMs, env: request?.env, signal: request?.signal }],
       );
-      return execResultFromUnknown(result);
+      return execResultFromUnknown(result, "Daytona sandbox process execution");
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "daytona" } }),
     async destroy(): Promise<void> {

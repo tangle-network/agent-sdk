@@ -28,12 +28,24 @@ function number(value: unknown): number | undefined {
  * `exitCode` or `code`, captured output under `stdout` or `output`, and
  * captured errors under `stderr` or `error`. Reading both names in one place
  * keeps every adapter's exec surface answering with the same shape.
+ *
+ * A result carrying no exit status is refused. Exit zero is the one value that
+ * means the command succeeded, so reading an absent status as zero reports a
+ * command nobody watched as a command that worked, and the turn that ran it
+ * completes on evidence that was never measured. `source` names the SDK call
+ * whose answer could not be read, because that is where the fix belongs.
  */
-export function execResultFromUnknown(value: unknown): ExecResult {
+export function execResultFromUnknown(value: unknown, source: string): ExecResult {
   const record =
     value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const exitCode = number(record.exitCode) ?? number(record.code);
+  if (exitCode === undefined) {
+    throw new Error(
+      `${source} returned no exit status: a command result must carry a finite exitCode or code`,
+    );
+  }
   return {
-    exitCode: number(record.exitCode) ?? number(record.code) ?? 0,
+    exitCode,
     stdout:
       typeof record.stdout === "string"
         ? record.stdout

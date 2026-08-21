@@ -124,7 +124,7 @@ function e2bSandboxAsEnvironment(
         ...(request?.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
         ...(request?.signal ? { signal: request.signal } : {}),
       });
-      return execResultFromUnknown(result);
+      return execResultFromUnknown(result, "E2B sandbox commands.run");
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "e2b" } }),
     async destroy(): Promise<void> {
