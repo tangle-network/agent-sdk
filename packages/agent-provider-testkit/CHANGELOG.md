@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.8.4
+
+### Patch Changes
+
+- c1ca2fc: Report the `AgentEnvironment.creation` verdict: the Tangle provider maps the platform create receipt, the CLI Bridge provider states `created` for the call that builds the environment handle, and the provider conformance rejects a same-key replay that claims it created the environment.
+- Updated dependencies [c1ca2fc]
+  - @tangle-network/agent-interface@1.4.0
+
 ## 0.8.3
 
 ### Patch Changes
