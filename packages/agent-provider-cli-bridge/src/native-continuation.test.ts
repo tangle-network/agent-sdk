@@ -257,6 +257,8 @@ describe("cli-bridge native continuation", () => {
     const restarted = createProvider(fixture.fetch);
     const reconstructedEnvironment = await restarted.get!(environment.id);
     if (!reconstructedEnvironment) throw new Error("the environment was not reconstructed");
+    expect(environment.creation).toBe("created");
+    expect(reconstructedEnvironment.creation).toBeUndefined();
     await expect(reconstructedEnvironment.dispatch!({ prompt: "must not dispatch" })).rejects.toThrow(
       /cannot dispatch new work/,
     );

@@ -33,9 +33,15 @@ The public `AgentInstanceRecord` contains a credential-free profile identity, no
 
 `AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
 `RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
+The `child-task` event reports one update of a provider-native child task (a subagent, worker, or delegated task) with a stable `childId`, an optional `parentChildId`, a lifecycle status, start and update times, and the runner, model, usage, and terminal reason when the provider reports them.
+Its `sourceEventId` identifies the exact update, so a consumer applies the first event with a given `sourceEventId` and ignores later copies during replay or reconnect.
+Identity never depends on the bounded `raw` payload, and a provider that cannot report a stable `childId` emits no `child-task` event.
 The canonical `cancelled` status identifies caller cancellation and remains distinct from `failed`.
 Providers advertise `retainedControl` only when exact run, result, event, cancellation, replay, detach, turn, and session identity are all implemented together.
 `AgentEnvironment.metadata` is the detached snapshot returned by create or get, so recovery can check persisted annotations without listing environments.
+`AgentEnvironment.creation` reports what the create call that returned the object did: `created` when the call provisioned the environment, `replayed` when an existing environment matched the idempotency key.
+It is a per-call fact, so a same-key replay returns a view of the same environment with `creation: "replayed"`, and the value is absent when the provider cannot prove either outcome.
+A consumer never destroys an environment whose creation it cannot prove, because another caller can hold it.
 Metadata can include caller-authored values and does not prove authorization or authorship.
 `AgentSession.cancelRun()` accepts a canonical request digest bound to one operation and `AgentExactRunControlRef`, so a caller can safely repeat the same cancellation after losing the first acknowledgement.
 Its acknowledgement repeats the operation, digest, and run coordinates and distinguishes a known cancellation effect from conflict or unknown state.

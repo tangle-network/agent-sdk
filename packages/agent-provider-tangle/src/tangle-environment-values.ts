@@ -1,5 +1,5 @@
-import type { AgentEnvironmentStatus, AgentSessionStatus, PlacementInfo } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxInstanceLike } from "./tangle-types.js";
+import type { AgentEnvironmentCreation, AgentEnvironmentStatus, AgentSessionStatus, PlacementInfo } from "@tangle-network/agent-interface/environment-provider";
+import type { SandboxCreateReceiptLike, SandboxInstanceLike } from "./tangle-types.js";
 
 const MAX_IDENTIFIER_LENGTH = 512;
 
@@ -140,4 +140,29 @@ export function executionBoundSessionStatus(
   if (latest === executionId) return sessionStatus;
   if (latest === undefined && admitted === executionId) return sessionStatus;
   return "unknown";
+}
+
+/**
+ * Map the platform create receipt to the environment creation verdict. An
+ * `unknown` outcome, a null receipt, and an SDK without receipts all leave the
+ * verdict absent, so a consumer cannot read them as proof of creation.
+ */
+export function creationFromSandboxCreateReceipt(
+  receipt: SandboxCreateReceiptLike | null | undefined,
+): AgentEnvironmentCreation | undefined {
+  if (receipt === null || receipt === undefined) return undefined;
+  switch (receipt.outcome) {
+    case "created":
+      return "created";
+    case "idempotent_replay":
+      return "replayed";
+    case "unknown":
+      return undefined;
+    default: {
+      const outcome: never = receipt.outcome;
+      throw new Error(
+        `Tangle create receipt reported an unknown outcome: ${String(outcome)}`,
+      );
+    }
+  }
 }

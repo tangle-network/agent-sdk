@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
+  AgentEnvironmentCreationSchema,
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
   agentEnvironmentCreateInputDigest,
   createAgentEnvironmentWithIdempotency,
+  replayedAgentEnvironmentView,
 } from "./environment-provider.js";
-import type { AgentEnvironmentCreateIdempotencyRecord } from "./environment-provider.js";
+import type {
+  AgentEnvironmentCreateIdempotencyRecord,
+  AgentEnvironmentCreation,
+} from "./environment-provider.js";
 import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
@@ -95,12 +100,25 @@ describe("generic environment create idempotency", () => {
     ).not.toBe(agentEnvironmentCreateInputDigest(input));
   });
 
-  it("coalesces same-key retries and rejects changed input", async () => {
+  type FakeEnvironment = {
+    id: string;
+    creation?: AgentEnvironmentCreation;
+    status: () => Promise<string>;
+  };
+
+  it("coalesces same-key retries into replayed views and rejects changed input", async () => {
     const records = new Map<
       string,
-      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
     >();
-    const create = vi.fn(async () => ({ id: "environment-1" }));
+    const status = async () => "running";
+    const create = vi.fn(
+      async (): Promise<FakeEnvironment> => ({
+        id: "environment-1",
+        creation: "created",
+        status,
+      }),
+    );
 
     const first = await createAgentEnvironmentWithIdempotency(
       records,
@@ -118,7 +136,11 @@ describe("generic environment create idempotency", () => {
       create,
     );
 
-    expect(replay).toBe(first);
+    expect(first.creation).toBe("created");
+    expect(replay).not.toBe(first);
+    expect(replay).toEqual({ id: "environment-1", creation: "replayed", status });
+    expect(replay.status).toBe(first.status);
+    expect(first.creation).toBe("created");
     expect(create).toHaveBeenCalledOnce();
     await expect(
       createAgentEnvironmentWithIdempotency(
@@ -138,6 +160,78 @@ describe("generic environment create idempotency", () => {
         create,
       ),
     ).rejects.toThrow("retry cancelled");
+  });
+
+  it("gives every caller that awaited one pending create a replayed view", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
+    >();
+    let release: (environment: FakeEnvironment) => void = () => {};
+    const create = vi.fn(
+      () =>
+        new Promise<FakeEnvironment>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const firstCall = createAgentEnvironmentWithIdempotency(records, input, create);
+    const secondCall = createAgentEnvironmentWithIdempotency(records, input, create);
+    await Promise.resolve();
+    release({ id: "environment-1", status: async () => "running" });
+
+    const [first, second] = await Promise.all([firstCall, secondCall]);
+    expect(create).toHaveBeenCalledOnce();
+    expect(first.creation).toBeUndefined();
+    expect(second.creation).toBe("replayed");
+    expect(second.id).toBe(first.id);
+    expect(second.status).toBe(first.status);
+  });
+
+  it("keeps an unkeyed create verdict as the provider stated it", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
+    >();
+    const { idempotencyKey: _key, ...unkeyed } = input;
+    const environment = await createAgentEnvironmentWithIdempotency(
+      records,
+      unkeyed,
+      async (): Promise<FakeEnvironment> => ({
+        id: "environment-2",
+        status: async () => "running",
+      }),
+    );
+    expect(environment.creation).toBeUndefined();
+    expect(records.size).toBe(0);
+  });
+
+  it("refuses a replayed view of a class instance", () => {
+    class Environment {
+      readonly id = "environment-1";
+      readonly creation = "created" as const;
+      status(): Promise<string> {
+        return Promise.resolve(this.id);
+      }
+    }
+    expect(() => replayedAgentEnvironmentView(new Environment())).toThrow(
+      /plain object environment/,
+    );
+    expect(
+      replayedAgentEnvironmentView(
+        Object.assign(Object.create(null) as object, { id: "environment-1" }),
+      ),
+    ).toEqual({ id: "environment-1", creation: "replayed" });
+  });
+});
+
+describe("AgentEnvironmentCreationSchema", () => {
+  it("accepts the two provable verdicts and rejects every other value", () => {
+    expect(AgentEnvironmentCreationSchema.parse("created")).toBe("created");
+    expect(AgentEnvironmentCreationSchema.parse("replayed")).toBe("replayed");
+    for (const invalid of ["unknown", "", "CREATED", undefined, null, true]) {
+      expect(() => AgentEnvironmentCreationSchema.parse(invalid)).toThrow();
+    }
   });
 });
 

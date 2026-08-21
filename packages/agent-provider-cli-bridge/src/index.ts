@@ -143,6 +143,7 @@ export function createCliBridgeProvider(
       environmentId,
       allowDispatch: true,
       cancelRunsOnDestroy: true,
+      creation: "created",
       capabilities: await resolveCapabilities(
         selectedBackend,
         model,

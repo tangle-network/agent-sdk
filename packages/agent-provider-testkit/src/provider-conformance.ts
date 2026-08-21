@@ -103,6 +103,18 @@ export async function runAgentEnvironmentProviderConformance(
       "same create key and canonical input must return the same environment",
       checked,
     );
+    // The first call already holds this environment, so the replay call
+    // provisioned nothing and may state only "replayed" or nothing at all.
+    assert(
+      replay.creation === undefined || replay.creation === "replayed",
+      "a same-key create replay must not claim it created the environment",
+      checked,
+    );
+    assert(
+      environment.creation === undefined || replay.creation === "replayed",
+      "a provider that states a creation verdict must state 'replayed' on a same-key replay",
+      checked,
+    );
     checked.push("create-idempotency");
 
     let collisionRejected = false;
