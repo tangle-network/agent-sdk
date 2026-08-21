@@ -50,6 +50,21 @@ export const AgentExactRunControlRefSchema = AgentRunControlRefSchema.extend({
   requestDigest: sha256DigestSchema,
 }) satisfies z.ZodType<AgentExactRunControlRef>;
 
+/**
+ * Whether two references name the same run.
+ *
+ * Comparison is over the reference's canonical form rather than a list of
+ * field names, so a reference that gains a field is compared on it without a
+ * caller having to remember: two runs that differ only in a field nobody
+ * enumerated must not read as one run.
+ */
+export function sameAgentRunControlRef(
+  left: AgentRunControlRef,
+  right: AgentRunControlRef,
+): boolean {
+  return canonicalCandidateDigest(left) === canonicalCandidateDigest(right);
+}
+
 export type AgentRunCancellationEffect =
   | "cancel_requested"
   | "cancelled"
@@ -191,8 +206,7 @@ export function agentRunCancellationAcknowledgementMatchesRequest(
   return (
     exactAcknowledgement.data.operationId === exactRequest.data.operationId &&
     exactAcknowledgement.data.requestDigest === exactRequest.data.requestDigest &&
-    canonicalCandidateDigest(exactAcknowledgement.data.run) ===
-      canonicalCandidateDigest(exactRequest.data.run)
+    sameAgentRunControlRef(exactAcknowledgement.data.run, exactRequest.data.run)
   );
 }
 
@@ -310,8 +324,7 @@ export function agentRunControlAcknowledgementMatchesRequest(
   return (
     exactAcknowledgement.data.operationId === exactRequest.data.operationId &&
     exactAcknowledgement.data.requestDigest === exactRequest.data.requestDigest &&
-    canonicalCandidateDigest(exactAcknowledgement.data.run) ===
-      canonicalCandidateDigest(exactRequest.data.run)
+    sameAgentRunControlRef(exactAcknowledgement.data.run, exactRequest.data.run)
   );
 }
 
