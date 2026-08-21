@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deepFreeze } from "./deep-freeze.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import {
   canonicalCandidateDigest,
@@ -314,16 +315,6 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
     : T extends object
       ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
       : T;
-
-function deepFreeze<T>(value: T): DeepReadonly<T> {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const child of Object.values(value)) {
-      deepFreeze(child);
-    }
-    Object.freeze(value);
-  }
-  return value as DeepReadonly<T>;
-}
 
 type MutuallyAssignable<A, B> = [A] extends [B]
   ? [B] extends [A]

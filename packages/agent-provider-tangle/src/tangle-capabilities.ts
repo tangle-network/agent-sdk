@@ -2,7 +2,7 @@ import type {
   AgentEnvironmentCapabilities,
   HarnessType,
 } from "@tangle-network/agent-interface";
-import { harnessSystemPromptIntents } from "@tangle-network/agent-interface";
+import { deepFreeze, harnessSystemPromptIntents } from "@tangle-network/agent-interface";
 import { SandboxInstance } from "@tangle-network/sandbox";
 import type { BackendRegistryEntry } from "@tangle-network/sandbox";
 import type {
@@ -555,9 +555,7 @@ export function capabilitiesForClient(
  * mutated flag would describe a surface this environment does not have.
  */
 export function frozenCapabilityDocument<T>(document: T): T {
-  if (document === null || typeof document !== "object") return document;
-  for (const value of Object.values(document)) frozenCapabilityDocument(value);
-  return Object.freeze(document);
+  return deepFreeze(document);
 }
 
 /**
