@@ -6,6 +6,13 @@
  * - Sidecar tokens: Ed25519 (asymmetric — sidecar cannot forge tokens)
  */
 
+import {
+  base64UrlDecode,
+  base64UrlToBytes,
+  decodeToken,
+  getTokenTTL,
+  isTokenExpiringSoon,
+} from "./tokens-browser.js";
 import type {
   BatchScopedTokenPayload,
   ProductAuthInfo,
@@ -17,7 +24,8 @@ import type {
 } from "./types.js";
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+
+export { decodeToken, getTokenTTL, isTokenExpiringSoon };
 
 type NodeCrypto = typeof import("node:crypto");
 let nodeCryptoCache: NodeCrypto | undefined;
@@ -82,24 +90,6 @@ function base64UrlEncode(data: string | Uint8Array): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-}
-
-/**
- * Base64URL decode (RFC 7515) to raw bytes.
- */
-function base64UrlToBytes(data: string): Uint8Array {
-  const padded = data + "=".repeat((4 - (data.length % 4)) % 4);
-  const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-/**
- * Base64URL decode to a UTF-8 string.
- */
-function base64UrlDecode(data: string): string {
-  return textDecoder.decode(base64UrlToBytes(data));
 }
 
 /**
@@ -713,24 +703,6 @@ export function validateTokenScope(payload: ReadTokenPayload): string | null {
 }
 
 /**
- * Decode a JWT without verification (to extract claims for lookup).
- * Returns null if the token is malformed.
- */
-export function decodeToken(token: string): ReadTokenPayload | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      return null;
-    }
-
-    const payload = JSON.parse(base64UrlDecode(parts[1]));
-    return payload as ReadTokenPayload;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Verify a read token against a product's signing secrets.
  *
  * @param token - The JWT token to verify
@@ -872,25 +844,6 @@ export function verifyReadToken(
     payload,
     scope: getTokenScope(payload) ?? undefined,
   };
-}
-
-/**
- * Get time until token expires (in seconds).
- * Returns negative if expired.
- */
-export function getTokenTTL(payload: ReadTokenPayload): number {
-  const now = Math.floor(Date.now() / 1000);
-  return payload.exp - now;
-}
-
-/**
- * Check if token is expiring soon (within buffer seconds).
- */
-export function isTokenExpiringSoon(
-  payload: ReadTokenPayload,
-  bufferSeconds = 60,
-): boolean {
-  return getTokenTTL(payload) <= bufferSeconds;
 }
 
 /**

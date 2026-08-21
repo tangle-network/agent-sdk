@@ -1,34 +1,41 @@
 /**
- * Browser-safe Token Utilities
+ * Reading a token, on any runtime.
  *
- * Token decoding and inspection that works in both browser and Node.js.
- * Uses only standard APIs (atob/btoa or TextEncoder/TextDecoder).
+ * Inspecting a token needs no secret, so this half of the token surface is
+ * portable: it uses only `atob`, `TextDecoder`, and `Date`, all of which a
+ * browser and Node both provide. The server module builds on it rather than
+ * keeping a second copy, so `@tangle-network/agent-core/auth` and
+ * `@tangle-network/agent-core/auth/browser` cannot read one token two ways.
  */
 
 import type { ReadTokenPayload } from "./types.js";
 
-/**
- * Base64URL decode (browser-safe).
- */
-function base64UrlDecode(data: string): string {
-  // Add padding if needed
-  const padded = data + "=".repeat((4 - (data.length % 4)) % 4);
-  // Convert base64url to base64
-  const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+const textDecoder = new TextDecoder();
 
-  // Use atob in browser, Buffer in Node
-  if (typeof atob === "function") {
-    return atob(base64);
-  }
-  // Node.js fallback
-  return Buffer.from(base64, "base64").toString();
+/** Base64URL decode (RFC 7515) to raw bytes. */
+export function base64UrlToBytes(data: string): Uint8Array {
+  const padded = data + "=".repeat((4 - (data.length % 4)) % 4);
+  const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 /**
- * Decode a JWT without verification (to extract claims for lookup).
- * Returns null if the token is malformed.
+ * Base64URL decode to a UTF-8 string.
  *
- * This is safe to use in browsers - it only parses the token, doesn't verify.
+ * `atob` answers one byte per code unit, so its result is the raw bytes and
+ * not yet text. A claim carrying any non-ASCII character — an account name, a
+ * project name, an email display name — is only recovered by decoding those
+ * bytes as UTF-8.
+ */
+export function base64UrlDecode(data: string): string {
+  return textDecoder.decode(base64UrlToBytes(data));
+}
+
+/**
+ * Decode a JWT without verifying it, to read claims for lookup.
+ * Returns null if the token is malformed.
  */
 export function decodeToken(token: string): ReadTokenPayload | null {
   try {
