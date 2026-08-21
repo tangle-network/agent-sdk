@@ -1,3 +1,4 @@
+import { agentCandidateEvidenceSchema } from "./agent-candidate-evidence-schema.js";
 import { z } from "zod";
 import type {
   AgentCandidateBenchmarkResultEvidence,
@@ -11,7 +12,6 @@ import type {
 } from "./agent-candidate.js";
 import {
   agentCandidateArtifactRefSchema,
-  agentCandidateCapturedArtifactSchema,
   agentCandidateWorkspaceSnapshotEvidenceSchema,
 } from "./agent-candidate-artifact-schema.js";
 import {
@@ -215,7 +215,7 @@ function refineModelSettlementMaterial(
   }
 }
 
-export const agentCandidateModelSettlementEvidenceSchema = evidenceSchema(
+export const agentCandidateModelSettlementEvidenceSchema = agentCandidateEvidenceSchema(
   "agent-candidate-model-settlement",
   agentCandidateModelSettlementMaterialSchema,
   "model settlement",
@@ -342,7 +342,7 @@ export const agentCandidateTaskOutcomeMaterialSchema = z
     }
   }) satisfies z.ZodType<AgentCandidateTaskOutcomeMaterial>;
 
-export const agentCandidateTaskOutcomeEvidenceSchema = evidenceSchema(
+export const agentCandidateTaskOutcomeEvidenceSchema = agentCandidateEvidenceSchema(
   "agent-candidate-task-outcome",
   agentCandidateTaskOutcomeMaterialSchema,
   "task outcome",
@@ -419,7 +419,7 @@ export const agentCandidateBenchmarkResultMaterialSchema = z
     }
   }) satisfies z.ZodType<AgentCandidateBenchmarkResultMaterial>;
 
-export const agentCandidateBenchmarkResultEvidenceSchema = evidenceSchema(
+export const agentCandidateBenchmarkResultEvidenceSchema = agentCandidateEvidenceSchema(
   "agent-candidate-benchmark-result",
   agentCandidateBenchmarkResultMaterialSchema,
   "benchmark result",
@@ -440,33 +440,3 @@ function sameFixedSpend(
   );
 }
 
-function evidenceSchema<TKind extends string, TMaterial>(
-  kind: TKind,
-  material: z.ZodType<TMaterial>,
-  label: string,
-) {
-  return z
-    .object({
-      kind: z.literal(kind),
-      digest: sha256DigestSchema,
-      material,
-      artifact: agentCandidateCapturedArtifactSchema,
-    })
-    .strict()
-    .superRefine((evidence, ctx) => {
-      if (evidence.artifact.sha256 !== evidence.digest) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["artifact", "sha256"],
-          message: `${label} artifact hash must equal its canonical material digest`,
-        });
-      }
-      if (evidence.artifact.byteLength === 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["artifact", "byteLength"],
-          message: `${label} artifact must contain canonical material bytes`,
-        });
-      }
-    });
-}

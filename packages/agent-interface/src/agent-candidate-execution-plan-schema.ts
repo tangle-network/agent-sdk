@@ -1,3 +1,4 @@
+import { agentCandidateEvidenceSchema } from "./agent-candidate-evidence-schema.js";
 import { z } from "zod";
 import type {
   AgentCandidateBenchmarkCellRef,
@@ -574,30 +575,7 @@ function planEvidenceSchema<TKind extends string, TMaterial>(
   kind: TKind,
   material: z.ZodType<TMaterial>,
 ) {
-  return z
-    .object({
-      kind: z.literal(kind),
-      digest: sha256DigestSchema,
-      material,
-      artifact: agentCandidateCapturedArtifactSchema,
-    })
-    .strict()
-    .superRefine((evidence, ctx) => {
-      if (evidence.artifact.sha256 !== evidence.digest) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["artifact", "sha256"],
-          message: "plan artifact hash must equal its canonical material digest",
-        });
-      }
-      if (evidence.artifact.byteLength === 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["artifact", "byteLength"],
-          message: "plan artifact must contain canonical material bytes",
-        });
-      }
-    });
+  return agentCandidateEvidenceSchema(kind, material, "plan");
 }
 
 export const agentCandidateProfilePlanEvidenceSchema = planEvidenceSchema(
