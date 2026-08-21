@@ -245,6 +245,40 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
         "durable interaction response request",
       ).toBe(true);
 
+      // The same interaction, answered again under a new operation identifier.
+      // The Bridge compares the response digest, not the operation, so a
+      // different answer is a conflict and an identical answer is the same
+      // resolution.
+      const resolvedAgain = async (
+        operationId: string,
+        response: InteractionResponse,
+      ): Promise<InteractionAcknowledgement> => {
+        const binding = command.binding;
+        return environment.respondToInteraction!({
+          operationId,
+          binding,
+          response,
+          commandDigest: interactionResponseCommandDigest({ binding, response }),
+        });
+      };
+      await expect(
+        resolvedAgain("sdk-cli-bridge-integration-conflicting-response", {
+          id: interaction.id,
+          outcome: "accepted",
+          data: { grant: ["deny"] },
+        }),
+      ).resolves.toMatchObject({
+        status: "already_resolved_different",
+        operationId: "sdk-cli-bridge-integration-conflicting-response",
+        retryable: false,
+      });
+      await expect(
+        resolvedAgain("sdk-cli-bridge-integration-identical-response", command.response),
+      ).resolves.toMatchObject({
+        status: "already_resolved_same",
+        operationId: "sdk-cli-bridge-integration-identical-response",
+      });
+
       const replayed: AgentEnvironmentEvent[] = [];
       for await (const event of session.events({ since: "0" })) replayed.push(event);
       expect(replayed.map((event) => event.id)).toEqual(firstEvents.map((event) => event.id));
@@ -298,6 +332,70 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\nRequests:\n${JSON.stringify(requests)}\nActual Bridge output:\n${bridge.logs()}`,
+      );
+    } finally {
+      await bridge.stop();
+    }
+  }, 30_000);
+
+  it("answers a cancelled interaction with the cancelled acknowledgement", async () => {
+    const bridge = await startActualBridge();
+    try {
+      const sessionId = "sdk-cli-bridge-cancelled-session";
+      const provider = createCliBridgeProvider({
+        baseUrl: bridge.baseUrl,
+        defaultModel: "pi/tangle-router/sdk-integration-model",
+      });
+      const environment = await provider.create({
+        idempotencyKey: "sdk-cli-bridge-cancelled-environment",
+        profile: { name: "integration", harness: "pi" },
+        workspace: { cwd: bridge.projectDir },
+      });
+      const reference = await environment.dispatch!({
+        prompt: "pause on a permission this run never answers",
+        sessionId,
+        turnId: "sdk-cli-bridge-cancelled-turn",
+        executionId: "sdk-cli-bridge-cancelled-run",
+        interactions: { permission: true },
+      });
+      const controlRef = reference.controlRef as AgentExactRunControlRef | undefined;
+      if (!controlRef) throw new Error("the actual Bridge did not return an exact native control reference");
+      const session = environment.session!(sessionId, { controlRef });
+
+      let interaction: InteractionRequest | undefined;
+      for await (const event of session.events({ since: "0" })) {
+        if (event.normalized?.type !== "interaction") continue;
+        interaction = event.normalized.request;
+        break;
+      }
+      if (!interaction) throw new Error("the actual Bridge did not pause on a native interaction");
+
+      // The permission is still outstanding, so cancelling the run closes it
+      // before any response can take effect.
+      await session.cancel();
+      await expect(session.status()).resolves.toBe("cancelled");
+
+      const binding = { ...interaction.binding, requestDigest: interaction.requestDigest };
+      const response: InteractionResponse = {
+        id: interaction.id,
+        outcome: "accepted",
+        data: { grant: ["allow_once"] },
+      };
+      await expect(
+        environment.respondToInteraction!({
+          operationId: "sdk-cli-bridge-cancelled-response",
+          binding,
+          response,
+          commandDigest: interactionResponseCommandDigest({ binding, response }),
+        }),
+      ).resolves.toMatchObject({
+        status: "cancelled",
+        operationId: "sdk-cli-bridge-cancelled-response",
+        retryable: false,
+      });
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\nActual Bridge output:\n${bridge.logs()}`,
       );
     } finally {
       await bridge.stop();

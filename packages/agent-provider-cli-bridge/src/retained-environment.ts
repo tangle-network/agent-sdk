@@ -84,6 +84,20 @@ export interface CreateCliBridgeEnvironmentArgs {
   readonly selectedModel?: string;
 }
 
+/**
+ * One refusal for every call that would add a turn to a reconstructed
+ * environment. `provider.get()` rebuilds control of existing runs from the
+ * opaque environment id alone, so it holds no create request that a new native
+ * session could reuse. Only `session.continueNative` advances a retained run
+ * after reconstruction, and only where the Bridge proves `nativeContinuation`.
+ */
+function assertCliBridgeTurnAllowed(allowed: boolean, surface: string): void {
+  if (allowed) return;
+  throw new Error(
+    `a reconstructed cli-bridge environment cannot start a turn through ${surface}; use session.continueNative, which requires the nativeContinuation capability`,
+  );
+}
+
 export function createCliBridgeEnvironment(
   args: CreateCliBridgeEnvironmentArgs,
 ): AgentEnvironment {
@@ -112,9 +126,7 @@ export function createCliBridgeEnvironment(
     turn: AgentTurnInput,
   ): AsyncIterable<AgentEnvironmentEvent> {
     if (destroyed) throw new Error("cli-bridge environment is destroyed");
-    if (!args.allowDispatch) {
-      throw new Error("a reconstructed cli-bridge environment can only control an existing run");
-    }
+    assertCliBridgeTurnAllowed(args.allowDispatch, "environment.stream()");
     if (
       args.selectedModel !== undefined &&
       args.capabilities.retainedControl !== undefined
@@ -168,9 +180,7 @@ export function createCliBridgeEnvironment(
     stream,
     async dispatch(turn) {
       if (destroyed) throw new Error("cli-bridge environment is destroyed");
-      if (!args.allowDispatch) {
-        throw new Error("a reconstructed cli-bridge environment cannot dispatch new work");
-      }
+      assertCliBridgeTurnAllowed(args.allowDispatch, "environment.dispatch()");
       if (
         args.selectedModel !== undefined &&
         args.capabilities.retainedControl !== undefined
@@ -419,9 +429,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       return result;
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
-      if (!args.allowPrompt) {
-        throw new Error("a reconstructed cli-bridge session cannot start another turn");
-      }
+      assertCliBridgeTurnAllowed(args.allowPrompt, "session.prompt()");
       if (input.sessionId && input.sessionId !== args.id) {
         throw new Error(
           `cli-bridge session "${args.id}" cannot prompt session "${input.sessionId}"`,

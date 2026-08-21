@@ -12,6 +12,7 @@ import {
   type AgentProfile,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
+import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
@@ -802,6 +803,70 @@ describe("createCliBridgeProvider", () => {
     })).rejects.toThrow("create another environment");
     expect(called).toBe(false);
   });
+
+  it.each([
+    { harness: "codex" as const, addsTurn: false },
+    { harness: "pi" as const, addsTurn: true },
+  ])(
+    "publishes on a reconstructed $harness environment exactly which call can add a turn",
+    async ({ harness, addsTurn }) => {
+      const model = `${harness}/reconstruction-model`;
+      const provider = createCliBridgeProvider({
+        baseUrl: "http://bridge.local",
+        defaultModel: model,
+        fetch: async (url) => {
+          if (new URL(String(url)).pathname === "/v1/capabilities") {
+            return Response.json(defaultCliBridgeCapabilities(harness));
+          }
+          throw new Error(`unexpected request to ${String(url)}`);
+        },
+      });
+      const created = await provider.create({
+        idempotencyKey: "reconstruction-environment",
+        profile: { name: "worker", harness },
+      });
+
+      const reconstructed = await provider.get!(created.id);
+      if (!reconstructed) throw new Error("the provider did not reconstruct the environment");
+      const capabilities = reconstructed.capabilities;
+      if (!capabilities) throw new Error("the reconstructed environment published no capabilities");
+
+      // `nativeContinuation` is the flag that states whether a reconstructed
+      // environment can add a turn.
+      expect(capabilities.nativeContinuation).toEqual(
+        addsTurn ? { atomicBoundary: true, requestIdempotency: true } : undefined,
+      );
+      // `sessions.continue` cannot carry that answer: the Agent Interface
+      // couples it to retained run control, which this environment keeps.
+      expect(capabilities.sessions.continue).toBe(true);
+      expect(capabilities.retainedControl).toBeDefined();
+      expect(
+        AgentEnvironmentCapabilitiesSchema.safeParse({
+          ...capabilities,
+          sessions: { ...capabilities.sessions, continue: false },
+        }).success,
+      ).toBe(false);
+
+      const session = reconstructed.session!("reconstruction-session", {
+        controlRef: {
+          runId: "reconstruction-run",
+          provider: "cli-bridge",
+          environmentId: reconstructed.id,
+          sessionId: "reconstruction-session",
+          executionId: "reconstruction-execution",
+          requestDigest: testDigest("reconstruction-run"),
+        },
+      });
+      await expect(reconstructed.dispatch!({ prompt: "add a turn" })).rejects.toThrow(
+        /cannot start a turn/,
+      );
+      await expect(consume(reconstructed)).rejects.toThrow(/cannot start a turn/);
+      await expect(session.prompt!({ prompt: "add a turn" })).rejects.toThrow(
+        /cannot start a turn/,
+      );
+      expect(typeof session.continueNative === "function").toBe(addsTurn);
+    },
+  );
 
   it("returns null when an exact retained run does not exist", async () => {
     const provider = createCliBridgeProvider({
