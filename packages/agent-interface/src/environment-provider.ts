@@ -5,6 +5,7 @@ import type {
 } from "./agent-profile.js";
 import type { AgentCandidateTermination } from "./agent-candidate.js";
 import type { InputPart, StreamEvent, TokenUsage } from "./index.js";
+import type { AgentProviderSessionRef } from "./provider-session.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
 export type AgentProfileRef = AgentProfile | string;
@@ -253,6 +254,8 @@ export interface AgentTurnResult {
   usage?: TokenUsage;
   metadata?: Record<string, unknown>;
   events?: AgentEnvironmentEvent[];
+  /** Exact provider-native session identity when the adapter can prove it. */
+  providerSession?: AgentProviderSessionRef;
 }
 
 export interface AgentSessionRef {
@@ -268,6 +271,8 @@ export interface AgentEnvironmentEvent {
   normalized?: StreamEvent;
   usage?: TokenUsage;
   providerEvent?: unknown;
+  /** Exact provider-native session identity attached to a terminal event. */
+  providerSession?: AgentProviderSessionRef;
 }
 
 export interface AgentSession {

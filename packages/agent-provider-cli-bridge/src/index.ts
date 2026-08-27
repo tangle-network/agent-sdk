@@ -13,9 +13,11 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
+  type AgentProviderSessionRef,
   type AgentProfile,
   type InputPart,
   type MessagePartUpdatedEvent,
+  snapshotAgentProviderSessionRef,
   snapshotAgentProfile,
   type TextPart,
   type TokenUsage,
@@ -86,6 +88,7 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
           options,
           environmentInput,
           prepared,
+          name,
           transport,
           runs,
           sessions,
@@ -182,6 +185,7 @@ interface CliBridgeRun {
   readonly id: string;
   readonly sessionId?: string;
   readonly turnId: string;
+  readonly backend: string;
   readonly requestBody: string;
   readonly readers: Set<AbortController>;
   requestDigest?: string;
@@ -219,15 +223,19 @@ function prepareCliBridgeRun(
     turnId,
     ...(sessionId ? { sessionId } : {}),
   };
+  const requestBody = toChatCompletionsBody(options, environmentInput, turn, runId);
+  const model = requestBody.model;
+  if (typeof model !== "string" || model.length === 0) {
+    throw new Error("cli-bridge request resolved no backend model");
+  }
   return {
     turn,
     run: {
       id: runId,
       ...(sessionId ? { sessionId } : {}),
       turnId,
-      requestBody: JSON.stringify(
-        toChatCompletionsBody(options, environmentInput, turn, runId),
-      ),
+      backend: model.split("/")[0]!,
+      requestBody: JSON.stringify(requestBody),
       readers: new Set<AbortController>(),
     },
   };
@@ -282,6 +290,7 @@ async function* streamTrackedCliBridgeTurn(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
   prepared: PreparedCliBridgeRun,
+  providerName: string,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
   sessions: Map<string, CliBridgeSessionState>,
@@ -309,6 +318,7 @@ async function* streamTrackedCliBridgeTurn(
 
   let drained = false;
   let threw = false;
+  let sessionLookupAttempted = false;
   try {
     for await (const event of streamCliBridgeTurn(
       options,
@@ -322,6 +332,16 @@ async function* streamTrackedCliBridgeTurn(
     )) {
       yield event;
     }
+    sessionLookupAttempted = true;
+    const providerSession = await providerSessionEvent(
+      options,
+      transport,
+      providerName,
+      run,
+      originalTurn,
+      signals.length > 0 ? AbortSignal.any(signals) : undefined,
+    );
+    if (providerSession) yield providerSession;
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } catch (error) {
@@ -337,7 +357,17 @@ async function* streamTrackedCliBridgeTurn(
     } catch {
       snapshot = undefined;
     }
-    if (snapshot?.terminal) {
+    if (snapshot?.terminal && !sessionLookupAttempted) {
+      sessionLookupAttempted = true;
+      const providerSession = await providerSessionEvent(
+        options,
+        transport,
+        providerName,
+        run,
+        originalTurn,
+        signals.length > 0 ? AbortSignal.any(signals) : undefined,
+      );
+      if (providerSession) yield providerSession;
       if (runs.get(run.id) === run) runs.delete(run.id);
     } else if (
       (originalTurn.signal?.aborted || environmentInput.signal?.aborted)
@@ -488,6 +518,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       yield* streamCliBridgeSessionEvents(
         args.options,
         args.environmentInput,
+        args.providerName,
         run,
         args.transport,
         args.runs,
@@ -501,6 +532,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         streamCliBridgeSessionEvents(
           args.options,
           args.environmentInput,
+          args.providerName,
           run,
           args.transport,
           args.runs,
@@ -533,6 +565,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
           args.options,
           args.environmentInput,
           prepared,
+          args.providerName,
           args.transport,
           args.runs,
           args.sessions,
@@ -555,6 +588,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
 async function* streamCliBridgeSessionEvents(
   options: CliBridgeProviderOptions,
   environmentInput: CreateAgentEnvironmentInput,
+  providerName: string,
   run: CliBridgeRun,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
@@ -571,6 +605,7 @@ async function* streamCliBridgeSessionEvents(
   run.readers.add(controller);
   readers.add(controller);
   let drained = false;
+  let sessionLookupAttempted = false;
   try {
     yield* streamCliBridgeTurn(
       options,
@@ -585,8 +620,45 @@ async function* streamCliBridgeSessionEvents(
       signal,
       (response) => captureCliBridgeRunIdentity(response, run, false),
     );
+    sessionLookupAttempted = true;
+    const providerSession = await providerSessionEvent(
+      options,
+      transport,
+      providerName,
+      run,
+      {
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        turnId: run.turnId,
+      },
+      signal,
+    );
+    if (providerSession) yield providerSession;
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
+  } catch (error) {
+    let snapshot: CliBridgeRunSnapshot | null | undefined;
+    try {
+      snapshot = await getCliBridgeRun(options, transport, run.id);
+    } catch {
+      snapshot = undefined;
+    }
+    if (snapshot?.terminal && !sessionLookupAttempted) {
+      sessionLookupAttempted = true;
+      const providerSession = await providerSessionEvent(
+        options,
+        transport,
+        providerName,
+        run,
+        {
+          ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+          turnId: run.turnId,
+        },
+        signal,
+      );
+      if (providerSession) yield providerSession;
+      if (runs.get(run.id) === run) runs.delete(run.id);
+    }
+    throw error;
   } finally {
     if (!drained) {
       controller.abort(
@@ -607,6 +679,7 @@ async function collectCliBridgeTurnResult(
   const events: AgentEnvironmentEvent[] = [];
   let text = "";
   let usage: TokenUsage | undefined;
+  let providerSession: AgentProviderSessionRef | undefined;
   let streamError: unknown;
   try {
     for await (const event of source) {
@@ -618,6 +691,7 @@ async function collectCliBridgeTurnResult(
         text += event.data.delta;
       }
       usage = addTokenUsage(usage, event.usage);
+      if (event.providerSession) providerSession = event.providerSession;
     }
   } catch (error) {
     streamError = error;
@@ -651,7 +725,118 @@ async function collectCliBridgeTurnResult(
       ...(run.requestDigest ? { requestDigest: run.requestDigest } : {}),
     },
     events,
+    ...(providerSession ? { providerSession } : {}),
   };
+}
+
+async function providerSessionEvent(
+  options: CliBridgeProviderOptions,
+  transport: CliBridgeTransport,
+  providerName: string,
+  run: CliBridgeRun,
+  turn: AgentTurnInput,
+  signal?: AbortSignal,
+): Promise<AgentEnvironmentEvent | undefined> {
+  const providerSession = await readExactProviderSession(
+    options,
+    transport,
+    providerName,
+    run,
+    turn,
+    signal,
+  );
+  if (!providerSession) return undefined;
+  return {
+    type: "provider.session",
+    data: {},
+    providerSession,
+  };
+}
+
+async function readExactProviderSession(
+  options: CliBridgeProviderOptions,
+  transport: CliBridgeTransport,
+  providerName: string,
+  run: CliBridgeRun,
+  turn: AgentTurnInput,
+  signal?: AbortSignal,
+): Promise<AgentProviderSessionRef | undefined> {
+  if (!run.sessionId || !run.requestDigest) return undefined;
+  let response: CliBridgeResponse;
+  try {
+    response = await transport.fetch(
+      `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(run.sessionId)}?backend=${encodeURIComponent(run.backend)}`,
+      {
+        method: "GET",
+        headers: requestHeaders(options),
+        signal,
+      },
+    );
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) return undefined;
+    throw error;
+  }
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new Error(
+      `cli-bridge exact session lookup ${response.status}: ${await response.text()}`,
+    );
+  }
+  const body = safeJson(await response.text());
+  const data = body?.data;
+  if (!data || typeof data !== "object") {
+    throw new Error("cli-bridge exact session lookup returned an invalid record");
+  }
+  const record = data as Record<string, unknown>;
+  const complete = snapshotAgentProviderSessionRef({
+    provider: providerName,
+    backend: record.backend,
+    externalId: record.externalId,
+    nativeSessionId: record.internalId,
+    cwd: record.cwd,
+    nativePromptCount: record.nativePromptCount,
+    controllerTurns: record.controllerTurns,
+  });
+  if (complete.externalId !== run.sessionId || complete.backend !== run.backend) {
+    throw new Error(
+      `cli-bridge exact session lookup returned a different session for run "${run.id}"`,
+    );
+  }
+  const matching = complete.controllerTurns.filter((receipt) => receipt.runId === run.id);
+  if (matching.length > 1) {
+    throw new Error(`cli-bridge exact session lookup duplicated run "${run.id}"`);
+  }
+  const receipt = matching[0];
+  if (receipt && run.requestDigest !== receipt.bridgeRequestDigest) {
+    throw new Error(
+      `cli-bridge exact session receipt changed X-Run-Request-Digest for run "${run.id}"`,
+    );
+  }
+  const promptSha256 = exactTurnPromptSha256(turn);
+  if (receipt && promptSha256 && receipt.promptSha256 !== promptSha256) {
+    throw new Error(`cli-bridge exact session receipt changed prompt bytes for run "${run.id}"`);
+  }
+  return snapshotAgentProviderSessionRef({
+    ...complete,
+    controllerTurns: receipt ? [receipt] : [],
+  });
+}
+
+function exactTurnPromptSha256(
+  turn: AgentTurnInput,
+): `sha256:${string}` | undefined {
+  if (turn.parts !== undefined || typeof turn.prompt !== "string") return undefined;
+  return `sha256:${createHash("sha256").update(turn.prompt, "utf8").digest("hex")}`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  ) || (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 function agentSessionStatusFromRun(
@@ -878,6 +1063,8 @@ async function* streamCliBridgeTurn(
   const sessionId = turn.sessionId ?? runId;
   const messageId = turn.turnId ?? `${sessionId}:assistant`;
   const emittedToolCalls = new Set<string>();
+  const accumulatedToolCalls = new Map<string, AccumulatedToolCall>();
+  const toolCallKeyByIndex = new Map<number, string>();
   let completed = false;
   let sawUsage = false;
   let terminalCursor: string | undefined;
@@ -924,28 +1111,30 @@ async function* streamCliBridgeTurn(
         normalized,
       });
     }
-    for (const toolCall of toolCallsFromDelta(delta)) {
-      const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
-      if (!toolCall.name || emittedToolCalls.has(callId)) continue;
-      emittedToolCalls.add(callId);
-      const part: ToolPart = {
-        id: callId,
-        sessionID: sessionId,
-        messageID: messageId,
-        type: "tool",
-        callID: callId,
-        tool: toolCall.name,
-        state: { status: "pending", input: {} },
+    for (const toolCallDelta of toolCallsFromDelta(delta)) {
+      const indexedKey =
+        toolCallKeyByIndex.get(toolCallDelta.index) ?? `index:${toolCallDelta.index}`;
+      const key = toolCallDelta.id ? `id:${toolCallDelta.id}` : indexedKey;
+      let previous = accumulatedToolCalls.get(key);
+      if (toolCallDelta.id && indexedKey !== key) {
+        const provisional = accumulatedToolCalls.get(indexedKey);
+        if (!previous && provisional && provisional.id === undefined) {
+          previous = provisional;
+          accumulatedToolCalls.delete(indexedKey);
+        }
+      }
+      toolCallKeyByIndex.set(toolCallDelta.index, key);
+      const toolCall: AccumulatedToolCall = {
+        index: toolCallDelta.index,
+        ...(toolCallDelta.id ? { id: toolCallDelta.id } : previous?.id ? { id: previous.id } : {}),
+        ...(previous?.name
+          ? { name: previous.name }
+          : toolCallDelta.name
+            ? { name: toolCallDelta.name }
+            : {}),
+        rawArguments: `${previous?.rawArguments ?? ""}${toolCallDelta.arguments ?? ""}`,
       };
-      const normalized: MessagePartUpdatedEvent = {
-        type: "message.part.updated",
-        part,
-      };
-      frameEvents.push({
-        type: "message.part.updated",
-        data: { part },
-        normalized,
-      });
+      accumulatedToolCalls.set(key, toolCall);
     }
     if (choice?.finish_reason) {
       if (choice.finish_reason === "error") {
@@ -955,6 +1144,36 @@ async function* streamCliBridgeTurn(
         });
         yield* eventsWithCursor(frameEvents, frame.id);
         throw new Error("cli-bridge returned finish_reason=error");
+      }
+      for (const toolCall of accumulatedToolCalls.values()) {
+        if (!toolCall.name) continue;
+        const callId = toolCall.id ?? `${messageId}:tool:${toolCall.index}`;
+        if (emittedToolCalls.has(callId)) continue;
+        emittedToolCalls.add(callId);
+        const captured = capturedToolArguments(toolCall.rawArguments);
+        const part: ToolPart = {
+          id: callId,
+          sessionID: sessionId,
+          messageID: messageId,
+          type: "tool",
+          callID: callId,
+          tool: toolCall.name,
+          argsCaptured: captured !== undefined,
+          state: {
+            status: "pending",
+            input: captured ?? {},
+            ...(toolCall.rawArguments ? { raw: toolCall.rawArguments } : {}),
+          },
+        };
+        const normalized: MessagePartUpdatedEvent = {
+          type: "message.part.updated",
+          part,
+        };
+        frameEvents.push({
+          type: "message.part.updated",
+          data: { part },
+          normalized,
+        });
       }
       completed = true;
       if (lastEventId) {
@@ -1243,7 +1462,21 @@ function* eventsWithCursor(
   }
 }
 
-function toolCallsFromDelta(value: unknown): Array<{ id?: string; index: number; name?: string }> {
+interface ToolCallDelta {
+  readonly id?: string;
+  readonly index: number;
+  readonly name?: string;
+  readonly arguments?: string;
+}
+
+interface AccumulatedToolCall {
+  readonly id?: string;
+  readonly index: number;
+  readonly name?: string;
+  readonly rawArguments: string;
+}
+
+function toolCallsFromDelta(value: unknown): ToolCallDelta[] {
   if (!value || typeof value !== "object") return [];
   const calls = (value as Record<string, unknown>).tool_calls;
   if (!Array.isArray(calls)) return [];
@@ -1257,8 +1490,29 @@ function toolCallsFromDelta(value: unknown): Array<{ id?: string; index: number;
         : undefined;
     const index = number(record.index) ?? position;
     const id = typeof record.id === "string" ? record.id : undefined;
-    return [{ ...(id ? { id } : {}), index, ...(name ? { name } : {}) }];
+    const args =
+      fn && typeof fn === "object" && typeof (fn as Record<string, unknown>).arguments === "string"
+        ? ((fn as Record<string, unknown>).arguments as string)
+        : undefined;
+    return [{
+      ...(id ? { id } : {}),
+      index,
+      ...(name ? { name } : {}),
+      ...(args !== undefined ? { arguments: args } : {}),
+    }];
   });
+}
+
+function capturedToolArguments(raw: string): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function safeJson(value: string): Record<string, unknown> | null {

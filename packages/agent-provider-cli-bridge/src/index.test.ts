@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
@@ -86,12 +87,34 @@ describe("createCliBridgeProvider", () => {
       cursor: string | null;
     }> = [];
     const statuses = new Map<string, "running" | "done">();
+    let exactSessionLookups = 0;
     let dispatchReaderDetached = false;
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       fetch: async (url, init) => {
         const target = String(url);
         if (init?.method === "GET") {
+          if (target.includes("/v1/sessions/")) {
+            exactSessionLookups += 1;
+            const turns = [
+              ...(statuses.get("run-1") === "done"
+                ? [controllerTurn("run-1", 1, "initial task")]
+                : []),
+              ...(statuses.get("run-2") === "done"
+                ? [controllerTurn("run-2", 2, "new direction")]
+                : []),
+            ];
+            return Response.json({
+              data: {
+                externalId: "research-session",
+                backend: "pi",
+                internalId: "pi-native-session",
+                cwd: "/workspace",
+                nativePromptCount: statuses.get("run-2") === "done" ? 2 : 1,
+                controllerTurns: turns,
+              },
+            });
+          }
           const runId = decodeURIComponent(target.split("/").at(-1)?.split("?")[0] ?? "");
           const status = statuses.get(runId) ?? "running";
           return runResponse(runId, status, status === "done");
@@ -103,7 +126,7 @@ describe("createCliBridgeProvider", () => {
         const headers = {
           "content-type": "text/event-stream",
           "x-run-id": runId,
-          "x-run-request-digest": `digest-${runId}`,
+          "x-run-request-digest": runDigest(runId),
         };
         if (body.stream === false) {
           return Response.json(
@@ -123,7 +146,7 @@ describe("createCliBridgeProvider", () => {
             {
               headers: {
                 "x-run-id": runId,
-                "x-run-request-digest": `digest-${runId}`,
+                "x-run-request-digest": runDigest(runId),
               },
             },
           );
@@ -173,7 +196,7 @@ describe("createCliBridgeProvider", () => {
       provider: "cli-bridge",
       metadata: {
         runId: "run-1",
-        requestDigest: "digest-run-1",
+        requestDigest: runDigest("run-1"),
       },
     });
     expect(dispatchReaderDetached).toBe(true);
@@ -185,6 +208,7 @@ describe("createCliBridgeProvider", () => {
       "usage",
       "message.part.updated",
       "result",
+      "provider.session",
     ]);
     expect(replayed[0]?.usage).toEqual({
       inputTokens: 11,
@@ -193,14 +217,15 @@ describe("createCliBridgeProvider", () => {
       reasoningTokens: 3,
       cost: 0.04,
     });
-    expect(replayed.at(-1)).toMatchObject({
+    expect(replayed.find((event) => event.type === "result")).toMatchObject({
       id: "2",
       data: {
         finalText: "complete-run-1",
         status: "completed",
       },
     });
-    await expect(session?.result()).resolves.toMatchObject({
+    const initialResult = await session!.result();
+    expect(initialResult).toMatchObject({
       text: "complete-run-1",
       success: true,
       sessionId: "research-session",
@@ -214,14 +239,29 @@ describe("createCliBridgeProvider", () => {
       metadata: {
         runId: "run-1",
         status: "done",
-        requestDigest: "digest-run-1",
+        requestDigest: runDigest("run-1"),
+      },
+      providerSession: {
+        provider: "cli-bridge",
+        backend: "pi",
+        externalId: "research-session",
+        nativeSessionId: "pi-native-session",
+        cwd: "/workspace",
+        nativePromptCount: 1,
+        controllerTurns: [controllerTurn("run-1", 1, "initial task")],
       },
     });
-    await expect(session?.prompt({
+    expect(Object.isFrozen(initialResult.providerSession)).toBe(true);
+    expect(Object.isFrozen(initialResult.providerSession?.controllerTurns)).toBe(true);
+    expect(() => {
+      (initialResult.providerSession as unknown as { backend: string }).backend = "codex";
+    }).toThrow();
+    const resumedResult = await session!.prompt({
       prompt: "new direction",
       turnId: "turn-2",
       executionId: "run-2",
-    })).resolves.toMatchObject({
+    });
+    expect(resumedResult).toMatchObject({
       text: "continued",
       success: true,
       sessionId: "research-session",
@@ -231,6 +271,15 @@ describe("createCliBridgeProvider", () => {
         cost: 0.01,
       },
       metadata: { runId: "run-2", status: "done" },
+      providerSession: {
+        provider: "cli-bridge",
+        backend: "pi",
+        externalId: "research-session",
+        nativeSessionId: "pi-native-session",
+        cwd: "/workspace",
+        nativePromptCount: 2,
+        controllerTurns: [controllerTurn("run-2", 2, "new direction")],
+      },
     });
     await expect(session?.prompt({
       prompt: "wrong conversation",
@@ -268,6 +317,7 @@ describe("createCliBridgeProvider", () => {
     ]);
     expect(requests.filter(({ body }) => body.stream !== false).map(({ cursor }) => cursor))
       .toEqual([null, "1", "0", null]);
+    expect(exactSessionLookups).toBe(3);
     for (const { body } of requests) {
       expect(body.messages).not.toEqual(
         expect.arrayContaining([{ role: "system", content: "Lead the research." }]),
@@ -277,6 +327,142 @@ describe("createCliBridgeProvider", () => {
       streaming: { detach: true, replay: true },
       sessions: { continue: true },
     });
+  });
+
+  it.each([
+    {
+      label: "missing",
+      exactLookup: async () => new Response("missing", { status: 404 }),
+    },
+    {
+      label: "aborted",
+      exactLookup: async () => {
+        throw new DOMException("lookup aborted", "AbortError");
+      },
+    },
+  ])("leaves an exact provider session unknown when lookup is $label", async ({
+    exactLookup,
+  }) => {
+    let exactLookups = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi",
+      fetch: async (url, init) => {
+        if (init?.method === "GET" && String(url).includes("/v1/sessions/")) {
+          exactLookups += 1;
+          return exactLookup();
+        }
+        if (init?.method === "GET") return runResponse("run-unknown", "done", true);
+        return terminalResponseWithIdentity("done", "run-unknown");
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    const result = await environment.session!("unknown-session").prompt({
+      prompt: "exact prompt",
+      executionId: "run-unknown",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.providerSession).toBeUndefined();
+    expect(exactLookups).toBe(1);
+  });
+
+  it("fails closed after one exact lookup returns a malformed receipt", async () => {
+    let exactLookups = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi",
+      fetch: async (url, init) => {
+        if (init?.method === "GET" && String(url).includes("/v1/sessions/")) {
+          exactLookups += 1;
+          return Response.json({
+            data: {
+              externalId: "malformed-session",
+              backend: "pi",
+              internalId: "pi-native",
+              cwd: "/workspace",
+              nativePromptCount: 1,
+              controllerTurns: [{
+                ...controllerTurn("run-malformed", 1, "exact prompt"),
+                promptSha256: `sha256:${"A".repeat(64)}`,
+              }],
+            },
+          });
+        }
+        if (init?.method === "GET") return runResponse("run-malformed", "done", true);
+        return terminalResponseWithIdentity("done", "run-malformed");
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    const result = await environment.session!("malformed-session").prompt({
+      prompt: "exact prompt",
+      executionId: "run-malformed",
+    });
+    expect(result).toMatchObject({ success: false });
+    expect(result.providerSession).toBeUndefined();
+    expect(exactLookups).toBe(1);
+  });
+
+  it("emits the exact provider session before a failed terminal turn rejects", async () => {
+    let exactLookups = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi",
+      fetch: async (url, init) => {
+        const target = String(url);
+        if (init?.method === "GET" && target.includes("/v1/sessions/")) {
+          exactLookups += 1;
+          return Response.json({
+            data: {
+              externalId: "failed-session",
+              backend: "pi",
+              internalId: "pi-native",
+              cwd: "/workspace",
+              nativePromptCount: 1,
+              controllerTurns: [controllerTurn("run-failed", 1, "fail exactly")],
+            },
+          });
+        }
+        if (init?.method === "GET") return runResponse("run-failed", "error", true);
+        return new Response(
+          'data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n',
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-run-id": "run-failed",
+              "x-run-request-digest": runDigest("run-failed"),
+            },
+          },
+        );
+      },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const events = [];
+    let failure: unknown;
+    try {
+      for await (const event of environment.stream({
+        prompt: "fail exactly",
+        sessionId: "failed-session",
+        executionId: "run-failed",
+      })) {
+        events.push(event);
+      }
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(events.at(-1)).toMatchObject({
+      type: "provider.session",
+      providerSession: {
+        externalId: "failed-session",
+        controllerTurns: [controllerTurn("run-failed", 1, "fail exactly")],
+      },
+    });
+    expect(exactLookups).toBe(1);
   });
 
   it("waits for terminal proof when cancelling a dispatched session", async () => {
@@ -454,7 +640,7 @@ describe("createCliBridgeProvider", () => {
         return new Response(
           [
             ": connected\r\n\r\n",
-            'data: {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\\"path\\":"}}]},"finish_reason":null}]}\r\n\r\n',
+            'data: {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"function":{"name":"read_file","arguments":"{\\"path\\":"}}]},"finish_reason":null}]}\r\n\r\n',
             'data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call-1","function":{"arguments":"\\"README.md\\"}"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"cost":0.01}}\r\n\r\n',
             "data: [DONE]\r\n\r\n",
           ].join(""),
@@ -478,8 +664,8 @@ describe("createCliBridgeProvider", () => {
     });
     expect(events.map((event) => event.type)).toEqual([
       "message.part.updated",
-      "message.part.updated",
       "usage",
+      "message.part.updated",
       "message.part.updated",
       "result",
     ]);
@@ -494,17 +680,22 @@ describe("createCliBridgeProvider", () => {
         part: { type: "text", text: "hel", sessionID: "s1" },
       },
     });
-    expect(events[1]).toMatchObject({
+    expect(events[3]).toMatchObject({
       data: {
         part: {
           type: "tool",
           callID: "call-1",
           tool: "read_file",
-          state: { status: "pending", input: {} },
+          argsCaptured: true,
+          state: {
+            status: "pending",
+            input: { path: "README.md" },
+            raw: '{"path":"README.md"}',
+          },
         },
       },
     });
-    expect(events[2]).toEqual({
+    expect(events[1]).toEqual({
       type: "usage",
       data: {},
       usage: {
@@ -514,7 +705,7 @@ describe("createCliBridgeProvider", () => {
         cost: 0.01,
       },
     });
-    expect(events[3]).toMatchObject({
+    expect(events[2]).toMatchObject({
       data: { delta: "lo", part: { type: "text", text: "hello" } },
     });
     expect(events.at(-1)).toEqual({
@@ -522,6 +713,50 @@ describe("createCliBridgeProvider", () => {
       data: { finalText: "hello", finishReason: "stop", status: "completed" },
     });
     expect(events.filter((event) => event.data.part && (event.data.part as { type?: string }).type === "tool")).toHaveLength(1);
+  });
+
+  it("marks malformed tool arguments unavailable without inventing an outcome", async () => {
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi",
+      fetch: async () =>
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-bad","function":{"name":"bash","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-bad","function":{"arguments":"garbage"}}]},"finish_reason":"tool_calls"}]}\n\n',
+            "data: [DONE]\n\n",
+          ].join(""),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    const environment = await provider.create({
+      profile: { name: "worker", prompt: { systemPrompt: "system" } },
+      backend: "pi",
+    });
+
+    const events = [];
+    for await (const event of environment.stream({ prompt: "go", sessionId: "s1" })) events.push(event);
+    const toolEvent = events.find(
+      (event) =>
+        event.data.part &&
+        (event.data.part as { type?: string }).type === "tool",
+    );
+
+    expect(toolEvent).toMatchObject({
+      data: {
+        part: {
+          type: "tool",
+          callID: "call-bad",
+          tool: "bash",
+          argsCaptured: false,
+          state: {
+            status: "pending",
+            input: {},
+            raw: '{}garbage',
+          },
+        },
+      },
+    });
   });
 
   it("throws after surfacing a bridge error", async () => {
@@ -1203,11 +1438,40 @@ async function consumeEvents(
   }
 }
 
+function controllerTurn(runId: string, ordinal: number, prompt: string) {
+  return {
+    ordinal,
+    runId,
+    bridgeRequestDigest: runDigest(runId),
+    promptSha256: `sha256:${createHash("sha256").update(prompt, "utf8").digest("hex")}`,
+    startedAt: ordinal * 100,
+    endedAt: ordinal * 100 + 50,
+  };
+}
+
 function terminalResponse(text: string): Response {
   return new Response(
     `data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`,
     { status: 200, headers: { "content-type": "text/event-stream" } },
   );
+}
+
+function terminalResponseWithIdentity(text: string, runId: string): Response {
+  return new Response(
+    `data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`,
+    {
+      status: 200,
+      headers: {
+        "content-type": "text/event-stream",
+        "x-run-id": runId,
+        "x-run-request-digest": runDigest(runId),
+      },
+    },
+  );
+}
+
+function runDigest(runId: string): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(runId, "utf8").digest("hex")}`;
 }
 
 function runResponse(

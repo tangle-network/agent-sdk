@@ -115,6 +115,11 @@ export type ToolPart = PartBase & {
   callID?: string;
   tool: string;
   state: ToolState;
+  /**
+   * Whether `state.input` is the tool call's captured argument object.
+   * Omitted when the provider's lifecycle state already supplies that guarantee.
+   */
+  argsCaptured?: boolean;
   metadata?: Record<string, unknown>;
 };
 
@@ -845,6 +850,7 @@ export * from "./agent-profile-improvement-schema.js";
 export * from "./agent-execution-limits.js";
 export * from "./agent-profile.js";
 export * from "./agent-profile-snapshot.js";
+export * from "./provider-session.js";
 export * from "./agent-profile-activation.js";
 export * from "./agent-profile-materialization.js";
 export * from "./agent-execution-preparation.js";
