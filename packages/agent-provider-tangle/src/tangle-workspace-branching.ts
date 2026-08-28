@@ -62,10 +62,13 @@ import type {
  * the provider which request produced a resource, but only the Sandbox
  * operation ledger and the external verifier can prove an outcome.
  */
-const MARKER_PREFIX = "tangle-agent-sdk:workspace:v1";
+const MARKER_PREFIX = "tangle-agent-ws-v1";
 const FORK_METADATA_KEY = "__tangle_agent_workspace_v1";
-const MARKER_CHUNK_SIZE = 240;
+const MAX_MARKER_TAG_LENGTH = 128;
+const MARKER_CHUNK_SIZE = 80;
 const MAX_MARKER_CHUNKS = 512;
+/** Sandbox rejects list requests above this page size. */
+const SANDBOX_LIST_PAGE_SIZE = 1_000;
 
 interface CheckpointMarker {
   version: 1;
@@ -152,6 +155,7 @@ export function createTangleWorkspaceBranching(
    */
   const resolveCheckpoint = async (
     request: Pick<WorkspaceCheckpointRequest, "idempotencyKey" | "requestDigest">,
+    signal?: AbortSignal,
   ): Promise<Resolved<CheckpointRecord>> => {
     const local = checkpoints.get(request.idempotencyKey);
     if (local) {
@@ -159,7 +163,7 @@ export function createTangleWorkspaceBranching(
         ? { state: "known", record: local }
         : { state: "conflict", existingRequestDigest: local.request.requestDigest };
     }
-    const recovered = await findCheckpointByKey(box, request.idempotencyKey);
+    const recovered = await findCheckpointByKey(box, request.idempotencyKey, signal);
     if (recovered === undefined) {
       return { state: "undecided", message: "Sandbox checkpoint inventory is unavailable" };
     }
@@ -189,7 +193,13 @@ export function createTangleWorkspaceBranching(
         ? { state: "known", record: local }
         : { state: "conflict", existingRequestDigest: local.request.requestDigest };
     }
-    const recovered = await findForkByKey(client, box, provider, request.idempotencyKey);
+    const recovered = await findForkByKey(
+      client,
+      box,
+      provider,
+      request.idempotencyKey,
+      signal,
+    );
     if (recovered === undefined) {
       return { state: "undecided", message: "Sandbox child inventory is unavailable" };
     }
@@ -197,11 +207,15 @@ export function createTangleWorkspaceBranching(
     if (recovered.marker.requestDigest !== request.requestDigest) {
       return { state: "conflict", existingRequestDigest: recovered.marker.requestDigest };
     }
+    const child = await completeForkChild(client, recovered.child, signal);
+    if (!child) {
+      return { state: "undecided", message: "Sandbox fork child identity is incomplete" };
+    }
     const environment = await environmentFromChild(
       recovered.marker.request,
-      recovered.child,
+      child,
       provider,
-      recovered.child.createdAt,
+      child.createdAt,
       options.confidentialAttestationVerifier,
       signal,
     );
@@ -219,7 +233,7 @@ export function createTangleWorkspaceBranching(
   ): Promise<WorkspaceCheckpointResult> => {
     const request = WorkspaceCheckpointRequestSchema.parse(input);
     assertCheckpointSource(request, provider, box.id);
-    const known = await resolveCheckpoint(request);
+    const known = await resolveCheckpoint(request, operation?.signal);
     if (known.state === "conflict") {
       return checkpointConflict(request, known.existingRequestDigest);
     }
@@ -238,7 +252,12 @@ export function createTangleWorkspaceBranching(
         operation?.signal,
       );
     } catch (error) {
-      const conflict = await checkpointConflictFromRemote(box, request);
+      operation?.signal?.throwIfAborted();
+      const conflict = await checkpointConflictFromRemote(
+        box,
+        request,
+        operation?.signal,
+      );
       return (
         conflict ??
         checkpointUnknown(
@@ -271,7 +290,10 @@ export function createTangleWorkspaceBranching(
       result.tags,
       request.idempotencyKey,
     );
-    if (!resultMarker || resultMarker.requestDigest !== request.requestDigest) {
+    if (resultMarker && resultMarker.requestDigest !== request.requestDigest) {
+      return checkpointConflict(request, resultMarker.requestDigest);
+    }
+    if (!resultMarker) {
       return checkpointUnknown(
         request,
         "Sandbox checkpoint acknowledgement omitted its provider recovery marker",
@@ -295,7 +317,7 @@ export function createTangleWorkspaceBranching(
     operation?: { signal?: AbortSignal },
   ): Promise<WorkspaceCheckpointLookupResult> => {
     const request = WorkspaceOperationLookupRequestSchema.parse(input);
-    const known = await resolveCheckpoint(request);
+    const known = await resolveCheckpoint(request, operation?.signal);
     if (known.state === "conflict") {
       return checkpointLookupConflict(request, known.existingRequestDigest);
     }
@@ -316,6 +338,7 @@ export function createTangleWorkspaceBranching(
         ? checkpointNotFound(request)
         : checkpointLookupUnknown(request, settled.message, settled.retryable);
     } catch (error) {
+      operation?.signal?.throwIfAborted();
       return checkpointLookupUnknown(
         request,
         `Sandbox checkpoint lookup failed: ${safeError(error)}`,
@@ -349,7 +372,13 @@ export function createTangleWorkspaceBranching(
       }
     }
 
-    const blocking = await findBlockingForks(box, client, provider, request.targetId);
+    const blocking = await findBlockingForks(
+      box,
+      client,
+      provider,
+      request.targetId,
+      operation?.signal,
+    );
     if (blocking === undefined) {
       return cleanupUnknown(
         request,
@@ -366,7 +395,13 @@ export function createTangleWorkspaceBranching(
       return acknowledgement;
     }
 
-    const known = await findManagedCheckpoint(box, provider, request.targetId);
+    const known = await findManagedCheckpoint(
+      box,
+      provider,
+      request.targetId,
+      undefined,
+      operation?.signal,
+    );
     if (known === "unknown") {
       return cleanupUnknown(
         request,
@@ -390,6 +425,7 @@ export function createTangleWorkspaceBranching(
         operation?.signal,
       );
     } catch (error) {
+      operation?.signal?.throwIfAborted();
       return cleanupTransportFailure(
         request,
         `Sandbox checkpoint deletion failed: ${safeError(error)}`,
@@ -427,6 +463,17 @@ export function createTangleWorkspaceBranching(
   ): Promise<WorkspaceForkResult> => {
     const request = WorkspaceForkRequestSchema.parse(input);
     assertForkSource(request, provider, box.id);
+    if (
+      request.confidential?.requested === true &&
+      (typeof options.confidentialAttestationVerifier !== "function" ||
+        typeof box.getTeeAttestation !== "function")
+    ) {
+      return forkUnknown(
+        request,
+        "Confidential fork requires a trusted verifier and Sandbox attestation support",
+        false,
+      );
+    }
     const known = await resolveFork(request, operation?.signal);
     if (known.state === "conflict") {
       return forkConflict(request, known.existingRequestDigest);
@@ -438,19 +485,26 @@ export function createTangleWorkspaceBranching(
       return forkSuccess(request, known.record.environment, "replayed");
     }
 
-    const checkpoint = await findManagedCheckpoint(
-      box,
-      provider,
-      request.checkpoint.checkpointId,
-      request.checkpoint,
-    );
+    const checkpoint = [...checkpoints.values()].some(
+      (record) =>
+        canonicalCandidateDigest(record.checkpoint) ===
+        canonicalCandidateDigest(request.checkpoint),
+    )
+      ? true
+      : await findManagedCheckpoint(
+          box,
+          provider,
+          request.checkpoint.checkpointId,
+          request.checkpoint,
+          operation?.signal,
+        );
     if (checkpoint !== true) {
       return forkUnknown(
         request,
         checkpoint === false
           ? "Requested checkpoint is absent"
           : "Sandbox checkpoint inventory is unavailable",
-        checkpoint === "unknown",
+        true,
       );
     }
 
@@ -465,11 +519,14 @@ export function createTangleWorkspaceBranching(
         operation?.signal,
       );
     } catch (error) {
+      operation?.signal?.throwIfAborted();
       const conflict = await forkConflictFromRemote(
         client,
         box,
         provider,
         request,
+        options.confidentialAttestationVerifier,
+        operation?.signal,
       );
       return (
         conflict ??
@@ -501,12 +558,23 @@ export function createTangleWorkspaceBranching(
         true,
       );
     }
-    const child = result.children[0];
+    const returnedChild = result.children[0];
+    const child = await completeForkChild(client, returnedChild, operation?.signal);
+    if (!child) {
+      return forkUnknown(
+        request,
+        "Sandbox fork returned a child without a complete identity",
+        true,
+      );
+    }
     const childMarker = forkMarkerFromMetadata(
       child.metadata,
       request.idempotencyKey,
     );
-    if (!childMarker || childMarker.requestDigest !== request.requestDigest) {
+    if (childMarker && childMarker.requestDigest !== request.requestDigest) {
+      return forkConflict(request, childMarker.requestDigest);
+    }
+    if (!childMarker) {
       return forkUnknown(
         request,
         "Sandbox fork acknowledgement omitted its provider recovery marker",
@@ -562,6 +630,7 @@ export function createTangleWorkspaceBranching(
         ? forkNotFound(request)
         : forkLookupUnknown(request, settled.message, settled.retryable);
     } catch (error) {
+      operation?.signal?.throwIfAborted();
       return forkLookupUnknown(
         request,
         `Sandbox fork lookup failed: ${safeError(error)}`,
@@ -594,7 +663,13 @@ export function createTangleWorkspaceBranching(
       (record) => record.environment.environmentId === request.targetId,
     );
     const child = localFork?.child ??
-      (await findForkChildById(client, box, provider, request.targetId));
+      (await findForkChildById(
+        client,
+        box,
+        provider,
+        request.targetId,
+        operation?.signal,
+      ));
     if (child === undefined) {
       return cleanupUnknown(
         request,
@@ -615,6 +690,7 @@ export function createTangleWorkspaceBranching(
     try {
       result = (await awaitWithSignal(child.delete?.(), operation?.signal)) as SandboxDeleteAcknowledgementLike;
     } catch (error) {
+      operation?.signal?.throwIfAborted();
       return cleanupTransportFailure(
         request,
         `Sandbox fork destruction failed: ${safeError(error)}`,
@@ -754,6 +830,7 @@ async function environmentFromChild(
   verifier: TangleConfidentialAttestationVerifier | undefined,
   signal?: AbortSignal,
 ): Promise<ForkedEnvironmentRef | undefined> {
+  signal?.throwIfAborted();
   const environmentId = safeIdentifier(child.id);
   if (!environmentId || environmentId === request.checkpoint.source.environmentId) {
     return undefined;
@@ -800,6 +877,7 @@ async function environmentFromChild(
     ...(attestation === undefined ? {} : { confidential: true }),
     ...(metadata === undefined ? {} : { metadata }),
   });
+  signal?.throwIfAborted();
   return environment.success ? environment.data : undefined;
 }
 
@@ -821,15 +899,15 @@ async function confidentialAttestationForChild(
       signal,
     );
   } catch {
+    signal?.throwIfAborted();
     return undefined;
   }
   if (
     !response ||
     response.sandbox_id !== child.id ||
     !validTeeReport(response.attestation) ||
-    (response.attestationNonce !== undefined &&
-      (safeIdentifier(response.attestationNonce) === undefined ||
-        response.attestationNonce !== confidential.nonce))
+    safeIdentifier(response.attestationNonce) === undefined ||
+    response.attestationNonce !== confidential.nonce
   ) {
     return undefined;
   }
@@ -966,18 +1044,12 @@ function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
     requestDigest: request.requestDigest,
     request,
   };
-  const encoded = encodeJson(marker);
-  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
-  const base = `${MARKER_PREFIX}:checkpoint`;
-  const chunks = split(encoded);
-  if (chunks.length > MAX_MARKER_CHUNKS) {
-    throw new Error("workspace marker exceeds the recovery bound");
-  }
-  return [
-    `${base}:key:${encodeText(request.idempotencyKey)}`,
-    `${base}:digest:${request.requestDigest}`,
-    ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
-  ];
+  return markerTags(
+    "checkpoint",
+    request.idempotencyKey,
+    request.requestDigest,
+    marker,
+  );
 }
 
 function forkMarkerMetadata(
@@ -1009,10 +1081,14 @@ function forkMarkerMetadata(
 async function checkpointOperationSucceeded(
   box: SandboxInstanceLike,
   marker: CheckpointMarker,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const lookup = await box.getSnapshotOperation?.(marker.idempotencyKey, {
-    tags: checkpointMarkerTags(marker.request),
-  });
+  const lookup = await awaitWithSignal(
+    box.getSnapshotOperation?.(marker.idempotencyKey, {
+      tags: checkpointMarkerTags(marker.request),
+    }),
+    signal,
+  );
   return (
     lookup?.outcome === "found" &&
     lookup.kind === "checkpoint" &&
@@ -1024,11 +1100,15 @@ async function checkpointOperationSucceeded(
 async function forkOperationSucceeded(
   box: SandboxInstanceLike,
   marker: ForkMarker,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const lookup = await box.getForkOperation?.(marker.idempotencyKey, {
-    count: 1,
-    metadata: forkMarkerMetadata(marker.request),
-  });
+  const lookup = await awaitWithSignal(
+    box.getForkOperation?.(marker.idempotencyKey, {
+      count: 1,
+      metadata: forkMarkerMetadata(marker.request),
+    }),
+    signal,
+  );
   return (
     lookup?.outcome === "found" &&
     lookup.kind === "fork" &&
@@ -1036,9 +1116,35 @@ async function forkOperationSucceeded(
   );
 }
 
+function markerTags(
+  kind: "checkpoint" | "fork",
+  idempotencyKey: string,
+  requestDigest: string,
+  marker: CheckpointMarker,
+): string[] {
+  const encoded = encodeJson(marker);
+  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
+  const base = `${MARKER_PREFIX}-${kind}`;
+  const chunks = split(encoded);
+  if (chunks.length > MAX_MARKER_CHUNKS) {
+    throw new Error("workspace marker exceeds the recovery bound");
+  }
+  return [
+    `${base}-key-${markerKeyDigest(idempotencyKey).replace(":", "-")}`,
+    `${base}-digest-${requestDigest.replace(":", "-")}`,
+    ...chunks.map((chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`),
+  ].map((tag) => {
+    if (Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH) {
+      throw new Error("workspace marker tag exceeds the platform bound");
+    }
+    return tag;
+  });
+}
+
 async function findCheckpointByKey(
   box: SandboxInstanceLike,
   key: string,
+  signal?: AbortSignal,
 ): Promise<
   | { snapshot: SandboxSnapshotInfoLike; marker: CheckpointMarker }
   | null
@@ -1046,10 +1152,11 @@ async function findCheckpointByKey(
 > {
   let snapshots: SandboxSnapshotInfoLike[];
   try {
-    const listed = await box.listSnapshots?.();
+    const listed = await awaitWithSignal(box.listSnapshots?.(), signal);
     if (!Array.isArray(listed)) return undefined;
     snapshots = listed;
   } catch {
+    signal?.throwIfAborted();
     return undefined;
   }
   if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
@@ -1061,11 +1168,12 @@ async function findCheckpointByKey(
     const marker = checkpointMarkerFromTags(snapshot.tags, key);
     if (!marker) continue;
     try {
-      if (await checkpointOperationSucceeded(box, marker)) {
+      if (await checkpointOperationSucceeded(box, marker, signal)) {
         return { snapshot, marker };
       }
       unresolved = true;
     } catch {
+      signal?.throwIfAborted();
       return undefined;
     }
   }
@@ -1084,9 +1192,10 @@ async function findManagedCheckpoint(
   provider: string,
   id: string,
   expected?: WorkspaceCheckpointRef,
+  signal?: AbortSignal,
 ): Promise<true | false | "unknown"> {
   try {
-    const snapshots = await box.listSnapshots?.();
+    const snapshots = await awaitWithSignal(box.listSnapshots?.(), signal);
     if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
       return "unknown";
     }
@@ -1109,8 +1218,9 @@ async function findManagedCheckpoint(
     ) {
       return false;
     }
-    return (await checkpointOperationSucceeded(box, marker)) ? true : "unknown";
+    return (await checkpointOperationSucceeded(box, marker, signal)) ? true : "unknown";
   } catch {
+    signal?.throwIfAborted();
     return "unknown";
   }
 }
@@ -1120,15 +1230,23 @@ async function findForkByKey(
   box: SandboxInstanceLike,
   provider: string,
   key: string,
+  signal?: AbortSignal,
 ): Promise<{ child: SandboxInstanceLike; marker: ForkMarker } | null | undefined> {
-  const candidates = await listMarkedForkChildren(client, box, provider, key);
+  const candidates = await listMarkedForkChildren(
+    client,
+    box,
+    provider,
+    key,
+    signal,
+  );
   if (candidates === undefined) return undefined;
   let unresolved = false;
   for (const candidate of candidates) {
     try {
-      if (await forkOperationSucceeded(box, candidate.marker)) return candidate;
+      if (await forkOperationSucceeded(box, candidate.marker, signal)) return candidate;
       unresolved = true;
     } catch {
+      signal?.throwIfAborted();
       return undefined;
     }
   }
@@ -1140,16 +1258,49 @@ async function findForkChildById(
   box: SandboxInstanceLike,
   provider: string,
   id: string,
+  signal?: AbortSignal,
 ): Promise<SandboxInstanceLike | null | undefined> {
   try {
     if (typeof client.get !== "function") return undefined;
-    const child = await client.get(id);
+    const child = await awaitWithSignal(client.get(id, signal ? { signal } : undefined), signal);
     if (child === null) return null;
     if (child.id !== id) return undefined;
     const marker = forkMarkerFromMetadata(child.metadata);
     if (!marker || !markerBelongsToSource(marker, provider, box.id)) return undefined;
-    return (await forkOperationSucceeded(box, marker)) ? child : undefined;
+    return (await forkOperationSucceeded(box, marker, signal)) ? child : undefined;
   } catch {
+    signal?.throwIfAborted();
+    return undefined;
+  }
+}
+
+/**
+ * Resolve a complete child identity when an inventory entry omits its time.
+ *
+ * The current Sandbox SDK includes `createdAt` on branch children. A provider
+ * wrapper may omit it, so recover the same child by id before claiming a
+ * durable environment instead of inventing a timestamp.
+ */
+async function completeForkChild(
+  client: SandboxClientLike,
+  child: SandboxInstanceLike,
+  signal?: AbortSignal,
+): Promise<SandboxInstanceLike | undefined> {
+  if (child.createdAt !== undefined) return child;
+  if (typeof client.get !== "function" || safeIdentifier(child.id) === undefined) {
+    return undefined;
+  }
+  try {
+    const resolved = await awaitWithSignal(
+      client.get(child.id, signal ? { signal } : undefined),
+      signal,
+    );
+    if (!resolved || resolved.id !== child.id || resolved.createdAt === undefined) {
+      return undefined;
+    }
+    return resolved;
+  } catch {
+    signal?.throwIfAborted();
     return undefined;
   }
 }
@@ -1159,8 +1310,15 @@ async function findBlockingForks(
   client: SandboxClientLike,
   provider: string,
   checkpointId: string,
+  signal?: AbortSignal,
 ): Promise<string[] | undefined> {
-  const candidates = await listMarkedForkChildren(client, box, provider);
+  const candidates = await listMarkedForkChildren(
+    client,
+    box,
+    provider,
+    undefined,
+    signal,
+  );
   if (candidates === undefined) return undefined;
   const blocking = new Set<string>();
   for (const { child, marker } of candidates) {
@@ -1168,13 +1326,74 @@ async function findBlockingForks(
     try {
       // A candidate that cannot be confirmed leaves the dependency set
       // unknown, so cleanup must not proceed on a partial answer.
-      if (!(await forkOperationSucceeded(box, marker))) return undefined;
+      if (!(await forkOperationSucceeded(box, marker, signal))) return undefined;
       blocking.add(child.id);
     } catch {
+      signal?.throwIfAborted();
       return undefined;
     }
   }
   return [...blocking].sort();
+}
+
+/**
+ * Read the complete account inventory through Sandbox offset pages.
+ *
+ * Sandbox returns only an array, so a short page is the terminal marker. A
+ * full page requires another request; stopping there would make recovery
+ * report a false absence. Duplicate ids or an inventory above the safety
+ * bound make completeness unknowable and therefore fail closed.
+ */
+async function listAllSandboxChildren(
+  client: SandboxClientLike,
+  signal?: AbortSignal,
+): Promise<SandboxInstanceLike[] | undefined> {
+  if (typeof client.list !== "function") return undefined;
+  const children: SandboxInstanceLike[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+
+  while (true) {
+    signal?.throwIfAborted();
+    let page: SandboxInstanceLike[];
+    try {
+      const listed = await awaitWithSignal(
+        client.list({
+          scope: "all",
+          limit: SANDBOX_LIST_PAGE_SIZE,
+          offset,
+        }),
+        signal,
+      );
+      if (!Array.isArray(listed) || listed.length > SANDBOX_LIST_PAGE_SIZE) {
+        return undefined;
+      }
+      page = listed;
+    } catch {
+      signal?.throwIfAborted();
+      return undefined;
+    }
+
+    for (const child of page) {
+      if (
+        !child ||
+        typeof child !== "object" ||
+        safeIdentifier(child.id) === undefined ||
+        seen.has(child.id)
+      ) {
+        return undefined;
+      }
+      seen.add(child.id);
+    }
+
+    if (children.length + page.length > MAX_LIST_RESULTS) return undefined;
+    children.push(...page);
+    if (page.length < SANDBOX_LIST_PAGE_SIZE) return children;
+    if (offset > Number.MAX_SAFE_INTEGER - SANDBOX_LIST_PAGE_SIZE) {
+      return undefined;
+    }
+    offset += SANDBOX_LIST_PAGE_SIZE;
+  }
 }
 
 /**
@@ -1189,16 +1408,10 @@ async function listMarkedForkChildren(
   box: SandboxInstanceLike,
   provider: string,
   key?: string,
+  signal?: AbortSignal,
 ): Promise<{ child: SandboxInstanceLike; marker: ForkMarker }[] | undefined> {
-  let children: SandboxInstanceLike[];
-  try {
-    const listed = await client.list?.({ scope: "all", limit: MAX_LIST_RESULTS });
-    if (!Array.isArray(listed)) return undefined;
-    children = listed;
-  } catch {
-    return undefined;
-  }
-  if (children.length > MAX_LIST_RESULTS) return undefined;
+  const children = await listAllSandboxChildren(client, signal);
+  if (children === undefined) return undefined;
   const marked: { child: SandboxInstanceLike; marker: ForkMarker }[] = [];
   for (const child of children) {
     if (!child || typeof child !== "object" || safeIdentifier(child.id) === undefined) {
@@ -1230,18 +1443,26 @@ function checkpointMarkerFromTags(
   if (
     !Array.isArray(tags) ||
     tags.length > MAX_MARKER_CHUNKS + 3 ||
-    !tags.every((tag) => safeString(tag) !== undefined)
+    !tags.every(
+      (tag) =>
+        safeString(tag) !== undefined &&
+        Buffer.byteLength(tag, "utf8") <= MAX_MARKER_TAG_LENGTH,
+    )
   ) {
     return undefined;
   }
-  const base = `${MARKER_PREFIX}:checkpoint`;
-  const keyTag = tags.find((tag) => tag.startsWith(`${base}:key:`));
-  if (keyTag && key !== undefined && decodeText(keyTag.slice(`${base}:key:`.length)) !== key) {
+  const base = `${MARKER_PREFIX}-checkpoint`;
+  const keyTag = tags.find((tag) => tag.startsWith(`${base}-key-`));
+  if (
+    keyTag &&
+    key !== undefined &&
+    keyTag.slice(`${base}-key-`.length) !== markerKeyDigest(key).replace(":", "-")
+  ) {
     return undefined;
   }
   const chunks = tags
     .map((tag) => {
-      const match = tag.match(new RegExp(`^${escapeRegExp(base)}:material:(\\d+):(\\d+):(.+)$`));
+      const match = tag.match(new RegExp(`^${escapeRegExp(base)}-material-(\\d+)-(\\d+)-([A-Za-z0-9_-]+)$`));
       return match ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] } : undefined;
     })
     .filter((value): value is { index: number; total: number; chunk: string } => value !== undefined)
@@ -1309,12 +1530,26 @@ function forkMarkerFromMetadata(
 async function checkpointConflictFromRemote(
   box: SandboxInstanceLike,
   request: WorkspaceCheckpointRequest,
+  signal?: AbortSignal,
 ): Promise<WorkspaceCheckpointResult | undefined> {
-  const recovered = await findCheckpointByKey(box, request.idempotencyKey);
-  if (recovered && recovered.marker.requestDigest !== request.requestDigest) {
+  signal?.throwIfAborted();
+  const recovered = await findCheckpointByKey(
+    box,
+    request.idempotencyKey,
+    signal,
+  );
+  signal?.throwIfAborted();
+  if (!recovered) return undefined;
+  if (recovered.marker.requestDigest !== request.requestDigest) {
     return checkpointConflict(request, recovered.marker.requestDigest);
   }
-  return undefined;
+  const record = checkpointRecordFromSnapshot(
+    recovered.marker.request,
+    recovered.snapshot,
+  );
+  return record === undefined
+    ? undefined
+    : checkpointSuccess(request, record.checkpoint, "replayed");
 }
 
 /** The fork equivalent of {@link checkpointConflictFromRemote}. */
@@ -1323,17 +1558,33 @@ async function forkConflictFromRemote(
   box: SandboxInstanceLike,
   provider: string,
   request: WorkspaceForkRequest,
+  verifier: TangleConfidentialAttestationVerifier | undefined,
+  signal?: AbortSignal,
 ): Promise<WorkspaceForkResult | undefined> {
   const recovered = await findForkByKey(
     client,
     box,
     provider,
     request.idempotencyKey,
+    signal,
   );
-  if (recovered && recovered.marker.requestDigest !== request.requestDigest) {
+  if (!recovered) return undefined;
+  if (recovered.marker.requestDigest !== request.requestDigest) {
     return forkConflict(request, recovered.marker.requestDigest);
   }
-  return undefined;
+  const child = await completeForkChild(client, recovered.child, signal);
+  if (!child) return undefined;
+  const environment = await environmentFromChild(
+    recovered.marker.request,
+    child,
+    provider,
+    child.createdAt,
+    verifier,
+    signal,
+  );
+  return environment === undefined
+    ? undefined
+    : forkSuccess(request, environment, "replayed");
 }
 
 /**
@@ -1483,12 +1734,8 @@ function encodeText(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
-function decodeText(value: string): string | undefined {
-  try {
-    return Buffer.from(value, "base64url").toString("utf8");
-  } catch {
-    return undefined;
-  }
+function markerKeyDigest(value: string): string {
+  return sha256Bytes(Buffer.from(value, "utf8"));
 }
 
 function encodeJson(value: unknown): string | undefined {

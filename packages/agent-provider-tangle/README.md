@@ -135,7 +135,22 @@ After a provider process restart, `provider.workspaceBranching.forEnvironment()`
 returns a fresh source-scoped handle for lookup and cleanup, or `null` when it
 cannot prove the complete operation surface.
 
+Recovery reads the account inventory through Sandbox offset pages of at most
+1,000 sandboxes and continues until a short page proves the inventory is
+complete.
+Malformed, repeated, failed, or over-bound pages return `unknown` and do not
+mutate a resource.
+Sandbox exposes snapshots only through the live source instance.
+If that source was deleted, this provider cannot recover its checkpoints or
+forked children through the public SDK.
+Clean branch resources before deleting the source or use a platform reaper.
+
 ```ts
+import {
+  workspaceCheckpointRequestDigest,
+  workspaceForkRequestDigest,
+} from '@tangle-network/agent-interface'
+
 const checkpoint = await environment.workspaceBranching?.checkpoint({
   source: exactRun,
   idempotencyKey: 'checkpoint-before-analysis',
@@ -160,13 +175,16 @@ if (checkpoint?.status === 'created' || checkpoint?.status === 'replayed') {
 Sandbox returns raw TEE evidence, not a verified claim.
 Pass `confidentialAttestationVerifier` to `createTangleProvider` to connect a
 trusted provider-key and measurement verifier.
-The callback receives the raw report and the canonical request-bound
-attestation material, and returns a provider key id, signature, and optional
-normalized measurement only after verification succeeds.
+The callback receives the raw report, the expected environment binding, and
+the canonical request-bound attestation material.
+It returns a provider key id, signature, and optional normalized measurement
+only after verification succeeds.
 Returning `null`, throwing, a mismatched measurement, or a copied quote leaves
 the result unverified while preserving `confidentialRequested: true`.
+The same unverified result occurs when no trusted verifier is configured.
 The adapter does not trust the requested nonce, child metadata, or any legacy
 `confidential: true` assertion as proof.
+`verifyTangleQuote` below represents a verifier supplied by the caller.
 
 ```ts
 const provider = createTangleProvider({

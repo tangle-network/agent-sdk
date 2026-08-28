@@ -251,6 +251,11 @@ describe("Tangle split leaf modules", () => {
       lookup: false,
       cleanup: false,
     });
+    const missingBranching = { ...capabilities, branching: undefined } as never;
+    expect(capabilitiesForClient(missingBranching, minimalClient).branching).toEqual({
+      checkpoint: false,
+      fork: false,
+    });
     expect(() => assertOptionKeys({ unsupported: true }, [], "leaf options")).toThrow();
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
   });

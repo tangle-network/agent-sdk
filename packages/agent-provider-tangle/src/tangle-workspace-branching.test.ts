@@ -59,7 +59,11 @@ function createFakeSandbox(): {
       const digest = canonicalCandidateDigest(options?.tags ?? []);
       const previousDigest = checkpointKeys.get(key);
       if (previousDigest !== undefined) {
-        const snapshot = snapshots.find((item) => item.tags.includes(`server:${key}`));
+        const snapshot = snapshots.find((item) =>
+          item.tags.includes(
+            `server-${canonicalCandidateDigest(key).replace(":", "-")}`,
+          ),
+        );
         if (!snapshot) throw new Error("snapshot ledger lost its resource");
         return {
           snapshotId: snapshot.snapshotId,
@@ -76,7 +80,10 @@ function createFakeSandbox(): {
         snapshotId: `checkpoint-${++snapshotNumber}`,
         sandboxId: sourceEnvironmentId,
         createdAt: new Date("2026-08-28T00:00:00.000Z"),
-        tags: [...(options?.tags ?? []), `server:${key}`],
+        tags: [
+          ...(options?.tags ?? []),
+          `server-${canonicalCandidateDigest(key).replace(":", "-")}`,
+        ],
       };
       snapshots.push(snapshot);
       return {
@@ -197,7 +204,6 @@ describe("Tangle workspace branching", () => {
       ),
     ).toBe(false);
   });
-
   it("passes exact checkpoint, fork, recovery, conflict, and cleanup conformance", async () => {
     const { box, client } = createFakeSandbox();
     const operations = createTangleWorkspaceBranching({ box, client, provider });
@@ -224,6 +230,252 @@ describe("Tangle workspace branching", () => {
     const result = await operations!.checkpoint(checkpointRequest());
     expect(result).toMatchObject({ status: "unknown", retryable: true });
     expect(snapshotCalls).toBe(0);
+  });
+
+  it("keeps every recovery tag within the platform byte bound", async () => {
+    const { box, client } = createFakeSandbox();
+    const snapshot = box.snapshot!;
+    let observedTags: string[] | undefined;
+    box.snapshot = async (options) => {
+      observedTags = options?.tags;
+      return snapshot(options);
+    };
+    const request = {
+      ...checkpointRequest(),
+      idempotencyKey: "k".repeat(512),
+    };
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const result = await operations!.checkpoint(request);
+    if (result.status !== "created") {
+      throw new Error(`long-key checkpoint failed: ${JSON.stringify(result)}`);
+    }
+    expect(observedTags).toBeDefined();
+    expect(
+      observedTags!.every(
+        (tag) =>
+          Buffer.byteLength(tag, "utf8") <= 128 && /^[A-Za-z0-9._-]+$/u.test(tag),
+      ),
+    ).toBe(true);
+  });
+
+  it("forks a checkpoint immediately when its inventory view still lags", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    box.listSnapshots = async () => [];
+    await expect(operations!.fork(forkRequest(checkpoint.checkpoint))).resolves.toMatchObject({
+      status: "created",
+    });
+  });
+
+  it("returns a replay after a create commits before transport failure", async () => {
+    const { box, client } = createFakeSandbox();
+    const snapshot = box.snapshot!;
+    let snapshotAttempts = 0;
+    box.snapshot = async (options) => {
+      const result = await snapshot(options);
+      snapshotAttempts += 1;
+      if (snapshotAttempts === 1) throw new Error("response lost after commit");
+      return result;
+    };
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    expect(checkpoint).toMatchObject({ status: "replayed" });
+
+    const fork = box.fork!;
+    let forkAttempts = 0;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      forkAttempts += 1;
+      if (forkAttempts === 1) throw new Error("response lost after commit");
+      return result;
+    };
+    if (checkpoint.status !== "replayed" && checkpoint.status !== "created") {
+      throw new Error("checkpoint recovery did not produce a reference");
+    }
+    const forkResult = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    expect(forkResult).toMatchObject({ status: "replayed" });
+  });
+
+  it("rehydrates a branch child when an acknowledgement omits createdAt", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const fork = box.fork!;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      return {
+        ...result,
+        children: result.children.map((child) => {
+          const { createdAt: _createdAt, ...withoutCreatedAt } = child;
+          return withoutCreatedAt;
+        }),
+      };
+    };
+    const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    expect(result).toMatchObject({ status: "created" });
+  });
+
+  it("propagates cancellation without starting recovery traffic", async () => {
+    const { box, client } = createFakeSandbox();
+    const snapshot = box.snapshot!;
+    let snapshotCalls = 0;
+    let listCalls = 0;
+    box.listSnapshots = async () => {
+      listCalls += 1;
+      return [];
+    };
+    box.snapshot = async (options) => {
+      snapshotCalls += 1;
+      await new Promise<void>(() => undefined);
+      return snapshot(options);
+    };
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const controller = new AbortController();
+    const pending = operations!.checkpoint(checkpointRequest(), {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(snapshotCalls).toBe(1);
+    expect(listCalls).toBe(1);
+  });
+
+  it("continues account inventory after a full Sandbox page", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await operations!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    const originalList = client.list!;
+    const filler = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `inventory-filler-${index}`,
+      async *streamPrompt() {},
+    }));
+    const calls: Array<{ limit?: number; offset?: number }> = [];
+    client.list = async (options) => {
+      calls.push({ limit: options?.limit, offset: options?.offset });
+      const inventory = [...filler, ...(await originalList())];
+      const offset = options?.offset ?? 0;
+      const limit = options?.limit ?? inventory.length;
+      return inventory.slice(offset, offset + limit);
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const result = await restarted!.lookupFork({
+      idempotencyKey: forkInput.idempotencyKey,
+      requestDigest: forkInput.requestDigest,
+    });
+    expect(result).toMatchObject({ status: "found", environment: fork.environment });
+    expect(calls).toEqual([
+      { limit: 1_000, offset: 0 },
+      { limit: 1_000, offset: 1_000 },
+    ]);
+  });
+
+  it("fails closed when a full page continuation is unavailable", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await operations!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    const originalList = client.list!;
+    const filler = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `inventory-filler-${index}`,
+      async *streamPrompt() {},
+    }));
+    const calls: Array<{ limit?: number; offset?: number }> = [];
+    client.list = async (options) => {
+      calls.push({ limit: options?.limit, offset: options?.offset });
+      if ((options?.offset ?? 0) > 0) throw new Error("continuation unavailable");
+      const inventory = [...filler, ...(await originalList())];
+      return inventory.slice(0, options?.limit ?? inventory.length);
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      }),
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+    expect(calls).toEqual([
+      { limit: 1_000, offset: 0 },
+      { limit: 1_000, offset: 1_000 },
+    ]);
+  });
+
+  it("rejects an over-sized page instead of trusting a truncated response", async () => {
+    const { box, client } = createFakeSandbox();
+    const originalList = client.list!;
+    const filler = Array.from({ length: 1_001 }, (_, index) => ({
+      id: `inventory-filler-${index}`,
+      async *streamPrompt() {},
+    }));
+    let observedLimit: number | undefined;
+    client.list = async (options) => {
+      observedLimit = options?.limit;
+      const inventory = [...filler, ...(await originalList())];
+      return inventory;
+    };
+
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const result = await operations!.lookupFork({
+      idempotencyKey: "missing-fork",
+      requestDigest: workspaceForkRequestDigest({
+        checkpoint: {
+          checkpointId: "missing-checkpoint",
+          provider,
+          source,
+          idempotencyKey: "missing-checkpoint-operation",
+          requestDigest: workspaceCheckpointRequestDigest({ source }),
+          createdAt: "2026-08-28T00:00:00.000Z",
+        },
+        name: "missing",
+        placement: { kind: "sandbox", sandboxId: sourceEnvironmentId },
+      }),
+    });
+    expect(result).toMatchObject({ status: "unknown", retryable: true });
+    expect(observedLimit).toBe(1_000);
+  });
+
+  it("rejects a continuation that repeats an earlier page", async () => {
+    const { box, client } = createFakeSandbox();
+    const originalList = client.list!;
+    const filler = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `inventory-filler-${index}`,
+      async *streamPrompt() {},
+    }));
+    client.list = async (options) => {
+      const inventory = [...filler, ...(await originalList())];
+      return inventory.slice(0, options?.limit ?? inventory.length);
+    };
+
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const result = await operations!.lookupFork({
+      idempotencyKey: "missing-fork",
+      requestDigest: workspaceForkRequestDigest({
+        checkpoint: {
+          checkpointId: "missing-checkpoint",
+          provider,
+          source,
+          idempotencyKey: "missing-checkpoint-operation",
+          requestDigest: workspaceCheckpointRequestDigest({ source }),
+          createdAt: "2026-08-28T00:00:00.000Z",
+        },
+        name: "missing",
+        placement: { kind: "sandbox", sandboxId: sourceEnvironmentId },
+      }),
+    });
+    expect(result).toMatchObject({ status: "unknown", retryable: true });
   });
 
   it("coalesces concurrent retries with deterministic provider markers", async () => {
@@ -402,9 +654,11 @@ describe("Tangle workspace branching", () => {
           sandbox_id: child.id,
           ...(options?.attestationNonce === "nonce-mismatch"
             ? { attestationNonce: "different-nonce" }
-            : options?.attestationNonce === undefined
+            : options?.attestationNonce === "nonce-missing"
               ? {}
-              : { attestationNonce: options.attestationNonce }),
+              : options?.attestationNonce === undefined
+                ? {}
+                : { attestationNonce: options.attestationNonce }),
           attestation: {
             tee_type: "tdx",
             evidence: [1, 2, 3],
@@ -460,6 +714,15 @@ describe("Tangle workspace branching", () => {
       };
     };
 
+    const withoutVerifier = createTangleWorkspaceBranching({
+      box: attestationBox,
+      client,
+      provider,
+    });
+    await expect(
+      withoutVerifier!.fork(makeRequest("fork-without-verifier", "nonce-without-verifier")),
+    ).resolves.toMatchObject({ status: "unknown", retryable: false });
+
     const acceptedRequest = makeRequest("fork-accepted", "nonce-accepted");
     const accepted = await operations!.fork(acceptedRequest);
     expect(accepted.status).toBe("created");
@@ -480,6 +743,13 @@ describe("Tangle workspace branching", () => {
     if (nonceRejected.status !== "created") throw new Error("nonce fork setup failed");
     expect(nonceRejected.environment.confidentialRequested).toBe(true);
     expect(nonceRejected.environment.confidentialAttestation).toBeUndefined();
+
+    const missingNonce = await operations!.fork(
+      makeRequest("fork-rejected-missing-nonce", "nonce-missing"),
+    );
+    expect(missingNonce.status).toBe("created");
+    if (missingNonce.status !== "created") throw new Error("missing nonce fork setup failed");
+    expect(missingNonce.environment.confidentialAttestation).toBeUndefined();
 
     const measurementRejected = await operations!.fork(
       makeRequest("fork-rejected-measurement", "nonce-measurement"),

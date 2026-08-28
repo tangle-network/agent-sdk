@@ -405,6 +405,13 @@ export function narrowedTangleCapabilities(
   deployment: DeploymentCapabilitySupport,
   options?: { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier },
 ): AgentEnvironmentCapabilities {
+  // JavaScript callers can omit required fields before schema validation.
+  // Missing branching intent must disable the surface, not throw while it is
+  // being narrowed.
+  const declaredBranching = declared.branching ?? {
+    checkpoint: false,
+    fork: false,
+  };
   const supportsRetainedControl = tangleRetainedControlSupported(
     declared,
     support,
@@ -446,14 +453,14 @@ export function narrowedTangleCapabilities(
     // An incomplete Sandbox surface clears every branching flag together. A
     // partial claim would let a caller start an operation it cannot recover.
     branching: support.workspaceBranching
-      ? { ...declared.branching }
+      ? { ...declaredBranching }
       : {
-          ...declared.branching,
+          ...declaredBranching,
           checkpoint: false,
           fork: false,
-          ...(declared.branching.retrySafe !== undefined ? { retrySafe: false } : {}),
-          ...(declared.branching.lookup !== undefined ? { lookup: false } : {}),
-          ...(declared.branching.cleanup !== undefined ? { cleanup: false } : {}),
+          ...(declaredBranching.retrySafe !== undefined ? { retrySafe: false } : {}),
+          ...(declaredBranching.lookup !== undefined ? { lookup: false } : {}),
+          ...(declaredBranching.cleanup !== undefined ? { cleanup: false } : {}),
         },
     placement: support.placement ? declared.placement : false,
     usage: false,

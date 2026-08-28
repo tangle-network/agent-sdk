@@ -772,7 +772,8 @@ export interface AgentEnvironmentProvider {
    *
    * This surface is intentionally separate from an environment-owned handle:
    * lookup and cleanup requests identify operations, not their source. The
-   * provider owns source resolution and the underlying platform calls.
+   * provider owns source resolution and the underlying platform calls. A
+   * returned handle is bound to that source and must reject other scopes.
    */
   readonly workspaceBranching?: AgentWorkspaceBranchingProvider;
   capabilities():

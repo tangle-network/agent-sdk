@@ -219,8 +219,10 @@ export interface AgentWorkspaceBranching {
  *
  * Environment handles are process-local views. A coordinator that restarts
  * must obtain a fresh source-scoped handle before it looks up or cleans a
- * checkpoint or fork. Providers return null when the source is absent or the
- * deployment cannot prove the complete branching surface.
+ * checkpoint or fork. The returned handle must reject a resource that does
+ * not belong to its source scope. Providers return null when the source is
+ * absent, the resolved environment id does not match, or the deployment
+ * cannot prove the complete branching surface.
  */
 export interface AgentWorkspaceBranchingProvider {
   forEnvironment(
