@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.13.3
+
+### Patch Changes
+
+- 99bb7e0: Accept the Sandbox SDK interaction field when an exact result has no pending interaction.
+
 ## 0.13.2
 
 ### Patch Changes
