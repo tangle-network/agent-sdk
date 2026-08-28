@@ -8,7 +8,10 @@ import type { TokenUsage } from "./execution-types.js";
 import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
 import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
-import type { AgentWorkspaceBranching } from "./workspace-branching.js";
+import type {
+  AgentWorkspaceBranching,
+  AgentWorkspaceBranchingProvider,
+} from "./workspace-branching.js";
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
 import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
@@ -764,6 +767,14 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
+  /**
+   * Reconstruct a source-scoped branching handle after a coordinator restart.
+   *
+   * This surface is intentionally separate from an environment-owned handle:
+   * lookup and cleanup requests identify operations, not their source. The
+   * provider owns source resolution and the underlying platform calls.
+   */
+  readonly workspaceBranching?: AgentWorkspaceBranchingProvider;
   capabilities():
     | AgentEnvironmentCapabilities
     | Promise<AgentEnvironmentCapabilities>;

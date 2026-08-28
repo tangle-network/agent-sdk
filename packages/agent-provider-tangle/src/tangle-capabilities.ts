@@ -24,6 +24,8 @@ import {
 } from "./tangle-observation.js";
 import { sandboxBacksInteractiveTerminal } from "./tangle-terminal.js";
 import { sandboxBacksInteractiveAgent } from "./tangle-interactive.js";
+import { supportsWorkspaceBranching } from "./tangle-workspace-branching.js";
+import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
 
 /**
  * The full capability document this adapter supports when the Sandbox client
@@ -95,14 +97,20 @@ export function defaultTangleSandboxCapabilities(
       cancellationIdempotency: true,
     },
     workspace: { read: true, write: true, exec: true, git: false, upload: true, download: true },
-    // Sandbox exposes snapshot/branch, not the checkpoint/fork contract, and
-    // durable branching needs retry, lookup, conflict, and cleanup together.
-    branching: { checkpoint: false, fork: false },
+    // The complete Sandbox SDK surface backs this contract. Narrowing below
+    // removes every flag when any recovery or cleanup method is absent.
+    branching: {
+      checkpoint: true,
+      fork: true,
+      retrySafe: true,
+      lookup: true,
+      cleanup: true,
+    },
     placement: true,
     usage: false,
-    // Confidential execution needs verified attestation evidence, which this
-    // adapter does not yet obtain, so it is never declared by default.
-    confidential: false,
+    // This is intent only. Narrowing requires both raw TEE evidence and the
+    // caller's external provider-key verifier before the flag survives.
+    confidential: true,
     // Observation surfaces are declared as intent and narrowed per sandbox to
     // the sources that can put a value on each one.
     observation: {
@@ -200,6 +208,10 @@ export interface SandboxCapabilitySupport {
   interactiveTerminal: boolean;
   /** The SDK can drive the existing native TUI and read its terminal metadata. */
   interactiveAgent: boolean;
+  /** Snapshot/fork methods and inventory recovery are all present. */
+  workspaceBranching: boolean;
+  /** The SDK can request raw TEE evidence for this sandbox. */
+  confidentialAttestation: boolean;
 }
 
 // One reserved id names both probe handles; neither ever reaches the service.
@@ -234,6 +246,8 @@ export function sandboxCapabilitySupport(
     observation: observationSurfaceSupport(box, client, requestedResources),
     interactiveTerminal: sandboxBacksInteractiveTerminal(box),
     interactiveAgent: sandboxBacksInteractiveAgent(box),
+    workspaceBranching: supportsWorkspaceBranching(box, client),
+    confidentialAttestation: typeof box.getTeeAttestation === "function",
   };
 }
 
@@ -300,6 +314,8 @@ export function clientCapabilitySupport(
     observation,
     interactiveTerminal: true,
     interactiveAgent: false,
+    workspaceBranching: false,
+    confidentialAttestation: false,
   };
 }
 
@@ -387,6 +403,7 @@ export function narrowedTangleCapabilities(
   declared: AgentEnvironmentCapabilities,
   support: SandboxCapabilitySupport,
   deployment: DeploymentCapabilitySupport,
+  options?: { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier },
 ): AgentEnvironmentCapabilities {
   const supportsRetainedControl = tangleRetainedControlSupported(
     declared,
@@ -428,11 +445,17 @@ export function narrowedTangleCapabilities(
     },
     branching: {
       ...declared.branching,
-      checkpoint: false,
-      fork: false,
-      ...(declared.branching.retrySafe !== undefined ? { retrySafe: false } : {}),
-      ...(declared.branching.lookup !== undefined ? { lookup: false } : {}),
-      ...(declared.branching.cleanup !== undefined ? { cleanup: false } : {}),
+      checkpoint: support.workspaceBranching ? declared.branching.checkpoint : false,
+      fork: support.workspaceBranching ? declared.branching.fork : false,
+      ...(declared.branching.retrySafe !== undefined
+        ? { retrySafe: support.workspaceBranching ? declared.branching.retrySafe : false }
+        : {}),
+      ...(declared.branching.lookup !== undefined
+        ? { lookup: support.workspaceBranching ? declared.branching.lookup : false }
+        : {}),
+      ...(declared.branching.cleanup !== undefined
+        ? { cleanup: support.workspaceBranching ? declared.branching.cleanup : false }
+        : {}),
     },
     placement: support.placement ? declared.placement : false,
     usage: false,
@@ -464,6 +487,13 @@ export function narrowedTangleCapabilities(
   }
   delete narrowed.nativeContinuation;
   if (!supportsRetainedControl) delete narrowed.retainedControl;
+  if (
+    narrowed.confidential &&
+    (!support.confidentialAttestation ||
+      typeof options?.confidentialAttestationVerifier !== "function")
+  ) {
+    narrowed.confidential = false;
+  }
   return narrowed;
 }
 
@@ -539,11 +569,13 @@ function narrowedInteractiveAgent(
 export function capabilitiesForClient(
   declared: AgentEnvironmentCapabilities,
   client: SandboxClientLike,
+  options?: { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier },
 ): AgentEnvironmentCapabilities {
   return narrowedTangleCapabilities(
     declared,
     clientCapabilitySupport(client),
     ADAPTER_CEILING_DEPLOYMENT,
+    options,
   );
 }
 
@@ -566,6 +598,7 @@ export function capabilitiesForSandbox(
   declared: AgentEnvironmentCapabilities,
   support: SandboxCapabilitySupport,
   deployment: DeploymentCapabilitySupport,
+  options?: { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier },
 ): AgentEnvironmentCapabilities {
-  return narrowedTangleCapabilities(declared, support, deployment);
+  return narrowedTangleCapabilities(declared, support, deployment, options);
 }

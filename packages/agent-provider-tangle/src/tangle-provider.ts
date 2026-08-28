@@ -20,6 +20,7 @@ import {
   narrowTangleCapabilitiesToBackend,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
+import { createTangleWorkspaceBranching } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
@@ -74,7 +75,14 @@ export function createTangleProvider(
     declared: AgentEnvironmentCapabilities,
   ): AgentEnvironmentCapabilities =>
     AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForClient(declared, options.client),
+      capabilitiesForClient(declared, options.client, {
+        ...(options.confidentialAttestationVerifier === undefined
+          ? {}
+          : {
+              confidentialAttestationVerifier:
+                options.confidentialAttestationVerifier,
+            }),
+      }),
     );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
     narrowedProviderCapabilities(await resolveDeclaredCapabilities());
@@ -144,7 +152,17 @@ export function createTangleProvider(
         options.client,
         declaredCapabilities,
         input.signal ? { signal: input.signal } : undefined,
-        requestedResources === undefined ? undefined : { resources: requestedResources },
+        {
+          ...(requestedResources === undefined
+            ? {}
+            : { resources: requestedResources }),
+          ...(options.confidentialAttestationVerifier === undefined
+            ? {}
+            : {
+                confidentialAttestationVerifier:
+                  options.confidentialAttestationVerifier,
+              }),
+        },
       );
       input.signal?.throwIfAborted();
       return environment;
@@ -163,9 +181,48 @@ export function createTangleProvider(
       throw error;
     }
   };
+  const workspaceBranching = options.client.get
+    ? {
+        async forEnvironment(
+          sourceEnvironmentId: string,
+          operation?: { signal?: AbortSignal },
+        ) {
+          assertProviderOperationOptions(
+            operation,
+            "Tangle workspaceBranching.forEnvironment",
+          );
+          const environmentId = boundedIdentifier(
+            sourceEnvironmentId,
+            "Tangle workspace branching source environment id",
+          );
+          operation?.signal?.throwIfAborted();
+          const box = await awaitWithSignal(
+            options.client.get?.(environmentId, operation),
+            operation?.signal,
+          );
+          operation?.signal?.throwIfAborted();
+          if (!box || box.id !== environmentId) return null;
+          boundedIdentifier(box.id, "Tangle workspace branching environment id");
+          return (
+            createTangleWorkspaceBranching({
+              box,
+              client: options.client,
+              provider: providerName,
+              ...(options.confidentialAttestationVerifier === undefined
+                ? {}
+                : {
+                    confidentialAttestationVerifier:
+                      options.confidentialAttestationVerifier,
+                  }),
+            }) ?? null
+          );
+        },
+      }
+    : undefined;
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
+    ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
     ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
     create(input) {
@@ -192,6 +249,12 @@ export function createTangleProvider(
               options.client,
               declaredCapabilities,
               operation?.signal ? { signal: operation.signal } : undefined,
+              options.confidentialAttestationVerifier === undefined
+                ? undefined
+                : {
+                    confidentialAttestationVerifier:
+                      options.confidentialAttestationVerifier,
+                  },
             );
           },
         }

@@ -214,6 +214,21 @@ export interface AgentWorkspaceBranching {
   ): Promise<WorkspaceCleanupAcknowledgement>;
 }
 
+/**
+ * Provider-level entry point for reconstructing branch operations by source.
+ *
+ * Environment handles are process-local views. A coordinator that restarts
+ * must obtain a fresh source-scoped handle before it looks up or cleans a
+ * checkpoint or fork. Providers return null when the source is absent or the
+ * deployment cannot prove the complete branching surface.
+ */
+export interface AgentWorkspaceBranchingProvider {
+  forEnvironment(
+    sourceEnvironmentId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentWorkspaceBranching | null>;
+}
+
 /** Bind cleanup confirmation to the exact provider resource and operation. */
 export function workspaceCleanupAcknowledgementMatches(
   request: WorkspaceCleanupRequest,
