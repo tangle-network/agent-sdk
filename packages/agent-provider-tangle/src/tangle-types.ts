@@ -529,7 +529,7 @@ export interface SandboxInstanceLike {
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
   /** Refresh accepts either the current SDK signal or no argument. */
-  refresh?(...args: never[]): Promise<void>;
+  refresh?(signal?: AbortSignal): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
   /** Managed whole-workspace checkpoint operation. */
   snapshot?(options?: {

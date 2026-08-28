@@ -6,7 +6,6 @@ export {
   createTangleWorkspaceBranching,
   supportsConfidentialAttestation,
   supportsWorkspaceBranching,
-  tangleWorkspaceCleanupRequestDigest,
   tangleWorkspaceConfidentialityVerified,
 } from "./tangle-workspace-branching.js";
 export type { TangleWorkspaceBranchingOptions } from "./tangle-workspace-branching.js";

@@ -285,9 +285,7 @@ async function refreshBeforeObservation(
   }
   try {
     await awaitWithSignal(
-      (box.refresh as unknown as (signal?: AbortSignal) => Promise<void>)(
-        options?.signal,
-      ),
+      box.refresh(options?.signal),
       options?.signal,
     );
     return undefined;

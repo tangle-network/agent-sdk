@@ -19,7 +19,6 @@ import {
   confidentialExecutionVerified,
   forkedEnvironmentConfidentialityVerified,
   sha256Bytes,
-  workspaceCleanupRequestDigest,
 } from "@tangle-network/agent-interface";
 import type {
   ConfidentialAttestation,
@@ -1610,13 +1609,6 @@ function split(value: string): string[] {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Retained for callers that need the same digest check without reimplementing it. */
-export function tangleWorkspaceCleanupRequestDigest(
-  material: Parameters<typeof workspaceCleanupRequestDigest>[0],
-): ReturnType<typeof workspaceCleanupRequestDigest> {
-  return workspaceCleanupRequestDigest(material);
 }
 
 /**

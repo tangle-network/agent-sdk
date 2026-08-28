@@ -192,11 +192,7 @@ export async function sandboxInstanceAsEnvironment(
     async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
       assertOptionKeys(options, ["signal"], "Tangle environment status");
       await awaitWithSignal(
-        box.refresh
-          ? (box.refresh as unknown as (signal?: AbortSignal) => Promise<void>)(
-              options?.signal,
-            )
-          : undefined,
+        box.refresh ? box.refresh(options?.signal) : undefined,
         options?.signal,
       );
       return statusFromUnknown(box.status);
@@ -445,11 +441,7 @@ export async function sandboxInstanceAsEnvironment(
       assertOptionKeys(options, ["signal"], "Tangle refresh");
       options?.signal?.throwIfAborted();
       await awaitWithSignal(
-        box.refresh
-          ? (box.refresh as unknown as (signal?: AbortSignal) => Promise<void>)(
-              options?.signal,
-            )
-          : undefined,
+        box.refresh ? box.refresh(options?.signal) : undefined,
         options?.signal,
       );
       options?.signal?.throwIfAborted();
