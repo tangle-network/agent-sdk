@@ -137,7 +137,7 @@ export function prepareControlCohort() {
           "@tangle-network/agent-interface": `file:${interfaceTarball}`,
           "@tangle-network/agent-provider-testkit": `file:${testkitTarball}`,
           "@tangle-network/agent-provider-tangle": `file:${tangleTarball}`,
-          "@tangle-network/sandbox": "0.30.1",
+          "@tangle-network/sandbox": "0.33.1",
           "@types/node": "25.6.0",
         },
       },

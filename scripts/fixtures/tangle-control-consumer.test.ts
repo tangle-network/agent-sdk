@@ -61,7 +61,7 @@ describe("packed Tangle exact-session control", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
     ) as { version?: unknown };
-    expect(manifest.version).toBe("0.30.1");
+    expect(manifest.version).toBe("0.33.1");
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
@@ -100,7 +100,13 @@ describe("packed Tangle exact-session control", () => {
     expect(typeof publicInstance.session("surface-probe").cancelRun).toBe(
       "function",
     );
-    expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
+    expect(capabilities.branching).toEqual({
+      checkpoint: false,
+      fork: false,
+      retrySafe: false,
+      lookup: false,
+      cleanup: false,
+    });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
 
