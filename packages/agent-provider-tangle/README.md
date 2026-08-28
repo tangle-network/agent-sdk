@@ -105,45 +105,35 @@ After `session.prompt()` admits another turn, that session object's `controlRef`
 Sandbox keeps execution identifiers optional for older or unproven service paths, so this adapter fails closed when a dispatch or prompt does not return one and never falls back to latest-session state.
 Sessions reconstructed without a control reference may start a new prompt, but result lookup, cancellation, and cursor replay fail before calling Sandbox because those operations could otherwise select the newest unrelated execution.
 It also rejects `contextTransfer` and `nativeContinuation` inputs explicitly until those operations have native Sandbox support instead of silently dropping them.
-The adapter advertises `branching.checkpoint`, `branching.fork`, `retrySafe`,
-`lookup`, and `cleanup` only when the linked SDK exposes the complete managed
-surface: keyed `snapshot` and `fork`, operation lookup, inventory recovery,
-and explicit deletion outcomes.
-The provider stores a bounded request marker in snapshot tags and child
-metadata so a fresh provider process can recover the exact interface digest.
-The marker identifies a candidate resource; the Sandbox operation ledger still
-has to report a settled success before the adapter returns it.
-An incomplete SDK surface clears every branching flag and omits
-`environment.workspaceBranching`.
 
 ### Workspace branching
 
 `environment.workspaceBranching` is the single operation surface for creating
 and recovering a checkpoint, forking one managed child, and cleaning both
 resources in dependency order.
+The adapter advertises `branching.checkpoint`, `branching.fork`, `retrySafe`,
+`lookup`, and `cleanup` only when the linked SDK exposes the complete managed
+surface: keyed `snapshot` and `fork`, operation lookup, inventory recovery, and
+explicit deletion outcomes.
+An incomplete SDK surface clears every branching flag and omits
+`environment.workspaceBranching`.
+
 Every operation validates the canonical agent-interface request digest before
 calling Sandbox.
 Retries with the same key replay the original resource, while changed material
 returns a conflict containing the original interface digest.
+The provider stores a bounded request marker in snapshot tags and child
+metadata so a fresh process can recover the exact interface digest, but the
+marker only names a candidate: the Sandbox operation ledger still has to report
+a settled success before the adapter returns the resource.
 Checkpoint deletion reports `in_use` with every verified child that still
 references it; delete the child first, then retry checkpoint deletion.
 The adapter never treats an SDK response without an explicit idempotency or
 deletion outcome as success.
 
-After a provider process restart, use `provider.workspaceBranching` to obtain a
-fresh handle for the source environment before lookup or cleanup.
-The provider resolves that source through Sandbox and returns `null` when it
+After a provider process restart, `provider.workspaceBranching.forEnvironment()`
+returns a fresh source-scoped handle for lookup and cleanup, or `null` when it
 cannot prove the complete operation surface.
-
-```ts
-const sourceBranching =
-  await provider.workspaceBranching?.forEnvironment(exactRun.environmentId)
-
-const lookup = await sourceBranching?.lookupCheckpoint({
-  idempotencyKey: checkpointOperationId,
-  requestDigest: checkpointRequestDigest,
-})
-```
 
 ```ts
 const checkpoint = await environment.workspaceBranching?.checkpoint({
@@ -169,11 +159,10 @@ if (checkpoint?.status === 'created' || checkpoint?.status === 'replayed') {
 
 Sandbox returns raw TEE evidence, not a verified claim.
 Pass `confidentialAttestationVerifier` to `createTangleProvider` to connect a
-trusted provider-key and measurement verifier, such as the Tangle attestation
-package.
-The callback receives the raw report and canonical request-bound attestation
-material and returns a provider key id, signature, and optional normalized
-measurement only after verification succeeds.
+trusted provider-key and measurement verifier.
+The callback receives the raw report and the canonical request-bound
+attestation material, and returns a provider key id, signature, and optional
+normalized measurement only after verification succeeds.
 Returning `null`, throwing, a mismatched measurement, or a copied quote leaves
 the result unverified while preserving `confidentialRequested: true`.
 The adapter does not trust the requested nonce, child metadata, or any legacy
@@ -182,21 +171,8 @@ The adapter does not trust the requested nonce, child metadata, or any legacy
 ```ts
 const provider = createTangleProvider({
   client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
-  confidentialAttestationVerifier: async ({ report, attestation }) => {
-    const verified = await verifyTangleQuote({
-      report,
-      nonce: attestation.nonce,
-      measurement: attestation.measurement,
-      policy: attestation.policy,
-    })
-    return verified
-      ? {
-          providerKeyId: verified.keyId,
-          providerSignature: verified.signature,
-          measurement: verified.measurement,
-        }
-      : null
-  },
+  confidentialAttestationVerifier: async ({ report, attestation }) =>
+    (await verifyTangleQuote({ report, attestation })) ?? null,
 })
 ```
 

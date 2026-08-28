@@ -443,20 +443,18 @@ export function narrowedTangleCapabilities(
       upload: support.write ? declared.workspace.upload : false,
       download: support.read ? declared.workspace.download : false,
     },
-    branching: {
-      ...declared.branching,
-      checkpoint: support.workspaceBranching ? declared.branching.checkpoint : false,
-      fork: support.workspaceBranching ? declared.branching.fork : false,
-      ...(declared.branching.retrySafe !== undefined
-        ? { retrySafe: support.workspaceBranching ? declared.branching.retrySafe : false }
-        : {}),
-      ...(declared.branching.lookup !== undefined
-        ? { lookup: support.workspaceBranching ? declared.branching.lookup : false }
-        : {}),
-      ...(declared.branching.cleanup !== undefined
-        ? { cleanup: support.workspaceBranching ? declared.branching.cleanup : false }
-        : {}),
-    },
+    // An incomplete Sandbox surface clears every branching flag together. A
+    // partial claim would let a caller start an operation it cannot recover.
+    branching: support.workspaceBranching
+      ? { ...declared.branching }
+      : {
+          ...declared.branching,
+          checkpoint: false,
+          fork: false,
+          ...(declared.branching.retrySafe !== undefined ? { retrySafe: false } : {}),
+          ...(declared.branching.lookup !== undefined ? { lookup: false } : {}),
+          ...(declared.branching.cleanup !== undefined ? { cleanup: false } : {}),
+        },
     placement: support.placement ? declared.placement : false,
     usage: false,
     ...(declared.observation === undefined

@@ -17,7 +17,6 @@ import {
   WorkspaceForkLookupResultSchema,
   canonicalCandidateDigest,
   confidentialExecutionVerified,
-  forkedEnvironmentConfidentialityVerified,
   sha256Bytes,
 } from "@tangle-network/agent-interface";
 import type {
@@ -101,11 +100,28 @@ interface CleanupRecord {
   acknowledgement: WorkspaceCleanupAcknowledgement;
 }
 
+/** What the provider knows about one operation key before it acts on it. */
+type Resolved<TRecord> =
+  | { state: "known"; record: TRecord }
+  | { state: "conflict"; existingRequestDigest: `sha256:${string}` }
+  | { state: "undecided"; message: string }
+  | { state: "absent" };
+
 export interface TangleWorkspaceBranchingOptions {
   box: SandboxInstanceLike;
   client: SandboxClientLike;
   provider: string;
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+}
+
+/**
+ * Carry the verifier only when the caller supplied one. Every option type that
+ * accepts it is exact-optional, so an explicit `undefined` is not an absent key.
+ */
+export function confidentialVerifierOption(
+  verifier: TangleConfidentialAttestationVerifier | undefined,
+): { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier } {
+  return verifier === undefined ? {} : { confidentialAttestationVerifier: verifier };
 }
 
 /**
@@ -126,42 +142,92 @@ export function createTangleWorkspaceBranching(
   const forks = new Map<string, ForkRecord>();
   const cleanup = new Map<string, CleanupRecord>();
 
+  /**
+   * Answer what this provider already knows about one checkpoint key.
+   *
+   * The in-process record answers first; otherwise the Sandbox inventory and
+   * operation ledger rebuild it after a restart. `absent` means the key has no
+   * resource this provider created, which is the only state where a caller may
+   * go on to create one.
+   */
+  const resolveCheckpoint = async (
+    request: Pick<WorkspaceCheckpointRequest, "idempotencyKey" | "requestDigest">,
+  ): Promise<Resolved<CheckpointRecord>> => {
+    const local = checkpoints.get(request.idempotencyKey);
+    if (local) {
+      return local.request.requestDigest === request.requestDigest
+        ? { state: "known", record: local }
+        : { state: "conflict", existingRequestDigest: local.request.requestDigest };
+    }
+    const recovered = await findCheckpointByKey(box, request.idempotencyKey);
+    if (recovered === undefined) {
+      return { state: "undecided", message: "Sandbox checkpoint inventory is unavailable" };
+    }
+    if (!recovered) return { state: "absent" };
+    if (recovered.marker.requestDigest !== request.requestDigest) {
+      return { state: "conflict", existingRequestDigest: recovered.marker.requestDigest };
+    }
+    const record = checkpointRecordFromSnapshot(
+      recovered.marker.request,
+      recovered.snapshot,
+    );
+    if (!record) {
+      return { state: "undecided", message: "Sandbox checkpoint metadata is invalid" };
+    }
+    checkpoints.set(request.idempotencyKey, record);
+    return { state: "known", record };
+  };
+
+  /** The fork equivalent of {@link resolveCheckpoint}. */
+  const resolveFork = async (
+    request: Pick<WorkspaceForkRequest, "idempotencyKey" | "requestDigest">,
+    signal?: AbortSignal,
+  ): Promise<Resolved<ForkRecord>> => {
+    const local = forks.get(request.idempotencyKey);
+    if (local) {
+      return local.request.requestDigest === request.requestDigest
+        ? { state: "known", record: local }
+        : { state: "conflict", existingRequestDigest: local.request.requestDigest };
+    }
+    const recovered = await findForkByKey(client, box, provider, request.idempotencyKey);
+    if (recovered === undefined) {
+      return { state: "undecided", message: "Sandbox child inventory is unavailable" };
+    }
+    if (!recovered) return { state: "absent" };
+    if (recovered.marker.requestDigest !== request.requestDigest) {
+      return { state: "conflict", existingRequestDigest: recovered.marker.requestDigest };
+    }
+    const environment = await environmentFromChild(
+      recovered.marker.request,
+      recovered.child,
+      provider,
+      recovered.child.createdAt,
+      options.confidentialAttestationVerifier,
+      signal,
+    );
+    if (!environment) {
+      return { state: "undecided", message: "Sandbox fork child identity is incomplete" };
+    }
+    const record = { request: recovered.marker.request, environment, child: recovered.child };
+    forks.set(request.idempotencyKey, record);
+    return { state: "known", record };
+  };
+
   const checkpoint = async (
     input: WorkspaceCheckpointRequest,
     operation?: { signal?: AbortSignal },
   ): Promise<WorkspaceCheckpointResult> => {
     const request = WorkspaceCheckpointRequestSchema.parse(input);
     assertCheckpointSource(request, provider, box.id);
-    const local = checkpoints.get(request.idempotencyKey);
-    if (local) {
-      if (local.request.requestDigest !== request.requestDigest) {
-        return checkpointConflict(request, local.request.requestDigest);
-      }
-      return checkpointSuccess(request, local.checkpoint, "replayed");
+    const known = await resolveCheckpoint(request);
+    if (known.state === "conflict") {
+      return checkpointConflict(request, known.existingRequestDigest);
     }
-
-    const recovered = await findCheckpointByKey(box, request.idempotencyKey);
-    if (recovered === undefined) {
-      return checkpointUnknown(
-        request,
-        "Sandbox checkpoint inventory is unavailable; retry after reconciliation",
-        true,
-      );
+    if (known.state === "undecided") {
+      return checkpointUnknown(request, `${known.message}; retry after reconciliation`, true);
     }
-    if (recovered) {
-      if (recovered.marker.requestDigest !== request.requestDigest) {
-        return checkpointConflict(request, recovered.marker.requestDigest);
-      }
-      const record = checkpointRecordFromSnapshot(request, recovered.snapshot);
-      if (!record) {
-        return checkpointUnknown(
-          request,
-          "Sandbox checkpoint metadata is invalid; retry after reconciliation",
-          true,
-        );
-      }
-      checkpoints.set(request.idempotencyKey, record);
-      return checkpointSuccess(request, record.checkpoint, "replayed");
+    if (known.state === "known") {
+      return checkpointSuccess(request, known.record.checkpoint, "replayed");
     }
 
     const tags = checkpointMarkerTags(request);
@@ -172,11 +238,7 @@ export function createTangleWorkspaceBranching(
         operation?.signal,
       );
     } catch (error) {
-      const conflict = await checkpointConflictFromRemote(
-        box,
-        request,
-        operation?.signal,
-      );
+      const conflict = await checkpointConflictFromRemote(box, request);
       return (
         conflict ??
         checkpointUnknown(
@@ -233,38 +295,15 @@ export function createTangleWorkspaceBranching(
     operation?: { signal?: AbortSignal },
   ): Promise<WorkspaceCheckpointLookupResult> => {
     const request = WorkspaceOperationLookupRequestSchema.parse(input);
-    const local = checkpoints.get(request.idempotencyKey);
-    if (local) {
-      return local.request.requestDigest === request.requestDigest
-        ? checkpointFound(request, local.checkpoint)
-        : checkpointLookupConflict(request, local.request.requestDigest);
+    const known = await resolveCheckpoint(request);
+    if (known.state === "conflict") {
+      return checkpointLookupConflict(request, known.existingRequestDigest);
     }
-
-    const recovered = await findCheckpointByKey(box, request.idempotencyKey);
-    if (recovered === undefined) {
-      return checkpointLookupUnknown(
-        request,
-        "Sandbox checkpoint inventory is unavailable",
-        true,
-      );
+    if (known.state === "undecided") {
+      return checkpointLookupUnknown(request, known.message, true);
     }
-    if (recovered) {
-      if (recovered.marker.requestDigest !== request.requestDigest) {
-        return checkpointLookupConflict(request, recovered.marker.requestDigest);
-      }
-      const record = checkpointRecordFromSnapshot(
-        recovered.marker.request,
-        recovered.snapshot,
-      );
-      if (!record) {
-        return checkpointLookupUnknown(
-          request,
-          "Sandbox checkpoint metadata is invalid",
-          true,
-        );
-      }
-      checkpoints.set(request.idempotencyKey, record);
-      return checkpointFound(request, record.checkpoint);
+    if (known.state === "known") {
+      return checkpointFound(request, known.record.checkpoint);
     }
 
     try {
@@ -272,7 +311,10 @@ export function createTangleWorkspaceBranching(
         box.getSnapshotOperation?.(request.idempotencyKey, { tags: [] }),
         operation?.signal,
       );
-      return checkpointLookupFromSandbox(request, lookup);
+      const settled = lookupOutcomeFromSandbox(lookup, "checkpoint");
+      return settled.absent
+        ? checkpointNotFound(request)
+        : checkpointLookupUnknown(request, settled.message, settled.retryable);
     } catch (error) {
       return checkpointLookupUnknown(
         request,
@@ -307,13 +349,7 @@ export function createTangleWorkspaceBranching(
       }
     }
 
-    const blocking = await findBlockingForks(
-      box,
-      client,
-      box.id,
-      provider,
-      request.targetId,
-    );
+    const blocking = await findBlockingForks(box, client, provider, request.targetId);
     if (blocking === undefined) {
       return cleanupUnknown(
         request,
@@ -330,7 +366,7 @@ export function createTangleWorkspaceBranching(
       return acknowledgement;
     }
 
-    const known = await findManagedCheckpointById(box, provider, request.targetId);
+    const known = await findManagedCheckpoint(box, provider, request.targetId);
     if (known === "unknown") {
       return cleanupUnknown(
         request,
@@ -377,13 +413,7 @@ export function createTangleWorkspaceBranching(
       outcome === "deleted"
         ? cleanupDeleted(request)
         : cleanupAlreadyAbsent(request);
-    if (outcome === "deleted" || outcome === "already_absent") {
-      checkpoints.delete(
-        [...checkpoints.entries()].find(
-          ([, record]) => record.snapshotId === request.targetId,
-        )?.[0] ?? "",
-      );
-    }
+    forgetRecords(checkpoints, (record) => record.snapshotId === request.targetId);
     cleanup.set(request.operationId, {
       requestDigest: request.requestDigest,
       acknowledgement,
@@ -397,56 +427,22 @@ export function createTangleWorkspaceBranching(
   ): Promise<WorkspaceForkResult> => {
     const request = WorkspaceForkRequestSchema.parse(input);
     assertForkSource(request, provider, box.id);
-    const local = forks.get(request.idempotencyKey);
-    if (local) {
-      if (local.request.requestDigest !== request.requestDigest) {
-        return forkConflict(request, local.request.requestDigest);
-      }
-      return forkSuccess(request, local.environment, "replayed");
+    const known = await resolveFork(request, operation?.signal);
+    if (known.state === "conflict") {
+      return forkConflict(request, known.existingRequestDigest);
+    }
+    if (known.state === "undecided") {
+      return forkUnknown(request, `${known.message}; retry after reconciliation`, true);
+    }
+    if (known.state === "known") {
+      return forkSuccess(request, known.record.environment, "replayed");
     }
 
-    const recovered = await findForkByKey(
-      client,
+    const checkpoint = await findManagedCheckpoint(
       box,
       provider,
-      box.id,
-      request.idempotencyKey,
-    );
-    if (recovered === undefined) {
-      return forkUnknown(
-        request,
-        "Sandbox child inventory is unavailable; retry after reconciliation",
-        true,
-      );
-    }
-    if (recovered) {
-      if (recovered.marker.requestDigest !== request.requestDigest) {
-        return forkConflict(request, recovered.marker.requestDigest);
-      }
-      const environment = await environmentFromChild(
-        recovered.marker.request,
-        recovered.child,
-        provider,
-        recovered.child.createdAt,
-        options.confidentialAttestationVerifier,
-        operation?.signal,
-      );
-      if (!environment) {
-        return forkUnknown(
-          request,
-          "Sandbox fork exists but its child identity is incomplete",
-          true,
-        );
-      }
-      const record = { request: recovered.marker.request, environment, child: recovered.child };
-      forks.set(request.idempotencyKey, record);
-      return forkSuccess(request, environment, "replayed");
-    }
-
-    const checkpoint = await findCheckpointForFork(
-      box,
+      request.checkpoint.checkpointId,
       request.checkpoint,
-      provider,
     );
     if (checkpoint !== true) {
       return forkUnknown(
@@ -542,52 +538,15 @@ export function createTangleWorkspaceBranching(
     operation?: { signal?: AbortSignal },
   ): Promise<WorkspaceForkLookupResult> => {
     const request = WorkspaceOperationLookupRequestSchema.parse(input);
-    const local = forks.get(request.idempotencyKey);
-    if (local) {
-      return local.request.requestDigest === request.requestDigest
-        ? forkFound(request, local.environment)
-        : forkLookupConflict(request, local.request.requestDigest);
+    const known = await resolveFork(request, operation?.signal);
+    if (known.state === "conflict") {
+      return forkLookupConflict(request, known.existingRequestDigest);
     }
-
-    const recovered = await findForkByKey(
-      client,
-      box,
-      provider,
-      box.id,
-      request.idempotencyKey,
-    );
-    if (recovered === undefined) {
-      return forkLookupUnknown(
-        request,
-        "Sandbox child inventory is unavailable",
-        true,
-      );
+    if (known.state === "undecided") {
+      return forkLookupUnknown(request, known.message, true);
     }
-    if (recovered) {
-      if (recovered.marker.requestDigest !== request.requestDigest) {
-        return forkLookupConflict(request, recovered.marker.requestDigest);
-      }
-      const environment = await environmentFromChild(
-        recovered.marker.request,
-        recovered.child,
-        provider,
-        recovered.child.createdAt,
-        options.confidentialAttestationVerifier,
-        operation?.signal,
-      );
-      if (!environment) {
-        return forkLookupUnknown(
-          request,
-          "Sandbox fork child identity is incomplete",
-          true,
-        );
-      }
-      forks.set(request.idempotencyKey, {
-        request: recovered.marker.request,
-        environment,
-        child: recovered.child,
-      });
-      return forkFound(request, environment);
+    if (known.state === "known") {
+      return forkFound(request, known.record.environment);
     }
 
     try {
@@ -598,7 +557,10 @@ export function createTangleWorkspaceBranching(
         }),
         operation?.signal,
       );
-      return forkLookupFromSandbox(request, lookup);
+      const settled = lookupOutcomeFromSandbox(lookup, "fork");
+      return settled.absent
+        ? forkNotFound(request)
+        : forkLookupUnknown(request, settled.message, settled.retryable);
     } catch (error) {
       return forkLookupUnknown(
         request,
@@ -676,13 +638,10 @@ export function createTangleWorkspaceBranching(
       outcome === "destroyed"
         ? cleanupDeleted(request)
         : cleanupAlreadyAbsent(request);
-    if (outcome === "destroyed" || outcome === "already_absent") {
-      forks.delete(
-        [...forks.entries()].find(
-          ([, record]) => record.environment.environmentId === request.targetId,
-        )?.[0] ?? "",
-      );
-    }
+    forgetRecords(
+      forks,
+      (record) => record.environment.environmentId === request.targetId,
+    );
     cleanup.set(request.operationId, {
       requestDigest: request.requestDigest,
       acknowledgement,
@@ -717,11 +676,11 @@ export function supportsWorkspaceBranching(
   );
 }
 
-export function supportsConfidentialAttestation(
-  box: SandboxInstanceLike,
-  verifier?: TangleConfidentialAttestationVerifier,
-): boolean {
-  return typeof box.getTeeAttestation === "function" && typeof verifier === "function";
+/** Drop every in-process record for a resource the platform no longer holds. */
+function forgetRecords<T>(records: Map<string, T>, matches: (record: T) => boolean): void {
+  for (const [key, record] of records) {
+    if (matches(record)) records.delete(key);
+  }
 }
 
 function assertCheckpointSource(
@@ -1007,7 +966,18 @@ function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
     requestDigest: request.requestDigest,
     request,
   };
-  return markerTags("checkpoint", request.idempotencyKey, request.requestDigest, marker);
+  const encoded = encodeJson(marker);
+  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
+  const base = `${MARKER_PREFIX}:checkpoint`;
+  const chunks = split(encoded);
+  if (chunks.length > MAX_MARKER_CHUNKS) {
+    throw new Error("workspace marker exceeds the recovery bound");
+  }
+  return [
+    `${base}:key:${encodeText(request.idempotencyKey)}`,
+    `${base}:digest:${request.requestDigest}`,
+    ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
+  ];
 }
 
 function forkMarkerMetadata(
@@ -1030,24 +1000,40 @@ function forkMarkerMetadata(
   };
 }
 
-function markerTags(
-  kind: "checkpoint" | "fork",
-  idempotencyKey: string,
-  requestDigest: string,
+/**
+ * Ask the Sandbox operation ledger whether a marked checkpoint settled.
+ *
+ * A marker only names a candidate resource. Nothing is returned to a caller
+ * until the ledger reports the operation succeeded.
+ */
+async function checkpointOperationSucceeded(
+  box: SandboxInstanceLike,
   marker: CheckpointMarker,
-): string[] {
-  const encoded = encodeJson(marker);
-  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
-  const base = `${MARKER_PREFIX}:${kind}`;
-  const chunks = split(encoded);
-  if (chunks.length > MAX_MARKER_CHUNKS) {
-    throw new Error("workspace marker exceeds the recovery bound");
-  }
-  return [
-    `${base}:key:${encodeText(idempotencyKey)}`,
-    `${base}:digest:${requestDigest}`,
-    ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
-  ];
+): Promise<boolean> {
+  const lookup = await box.getSnapshotOperation?.(marker.idempotencyKey, {
+    tags: checkpointMarkerTags(marker.request),
+  });
+  return (
+    lookup?.outcome === "found" &&
+    lookup.kind === "checkpoint" &&
+    lookup.state === "succeeded"
+  );
+}
+
+/** The fork equivalent of {@link checkpointOperationSucceeded}. */
+async function forkOperationSucceeded(
+  box: SandboxInstanceLike,
+  marker: ForkMarker,
+): Promise<boolean> {
+  const lookup = await box.getForkOperation?.(marker.idempotencyKey, {
+    count: 1,
+    metadata: forkMarkerMetadata(marker.request),
+  });
+  return (
+    lookup?.outcome === "found" &&
+    lookup.kind === "fork" &&
+    lookup.state === "succeeded"
+  );
 }
 
 async function findCheckpointByKey(
@@ -1075,15 +1061,7 @@ async function findCheckpointByKey(
     const marker = checkpointMarkerFromTags(snapshot.tags, key);
     if (!marker) continue;
     try {
-      const lookup = await box.getSnapshotOperation?.(
-        marker.idempotencyKey,
-        { tags: checkpointMarkerTags(marker.request) },
-      );
-      if (
-        lookup?.outcome === "found" &&
-        lookup.state === "succeeded" &&
-        lookup.kind === "checkpoint"
-      ) {
+      if (await checkpointOperationSucceeded(box, marker)) {
         return { snapshot, marker };
       }
       unresolved = true;
@@ -1094,10 +1072,18 @@ async function findCheckpointByKey(
   return unresolved ? undefined : null;
 }
 
-async function findManagedCheckpointById(
+/**
+ * Confirm that one snapshot id is a settled checkpoint this provider created.
+ *
+ * `expected` binds the answer to a specific checkpoint reference. A reference
+ * that does not match its marker is absent, not unknown: the caller supplied a
+ * checkpoint this source never produced.
+ */
+async function findManagedCheckpoint(
   box: SandboxInstanceLike,
   provider: string,
   id: string,
+  expected?: WorkspaceCheckpointRef,
 ): Promise<true | false | "unknown"> {
   try {
     const snapshots = await box.listSnapshots?.();
@@ -1107,61 +1093,23 @@ async function findManagedCheckpointById(
     const snapshot = snapshots.find((candidate) => candidate.snapshotId === id);
     if (!snapshot) return false;
     if (!validSnapshotInfo(snapshot, box.id)) return "unknown";
-    const marker = checkpointMarkerFromTags(snapshot.tags);
-    if (!marker) return "unknown";
-    if (marker.request.source.provider !== provider || marker.request.source.environmentId !== box.id) return "unknown";
-    const lookup = await box.getSnapshotOperation?.(
-      marker.idempotencyKey,
-      { tags: checkpointMarkerTags(marker.request) },
-    );
-    return lookup?.outcome === "found" &&
-      lookup.kind === "checkpoint" &&
-      lookup.state === "succeeded"
-      ? true
-      : "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-async function findCheckpointForFork(
-  box: SandboxInstanceLike,
-  checkpoint: WorkspaceCheckpointRef,
-  provider: string,
-): Promise<true | false | "unknown"> {
-  try {
-    const snapshots = await box.listSnapshots?.();
-    if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
-      return "unknown";
-    }
-    const snapshot = snapshots.find(
-      (candidate) => candidate.snapshotId === checkpoint.checkpointId,
-    );
-    if (!snapshot) return false;
-    if (!validSnapshotInfo(snapshot, box.id)) return "unknown";
-    const marker = checkpointMarkerFromTags(
-      snapshot.tags,
-      checkpoint.idempotencyKey,
-    );
+    const marker = checkpointMarkerFromTags(snapshot.tags, expected?.idempotencyKey);
+    if (!marker) return expected ? false : "unknown";
     if (
-      !marker ||
-      marker.requestDigest !== checkpoint.requestDigest ||
       marker.request.source.provider !== provider ||
-      marker.request.source.environmentId !== box.id ||
-      canonicalCandidateDigest(marker.request.source) !==
-        canonicalCandidateDigest(checkpoint.source)
+      marker.request.source.environmentId !== box.id
+    ) {
+      return expected ? false : "unknown";
+    }
+    if (
+      expected &&
+      (marker.requestDigest !== expected.requestDigest ||
+        canonicalCandidateDigest(marker.request.source) !==
+          canonicalCandidateDigest(expected.source))
     ) {
       return false;
     }
-    const lookup = await box.getSnapshotOperation?.(
-      marker.idempotencyKey,
-      { tags: checkpointMarkerTags(marker.request) },
-    );
-    return lookup?.outcome === "found" &&
-      lookup.kind === "checkpoint" &&
-      lookup.state === "succeeded"
-      ? true
-      : "unknown";
+    return (await checkpointOperationSucceeded(box, marker)) ? true : "unknown";
   } catch {
     return "unknown";
   }
@@ -1171,46 +1119,14 @@ async function findForkByKey(
   client: SandboxClientLike,
   box: SandboxInstanceLike,
   provider: string,
-  sourceEnvironmentId: string,
   key: string,
 ): Promise<{ child: SandboxInstanceLike; marker: ForkMarker } | null | undefined> {
-  let children: SandboxInstanceLike[];
-  try {
-    const listed = await client.list?.({ scope: "all", limit: MAX_LIST_RESULTS });
-    if (!Array.isArray(listed)) return undefined;
-    children = listed;
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(children) || children.length > MAX_LIST_RESULTS) {
-    return undefined;
-  }
+  const candidates = await listMarkedForkChildren(client, box, provider, key);
+  if (candidates === undefined) return undefined;
   let unresolved = false;
-  for (const child of children) {
-    if (!child || typeof child !== "object" || safeIdentifier(child.id) === undefined) {
-      return undefined;
-    }
-    if (child.id === sourceEnvironmentId) continue;
-    const marker = forkMarkerFromMetadata(child.metadata, key);
-    if (!marker) continue;
-    if (
-      marker.request.checkpoint.provider !== provider ||
-      marker.request.checkpoint.source.environmentId !== sourceEnvironmentId
-    ) {
-      continue;
-    }
+  for (const candidate of candidates) {
     try {
-      const lookup = await box.getForkOperation?.(marker.idempotencyKey, {
-        count: 1,
-        metadata: forkMarkerMetadata(marker.request),
-      });
-      if (
-        lookup?.outcome === "found" &&
-        lookup.state === "succeeded" &&
-        lookup.kind === "fork"
-      ) {
-        return { child, marker };
-      }
+      if (await forkOperationSucceeded(box, candidate.marker)) return candidate;
       unresolved = true;
     } catch {
       return undefined;
@@ -1231,20 +1147,8 @@ async function findForkChildById(
     if (child === null) return null;
     if (child.id !== id) return undefined;
     const marker = forkMarkerFromMetadata(child.metadata);
-    if (
-      !marker ||
-      marker.request.checkpoint.provider !== provider ||
-      marker.request.checkpoint.source.environmentId !== box.id
-    ) {
-      return undefined;
-    }
-    const lookup = await box.getForkOperation?.(marker.idempotencyKey, {
-      count: 1,
-      metadata: forkMarkerMetadata(marker.request),
-    });
-    return lookup?.outcome === "found" && lookup.state === "succeeded"
-      ? child
-      : undefined;
+    if (!marker || !markerBelongsToSource(marker, provider, box.id)) return undefined;
+    return (await forkOperationSucceeded(box, marker)) ? child : undefined;
   } catch {
     return undefined;
   }
@@ -1253,10 +1157,39 @@ async function findForkChildById(
 async function findBlockingForks(
   box: SandboxInstanceLike,
   client: SandboxClientLike,
-  sourceEnvironmentId: string,
   provider: string,
   checkpointId: string,
 ): Promise<string[] | undefined> {
+  const candidates = await listMarkedForkChildren(client, box, provider);
+  if (candidates === undefined) return undefined;
+  const blocking = new Set<string>();
+  for (const { child, marker } of candidates) {
+    if (marker.request.checkpoint.checkpointId !== checkpointId) continue;
+    try {
+      // A candidate that cannot be confirmed leaves the dependency set
+      // unknown, so cleanup must not proceed on a partial answer.
+      if (!(await forkOperationSucceeded(box, marker))) return undefined;
+      blocking.add(child.id);
+    } catch {
+      return undefined;
+    }
+  }
+  return [...blocking].sort();
+}
+
+/**
+ * Read every account child that carries a fork marker this source produced.
+ *
+ * The scan is the shared front half of fork recovery and cleanup. It returns
+ * undefined when the inventory itself cannot be trusted, so both callers fail
+ * closed on the same condition.
+ */
+async function listMarkedForkChildren(
+  client: SandboxClientLike,
+  box: SandboxInstanceLike,
+  provider: string,
+  key?: string,
+): Promise<{ child: SandboxInstanceLike; marker: ForkMarker }[] | undefined> {
   let children: SandboxInstanceLike[];
   try {
     const listed = await client.list?.({ scope: "all", limit: MAX_LIST_RESULTS });
@@ -1265,43 +1198,29 @@ async function findBlockingForks(
   } catch {
     return undefined;
   }
-  if (!Array.isArray(children) || children.length > MAX_LIST_RESULTS) {
-    return undefined;
-  }
-  const blocking: string[] = [];
+  if (children.length > MAX_LIST_RESULTS) return undefined;
+  const marked: { child: SandboxInstanceLike; marker: ForkMarker }[] = [];
   for (const child of children) {
     if (!child || typeof child !== "object" || safeIdentifier(child.id) === undefined) {
       return undefined;
     }
-    if (child.id === sourceEnvironmentId) continue;
-    const marker = forkMarkerFromMetadata(child.metadata);
-    if (
-      !marker ||
-      marker.request.checkpoint.provider !== provider ||
-      marker.request.checkpoint.source.environmentId !== sourceEnvironmentId ||
-      marker.request.checkpoint.checkpointId !== checkpointId
-    ) {
-      continue;
-    }
-    try {
-      const lookup = await box.getForkOperation?.(marker.idempotencyKey, {
-        count: 1,
-        metadata: forkMarkerMetadata(marker.request),
-      });
-      if (
-        !lookup ||
-        lookup.kind !== "fork" ||
-        lookup.outcome !== "found" ||
-        lookup.state !== "succeeded"
-      ) {
-        return undefined;
-      }
-      blocking.push(child.id);
-    } catch {
-      return undefined;
-    }
+    if (child.id === box.id) continue;
+    const marker = forkMarkerFromMetadata(child.metadata, key);
+    if (!marker || !markerBelongsToSource(marker, provider, box.id)) continue;
+    marked.push({ child, marker });
   }
-  return blocking.filter((id, index, values) => values.indexOf(id) === index).sort();
+  return marked;
+}
+
+function markerBelongsToSource(
+  marker: ForkMarker,
+  provider: string,
+  sourceEnvironmentId: string,
+): boolean {
+  return (
+    marker.request.checkpoint.provider === provider &&
+    marker.request.checkpoint.source.environmentId === sourceEnvironmentId
+  );
 }
 
 function checkpointMarkerFromTags(
@@ -1380,31 +1299,25 @@ function forkMarkerFromMetadata(
   return { version: 1, kind: "fork", idempotencyKey: parsed.idempotencyKey, requestDigest: parsed.requestDigest, request: request.data };
 }
 
+/**
+ * Turn a failed create into a conflict only from provider-owned material.
+ *
+ * The Sandbox operation ledger also reports a conflicting digest, but that
+ * digest covers the Sandbox request body, not this interface's identity, so it
+ * is never presented as an interface digest.
+ */
 async function checkpointConflictFromRemote(
   box: SandboxInstanceLike,
   request: WorkspaceCheckpointRequest,
-  signal?: AbortSignal,
 ): Promise<WorkspaceCheckpointResult | undefined> {
   const recovered = await findCheckpointByKey(box, request.idempotencyKey);
   if (recovered && recovered.marker.requestDigest !== request.requestDigest) {
     return checkpointConflict(request, recovered.marker.requestDigest);
   }
-  try {
-    const lookup = await awaitWithSignal(
-      box.getSnapshotOperation?.(request.idempotencyKey, { tags: checkpointMarkerTags(request) }),
-      signal,
-    );
-    if (lookup?.outcome === "conflict" && validDigest(lookup.existingRequestDigest)) {
-      // The server digest covers Sandbox's request body, not this interface's
-      // identity. Do not present it as an interface digest.
-      return undefined;
-    }
-  } catch {
-    // The original error is the useful bounded failure for the caller.
-  }
   return undefined;
 }
 
+/** The fork equivalent of {@link checkpointConflictFromRemote}. */
 async function forkConflictFromRemote(
   client: SandboxClientLike,
   box: SandboxInstanceLike,
@@ -1415,7 +1328,6 @@ async function forkConflictFromRemote(
     client,
     box,
     provider,
-    box.id,
     request.idempotencyKey,
   );
   if (recovered && recovered.marker.requestDigest !== request.requestDigest) {
@@ -1424,29 +1336,31 @@ async function forkConflictFromRemote(
   return undefined;
 }
 
-function checkpointLookupFromSandbox(
-  request: WorkspaceOperationLookupRequest,
+/**
+ * Read a ledger answer for a key that left no marked resource behind.
+ *
+ * `absent` is the settled answer: a decided operation with no inventory marker
+ * means the resource was cleaned after creation, and the provider must not
+ * resurrect it from the ledger. Every other state is undecided for the caller.
+ */
+function lookupOutcomeFromSandbox(
   lookup: SandboxWorkspaceOperationLookupLike | undefined,
-): WorkspaceCheckpointLookupResult {
-  if (!lookup || lookup.kind !== "checkpoint") return checkpointLookupUnknown(request, "Sandbox returned no checkpoint lookup", true);
-  if (lookup.outcome === "not_found") return checkpointNotFound(request);
-  if (lookup.outcome === "conflict") return checkpointLookupUnknown(request, "Sandbox found a conflicting operation without provider identity", false);
-  if (lookup.outcome === "unknown" || lookup.state !== "succeeded") return checkpointLookupUnknown(request, "Sandbox checkpoint operation is not decided", true);
-  // A settled operation with no inventory marker means the resource was
-  // cleaned after creation. The provider must not resurrect it from the
-  // operation ledger.
-  return checkpointNotFound(request);
-}
-
-function forkLookupFromSandbox(
-  request: WorkspaceOperationLookupRequest,
-  lookup: SandboxWorkspaceOperationLookupLike | undefined,
-): WorkspaceForkLookupResult {
-  if (!lookup || lookup.kind !== "fork") return forkLookupUnknown(request, "Sandbox returned no fork lookup", true);
-  if (lookup.outcome === "not_found") return forkNotFound(request);
-  if (lookup.outcome === "conflict") return forkLookupUnknown(request, "Sandbox found a conflicting operation without provider identity", false);
-  if (lookup.outcome === "unknown" || lookup.state !== "succeeded") return forkLookupUnknown(request, "Sandbox fork operation is not decided", true);
-  return forkNotFound(request);
+  kind: "checkpoint" | "fork",
+): { absent: true } | { absent: false; message: string; retryable: boolean } {
+  if (!lookup || lookup.kind !== kind) {
+    return { absent: false, message: `Sandbox returned no ${kind} lookup`, retryable: true };
+  }
+  if (lookup.outcome === "conflict") {
+    return {
+      absent: false,
+      message: "Sandbox found a conflicting operation without provider identity",
+      retryable: false,
+    };
+  }
+  if (lookup.outcome !== "not_found" && (lookup.outcome === "unknown" || lookup.state !== "succeeded")) {
+    return { absent: false, message: `Sandbox ${kind} operation is not decided`, retryable: true };
+  }
+  return { absent: true };
 }
 
 function checkpointSuccess(
@@ -1565,10 +1479,6 @@ function safeError(error: unknown): string {
   return message.slice(0, MAX_STRING_LENGTH);
 }
 
-function validDigest(value: unknown): value is `sha256:${string}` {
-  return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
-}
-
 function encodeText(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
@@ -1609,17 +1519,4 @@ function split(value: string): string[] {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Validate the attestation a caller received from this provider with the
- * canonical interface verifier. The provider's callback remains the trust
- * boundary for the provider key and hardware quote.
- */
-export function tangleWorkspaceConfidentialityVerified(
-  request: WorkspaceForkRequest,
-  environment: ForkedEnvironmentRef,
-  verifier?: Parameters<typeof confidentialExecutionVerified>[0]["verifyProviderAttestation"],
-): boolean {
-  return forkedEnvironmentConfidentialityVerified(request, environment, verifier);
 }

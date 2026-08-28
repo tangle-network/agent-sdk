@@ -213,11 +213,15 @@ export interface SandboxConnectionLike {
   runtimeUrl?: string;
 }
 
-/** The keyed snapshot acknowledgement exposed by the Sandbox SDK. */
+/**
+ * The keyed snapshot acknowledgement exposed by the Sandbox SDK.
+ *
+ * Every structural type below declares only the fields this adapter reads. A
+ * newer SDK may return more, and an unread field never becomes a contract.
+ */
 export interface SandboxSnapshotResultLike {
   snapshotId: string;
   createdAt: Date | string;
-  sizeBytes?: number;
   tags: string[];
   idempotency?: {
     outcome: "created" | "replayed";
@@ -231,8 +235,6 @@ export interface SandboxSnapshotInfoLike {
   sandboxId: string;
   createdAt: Date | string;
   tags: string[];
-  paths?: string[];
-  sizeBytes?: number;
 }
 
 /** A deletion result must state what the platform actually did. */
@@ -246,16 +248,6 @@ export interface SandboxWorkspaceOperationLookupLike {
   outcome: "found" | "not_found" | "conflict" | "unknown";
   kind: "checkpoint" | "fork";
   state?: "pending" | "succeeded" | "failed";
-  requestDigest?: string;
-  existingRequestDigest?: string;
-  result?: Record<string, unknown>;
-  failure?: { status: number; error: string; code?: string };
-}
-
-/** The branch options supported by the managed Sandbox route. */
-export interface SandboxForkOptionsLike {
-  metadata?: Record<string, unknown>;
-  idempotencyKey?: string;
 }
 
 /** Fan-out acknowledgement returned by SandboxInstance.fork(). */
@@ -528,7 +520,6 @@ export interface SandboxInstanceLike {
    * by id or when the platform reported no receipt.
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
-  /** Refresh accepts either the current SDK signal or no argument. */
   refresh?(signal?: AbortSignal): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
   /** Managed whole-workspace checkpoint operation. */
@@ -551,7 +542,7 @@ export interface SandboxInstanceLike {
   /** Managed copy-on-write fork operation. */
   fork?(
     count: number,
-    options?: SandboxForkOptionsLike,
+    options?: { metadata?: Record<string, unknown>; idempotencyKey?: string },
   ): Promise<SandboxForkAcknowledgementLike>;
   /** Recover fork state after a provider process restart. */
   getForkOperation?(

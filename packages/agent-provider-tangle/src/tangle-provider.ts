@@ -20,7 +20,10 @@ import {
   narrowTangleCapabilitiesToBackend,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
-import { createTangleWorkspaceBranching } from "./tangle-workspace-branching.js";
+import {
+  confidentialVerifierOption,
+  createTangleWorkspaceBranching,
+} from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
@@ -75,14 +78,11 @@ export function createTangleProvider(
     declared: AgentEnvironmentCapabilities,
   ): AgentEnvironmentCapabilities =>
     AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForClient(declared, options.client, {
-        ...(options.confidentialAttestationVerifier === undefined
-          ? {}
-          : {
-              confidentialAttestationVerifier:
-                options.confidentialAttestationVerifier,
-            }),
-      }),
+      capabilitiesForClient(
+        declared,
+        options.client,
+        confidentialVerifierOption(options.confidentialAttestationVerifier),
+      ),
     );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
     narrowedProviderCapabilities(await resolveDeclaredCapabilities());
@@ -156,12 +156,7 @@ export function createTangleProvider(
           ...(requestedResources === undefined
             ? {}
             : { resources: requestedResources }),
-          ...(options.confidentialAttestationVerifier === undefined
-            ? {}
-            : {
-                confidentialAttestationVerifier:
-                  options.confidentialAttestationVerifier,
-              }),
+          ...confidentialVerifierOption(options.confidentialAttestationVerifier),
         },
       );
       input.signal?.throwIfAborted();
@@ -208,12 +203,9 @@ export function createTangleProvider(
               box,
               client: options.client,
               provider: providerName,
-              ...(options.confidentialAttestationVerifier === undefined
-                ? {}
-                : {
-                    confidentialAttestationVerifier:
-                      options.confidentialAttestationVerifier,
-                  }),
+              ...confidentialVerifierOption(
+                options.confidentialAttestationVerifier,
+              ),
             }) ?? null
           );
         },
@@ -249,12 +241,9 @@ export function createTangleProvider(
               options.client,
               declaredCapabilities,
               operation?.signal ? { signal: operation.signal } : undefined,
-              options.confidentialAttestationVerifier === undefined
-                ? undefined
-                : {
-                    confidentialAttestationVerifier:
-                      options.confidentialAttestationVerifier,
-                  },
+              confidentialVerifierOption(
+                options.confidentialAttestationVerifier,
+              ),
             );
           },
         }

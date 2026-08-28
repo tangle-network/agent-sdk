@@ -68,7 +68,10 @@ import { createExecutionUsageLog } from "./tangle-usage-log.js";
 import { observeTangleEnvironment } from "./tangle-observation.js";
 import { createTangleTerminalRegistry } from "./tangle-terminal.js";
 import { createTangleInteractiveAgentRegistry } from "./tangle-interactive.js";
-import { createTangleWorkspaceBranching } from "./tangle-workspace-branching.js";
+import {
+  confidentialVerifierOption,
+  createTangleWorkspaceBranching,
+} from "./tangle-workspace-branching.js";
 import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
 
 /**
@@ -115,14 +118,12 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = await readDeploymentCapabilitySupport(box, operation);
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForSandbox(declaredCapabilities, support, deployment, {
-        ...(request?.confidentialAttestationVerifier === undefined
-          ? {}
-          : {
-              confidentialAttestationVerifier:
-                request.confidentialAttestationVerifier,
-            }),
-      }),
+      capabilitiesForSandbox(
+        declaredCapabilities,
+        support,
+        deployment,
+        confidentialVerifierOption(request?.confidentialAttestationVerifier),
+      ),
     ),
   );
   const workspaceBranching =
@@ -134,12 +135,7 @@ export async function sandboxInstanceAsEnvironment(
           box,
           client,
           provider: providerName,
-          ...(request?.confidentialAttestationVerifier === undefined
-            ? {}
-            : {
-                confidentialAttestationVerifier:
-                  request.confidentialAttestationVerifier,
-              }),
+          ...confidentialVerifierOption(request?.confidentialAttestationVerifier),
         })
       : undefined;
   // The published document is the single source for what this environment
@@ -191,10 +187,7 @@ export async function sandboxInstanceAsEnvironment(
       : { workspaceBranching }),
     async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
       assertOptionKeys(options, ["signal"], "Tangle environment status");
-      await awaitWithSignal(
-        box.refresh ? box.refresh(options?.signal) : undefined,
-        options?.signal,
-      );
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
       return statusFromUnknown(box.status);
     },
     async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
@@ -440,10 +433,7 @@ export async function sandboxInstanceAsEnvironment(
     async refresh(options?: { signal?: AbortSignal }): Promise<void> {
       assertOptionKeys(options, ["signal"], "Tangle refresh");
       options?.signal?.throwIfAborted();
-      await awaitWithSignal(
-        box.refresh ? box.refresh(options?.signal) : undefined,
-        options?.signal,
-      );
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
       options?.signal?.throwIfAborted();
     },
     ...(support.destroy

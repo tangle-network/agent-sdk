@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalCandidateDigest,
   confidentialExecutionRequestDigest,
+  forkedEnvironmentConfidentialityVerified,
   sha256Bytes,
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
@@ -14,9 +15,7 @@ import type {
 import { runWorkspaceBranchingConformance } from "@tangle-network/agent-provider-testkit";
 import {
   createTangleWorkspaceBranching,
-  supportsConfidentialAttestation,
   supportsWorkspaceBranching,
-  tangleWorkspaceConfidentialityVerified,
 } from "./tangle-workspace-branching.js";
 import { createTangleProvider } from "./tangle-provider.js";
 import type {
@@ -197,7 +196,6 @@ describe("Tangle workspace branching", () => {
         client,
       ),
     ).toBe(false);
-    expect(supportsConfidentialAttestation(box)).toBe(false);
   });
 
   it("passes exact checkpoint, fork, recovery, conflict, and cleanup conformance", async () => {
@@ -330,7 +328,6 @@ describe("Tangle workspace branching", () => {
         };
       },
     };
-    expect(supportsConfidentialAttestation(attestationBox, () => null)).toBe(true);
     const verifier = async ({ attestation }: { attestation: { measurement: `sha256:${string}` } }) => ({
       providerKeyId: "provider-key-1",
       providerSignature: "signature-1",
@@ -377,7 +374,7 @@ describe("Tangle workspace branching", () => {
       placement: request.placement,
       confidentialRequested: true,
     };
-    expect(tangleWorkspaceConfidentialityVerified(request, environment, () => false)).toBe(false);
+    expect(forkedEnvironmentConfidentialityVerified(request, environment, () => false)).toBe(false);
     expect(confidentialExecutionRequestDigest(request.confidential!)).toMatch(/^sha256:/);
   });
 
@@ -469,7 +466,7 @@ describe("Tangle workspace branching", () => {
     if (accepted.status !== "created") throw new Error("accepted fork setup failed");
     expect(accepted.environment.confidentialAttestation).toBeDefined();
     expect(
-      tangleWorkspaceConfidentialityVerified(
+      forkedEnvironmentConfidentialityVerified(
         acceptedRequest,
         accepted.environment,
         () => true,
