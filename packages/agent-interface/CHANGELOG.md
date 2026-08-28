@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 1.7.0
+
+### Minor Changes
+
+- 19e8678: Implement managed Sandbox workspace checkpoint and fork operations with durable recovery, dependency-safe cleanup, and fail-closed TEE attestation verification.
+
+  The Tangle provider now requires `@tangle-network/sandbox` 0.33.1 or newer.
+
 ## 1.6.0
 
 ### Minor Changes
