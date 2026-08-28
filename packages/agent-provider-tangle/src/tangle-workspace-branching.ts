@@ -63,9 +63,12 @@ import type {
  * operation ledger and the external verifier can prove an outcome.
  */
 const MARKER_PREFIX = "tangle-agent-ws-v1";
+/** Marker namespace used by releases before the 128-byte tag limit. */
+const LEGACY_MARKER_PREFIX = "tangle-agent-sdk:workspace:v1";
 const FORK_METADATA_KEY = "__tangle_agent_workspace_v1";
 const MAX_MARKER_TAG_LENGTH = 128;
 const MARKER_CHUNK_SIZE = 80;
+const LEGACY_MARKER_CHUNK_SIZE = 240;
 const MAX_MARKER_CHUNKS = 512;
 /** Sandbox rejects list requests above this page size. */
 const SANDBOX_LIST_PAGE_SIZE = 1_000;
@@ -76,6 +79,8 @@ interface CheckpointMarker {
   idempotencyKey: string;
   requestDigest: `sha256:${string}`;
   request: WorkspaceCheckpointRequest;
+  /** True only for markers written by the pre-128-byte-tag release. */
+  legacy?: boolean;
 }
 
 interface ForkMarker {
@@ -1052,6 +1057,29 @@ function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
   );
 }
 
+/** Rebuild the exact tags used by the release before the current safe format. */
+function legacyCheckpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
+  const marker: CheckpointMarker = {
+    version: 1,
+    kind: "checkpoint",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    request,
+  };
+  const encoded = encodeJson(marker);
+  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
+  const base = `${LEGACY_MARKER_PREFIX}:checkpoint`;
+  const chunks = splitIntoChunks(encoded, LEGACY_MARKER_CHUNK_SIZE);
+  if (chunks.length > MAX_MARKER_CHUNKS) {
+    throw new Error("workspace marker exceeds the recovery bound");
+  }
+  return [
+    `${base}:key:${encodeText(request.idempotencyKey)}`,
+    `${base}:digest:${request.requestDigest}`,
+    ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
+  ];
+}
+
 function forkMarkerMetadata(
   request: WorkspaceForkRequest,
 ): Record<string, unknown> {
@@ -1085,7 +1113,9 @@ async function checkpointOperationSucceeded(
 ): Promise<boolean> {
   const lookup = await awaitWithSignal(
     box.getSnapshotOperation?.(marker.idempotencyKey, {
-      tags: checkpointMarkerTags(marker.request),
+      tags: marker.legacy
+        ? legacyCheckpointMarkerTags(marker.request)
+        : checkpointMarkerTags(marker.request),
     }),
     signal,
   );
@@ -1443,15 +1473,28 @@ function checkpointMarkerFromTags(
   if (
     !Array.isArray(tags) ||
     tags.length > MAX_MARKER_CHUNKS + 3 ||
-    !tags.every(
-      (tag) =>
-        safeString(tag) !== undefined &&
-        Buffer.byteLength(tag, "utf8") <= MAX_MARKER_TAG_LENGTH,
-    )
+    !tags.every((tag) => safeString(tag) !== undefined)
   ) {
     return undefined;
   }
-  const base = `${MARKER_PREFIX}-checkpoint`;
+
+  const currentBase = `${MARKER_PREFIX}-checkpoint`;
+  const legacyBase = `${LEGACY_MARKER_PREFIX}:checkpoint`;
+  const hasCurrentTags = tags.some((tag) => tag.startsWith(`${currentBase}-`));
+  const hasLegacyTags = tags.some((tag) => tag.startsWith(`${legacyBase}:`));
+  if (hasCurrentTags === hasLegacyTags) return undefined;
+  if (hasLegacyTags) return legacyCheckpointMarkerFromTags(tags, key, legacyBase);
+  if (tags.some((tag) => Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH)) {
+    return undefined;
+  }
+  return currentCheckpointMarkerFromTags(tags, key, currentBase);
+}
+
+function currentCheckpointMarkerFromTags(
+  tags: string[],
+  key: string | undefined,
+  base: string,
+): CheckpointMarker | undefined {
   const keyTag = tags.find((tag) => tag.startsWith(`${base}-key-`));
   if (
     keyTag &&
@@ -1486,9 +1529,56 @@ function checkpointMarkerFromTags(
   return checkpointMarkerFromUnknown(decoded, key);
 }
 
+function legacyCheckpointMarkerFromTags(
+  tags: string[],
+  key: string | undefined,
+  base: string,
+): CheckpointMarker | undefined {
+  const keyTag = tags.find((tag) => tag.startsWith(`${base}:key:`));
+  if (
+    keyTag &&
+    key !== undefined &&
+    decodeText(keyTag.slice(`${base}:key:`.length)) !== key
+  ) {
+    return undefined;
+  }
+  const chunks = tags
+    .map((tag) => {
+      const match = tag.match(
+        new RegExp(`^${escapeRegExp(base)}:material:(\\d+):(\\d+):([A-Za-z0-9_-]+)$`),
+      );
+      return match
+        ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] }
+        : undefined;
+    })
+    .filter(
+      (value): value is { index: number; total: number; chunk: string } =>
+        value !== undefined,
+    )
+    .sort((left, right) => left.index - right.index);
+  if (
+    chunks.length === 0 ||
+    chunks[0].total < 1 ||
+    chunks[0].total > MAX_MARKER_CHUNKS ||
+    chunks[0].total !== chunks.length ||
+    chunks.some(
+      (chunk, index) =>
+        !Number.isSafeInteger(chunk.index) ||
+        !Number.isSafeInteger(chunk.total) ||
+        chunk.index !== index ||
+        chunk.total !== chunks[0].total,
+    )
+  ) {
+    return undefined;
+  }
+  const decoded = decodeJson(chunks.map((chunk) => chunk.chunk).join(""));
+  return checkpointMarkerFromUnknown(decoded, key, true);
+}
+
 function checkpointMarkerFromUnknown(
   value: unknown,
   key?: string,
+  legacy = false,
 ): CheckpointMarker | undefined {
   if (!value || typeof value !== "object") return undefined;
   const parsed = value as Partial<CheckpointMarker>;
@@ -1496,7 +1586,14 @@ function checkpointMarkerFromUnknown(
   if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
   const request = WorkspaceCheckpointRequestSchema.safeParse(parsed.request);
   if (!request.success || request.data.idempotencyKey !== parsed.idempotencyKey || request.data.requestDigest !== parsed.requestDigest) return undefined;
-  return { version: 1, kind: "checkpoint", idempotencyKey: parsed.idempotencyKey, requestDigest: parsed.requestDigest, request: request.data };
+  return {
+    version: 1,
+    kind: "checkpoint",
+    idempotencyKey: parsed.idempotencyKey,
+    requestDigest: parsed.requestDigest,
+    request: request.data,
+    ...(legacy ? { legacy: true } : {}),
+  };
 }
 
 function forkMarkerFromMetadata(
@@ -1734,6 +1831,15 @@ function encodeText(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
+function decodeText(value: string): string | undefined {
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    return encodeText(decoded) === value ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function markerKeyDigest(value: string): string {
   return sha256Bytes(Buffer.from(value, "utf8"));
 }
@@ -1757,9 +1863,13 @@ function decodeJson(value: string): unknown {
 }
 
 function split(value: string): string[] {
+  return splitIntoChunks(value, MARKER_CHUNK_SIZE);
+}
+
+function splitIntoChunks(value: string, chunkSize: number): string[] {
   const chunks: string[] = [];
-  for (let index = 0; index < value.length; index += MARKER_CHUNK_SIZE) {
-    chunks.push(value.slice(index, index + MARKER_CHUNK_SIZE));
+  for (let index = 0; index < value.length; index += chunkSize) {
+    chunks.push(value.slice(index, index + chunkSize));
   }
   return chunks;
 }

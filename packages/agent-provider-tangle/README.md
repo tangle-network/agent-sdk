@@ -138,6 +138,7 @@ cannot prove the complete operation surface.
 Recovery reads the account inventory through Sandbox offset pages of at most
 1,000 sandboxes and continues until a short page proves the inventory is
 complete.
+The adapter also reads checkpoints from the previous marker format while writing only the current bounded format.
 Malformed, repeated, failed, or over-bound pages return `unknown` and do not
 mutate a resource.
 Sandbox exposes snapshots only through the live source instance.

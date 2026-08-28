@@ -258,6 +258,61 @@ describe("Tangle workspace branching", () => {
     ).toBe(true);
   });
 
+  it("recovers checkpoints written with the pre-safe marker format", async () => {
+    const { box, client } = createFakeSandbox();
+    const request = checkpointRequest();
+    const marker = {
+      version: 1 as const,
+      kind: "checkpoint" as const,
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+      request,
+    };
+    const encoded = Buffer.from(JSON.stringify(marker), "utf8").toString("base64url");
+    const chunks: string[] = [];
+    for (let index = 0; index < encoded.length; index += 240) {
+      chunks.push(encoded.slice(index, index + 240));
+    }
+    const base = "tangle-agent-sdk:workspace:v1:checkpoint";
+    const legacyTags = [
+      `${base}:key:${Buffer.from(request.idempotencyKey, "utf8").toString("base64url")}`,
+      `${base}:digest:${request.requestDigest}`,
+      ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
+    ];
+    const snapshot = {
+      snapshotId: "legacy-checkpoint",
+      sandboxId: sourceEnvironmentId,
+      createdAt: new Date("2026-08-28T00:00:00.000Z"),
+      tags: legacyTags,
+    };
+    box.listSnapshots = async () => [snapshot];
+    const observedTags: string[][] = [];
+    box.getSnapshotOperation = async (_id, options) => {
+      observedTags.push(options?.tags ?? []);
+      return options?.tags?.join("|") === legacyTags.join("|")
+        ? { outcome: "found" as const, kind: "checkpoint" as const, state: "succeeded" as const }
+        : { outcome: "not_found" as const, kind: "checkpoint" as const };
+    };
+
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const result = await operations!.lookupCheckpoint({
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+    });
+    expect(result).toMatchObject({
+      status: "found",
+      checkpoint: {
+        checkpointId: snapshot.snapshotId,
+        provider,
+        source,
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+        createdAt: snapshot.createdAt.toISOString(),
+      },
+    });
+    expect(observedTags).toEqual([legacyTags]);
+  });
+
   it("forks a checkpoint immediately when its inventory view still lags", async () => {
     const { box, client } = createFakeSandbox();
     const operations = createTangleWorkspaceBranching({ box, client, provider });
