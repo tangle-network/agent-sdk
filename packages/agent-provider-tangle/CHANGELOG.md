@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.14.1
+
+### Patch Changes
+
+- ab7945c: Use a bounded canonical base64url TEE quote that fits the shared attestation contract.
+- Updated dependencies [ab7945c]
+  - @tangle-network/agent-interface@1.7.1
+
 ## 0.14.0
 
 ### Minor Changes
