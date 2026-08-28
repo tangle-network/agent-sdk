@@ -4,6 +4,8 @@ import type { TangleExactProcessOptions } from "./tangle-types.js";
 
 export const MAX_EXACT_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_LIST_RESULTS = 100_000;
+/** Sandbox caps list responses at 1,000 resources. */
+export const SANDBOX_LIST_PAGE_SIZE = 1_000;
 export const MAX_IDENTIFIER_LENGTH = 512;
 export const MAX_STRING_LENGTH = 16_384;
 export const MAX_ARRAY_LENGTH = 1_024;

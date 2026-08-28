@@ -251,6 +251,11 @@ describe("Tangle split leaf modules", () => {
       lookup: false,
       cleanup: false,
     });
+    const missingBranching = { ...capabilities, branching: undefined } as never;
+    expect(capabilitiesForClient(missingBranching, minimalClient).branching).toEqual({
+      checkpoint: false,
+      fork: false,
+    });
     expect(() => assertOptionKeys({ unsupported: true }, [], "leaf options")).toThrow();
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
   });
@@ -1288,6 +1293,56 @@ describe("Tangle split leaf modules", () => {
     const oversizedList = createTangleProvider({
       client: { create: async () => invalidBox, list: async () => new Array(MAX_LIST_RESULTS + 1).fill(invalidBox) },
     });
-    await expect(oversizedList.list?.()).rejects.toThrow(/result bound/);
+    await expect(oversizedList.list?.()).rejects.toThrow(/page size|result bound/);
+  });
+
+  it("pages generic environment inventory beyond the Sandbox response cap", async () => {
+    const boxes = Array.from({ length: 1_001 }, (_, index) => ({
+      id: `environment-${index}`,
+      async *streamPrompt() {},
+    }));
+    const calls: Array<{ limit?: number; offset?: number }> = [];
+    const provider = createTangleProvider({
+      client: {
+        create: async () => boxes[0]!,
+        async list(options) {
+          calls.push({ limit: options?.limit, offset: options?.offset });
+          const offset = options?.offset ?? 0;
+          const limit = options?.limit ?? boxes.length;
+          return boxes.slice(offset, offset + limit);
+        },
+      },
+    });
+
+    const environments = await provider.list?.();
+    expect(environments).toHaveLength(boxes.length);
+    expect(calls).toEqual([
+      { limit: 1_000, offset: 0 },
+      { limit: 1_000, offset: 1_000 },
+    ]);
+  });
+
+  it("does not return a truncated environment inventory when continuation fails", async () => {
+    const boxes = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `environment-${index}`,
+      async *streamPrompt() {},
+    }));
+    const calls: Array<{ limit?: number; offset?: number }> = [];
+    const provider = createTangleProvider({
+      client: {
+        create: async () => boxes[0]!,
+        async list(options) {
+          calls.push({ limit: options?.limit, offset: options?.offset });
+          if ((options?.offset ?? 0) > 0) throw new Error("continuation unavailable");
+          return boxes;
+        },
+      },
+    });
+
+    await expect(provider.list?.()).rejects.toThrow(/continuation unavailable/);
+    expect(calls).toEqual([
+      { limit: 1_000, offset: 0 },
+      { limit: 1_000, offset: 1_000 },
+    ]);
   });
 });
