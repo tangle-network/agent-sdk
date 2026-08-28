@@ -18,6 +18,7 @@ import {
   exactProcessRequestDigest,
   isBoundedJson,
   MAX_LIST_RESULTS,
+  SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 import { sandboxInstanceAsExactProcessEnvironment } from "./tangle-exact-process-environment.js";
 import {
@@ -33,8 +34,6 @@ import {
 
 const IMMUTABLE_TANGLE_IMAGE =
   /^(?:sha256:[a-f0-9]{64}|\S+@sha256:[a-f0-9]{64})$/i;
-const LIST_PAGE_SIZE = 1_000;
-
 type TangleExactSandboxOptions = Omit<
   CreateSandboxOptions,
   "agent" | "driver" | "egressPolicy" | "environment"
@@ -164,7 +163,7 @@ export function createTangleExactProcessProvider(input: {
       assertSupportedProviderOptions(query?.providerOptions);
       assertExactProcessListQuery(query);
       const matches: AgentExactProcessEnvironment[] = [];
-      for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+      for (let offset = 0; ; offset += SANDBOX_LIST_PAGE_SIZE) {
         if (offset > MAX_LIST_RESULTS) {
           throw new Error("Tangle exact process list exceeded its page bound");
         }
@@ -173,11 +172,11 @@ export function createTangleExactProcessProvider(input: {
           ...(options.teamId
             ? { scope: `team:${options.teamId}` }
             : { scope: "personal" }),
-          limit: LIST_PAGE_SIZE,
+          limit: SANDBOX_LIST_PAGE_SIZE,
           offset,
           ...(signal ? { signal } : {}),
         }), signal);
-        if (!Array.isArray(page) || page.length > LIST_PAGE_SIZE) {
+        if (!Array.isArray(page) || page.length > SANDBOX_LIST_PAGE_SIZE) {
           throw new Error("Tangle exact process list returned an invalid page size");
         }
         if (offset + page.length > MAX_LIST_RESULTS) {
@@ -202,7 +201,7 @@ export function createTangleExactProcessProvider(input: {
             }
           }
         }
-        if (page.length < LIST_PAGE_SIZE) return matches;
+        if (page.length < SANDBOX_LIST_PAGE_SIZE) return matches;
       }
     },
   };

@@ -27,7 +27,10 @@ import {
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
-import type { TangleProviderOptions } from "./tangle-types.js";
+import type {
+  SandboxInstanceLike,
+  TangleProviderOptions,
+} from "./tangle-types.js";
 import {
   assertBoundedJson,
   attachCleanupHandle,
@@ -35,6 +38,7 @@ import {
   boundedIdentifier,
   boundedString,
   MAX_LIST_RESULTS,
+  SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 
 export function createTangleProvider(
@@ -270,9 +274,28 @@ export function createTangleProvider(
               }
               assertBoundedJson(query.metadata);
             }
-            const boxes = await awaitWithSignal(options.client.list?.(operation?.signal ? { signal: operation.signal } : undefined), operation?.signal);
-            if (!Array.isArray(boxes) || boxes.length > MAX_LIST_RESULTS) {
-              throw new Error("Tangle environment list exceeded its result bound");
+            const boxes: SandboxInstanceLike[] = [];
+            for (let offset = 0; ; offset += SANDBOX_LIST_PAGE_SIZE) {
+              if (offset > MAX_LIST_RESULTS) {
+                throw new Error("Tangle environment list exceeded its page bound");
+              }
+              operation?.signal?.throwIfAborted();
+              const page = await awaitWithSignal(
+                options.client.list?.({
+                  limit: SANDBOX_LIST_PAGE_SIZE,
+                  offset,
+                  ...(operation?.signal ? { signal: operation.signal } : {}),
+                }),
+                operation?.signal,
+              );
+              if (!Array.isArray(page) || page.length > SANDBOX_LIST_PAGE_SIZE) {
+                throw new Error("Tangle environment list returned an invalid page size");
+              }
+              if (boxes.length + page.length > MAX_LIST_RESULTS) {
+                throw new Error("Tangle environment list exceeded its result bound");
+              }
+              boxes.push(...page);
+              if (page.length < SANDBOX_LIST_PAGE_SIZE) break;
             }
             const summaries = (boxes ?? []).filter((box) => {
               boundedIdentifier(box.id, "Tangle environment id");

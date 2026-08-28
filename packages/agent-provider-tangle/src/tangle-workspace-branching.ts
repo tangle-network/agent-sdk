@@ -41,6 +41,7 @@ import {
   assertBoundedJson,
   MAX_LIST_RESULTS,
   MAX_STRING_LENGTH,
+  SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 import type {
   SandboxClientLike,
@@ -70,9 +71,6 @@ const MAX_MARKER_TAG_LENGTH = 128;
 const MARKER_CHUNK_SIZE = 80;
 const LEGACY_MARKER_CHUNK_SIZE = 240;
 const MAX_MARKER_CHUNKS = 512;
-/** Sandbox rejects list requests above this page size. */
-const SANDBOX_LIST_PAGE_SIZE = 1_000;
-
 interface CheckpointMarker {
   version: 1;
   kind: "checkpoint";
