@@ -2,6 +2,8 @@ import { z } from "zod";
 
 /** Limits applied before a value is hashed, copied, or sent to a provider. */
 export const CONTRACT_MAX_STRING_LENGTH = 16_384;
+/** Maximum length of one canonical confidential-attestation quote. */
+export const CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH = 32_768;
 export const CONTRACT_MAX_IDENTIFIER_LENGTH = 512;
 export const CONTRACT_MAX_ARRAY_LENGTH = 1_024;
 export const CONTRACT_MAX_MAP_ENTRIES = 256;
@@ -10,6 +12,9 @@ export const CONTRACT_MAX_JSON_BYTES = 1_048_576;
 export const CONTRACT_MAX_JSON_NODES = 8_192;
 
 export const boundedStringSchema = z.string().max(CONTRACT_MAX_STRING_LENGTH);
+export const confidentialAttestationQuoteSchema = z
+  .string()
+  .max(CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH);
 export const boundedIdentifierSchema = boundedStringSchema
   .min(1)
   .max(CONTRACT_MAX_IDENTIFIER_LENGTH)

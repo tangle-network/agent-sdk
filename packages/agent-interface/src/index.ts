@@ -110,3 +110,6 @@ export * from "./harness-capabilities.js";
 export * from "./profile-schema.js";
 export * from "./profile-security.js";
 export * from "./sandbox-size.js";
+export {
+  CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
+} from "./contract-limits.js";
