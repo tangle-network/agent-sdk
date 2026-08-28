@@ -91,6 +91,8 @@
     "dist/tangle-types.js",
     "dist/tangle-workspace-branching.d.ts",
     "dist/tangle-workspace-branching.js",
+    "dist/tangle-confidential-attestation.d.ts",
+    "dist/tangle-confidential-attestation.js",
     "README.md",
     "LICENSE"
   ],

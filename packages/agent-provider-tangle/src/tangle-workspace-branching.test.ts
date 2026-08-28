@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  ConfidentialAttestationSchema,
   canonicalCandidateDigest,
   confidentialExecutionRequestDigest,
   forkedEnvironmentConfidentialityVerified,
@@ -17,6 +21,7 @@ import {
   createTangleWorkspaceBranching,
   supportsWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
+import { decodeTangleConfidentialAttestationQuote } from "./tangle-confidential-attestation.js";
 import { createTangleProvider } from "./tangle-provider.js";
 import type {
   SandboxClientLike,
@@ -685,6 +690,94 @@ describe("Tangle workspace branching", () => {
     expect(confidentialExecutionRequestDigest(request.confidential!)).toMatch(/^sha256:/);
   });
 
+  it("carries the real Nitro report through the branching attestation path", async () => {
+    const { box, client } = createFakeSandbox();
+    const checkpointOperations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await checkpointOperations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+
+    const fixturePath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../test/fixtures/aws-nitro-document.cbor",
+    );
+    const evidence = Array.from(readFileSync(fixturePath));
+    expect(evidence).toHaveLength(4_461);
+    const report = {
+      tee_type: "nitro",
+      evidence,
+      measurement: Array.from({ length: 48 }, (_, index) => index),
+      timestamp: 1_756_368_000,
+    };
+    const attestationBox: SandboxInstanceLike = {
+      ...box,
+      async getTeeAttestation() {
+        throw new Error("the parent must not be attested");
+      },
+    };
+    const originalFork = box.fork!;
+    attestationBox.fork = async (count, options) => {
+      const result = await originalFork(count, options);
+      for (const child of result.children) {
+        child.getTeeAttestation = async (attestationOptions) => ({
+          sandbox_id: child.id,
+          attestationNonce: attestationOptions?.attestationNonce,
+          attestation: report,
+        });
+      }
+      return result;
+    };
+
+    const verifier = ({ attestation }: { attestation: { quote: string } }) => {
+      const decoded = decodeTangleConfidentialAttestationQuote(attestation.quote);
+      expect(decoded).toEqual(report);
+      return {
+        providerKeyId: "provider-key-real-nitro",
+        providerSignature: "provider-signature-real-nitro",
+      };
+    };
+    const operations = createTangleWorkspaceBranching({
+      box: attestationBox,
+      client,
+      provider,
+      confidentialAttestationVerifier: verifier,
+    });
+    const material = {
+      checkpoint: checkpoint.checkpoint,
+      placement: { kind: "sandbox", sandboxId: sourceEnvironmentId } as const,
+      confidential: {
+        requested: true as const,
+        nonce: "nonce-real-nitro",
+        policy: "policy-real-nitro",
+        profileDigest: canonicalCandidateDigest({ profile: "worker" }),
+      },
+    };
+    const request: WorkspaceForkRequest = {
+      ...material,
+      idempotencyKey: "fork-real-nitro",
+      requestDigest: workspaceForkRequestDigest(material),
+    };
+    const result = await operations!.fork(request);
+    if (result.status !== "created") {
+      throw new Error(`real Nitro fork failed: ${JSON.stringify(result)}`);
+    }
+    const confidentialAttestation = result.environment.confidentialAttestation;
+    expect(
+      ConfidentialAttestationSchema.safeParse(confidentialAttestation).success,
+    ).toBe(true);
+    expect(confidentialAttestation).toMatchObject({
+      providerKeyId: "provider-key-real-nitro",
+      providerSignature: "provider-signature-real-nitro",
+    });
+    expect(
+      decodeTangleConfidentialAttestationQuote(confidentialAttestation?.quote)
+        ?.evidence,
+    ).toHaveLength(4_461);
+  });
+
   it("returns a confidential claim only after the external verifier accepts the raw quote", async () => {
     const { box, client } = createFakeSandbox();
     const checkpointOperations = createTangleWorkspaceBranching({
@@ -783,6 +876,16 @@ describe("Tangle workspace branching", () => {
     expect(accepted.status).toBe("created");
     if (accepted.status !== "created") throw new Error("accepted fork setup failed");
     expect(accepted.environment.confidentialAttestation).toBeDefined();
+    expect(
+      decodeTangleConfidentialAttestationQuote(
+        accepted.environment.confidentialAttestation?.quote,
+      ),
+    ).toEqual({
+      tee_type: "tdx",
+      evidence: [1, 2, 3],
+      measurement: [4, 5, 6],
+      timestamp: 1_756_368_000,
+    });
     expect(
       forkedEnvironmentConfidentialityVerified(
         acceptedRequest,

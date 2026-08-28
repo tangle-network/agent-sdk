@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { Sha256Digest } from "./agent-candidate.js";
-import { boundedStringSchema } from "./contract-limits.js";
+import {
+  boundedStringSchema,
+  confidentialAttestationQuoteSchema,
+} from "./contract-limits.js";
 import {
   AgentExactRunControlRefSchema,
   type AgentExactRunControlRef,
@@ -23,7 +26,7 @@ export const ConfidentialAttestationSchema = z
     requestDigest: sha256DigestSchema,
     profileDigest: sha256DigestSchema,
     policy: idSchema,
-    quote: boundedStringSchema.min(1),
+    quote: confidentialAttestationQuoteSchema.min(1),
     providerKeyId: idSchema,
     providerSignature: boundedStringSchema.min(1),
     verifiedAt: z.iso.datetime().max(64),

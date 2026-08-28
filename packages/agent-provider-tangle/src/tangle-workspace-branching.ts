@@ -43,6 +43,11 @@ import {
   MAX_STRING_LENGTH,
   SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
+import {
+  encodeTangleConfidentialAttestationQuote,
+  MAX_TEE_EVIDENCE_BYTES,
+  MAX_TEE_MEASUREMENT_BYTES,
+} from "./tangle-confidential-attestation.js";
 import type {
   SandboxClientLike,
   SandboxDeleteAcknowledgementLike,
@@ -915,7 +920,7 @@ async function confidentialAttestationForChild(
     return undefined;
   }
   const measurement = sha256Bytes(Uint8Array.from(response.attestation.measurement));
-  const quote = encodeJson(response.attestation);
+  const quote = encodeTangleConfidentialAttestationQuote(response.attestation);
   if (quote === undefined) return undefined;
   let verifiedAt: string;
   try {
@@ -993,10 +998,10 @@ function validTeeReport(
   return !!report &&
     safeString(report.tee_type) !== undefined &&
     Array.isArray(report.evidence) &&
-    report.evidence.length <= MAX_STRING_LENGTH &&
+    report.evidence.length <= MAX_TEE_EVIDENCE_BYTES &&
     report.evidence.every((value) => Number.isInteger(value) && value >= 0 && value <= 255) &&
     Array.isArray(report.measurement) &&
-    report.measurement.length <= MAX_STRING_LENGTH &&
+    report.measurement.length <= MAX_TEE_MEASUREMENT_BYTES &&
     report.measurement.every((value) => Number.isInteger(value) && value >= 0 && value <= 255) &&
     Number.isFinite(report.timestamp) &&
     report.timestamp > 0;

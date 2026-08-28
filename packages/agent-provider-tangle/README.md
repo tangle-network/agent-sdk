@@ -195,6 +195,13 @@ const provider = createTangleProvider({
 })
 ```
 
+The provider stores the raw report in `ConfidentialAttestation.quote` through
+`encodeTangleConfidentialAttestationQuote`.
+The quote is a versioned canonical JSON object with base64url byte fields.
+Use `decodeTangleConfidentialAttestationQuote` to recover a report and reject
+legacy numeric-array quotes, unknown fields, malformed bytes, and oversized
+reports before verification.
+
 ## Environment observation
 
 `environment.observe()` returns the normalized `AgentEnvironmentObservation`.

@@ -70,6 +70,7 @@ import {
   type ContextTransferReceipt,
 } from "./portable-context-transfer.js";
 import {
+  CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
   CONTRACT_MAX_JSON_BYTES,
   CONTRACT_MAX_STRING_LENGTH,
   boundedJsonSchema,
@@ -626,6 +627,20 @@ describe("interface split leaf modules", () => {
       providerSignature: "signed-provider-quote",
       verifiedAt: "2026-08-01T20:02:01.000Z",
     });
+    expect(
+      ConfidentialAttestationSchema.safeParse({
+        ...attestation,
+        quote: "x".repeat(CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      ConfidentialAttestationSchema.safeParse({
+        ...attestation,
+        quote: "x".repeat(
+          CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH + 1,
+        ),
+      }).success,
+    ).toBe(false);
     expect(confidentialExecutionVerified({
       request: confidentialityRequest,
       environment: {
