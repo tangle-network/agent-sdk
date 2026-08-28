@@ -1,8 +1,9 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.30.1 <1.0.0`, and this package is developed and tested against 0.30.1.
-The floor is 0.30.1 because interaction claims use the Sandbox backend catalog exposed by `listBackends()`.
+The peer range is `>=0.33.1 <1.0.0`, and this package is developed and tested against 0.33.1.
+The floor is 0.33.1 because workspace branching uses the keyed snapshot, fork,
+lookup, and cleanup operations added to that SDK.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
@@ -104,8 +105,76 @@ After `session.prompt()` admits another turn, that session object's `controlRef`
 Sandbox keeps execution identifiers optional for older or unproven service paths, so this adapter fails closed when a dispatch or prompt does not return one and never falls back to latest-session state.
 Sessions reconstructed without a control reference may start a new prompt, but result lookup, cancellation, and cursor replay fail before calling Sandbox because those operations could otherwise select the newest unrelated execution.
 It also rejects `contextTransfer` and `nativeContinuation` inputs explicitly until those operations have native Sandbox support instead of silently dropping them.
-The adapter never advertises `branching.checkpoint` or `branching.fork`.
-Sandbox exposes `snapshot`, `listSnapshots`, `deleteSnapshot`, and `branch(count)` with different semantics; durable workspace branching stays unadvertised until the full `AgentWorkspaceBranching` contract — retry, lookup, conflict, and cleanup together — is implemented over that surface.
+
+### Workspace branching
+
+`environment.workspaceBranching` is the single operation surface for creating
+and recovering a checkpoint, forking one managed child, and cleaning both
+resources in dependency order.
+The adapter advertises `branching.checkpoint`, `branching.fork`, `retrySafe`,
+`lookup`, and `cleanup` only when the linked SDK exposes the complete managed
+surface: keyed `snapshot` and `fork`, operation lookup, inventory recovery, and
+explicit deletion outcomes.
+An incomplete SDK surface clears every branching flag and omits
+`environment.workspaceBranching`.
+
+Every operation validates the canonical agent-interface request digest before
+calling Sandbox.
+Retries with the same key replay the original resource, while changed material
+returns a conflict containing the original interface digest.
+The provider stores a bounded request marker in snapshot tags and child
+metadata so a fresh process can recover the exact interface digest, but the
+marker only names a candidate: the Sandbox operation ledger still has to report
+a settled success before the adapter returns the resource.
+Checkpoint deletion reports `in_use` with every verified child that still
+references it; delete the child first, then retry checkpoint deletion.
+The adapter never treats an SDK response without an explicit idempotency or
+deletion outcome as success.
+
+After a provider process restart, `provider.workspaceBranching.forEnvironment()`
+returns a fresh source-scoped handle for lookup and cleanup, or `null` when it
+cannot prove the complete operation surface.
+
+```ts
+const checkpoint = await environment.workspaceBranching?.checkpoint({
+  source: exactRun,
+  idempotencyKey: 'checkpoint-before-analysis',
+  requestDigest: workspaceCheckpointRequestDigest({ source: exactRun }),
+})
+
+if (checkpoint?.status === 'created' || checkpoint?.status === 'replayed') {
+  const fork = await environment.workspaceBranching?.fork({
+    checkpoint: checkpoint.checkpoint,
+    placement: { kind: 'sandbox', sandboxId: 'analysis-worker' },
+    idempotencyKey: 'analysis-worker',
+    requestDigest: workspaceForkRequestDigest({
+      checkpoint: checkpoint.checkpoint,
+      placement: { kind: 'sandbox', sandboxId: 'analysis-worker' },
+    }),
+  })
+}
+```
+
+### Confidential forks
+
+Sandbox returns raw TEE evidence, not a verified claim.
+Pass `confidentialAttestationVerifier` to `createTangleProvider` to connect a
+trusted provider-key and measurement verifier.
+The callback receives the raw report and the canonical request-bound
+attestation material, and returns a provider key id, signature, and optional
+normalized measurement only after verification succeeds.
+Returning `null`, throwing, a mismatched measurement, or a copied quote leaves
+the result unverified while preserving `confidentialRequested: true`.
+The adapter does not trust the requested nonce, child metadata, or any legacy
+`confidential: true` assertion as proof.
+
+```ts
+const provider = createTangleProvider({
+  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  confidentialAttestationVerifier: async ({ report, attestation }) =>
+    (await verifyTangleQuote({ report, attestation })) ?? null,
+})
+```
 
 ## Environment observation
 

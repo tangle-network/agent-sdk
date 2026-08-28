@@ -68,6 +68,11 @@ import { createExecutionUsageLog } from "./tangle-usage-log.js";
 import { observeTangleEnvironment } from "./tangle-observation.js";
 import { createTangleTerminalRegistry } from "./tangle-terminal.js";
 import { createTangleInteractiveAgentRegistry } from "./tangle-interactive.js";
+import {
+  confidentialVerifierOption,
+  createTangleWorkspaceBranching,
+} from "./tangle-workspace-branching.js";
+import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
 
 /**
  * Compose one concrete sandbox into an environment.
@@ -96,7 +101,10 @@ export async function sandboxInstanceAsEnvironment(
   client: SandboxClientLike,
   declaredCapabilities: AgentEnvironmentCapabilities,
   operation?: { signal?: AbortSignal },
-  request?: { resources?: ResourceProfile },
+  request?: {
+    resources?: ResourceProfile;
+    confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+  },
 ): Promise<AgentEnvironment> {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
   boundedIdentifier(providerName, "Tangle provider name");
@@ -110,9 +118,26 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = await readDeploymentCapabilitySupport(box, operation);
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForSandbox(declaredCapabilities, support, deployment),
+      capabilitiesForSandbox(
+        declaredCapabilities,
+        support,
+        deployment,
+        confidentialVerifierOption(request?.confidentialAttestationVerifier),
+      ),
     ),
   );
+  const workspaceBranching =
+    capabilities.branching.checkpoint &&
+    capabilities.branching.fork &&
+    capabilities.branching.lookup === true &&
+    capabilities.branching.cleanup === true
+      ? createTangleWorkspaceBranching({
+          box,
+          client,
+          provider: providerName,
+          ...confidentialVerifierOption(request?.confidentialAttestationVerifier),
+        })
+      : undefined;
   // The published document is the single source for what this environment
   // offers, so the session surface reads its grant from there.
   const retainedControl = capabilities.retainedControl !== undefined;
@@ -157,9 +182,12 @@ export async function sandboxInstanceAsEnvironment(
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
     ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,
+    ...(workspaceBranching === undefined
+      ? {}
+      : { workspaceBranching }),
     async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
       assertOptionKeys(options, ["signal"], "Tangle environment status");
-      await awaitWithSignal(box.refresh?.(options), options?.signal);
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
       return statusFromUnknown(box.status);
     },
     async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
@@ -405,7 +433,7 @@ export async function sandboxInstanceAsEnvironment(
     async refresh(options?: { signal?: AbortSignal }): Promise<void> {
       assertOptionKeys(options, ["signal"], "Tangle refresh");
       options?.signal?.throwIfAborted();
-      await awaitWithSignal(box.refresh?.(options), options?.signal);
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
       options?.signal?.throwIfAborted();
     },
     ...(support.destroy

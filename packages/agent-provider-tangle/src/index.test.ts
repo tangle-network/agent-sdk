@@ -914,7 +914,13 @@ describe("createTangleProvider", () => {
     const environment = await provider.create({ profile: { name: "worker" } });
     const capabilities = await provider.capabilities();
     expect(capabilities.interactions).toBeUndefined();
-    expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
+    expect(capabilities.branching).toEqual({
+      checkpoint: false,
+      fork: false,
+      retrySafe: false,
+      lookup: false,
+      cleanup: false,
+    });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
     expect(environment.workspaceBranching).toBeUndefined();

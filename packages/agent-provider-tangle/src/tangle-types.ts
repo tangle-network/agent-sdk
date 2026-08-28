@@ -20,6 +20,8 @@ import type {
   AgentInteractiveSessionStopAcknowledgement,
   AgentInteractiveSessionStopCommand,
   AgentProfile,
+  ConfidentialAttestation,
+  ConfidentialExecutionEnvironment,
   InputPart,
   InteractionRequest,
   InteractionResponseCommand,
@@ -211,6 +213,99 @@ export interface SandboxConnectionLike {
   runtimeUrl?: string;
 }
 
+/**
+ * The keyed snapshot acknowledgement exposed by the Sandbox SDK.
+ *
+ * Every structural type below declares only the fields this adapter reads. A
+ * newer SDK may return more, and an unread field never becomes a contract.
+ */
+export interface SandboxSnapshotResultLike {
+  snapshotId: string;
+  createdAt: Date | string;
+  tags: string[];
+  idempotency?: {
+    outcome: "created" | "replayed";
+    requestDigest: string;
+  };
+}
+
+/** Snapshot metadata returned by the managed Sandbox storage service. */
+export interface SandboxSnapshotInfoLike {
+  snapshotId: string;
+  sandboxId: string;
+  createdAt: Date | string;
+  tags: string[];
+}
+
+/** A deletion result must state what the platform actually did. */
+export interface SandboxSnapshotDeleteAcknowledgementLike {
+  snapshotId: string;
+  outcome: "deleted" | "already_absent" | "unknown";
+}
+
+/** Result returned by the SDK's durable operation lookup route. */
+export interface SandboxWorkspaceOperationLookupLike {
+  outcome: "found" | "not_found" | "conflict" | "unknown";
+  kind: "checkpoint" | "fork";
+  state?: "pending" | "succeeded" | "failed";
+}
+
+/** Fan-out acknowledgement returned by SandboxInstance.fork(). */
+export interface SandboxForkAcknowledgementLike {
+  children: SandboxInstanceLike[];
+  requestedCount: number;
+  materializedCount: number;
+  complete: boolean;
+  idempotency?: {
+    outcome: "created" | "replayed";
+    requestDigest: string;
+  };
+}
+
+/** A forked Sandbox child can be destroyed with an explicit outcome. */
+export interface SandboxDeleteAcknowledgementLike {
+  sandboxId: string;
+  outcome: "destroyed" | "already_absent" | "unknown";
+}
+
+/** Raw TEE evidence returned by Sandbox, before provider-key verification. */
+export interface SandboxTeeAttestationReportLike {
+  tee_type: string;
+  evidence: number[];
+  measurement: number[];
+  timestamp: number;
+}
+
+export interface SandboxTeeAttestationResponseLike {
+  sandbox_id: string;
+  attestation: SandboxTeeAttestationReportLike;
+  attestationNonce?: string;
+}
+
+/**
+ * Evidence returned by an external TEE verifier after it checks the raw quote.
+ * The provider never derives these fields from request metadata or the quote.
+ */
+export interface TangleConfidentialAttestationVerification {
+  providerKeyId: string;
+  providerSignature: string;
+  /** Optional verifier-normalized measurement, checked against raw evidence. */
+  measurement?: `sha256:${string}`;
+}
+
+/**
+ * Provider-owned trust boundary for TEE evidence.
+ * Return `null` when the quote, nonce, key, or policy is not trusted.
+ */
+export type TangleConfidentialAttestationVerifier = (input: {
+  report: SandboxTeeAttestationReportLike;
+  expected: ConfidentialExecutionEnvironment;
+  attestation: ConfidentialAttestation;
+}) =>
+  | TangleConfidentialAttestationVerification
+  | null
+  | Promise<TangleConfidentialAttestationVerification | null>;
+
 /** Live cgroup sample for one sandbox. `null` fields mean the host reported none. */
 export interface SandboxResourceUsageLike {
   memoryCurrentMb: number;
@@ -369,6 +464,8 @@ export interface SandboxInstanceLike {
   connection?: SandboxConnectionLike;
   /** When the platform retires this sandbox, when it set a lifetime. */
   expiresAt?: Date | string;
+  /** Stable platform creation time, returned by branch child descriptions. */
+  createdAt?: Date | string;
   /** GPU lease attached at create time, when one was requested. */
   gpuLease?: SandboxGpuLeaseLike;
   streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
@@ -423,8 +520,42 @@ export interface SandboxInstanceLike {
    * by id or when the platform reported no receipt.
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
-  refresh?(options?: { signal?: AbortSignal }): Promise<void>;
+  refresh?(signal?: AbortSignal): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
+  /** Managed whole-workspace checkpoint operation. */
+  snapshot?(options?: {
+    tags?: string[];
+    idempotencyKey?: string;
+  }): Promise<SandboxSnapshotResultLike>;
+  /** Recover checkpoint metadata after a provider process restart. */
+  listSnapshots?(): Promise<SandboxSnapshotInfoLike[]>;
+  /** Delete one managed checkpoint. */
+  deleteSnapshot?(
+    snapshotId: string,
+    options?: { timeoutMs?: number },
+  ): Promise<SandboxSnapshotDeleteAcknowledgementLike>;
+  /** Ask the service for the state of a keyed checkpoint operation. */
+  getSnapshotOperation?(
+    idempotencyKey: string,
+    options?: { tags?: string[] },
+  ): Promise<SandboxWorkspaceOperationLookupLike>;
+  /** Managed copy-on-write fork operation. */
+  fork?(
+    count: number,
+    options?: { metadata?: Record<string, unknown>; idempotencyKey?: string },
+  ): Promise<SandboxForkAcknowledgementLike>;
+  /** Recover fork state after a provider process restart. */
+  getForkOperation?(
+    idempotencyKey: string,
+    options: {
+      count: number;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<SandboxWorkspaceOperationLookupLike>;
+  /** Raw TEE quote and measurement; verification stays outside Sandbox. */
+  getTeeAttestation?(options?: {
+    attestationNonce?: string;
+  }): Promise<SandboxTeeAttestationResponseLike>;
 }
 
 export interface SandboxSessionLike {
@@ -494,4 +625,6 @@ export interface TangleProviderOptions {
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
+  /** External provider-key and measurement verifier for confidential forks. */
+  confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
 }

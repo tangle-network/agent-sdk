@@ -55,13 +55,30 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("packed Tangle exact-session control", () => {
-  it("uses the required public Sandbox SDK version", () => {
+  it("installs a Sandbox SDK version the packed peer range accepts", () => {
     const require = createRequire(import.meta.url);
-    const entry = require.resolve("@tangle-network/sandbox");
-    const manifest = JSON.parse(
-      readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
-    ) as { version?: unknown };
-    expect(manifest.version).toBe("0.30.1");
+    const manifestOf = (specifier: string): Record<string, unknown> => {
+      const entry = require.resolve(specifier);
+      return JSON.parse(
+        readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
+      ) as Record<string, unknown>;
+    };
+    const peerRange = (
+      manifestOf("@tangle-network/agent-provider-tangle")
+        .peerDependencies as Record<string, string>
+    )["@tangle-network/sandbox"];
+    // The packed range always names one floor, ">=X <1.0.0". Reading the floor
+    // keeps this check on the published contract instead of a literal that
+    // drifts every time the provider raises its Sandbox requirement.
+    const floor = /^>=(\d+)\.(\d+)\.(\d+) <1\.0\.0$/.exec(peerRange);
+    expect(floor).not.toBeNull();
+    const installed = /^(\d+)\.(\d+)\.(\d+)/.exec(
+      String(manifestOf("@tangle-network/sandbox").version),
+    );
+    expect(installed).not.toBeNull();
+    const order = (parts: RegExpExecArray): number =>
+      Number(parts[1]) * 1_000_000 + Number(parts[2]) * 1_000 + Number(parts[3]);
+    expect(order(installed!)).toBeGreaterThanOrEqual(order(floor!));
   });
 
   it("adapts the actual public Sandbox instance without inventing branching", async () => {
@@ -100,7 +117,13 @@ describe("packed Tangle exact-session control", () => {
     expect(typeof publicInstance.session("surface-probe").cancelRun).toBe(
       "function",
     );
-    expect(capabilities.branching).toEqual({ checkpoint: false, fork: false });
+    expect(capabilities.branching).toEqual({
+      checkpoint: false,
+      fork: false,
+      retrySafe: false,
+      lookup: false,
+      cleanup: false,
+    });
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
 

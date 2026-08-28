@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -97,6 +98,25 @@ function tarballName(tarball) {
   return filename ?? tarball;
 }
 
+// The consumer must install the same Sandbox version the Tangle provider is
+// developed against. Read it from that package so the pin cannot drift from
+// the published peer range.
+function sandboxVersion() {
+  const manifest = JSON.parse(
+    readFileSync(
+      join(root, "packages", "agent-provider-tangle", "package.json"),
+      "utf8",
+    ),
+  );
+  const version = manifest.devDependencies?.["@tangle-network/sandbox"];
+  if (typeof version !== "string") {
+    throw new Error(
+      "agent-provider-tangle must declare a @tangle-network/sandbox devDependency",
+    );
+  }
+  return version;
+}
+
 // Build the three control packages, pack them, install the tarballs into one
 // isolated consumer, and copy every contract test file plus its re-export
 // shims. The caller runs tsc and/or vitest against the returned consumer and
@@ -137,7 +157,7 @@ export function prepareControlCohort() {
           "@tangle-network/agent-interface": `file:${interfaceTarball}`,
           "@tangle-network/agent-provider-testkit": `file:${testkitTarball}`,
           "@tangle-network/agent-provider-tangle": `file:${tangleTarball}`,
-          "@tangle-network/sandbox": "0.30.1",
+          "@tangle-network/sandbox": sandboxVersion(),
           "@types/node": "25.6.0",
         },
       },

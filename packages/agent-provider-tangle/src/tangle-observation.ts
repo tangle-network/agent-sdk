@@ -284,7 +284,7 @@ async function refreshBeforeObservation(
     return "the Sandbox client cannot refresh this environment";
   }
   try {
-    await awaitWithSignal(box.refresh(options), options?.signal);
+    await awaitWithSignal(box.refresh(options?.signal), options?.signal);
     return undefined;
   } catch (error) {
     options?.signal?.throwIfAborted();

@@ -89,6 +89,8 @@
     "dist/tangle-session-control.js",
     "dist/tangle-types.d.ts",
     "dist/tangle-types.js",
+    "dist/tangle-workspace-branching.d.ts",
+    "dist/tangle-workspace-branching.js",
     "README.md",
     "LICENSE"
   ],
@@ -103,7 +105,7 @@
     "@tangle-network/agent-interface": "^1.5.0"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.30.1 <1.0.0"
+    "@tangle-network/sandbox": ">=0.33.1 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -114,7 +116,7 @@
     "@tangle-network/agent-eval": "0.149.0",
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.142.3",
-    "@tangle-network/sandbox": "0.30.1",
+    "@tangle-network/sandbox": "0.33.1",
     "@types/node": "catalog:",
     "typescript": "^6.0.3",
     "vitest": "catalog:"
