@@ -124,6 +124,7 @@ const SANDBOX_OPTIONAL_RESULT_FIELDS = new Set([
   "errorCode",
   "toolInvocations",
   "approval",
+  "interaction",
   "question",
   "plan",
   "traceId",

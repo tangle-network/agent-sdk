@@ -463,6 +463,7 @@ describe("Tangle split leaf modules", () => {
       response: "done",
       error: undefined,
       approval: undefined,
+      interaction: undefined,
       question: undefined,
       plan: undefined,
       traceId: undefined,
