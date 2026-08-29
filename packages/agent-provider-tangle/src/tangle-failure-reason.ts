@@ -42,8 +42,11 @@ function failureCause(error: unknown): string {
   if (name === "AbortError") return "aborted";
   if (name === "TimeoutError") return "timed out";
   const status = httpStatus(detail.status);
-  if (status !== undefined) return `HTTP ${status}`;
   const code = bareIdentifier(detail.code);
+  if (status !== undefined && code !== undefined) {
+    return `HTTP ${status}; code ${code}`;
+  }
+  if (status !== undefined) return `HTTP ${status}`;
   if (code !== undefined) return `code ${code}`;
   // A bare `Error` names no cause beyond the message, which is never carried.
   if (name !== undefined && name !== "Error") return name;
