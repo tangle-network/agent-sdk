@@ -95,7 +95,14 @@ export function narrowCliBridgeCapabilities(
   const nativeContinuation =
     supportsCliBridgeNativeContinuation(adapter) &&
     supportsCliBridgeNativeContinuation(reported)
-      ? { atomicBoundary: true, requestIdempotency: true }
+      ? {
+          atomicBoundary: true,
+          requestIdempotency: true,
+          ...(adapter.nativeContinuation?.admissionControl === true &&
+          reported.nativeContinuation?.admissionControl === true
+            ? { admissionControl: true }
+            : {}),
+        }
       : undefined;
   const sessions = {
     continue: adapter.sessions.continue && reported.sessions.continue,

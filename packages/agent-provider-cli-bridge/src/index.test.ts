@@ -834,7 +834,13 @@ describe("createCliBridgeProvider", () => {
       // `nativeContinuation` is the flag that states whether a reconstructed
       // environment can add a turn.
       expect(capabilities.nativeContinuation).toEqual(
-        addsTurn ? { atomicBoundary: true, requestIdempotency: true } : undefined,
+        addsTurn
+          ? {
+              atomicBoundary: true,
+              requestIdempotency: true,
+              admissionControl: true,
+            }
+          : undefined,
       );
       // `sessions.continue` cannot carry that answer: the Agent Interface
       // couples it to retained run control, which this environment keeps.
@@ -2817,7 +2823,13 @@ describe("createCliBridgeProvider", () => {
       cancellationIdempotency: true,
     });
     expect(capabilities.nativeContinuation).toEqual(
-      native ? { atomicBoundary: true, requestIdempotency: true } : undefined,
+      native
+        ? {
+            atomicBoundary: true,
+            requestIdempotency: true,
+            admissionControl: true,
+          }
+        : undefined,
     );
     expect(capabilities.interactions).toEqual(
       interactions

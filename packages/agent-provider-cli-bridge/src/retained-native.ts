@@ -5,15 +5,18 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   AgentNativeContextContinuationResultSchema,
+  AgentNativeContextContinuationAdmissionSchema,
   AgentExactRunControlRefSchema,
   NativeContextBoundaryProofSchema,
   NativeContextContinuationRequestSchema,
   RequestedInteractionsSchema,
   agentNativeContextContinuationResultMatchesRequest,
+  agentNativeContextContinuationAdmissionMatchesRequest,
   canonicalCandidateDigest,
   nativeContextContinuationTurnDigest,
   sameAgentRunControlRef,
   type AgentExactRunControlRef,
+  type AgentNativeContextContinuationAdmission,
   type AgentNativeContextContinuationOptions,
   type AgentNativeContextContinuationResult,
   type AgentProfile,
@@ -88,6 +91,21 @@ export function supportsCliBridgeNativeContinuation(
     capabilities.sessions.continue &&
       capabilities.nativeContinuation?.atomicBoundary === true &&
       capabilities.nativeContinuation.requestIdempotency === true,
+  );
+}
+
+/** Early continuation control is valid only with the complete retained-run contract. */
+export function supportsCliBridgeNativeAdmissionControl(
+  capabilities: AgentEnvironmentCapabilities,
+): boolean {
+  const retained = capabilities.retainedControl;
+  return Boolean(
+    supportsCliBridgeNativeContinuation(capabilities) &&
+      capabilities.nativeContinuation?.admissionControl === true &&
+      retained?.exactRunIdentity === true &&
+      retained.resultIdentity === true &&
+      retained.eventIdentity === true &&
+      retained.cancellationIdempotency === true,
   );
 }
 
@@ -197,6 +215,7 @@ export async function continueCliBridgeNative(
   request: NativeContextContinuationRequest,
   continuationOptions: AgentNativeContextContinuationOptions,
   runs: Map<string, CliBridgeRun>,
+  admissionControl: boolean,
 ): Promise<AgentNativeContextContinuationResult> {
   const exactRequest = NativeContextContinuationRequestSchema.parse(request);
   const current = currentCliBridgeControlRef(run, providerName);
@@ -209,49 +228,169 @@ export async function continueCliBridgeNative(
   ) {
     throw new Error("cli-bridge native continuation turn does not match its request digest");
   }
+  if (continuationOptions.onAdmission !== undefined && !admissionControl) {
+    throw new Error(
+      "cli-bridge native continuation does not advertise early admission control",
+    );
+  }
   const operation = continuationSignal(continuationOptions);
+  const endpoint = `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(exactRequest.run.sessionId)}/continue`;
+  const body = JSON.stringify({ request: exactRequest, turn: continuationOptions.turn });
+  const requestInit = {
+    method: "POST" as const,
+    headers: requestHeaders(options),
+    body,
+    ...(operation.signal ? { signal: operation.signal } : {}),
+  };
   try {
     operation.signal?.throwIfAborted();
     const response = await transport.fetch(
-      `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(exactRequest.run.sessionId)}/continue`,
-      {
-        method: "POST",
-        headers: requestHeaders(options),
-        body: JSON.stringify({ request: exactRequest, turn: continuationOptions.turn }),
-        ...(operation.signal ? { signal: operation.signal } : {}),
-      },
+      continuationOptions.onAdmission === undefined
+        ? endpoint
+        : `${endpoint}?return=admission`,
+      requestInit,
     );
     const responseText = await readBoundedCliBridgeResponse(
       response,
       MAX_NATIVE_CONTINUATION_RESPONSE_BYTES,
       operation.signal,
     );
-    const outcome = parseNativeContinuationResult(responseText);
-    assertContinuationAcknowledgementBinding(exactRequest, outcome);
-    if (
-      outcome.acknowledgement.status === "accepted" ||
-      outcome.acknowledgement.status === "replayed"
-    ) {
-      if (
-        !agentNativeContextContinuationResultMatchesRequest(exactRequest, outcome)
-      ) {
-        throw new Error(
-          "cli-bridge native continuation returned an acknowledgement for another request",
-        );
-      }
-      if (!response.ok) {
-        throw new Error(
-          `cli-bridge native continuation returned HTTP ${response.status} for an accepted result`,
-        );
-      }
-      if (!("controlRef" in outcome)) {
-        throw new Error("cli-bridge native continuation omitted its current control reference");
-      }
-      advanceCliBridgeRun(run, outcome.controlRef, providerName, runs);
+    if (continuationOptions.onAdmission !== undefined && response.status === 202) {
+      const admission = parseNativeContinuationAdmission(responseText);
+      assertContinuationAdmissionBinding(exactRequest, admission);
+      assertContinuationAdmissionHeaders(response, admission.controlRef);
+      advanceCliBridgeRun(run, admission.controlRef, providerName, runs);
+      continuationOptions.onAdmission(admission.controlRef);
+
+      operation.signal?.throwIfAborted();
+      const terminalResponse = await transport.fetch(endpoint, requestInit);
+      const terminalText = await readBoundedCliBridgeResponse(
+        terminalResponse,
+        MAX_NATIVE_CONTINUATION_RESPONSE_BYTES,
+        operation.signal,
+      );
+      return acceptNativeContinuationResult(
+        terminalResponse,
+        terminalText,
+        exactRequest,
+        run,
+        providerName,
+        runs,
+      );
     }
-    return outcome;
+    const outcome = parseNativeContinuationResult(responseText);
+    if (
+      continuationOptions.onAdmission !== undefined &&
+      (outcome.acknowledgement.status === "accepted" ||
+        outcome.acknowledgement.status === "replayed")
+    ) {
+      throw new Error(
+        "cli-bridge native continuation omitted its advertised early admission",
+      );
+    }
+    return acceptParsedNativeContinuationResult(
+      response,
+      outcome,
+      exactRequest,
+      run,
+      providerName,
+      runs,
+    );
   } finally {
     operation.dispose();
+  }
+}
+
+function acceptNativeContinuationResult(
+  response: CliBridgeResponse,
+  responseText: string,
+  request: NativeContextContinuationRequest,
+  run: CliBridgeRun,
+  providerName: string,
+  runs: Map<string, CliBridgeRun>,
+): AgentNativeContextContinuationResult {
+  return acceptParsedNativeContinuationResult(
+    response,
+    parseNativeContinuationResult(responseText),
+    request,
+    run,
+    providerName,
+    runs,
+  );
+}
+
+function acceptParsedNativeContinuationResult(
+  response: CliBridgeResponse,
+  outcome: AgentNativeContextContinuationResult,
+  exactRequest: NativeContextContinuationRequest,
+  run: CliBridgeRun,
+  providerName: string,
+  runs: Map<string, CliBridgeRun>,
+): AgentNativeContextContinuationResult {
+  assertContinuationAcknowledgementBinding(exactRequest, outcome);
+  if (
+    outcome.acknowledgement.status === "accepted" ||
+    outcome.acknowledgement.status === "replayed"
+  ) {
+    if (
+      !agentNativeContextContinuationResultMatchesRequest(exactRequest, outcome)
+    ) {
+      throw new Error(
+        "cli-bridge native continuation returned an acknowledgement for another request",
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `cli-bridge native continuation returned HTTP ${response.status} for an accepted result`,
+      );
+    }
+    if (!("controlRef" in outcome)) {
+      throw new Error("cli-bridge native continuation omitted its current control reference");
+    }
+    advanceCliBridgeRun(run, outcome.controlRef, providerName, runs);
+  }
+  return outcome;
+}
+
+function parseNativeContinuationAdmission(
+  value: string,
+): AgentNativeContextContinuationAdmission {
+  const parsed = safeJson(value);
+  try {
+    return AgentNativeContextContinuationAdmissionSchema.parse(parsed);
+  } catch (error) {
+    throw new Error("cli-bridge native continuation returned an invalid admission", {
+      cause: error,
+    });
+  }
+}
+
+function assertContinuationAdmissionBinding(
+  request: NativeContextContinuationRequest,
+  admission: AgentNativeContextContinuationAdmission,
+): void {
+  if (!agentNativeContextContinuationAdmissionMatchesRequest(request, admission)) {
+    throw new Error("cli-bridge native continuation admission is not bound to the request");
+  }
+}
+
+function assertContinuationAdmissionHeaders(
+  response: CliBridgeResponse,
+  controlRef: AgentExactRunControlRef,
+): void {
+  const expected = new Map<string, string>([
+    ["x-run-id", controlRef.runId],
+    ["x-run-request-digest", controlRef.requestDigest],
+    ["x-run-provider", controlRef.provider],
+    ["x-run-environment-id", controlRef.environmentId],
+    ["x-run-session-id", controlRef.sessionId],
+    ["x-run-execution-id", controlRef.executionId],
+    ["location", `/v1/runs/${encodeURIComponent(controlRef.runId)}`],
+  ]);
+  for (const [name, value] of expected) {
+    if (response.headers.get(name) !== value) {
+      throw new Error(`cli-bridge native continuation admission has invalid ${name}`);
+    }
   }
 }
 

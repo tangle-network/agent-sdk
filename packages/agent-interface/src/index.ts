@@ -12,10 +12,12 @@ export * from "./provider-adapter.js";
 export type * from "./environment-provider.js";
 export {
   AgentEnvironmentCapabilitiesSchema,
+  AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,
   AgentTurnInputSchema,
   AgentTurnResultSchema,
   agentEnvironmentCreateInputDigest,
+  agentNativeContextContinuationAdmissionMatchesRequest,
   agentNativeContextContinuationResultMatchesRequest,
   AccountUsageSchema,
   AgentEnvironmentObservationSchema,

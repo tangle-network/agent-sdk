@@ -73,6 +73,8 @@ Its successful receipt repeats the exact destination and carries the provider's 
 `NativeContextContinuationRequest.turnDigest` binds the operation to the exact new JSON-stable user turn; timeout and abort controls live outside that turn under `AgentNativeContextContinuationOptions`.
 Continuation is valid only when the provider atomically proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.
 Providers advertise `nativeContinuation` only when both guarantees are implemented and expose `AgentSession.continueNative()` as the single durable operation.
+When `nativeContinuation.admissionControl` is true, `continueNative()` calls `onAdmission` once with the exact new run before it waits for terminal output.
+This lets a runtime stream, inspect, and cancel the continued run through the same retained-control methods.
 An accepted or replayed operation returns its original turn result and exact current control reference; `AgentNativeContextContinuationResultSchema` validates that shape and `agentNativeContextContinuationResultMatchesRequest()` checks its request and retained-session bindings.
 A changed request with the same operation identifier conflicts without dispatch.
 

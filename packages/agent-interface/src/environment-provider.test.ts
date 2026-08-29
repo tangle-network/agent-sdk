@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentEnvironmentCreationSchema,
+  AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,
+  agentNativeContextContinuationAdmissionMatchesRequest,
   agentNativeContextContinuationResultMatchesRequest,
   agentEnvironmentCreateInputDigest,
   createAgentEnvironmentWithIdempotency,
@@ -314,6 +316,17 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         sessions: { ...capabilities.sessions, continue: false },
       }),
     ).toThrow(/requires session continuation/);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        retainedControl: undefined,
+        nativeContinuation: {
+          atomicBoundary: true,
+          requestIdempotency: true,
+          admissionControl: true,
+        },
+      }),
+    ).toThrow(/retained control for early admission/);
   });
 
   it("advertises retained run control only with every identity guarantee", () => {
@@ -508,6 +521,37 @@ describe("AgentNativeContextContinuationResultSchema", () => {
       requestDigest: `sha256:${"b".repeat(64)}` as `sha256:${string}`,
     },
   };
+
+  it("validates and exactly binds early continuation admission", () => {
+    const admission = AgentNativeContextContinuationAdmissionSchema.parse({
+      phase: "admitted",
+      acknowledgement: {
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        historyMessagesSent: 0,
+        actualBoundary: expectedBoundary,
+      },
+      controlRef: outcome.controlRef,
+    });
+    expect(
+      agentNativeContextContinuationAdmissionMatchesRequest(request, admission),
+    ).toBe(true);
+    expect(
+      agentNativeContextContinuationAdmissionMatchesRequest(request, {
+        ...admission,
+        acknowledgement: {
+          ...admission.acknowledgement,
+          operationId: "another-operation",
+        },
+      }),
+    ).toBe(false);
+    expect(() =>
+      AgentNativeContextContinuationAdmissionSchema.parse({
+        ...admission,
+        controlRef: { ...admission.controlRef, sessionId: "another-session" },
+      }),
+    ).toThrow(/must stay in the retained session/);
+  });
 
   it("validates and exactly binds a successful continuation outcome", () => {
     const parsed = AgentNativeContextContinuationResultSchema.parse(outcome);

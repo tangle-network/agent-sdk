@@ -131,6 +131,83 @@ describe("cli-bridge native continuation", () => {
     ).toEqual(["/v1/runs/continued-run/cancel"]);
   });
 
+  it("exposes the continued run before its terminal result", async () => {
+    const fixture = createNativeContinuationFixture();
+    let releaseTerminal!: () => void;
+    const terminalBarrier = new Promise<void>((resolve) => {
+      releaseTerminal = resolve;
+    });
+    let admissionReturned = false;
+    const provider = createProvider(async (url, init) => {
+      const parsed = new URL(String(url));
+      const body = init?.body === undefined
+        ? undefined
+        : JSON.parse(String(init.body)) as {
+            request?: NativeContextContinuationRequest;
+          };
+      if (
+        admissionReturned &&
+        parsed.pathname.endsWith("/continue") &&
+        parsed.searchParams.get("return") === null &&
+        body?.request?.operationId === "continue-admission"
+      ) {
+        await terminalBarrier;
+      }
+      const response = await fixture.fetch(url, init);
+      if (parsed.searchParams.get("return") === "admission") admissionReturned = true;
+      return response;
+    });
+    const environment = await provider.create({
+      profile: { name: "worker", harness: "pi" },
+    });
+    const reference = await environment.dispatch!({
+      prompt: "start the task",
+      sessionId: "admission-session",
+      turnId: "initial-turn",
+      executionId: "initial-run",
+    });
+    const initialControlRef = exactControlRef(reference.controlRef);
+    const session = environment.session!(initialControlRef.sessionId, {
+      controlRef: initialControlRef,
+    });
+    const boundary = await session.contextBoundary!();
+    if (!boundary) throw new Error("the fixture did not return a context boundary");
+    const turn: NativeContextContinuationTurn = { prompt: "continue and stay controllable" };
+    const request = continuationRequest(
+      initialControlRef,
+      boundary,
+      "continue-admission",
+      turn,
+    );
+    let resolveAdmission!: (controlRef: AgentExactRunControlRef) => void;
+    const admitted = new Promise<AgentExactRunControlRef>((resolve) => {
+      resolveAdmission = resolve;
+    });
+    let terminalSettled = false;
+    const terminal = session.continueNative!(request, {
+      turn,
+      onAdmission(controlRef) {
+        resolveAdmission(controlRef);
+      },
+    }).finally(() => {
+      terminalSettled = true;
+    });
+
+    try {
+      const controlRef = await admitted;
+      expect(controlRef).toEqual(fixture.continuedControlRef(initialControlRef));
+      expect(session.controlRef).toEqual(controlRef);
+      expect(terminalSettled).toBe(false);
+    } finally {
+      releaseTerminal();
+    }
+    await expect(terminal).resolves.toMatchObject({
+      acknowledgement: { status: "replayed" },
+      controlRef: fixture.continuedControlRef(initialControlRef),
+    });
+    expect(fixture.continuationBodies).toHaveLength(2);
+  });
+
   it("aborts a stalled context-boundary reader and closes its iterator", async () => {
     const fixture = createNativeContinuationFixture();
     let readStartedResolve!: () => void;
@@ -569,10 +646,34 @@ function createNativeContinuationFixture(): NativeContinuationFixture {
         controls.set(nextControlRef.runId, nextControlRef);
         currentControlRef = nextControlRef;
       }
+      const activeControlRef = replay ?? nextControlRef;
+      if (parsed.searchParams.get("return") === "admission") {
+        return Response.json({
+          phase: "admitted",
+          acknowledgement: {
+            operationId,
+            requestDigest: request.requestDigest,
+            historyMessagesSent: 0,
+            actualBoundary: boundaryFor(request.run),
+          },
+          controlRef: activeControlRef,
+        }, {
+          status: 202,
+          headers: {
+            "x-run-id": activeControlRef.runId,
+            "x-run-request-digest": activeControlRef.requestDigest,
+            "x-run-provider": activeControlRef.provider,
+            "x-run-environment-id": activeControlRef.environmentId,
+            "x-run-session-id": activeControlRef.sessionId,
+            "x-run-execution-id": activeControlRef.executionId,
+            location: `/v1/runs/${encodeURIComponent(activeControlRef.runId)}`,
+          },
+        });
+      }
       return Response.json(validAcceptedOutcome(
         request,
         boundaryFor(request.run),
-        replay ?? nextControlRef,
+        activeControlRef,
         undefined,
         replay ? "replayed" : "accepted",
       ));
