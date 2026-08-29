@@ -1,19 +1,19 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.33.1 <1.0.0`, and this package is developed and tested against 0.33.1.
-The floor is 0.33.1 because workspace branching uses the keyed snapshot, fork,
+The peer range is `>=0.34.0 <1.0.0`, and this package is developed and tested against 0.34.3.
+The floor is 0.34.0 because workspace branching uses the keyed snapshot, fork,
 lookup, and cleanup operations added to that SDK.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
 ```ts
-import { Sandbox } from '@tangle-network/sandbox'
-import { createTangleProvider } from '@tangle-network/agent-provider-tangle'
+import { Sandbox } from "@tangle-network/sandbox";
+import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
 
 const provider = createTangleProvider({
   client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
-})
+});
 ```
 
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
@@ -43,16 +43,16 @@ One provider reaches deployments of different ages, which is why the environment
 
 Each deployment flag this adapter reads gates the claims it backs, and no flag is read that gates nothing:
 
-| Deployment flag | Claims it gates |
-| --- | --- |
-| `dispatch.runControlRef` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
+| Deployment flag                   | Claims it gates                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `dispatch.runControlRef`          | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
 | `dispatch.executionIdOnAdmission` | `streaming.detach`, `streaming.turnIdempotency`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `cancel.canonicalRunCancellation` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `cancel.digestBound` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `cancel.idempotent` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `runs.eventReplay` | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `runs.executionScopedStatus` | `sessions.continue`, `retainedControl`, `session.cancelRun` |
-| `interactions.responseDedupe` | `interactions`, `environment.respondToInteraction`, `session.respondToInteraction` |
+| `cancel.canonicalRunCancellation` | `sessions.continue`, `retainedControl`, `session.cancelRun`                                                  |
+| `cancel.digestBound`              | `sessions.continue`, `retainedControl`, `session.cancelRun`                                                  |
+| `cancel.idempotent`               | `sessions.continue`, `retainedControl`, `session.cancelRun`                                                  |
+| `runs.eventReplay`                | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun`                              |
+| `runs.executionScopedStatus`      | `sessions.continue`, `retainedControl`, `session.cancelRun`                                                  |
+| `interactions.responseDedupe`     | `interactions`, `environment.respondToInteraction`, `session.respondToInteraction`                           |
 
 Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
 `sessions.continue`, `retainedControl`, and `session.cancelRun` need every flag in the table, because the capability schema refuses a partial retained-control block and each identity rests on its own flag.
@@ -70,19 +70,19 @@ The claim and the two methods stand or fall together.
 It is offered on the environment and on a session handle; the environment routes the command to the session its binding names.
 The command carries only the answer the caller supplied. No field is filled in on the caller's behalf, and an answer the outstanding ask's spec rejects is refused with the field named.
 
-| Result | Acknowledgement status |
-| --- | --- |
-| The deployment recorded and delivered the response | `accepted` |
-| The deployment already holds this exact response | `already_resolved_same` |
+| Result                                                        | Acknowledgement status                                           |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| The deployment recorded and delivered the response            | `accepted`                                                       |
+| The deployment already holds this exact response              | `already_resolved_same`                                          |
 | The deployment already holds a different response for the ask | `already_resolved_different`, message naming the recorded digest |
-| The command names another provider, environment, or session | `binding_mismatch` |
-| The deployment refuses the binding | `binding_mismatch` |
-| The ask is unknown to the deployment | `unknown_interaction` |
-| The session is unknown to the deployment | `unknown_run` |
-| The ask left the outstanding set on a deadline | `expired` |
-| The ask's spec rejects the answer | `invalid_response`, message naming each field |
-| The response is recorded and delivery is unconfirmed | `transport_failure`, `retryable: true` |
-| The request did not reach the route | `transport_failure`, `retryable: true` |
+| The command names another provider, environment, or session   | `binding_mismatch`                                               |
+| The deployment refuses the binding                            | `binding_mismatch`                                               |
+| The ask is unknown to the deployment                          | `unknown_interaction`                                            |
+| The session is unknown to the deployment                      | `unknown_run`                                                    |
+| The ask left the outstanding set on a deadline                | `expired`                                                        |
+| The ask's spec rejects the answer                             | `invalid_response`, message naming each field                    |
+| The response is recorded and delivery is unconfirmed          | `transport_failure`, `retryable: true`                           |
+| The request did not reach the route                           | `transport_failure`, `retryable: true`                           |
 
 A refusal is never reported as a success, and a recorded response whose delivery the deployment does not confirm is never reported as `accepted`.
 
@@ -150,24 +150,24 @@ Clean branch resources before deleting the source or use a platform reaper.
 import {
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
-} from '@tangle-network/agent-interface'
+} from "@tangle-network/agent-interface";
 
 const checkpoint = await environment.workspaceBranching?.checkpoint({
   source: exactRun,
-  idempotencyKey: 'checkpoint-before-analysis',
+  idempotencyKey: "checkpoint-before-analysis",
   requestDigest: workspaceCheckpointRequestDigest({ source: exactRun }),
-})
+});
 
-if (checkpoint?.status === 'created' || checkpoint?.status === 'replayed') {
+if (checkpoint?.status === "created" || checkpoint?.status === "replayed") {
   const fork = await environment.workspaceBranching?.fork({
     checkpoint: checkpoint.checkpoint,
-    placement: { kind: 'sandbox', sandboxId: 'analysis-worker' },
-    idempotencyKey: 'analysis-worker',
+    placement: { kind: "sandbox", sandboxId: "analysis-worker" },
+    idempotencyKey: "analysis-worker",
     requestDigest: workspaceForkRequestDigest({
       checkpoint: checkpoint.checkpoint,
-      placement: { kind: 'sandbox', sandboxId: 'analysis-worker' },
+      placement: { kind: "sandbox", sandboxId: "analysis-worker" },
     }),
-  })
+  });
 }
 ```
 
@@ -192,7 +192,7 @@ const provider = createTangleProvider({
   client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
   confidentialAttestationVerifier: async ({ report, attestation }) =>
     (await verifyTangleQuote({ report, attestation })) ?? null,
-})
+});
 ```
 
 The provider stores the raw report in `ConfidentialAttestation.quote` through
@@ -208,19 +208,19 @@ reports before verification.
 Every surface carries a freshness discriminator, so a value the Sandbox SDK does not report is visibly absent instead of arriving as a measured zero.
 The `observation` capability flag for a surface is true only when a source can put a value on it for that environment; the observation itself always carries the surface, with `unavailable` and its reason when there is nothing to report.
 
-| Surface | Sandbox source | State when the source is missing |
-| --- | --- | --- |
-| `identity` | provider name and `box.id` | always known |
-| `lifecycle.status` | `box.status` after a refresh | `stale` with the refresh failure |
-| `lifecycle.cleanup` | `box.expiresAt` as a scheduled retirement | omitted from the lifecycle value |
-| `endpoint` | scheme, host, and explicit port of `connection.runtimeUrl` | `unavailable` |
-| `placement.verified` | `client.describePlacement(box)` | `unavailable` |
-| `resources.requested` | the `create()` resource request | omitted on an environment rebuilt by id |
-| `resources.effective` | cgroup `memoryLimitMb` and the attached GPU lease | `unavailable` |
-| `resourceUse.current` / `peak` | cgroup `memoryCurrentMb` / `memoryPeakMb` | `unavailable` |
-| `modelUsage` | the newest execution this handle measured | `unavailable` |
-| `computeBilling` | the GPU lease's billed or estimated customer cost | `unavailable` |
-| `accountUsage` | `client.subscription()` and `client.usage()` | `unavailable` |
+| Surface                        | Sandbox source                                             | State when the source is missing        |
+| ------------------------------ | ---------------------------------------------------------- | --------------------------------------- |
+| `identity`                     | provider name and `box.id`                                 | always known                            |
+| `lifecycle.status`             | `box.status` after a refresh                               | `stale` with the refresh failure        |
+| `lifecycle.cleanup`            | `box.expiresAt` as a scheduled retirement                  | omitted from the lifecycle value        |
+| `endpoint`                     | scheme, host, and explicit port of `connection.runtimeUrl` | `unavailable`                           |
+| `placement.verified`           | `client.describePlacement(box)`                            | `unavailable`                           |
+| `resources.requested`          | the `create()` resource request                            | omitted on an environment rebuilt by id |
+| `resources.effective`          | cgroup `memoryLimitMb` and the attached GPU lease          | `unavailable`                           |
+| `resourceUse.current` / `peak` | cgroup `memoryCurrentMb` / `memoryPeakMb`                  | `unavailable`                           |
+| `modelUsage`                   | the newest execution this handle measured                  | `unavailable`                           |
+| `computeBilling`               | the GPU lease's billed or estimated customer cost          | `unavailable`                           |
+| `accountUsage`                 | `client.subscription()` and `client.usage()`               | `unavailable`                           |
 
 Four quantities have no Sandbox source at all, and the adapter reports them as absent rather than deriving them.
 There is no effective CPU or disk figure anywhere in the SDK, so `resources.effective` carries memory and the accelerator only.
@@ -266,16 +266,16 @@ Set `teamId` inside `exactProcess` to scope create, lookup, and recovery to one 
 const provider = createTangleProvider({
   client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
   exactProcess: {},
-})
+});
 
 const environment = await provider.exactProcess!.create({
-  image: 'ghcr.io/acme/agent@sha256:<64-hex-manifest-digest>',
-  egress: { mode: 'blocked' },
+  image: "ghcr.io/acme/agent@sha256:<64-hex-manifest-digest>",
+  egress: { mode: "blocked" },
   maxLifetimeMs: 120_000,
   resources: { cpu: 1, memoryMb: 1024, diskMb: 1024 },
-  metadata: { executionId: 'run-1' },
-  idempotencyKey: 'run-1',
-})
+  metadata: { executionId: "run-1" },
+  idempotencyKey: "run-1",
+});
 ```
 
 The adapter rejects ordinary sandboxes during create, recovery, and list operations.

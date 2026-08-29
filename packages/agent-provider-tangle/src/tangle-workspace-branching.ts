@@ -1,6 +1,4 @@
-import type {
-  AgentWorkspaceBranching,
-} from "@tangle-network/agent-interface";
+import type { AgentWorkspaceBranching } from "@tangle-network/agent-interface";
 import {
   ConfidentialAttestationSchema,
   ConfidentialExecutionRequestSchema,
@@ -130,9 +128,11 @@ export interface TangleWorkspaceBranchingOptions {
  * accepts it is exact-optional, so an explicit `undefined` is not an absent key.
  */
 export function confidentialVerifierOption(
-  verifier: TangleConfidentialAttestationVerifier | undefined,
+  verifier: TangleConfidentialAttestationVerifier | undefined
 ): { confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier } {
-  return verifier === undefined ? {} : { confidentialAttestationVerifier: verifier };
+  return verifier === undefined
+    ? {}
+    : { confidentialAttestationVerifier: verifier };
 }
 
 /**
@@ -142,7 +142,7 @@ export function confidentialVerifierOption(
  * delete methods. Without recovery, it cannot safely claim durable branching.
  */
 export function createTangleWorkspaceBranching(
-  options: TangleWorkspaceBranchingOptions,
+  options: TangleWorkspaceBranchingOptions
 ): AgentWorkspaceBranching | undefined {
   const { box, client, provider } = options;
   boundedIdentifier(provider, "Tangle workspace branching provider");
@@ -162,29 +162,48 @@ export function createTangleWorkspaceBranching(
    * go on to create one.
    */
   const resolveCheckpoint = async (
-    request: Pick<WorkspaceCheckpointRequest, "idempotencyKey" | "requestDigest">,
-    signal?: AbortSignal,
+    request: Pick<
+      WorkspaceCheckpointRequest,
+      "idempotencyKey" | "requestDigest"
+    >,
+    signal?: AbortSignal
   ): Promise<Resolved<CheckpointRecord>> => {
     const local = checkpoints.get(request.idempotencyKey);
     if (local) {
       return local.request.requestDigest === request.requestDigest
         ? { state: "known", record: local }
-        : { state: "conflict", existingRequestDigest: local.request.requestDigest };
+        : {
+            state: "conflict",
+            existingRequestDigest: local.request.requestDigest,
+          };
     }
-    const recovered = await findCheckpointByKey(box, request.idempotencyKey, signal);
+    const recovered = await findCheckpointByKey(
+      box,
+      request.idempotencyKey,
+      signal
+    );
     if (recovered === undefined) {
-      return { state: "undecided", message: "Sandbox checkpoint inventory is unavailable" };
+      return {
+        state: "undecided",
+        message: "Sandbox checkpoint inventory is unavailable",
+      };
     }
     if (!recovered) return { state: "absent" };
     if (recovered.marker.requestDigest !== request.requestDigest) {
-      return { state: "conflict", existingRequestDigest: recovered.marker.requestDigest };
+      return {
+        state: "conflict",
+        existingRequestDigest: recovered.marker.requestDigest,
+      };
     }
     const record = checkpointRecordFromSnapshot(
       recovered.marker.request,
-      recovered.snapshot,
+      recovered.snapshot
     );
     if (!record) {
-      return { state: "undecided", message: "Sandbox checkpoint metadata is invalid" };
+      return {
+        state: "undecided",
+        message: "Sandbox checkpoint metadata is invalid",
+      };
     }
     checkpoints.set(request.idempotencyKey, record);
     return { state: "known", record };
@@ -193,31 +212,43 @@ export function createTangleWorkspaceBranching(
   /** The fork equivalent of {@link resolveCheckpoint}. */
   const resolveFork = async (
     request: Pick<WorkspaceForkRequest, "idempotencyKey" | "requestDigest">,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<Resolved<ForkRecord>> => {
     const local = forks.get(request.idempotencyKey);
     if (local) {
       return local.request.requestDigest === request.requestDigest
         ? { state: "known", record: local }
-        : { state: "conflict", existingRequestDigest: local.request.requestDigest };
+        : {
+            state: "conflict",
+            existingRequestDigest: local.request.requestDigest,
+          };
     }
     const recovered = await findForkByKey(
       client,
       box,
       provider,
       request.idempotencyKey,
-      signal,
+      signal
     );
     if (recovered === undefined) {
-      return { state: "undecided", message: "Sandbox child inventory is unavailable" };
+      return {
+        state: "undecided",
+        message: "Sandbox child inventory is unavailable",
+      };
     }
     if (!recovered) return { state: "absent" };
     if (recovered.marker.requestDigest !== request.requestDigest) {
-      return { state: "conflict", existingRequestDigest: recovered.marker.requestDigest };
+      return {
+        state: "conflict",
+        existingRequestDigest: recovered.marker.requestDigest,
+      };
     }
     const child = await completeForkChild(client, recovered.child, signal);
     if (!child) {
-      return { state: "undecided", message: "Sandbox fork child identity is incomplete" };
+      return {
+        state: "undecided",
+        message: "Sandbox fork child identity is incomplete",
+      };
     }
     const environment = await environmentFromChild(
       recovered.marker.request,
@@ -225,19 +256,26 @@ export function createTangleWorkspaceBranching(
       provider,
       child.createdAt,
       options.confidentialAttestationVerifier,
-      signal,
+      signal
     );
     if (!environment) {
-      return { state: "undecided", message: "Sandbox fork child identity is incomplete" };
+      return {
+        state: "undecided",
+        message: "Sandbox fork child identity is incomplete",
+      };
     }
-    const record = { request: recovered.marker.request, environment, child: recovered.child };
+    const record = {
+      request: recovered.marker.request,
+      environment,
+      child,
+    };
     forks.set(request.idempotencyKey, record);
     return { state: "known", record };
   };
 
   const checkpoint = async (
     input: WorkspaceCheckpointRequest,
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceCheckpointResult> => {
     const request = WorkspaceCheckpointRequestSchema.parse(input);
     assertCheckpointSource(request, provider, box.id);
@@ -246,7 +284,11 @@ export function createTangleWorkspaceBranching(
       return checkpointConflict(request, known.existingRequestDigest);
     }
     if (known.state === "undecided") {
-      return checkpointUnknown(request, `${known.message}; retry after reconciliation`, true);
+      return checkpointUnknown(
+        request,
+        `${known.message}; retry after reconciliation`,
+        true
+      );
     }
     if (known.state === "known") {
       return checkpointSuccess(request, known.record.checkpoint, "replayed");
@@ -257,21 +299,21 @@ export function createTangleWorkspaceBranching(
     try {
       result = await awaitWithSignal(
         box.snapshot?.({ tags, idempotencyKey: request.idempotencyKey }),
-        operation?.signal,
+        operation?.signal
       );
     } catch (error) {
       operation?.signal?.throwIfAborted();
       const conflict = await checkpointConflictFromRemote(
         box,
         request,
-        operation?.signal,
+        operation?.signal
       );
       return (
         conflict ??
         checkpointUnknown(
           request,
           `Sandbox checkpoint outcome is unresolved: ${safeError(error)}`,
-          true,
+          true
         )
       );
     }
@@ -279,7 +321,7 @@ export function createTangleWorkspaceBranching(
       return checkpointUnknown(
         request,
         "Sandbox checkpoint returned no complete idempotent acknowledgement",
-        true,
+        true
       );
     }
     if (
@@ -291,12 +333,12 @@ export function createTangleWorkspaceBranching(
       return checkpointUnknown(
         request,
         "Sandbox checkpoint did not report idempotency state",
-        true,
+        true
       );
     }
     const resultMarker = checkpointMarkerFromTags(
       result.tags,
-      request.idempotencyKey,
+      request.idempotencyKey
     );
     if (resultMarker && resultMarker.requestDigest !== request.requestDigest) {
       return checkpointConflict(request, resultMarker.requestDigest);
@@ -305,7 +347,7 @@ export function createTangleWorkspaceBranching(
       return checkpointUnknown(
         request,
         "Sandbox checkpoint acknowledgement omitted its provider recovery marker",
-        true,
+        true
       );
     }
     const record = checkpointRecordFromSnapshot(request, result);
@@ -313,16 +355,20 @@ export function createTangleWorkspaceBranching(
       return checkpointUnknown(
         request,
         "Sandbox checkpoint acknowledgement contains invalid metadata",
-        true,
+        true
       );
     }
     checkpoints.set(request.idempotencyKey, record);
-    return checkpointSuccess(request, record.checkpoint, result.idempotency.outcome);
+    return checkpointSuccess(
+      request,
+      record.checkpoint,
+      result.idempotency.outcome
+    );
   };
 
   const lookupCheckpoint = async (
     input: WorkspaceOperationLookupRequest,
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceCheckpointLookupResult> => {
     const request = WorkspaceOperationLookupRequestSchema.parse(input);
     const known = await resolveCheckpoint(request, operation?.signal);
@@ -339,7 +385,7 @@ export function createTangleWorkspaceBranching(
     try {
       const lookup = await awaitWithSignal(
         box.getSnapshotOperation?.(request.idempotencyKey, { tags: [] }),
-        operation?.signal,
+        operation?.signal
       );
       const settled = lookupOutcomeFromSandbox(lookup, "checkpoint");
       return settled.absent
@@ -350,14 +396,14 @@ export function createTangleWorkspaceBranching(
       return checkpointLookupUnknown(
         request,
         `Sandbox checkpoint lookup failed: ${safeError(error)}`,
-        true,
+        true
       );
     }
   };
 
   const deleteCheckpoint = async (
     input: WorkspaceCleanupRequest & { kind: "checkpoint" },
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceCleanupAcknowledgement> => {
     const request = WorkspaceCleanupRequestSchema.parse(input);
     if (request.kind !== "checkpoint") {
@@ -385,13 +431,13 @@ export function createTangleWorkspaceBranching(
       client,
       provider,
       request.targetId,
-      operation?.signal,
+      operation?.signal
     );
     if (blocking === undefined) {
       return cleanupUnknown(
         request,
         "Sandbox child inventory is unavailable; deletion was not attempted",
-        true,
+        true
       );
     }
     if (blocking.length > 0) {
@@ -408,13 +454,13 @@ export function createTangleWorkspaceBranching(
       provider,
       request.targetId,
       undefined,
-      operation?.signal,
+      operation?.signal
     );
     if (known === "unknown") {
       return cleanupUnknown(
         request,
         "Sandbox checkpoint inventory is unavailable; deletion was not attempted",
-        true,
+        true
       );
     }
     if (known === false) {
@@ -430,14 +476,14 @@ export function createTangleWorkspaceBranching(
     try {
       result = await awaitWithSignal(
         box.deleteSnapshot?.(request.targetId),
-        operation?.signal,
+        operation?.signal
       );
     } catch (error) {
       operation?.signal?.throwIfAborted();
       return cleanupTransportFailure(
         request,
         `Sandbox checkpoint deletion failed: ${safeError(error)}`,
-        true,
+        true
       );
     }
     const outcome =
@@ -450,14 +496,17 @@ export function createTangleWorkspaceBranching(
       return cleanupUnknown(
         request,
         "Sandbox did not attest checkpoint deletion",
-        true,
+        true
       );
     }
     const acknowledgement =
       outcome === "deleted"
         ? cleanupDeleted(request)
         : cleanupAlreadyAbsent(request);
-    forgetRecords(checkpoints, (record) => record.snapshotId === request.targetId);
+    forgetRecords(
+      checkpoints,
+      (record) => record.snapshotId === request.targetId
+    );
     cleanup.set(request.operationId, {
       requestDigest: request.requestDigest,
       acknowledgement,
@@ -467,7 +516,7 @@ export function createTangleWorkspaceBranching(
 
   const fork = async (
     input: WorkspaceForkRequest,
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceForkResult> => {
     const request = WorkspaceForkRequestSchema.parse(input);
     assertForkSource(request, provider, box.id);
@@ -479,7 +528,7 @@ export function createTangleWorkspaceBranching(
       return forkUnknown(
         request,
         "Confidential fork requires a trusted verifier and Sandbox attestation support",
-        false,
+        false
       );
     }
     const known = await resolveFork(request, operation?.signal);
@@ -487,7 +536,11 @@ export function createTangleWorkspaceBranching(
       return forkConflict(request, known.existingRequestDigest);
     }
     if (known.state === "undecided") {
-      return forkUnknown(request, `${known.message}; retry after reconciliation`, true);
+      return forkUnknown(
+        request,
+        `${known.message}; retry after reconciliation`,
+        true
+      );
     }
     if (known.state === "known") {
       return forkSuccess(request, known.record.environment, "replayed");
@@ -496,7 +549,7 @@ export function createTangleWorkspaceBranching(
     const checkpoint = [...checkpoints.values()].some(
       (record) =>
         canonicalCandidateDigest(record.checkpoint) ===
-        canonicalCandidateDigest(request.checkpoint),
+        canonicalCandidateDigest(request.checkpoint)
     )
       ? true
       : await findManagedCheckpoint(
@@ -504,7 +557,7 @@ export function createTangleWorkspaceBranching(
           provider,
           request.checkpoint.checkpointId,
           request.checkpoint,
-          operation?.signal,
+          operation?.signal
         );
     if (checkpoint !== true) {
       return forkUnknown(
@@ -512,7 +565,7 @@ export function createTangleWorkspaceBranching(
         checkpoint === false
           ? "Requested checkpoint is absent"
           : "Sandbox checkpoint inventory is unavailable",
-        true,
+        true
       );
     }
 
@@ -524,7 +577,7 @@ export function createTangleWorkspaceBranching(
           metadata,
           idempotencyKey: request.idempotencyKey,
         }),
-        operation?.signal,
+        operation?.signal
       );
     } catch (error) {
       operation?.signal?.throwIfAborted();
@@ -534,14 +587,14 @@ export function createTangleWorkspaceBranching(
         provider,
         request,
         options.confidentialAttestationVerifier,
-        operation?.signal,
+        operation?.signal
       );
       return (
         conflict ??
         forkUnknown(
           request,
           `Sandbox fork outcome is unresolved: ${safeError(error)}`,
-          true,
+          true
         )
       );
     }
@@ -556,37 +609,75 @@ export function createTangleWorkspaceBranching(
       return forkUnknown(
         request,
         "Sandbox fork returned no complete idempotent acknowledgement",
-        true,
+        true
       );
     }
     if (result.children.length !== 1 || result.complete !== true) {
       return forkUnknown(
         request,
         "Sandbox fork did not materialize exactly one complete child",
-        true,
+        true
       );
     }
     const returnedChild = result.children[0];
-    const child = await completeForkChild(client, returnedChild, operation?.signal);
+    const child = await completeForkChild(
+      client,
+      returnedChild,
+      operation?.signal
+    );
     if (!child) {
+      const compensation =
+        forkMarkerFromMetadata(returnedChild.metadata) === undefined
+          ? await compensateUnmarkedForkChild(
+              result,
+              returnedChild,
+              operation?.signal
+            )
+          : "not_attempted";
+      const removed =
+        compensation === "destroyed" || compensation === "already_absent";
       return forkUnknown(
         request,
-        "Sandbox fork returned a child without a complete identity",
-        true,
+        removed
+          ? "Sandbox fork returned a child without a complete identity; the newly created child was removed"
+          : compensation === "unconfirmed"
+          ? "Sandbox fork returned a child without a complete identity; child cleanup was not confirmed"
+          : "Sandbox fork returned a child without a complete identity",
+        !removed
       );
     }
-    const childMarker = forkMarkerFromMetadata(
-      child.metadata,
-      request.idempotencyKey,
-    );
-    if (childMarker && childMarker.requestDigest !== request.requestDigest) {
-      return forkConflict(request, childMarker.requestDigest);
+    const childMarker = forkMarkerFromMetadata(child.metadata);
+    if (childMarker) {
+      if (!markerBelongsToSource(childMarker, provider, box.id)) {
+        return forkUnknown(
+          request,
+          "Sandbox fork returned a child marked for another source",
+          true
+        );
+      }
+      if (
+        childMarker.idempotencyKey !== request.idempotencyKey ||
+        childMarker.requestDigest !== request.requestDigest
+      ) {
+        return forkConflict(request, childMarker.requestDigest);
+      }
     }
     if (!childMarker) {
+      const compensation = await compensateUnmarkedForkChild(
+        result,
+        child,
+        operation?.signal
+      );
+      const removed =
+        compensation === "destroyed" || compensation === "already_absent";
       return forkUnknown(
         request,
-        "Sandbox fork acknowledgement omitted its provider recovery marker",
-        true,
+        removed
+          ? "Sandbox fork acknowledgement omitted its provider recovery marker; the newly created child was removed"
+          : compensation === "unconfirmed"
+          ? "Sandbox fork acknowledgement omitted its provider recovery marker; child cleanup was not confirmed"
+          : "Sandbox fork acknowledgement omitted its provider recovery marker",
+        !removed
       );
     }
     const environment = await environmentFromChild(
@@ -595,13 +686,13 @@ export function createTangleWorkspaceBranching(
       provider,
       child.createdAt,
       options.confidentialAttestationVerifier,
-      operation?.signal,
+      operation?.signal
     );
     if (!environment) {
       return forkUnknown(
         request,
         "Sandbox fork returned a child without a valid identity",
-        true,
+        true
       );
     }
     const record = { request, environment, child };
@@ -611,7 +702,7 @@ export function createTangleWorkspaceBranching(
 
   const lookupFork = async (
     input: WorkspaceOperationLookupRequest,
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceForkLookupResult> => {
     const request = WorkspaceOperationLookupRequestSchema.parse(input);
     const known = await resolveFork(request, operation?.signal);
@@ -631,7 +722,7 @@ export function createTangleWorkspaceBranching(
           count: 1,
           metadata: {},
         }),
-        operation?.signal,
+        operation?.signal
       );
       const settled = lookupOutcomeFromSandbox(lookup, "fork");
       return settled.absent
@@ -642,14 +733,14 @@ export function createTangleWorkspaceBranching(
       return forkLookupUnknown(
         request,
         `Sandbox fork lookup failed: ${safeError(error)}`,
-        true,
+        true
       );
     }
   };
 
   const destroyFork = async (
     input: WorkspaceCleanupRequest & { kind: "fork" },
-    operation?: { signal?: AbortSignal },
+    operation?: { signal?: AbortSignal }
   ): Promise<WorkspaceCleanupAcknowledgement> => {
     const request = WorkspaceCleanupRequestSchema.parse(input);
     if (request.kind !== "fork") {
@@ -668,21 +759,22 @@ export function createTangleWorkspaceBranching(
     }
 
     const localFork = [...forks.values()].find(
-      (record) => record.environment.environmentId === request.targetId,
+      (record) => record.environment.environmentId === request.targetId
     );
-    const child = localFork?.child ??
+    const child =
+      localFork?.child ??
       (await findForkChildById(
         client,
         box,
         provider,
         request.targetId,
-        operation?.signal,
+        operation?.signal
       ));
     if (child === undefined) {
       return cleanupUnknown(
         request,
         "Sandbox child inventory is unavailable; destruction was not attempted",
-        true,
+        true
       );
     }
     if (child === null) {
@@ -696,13 +788,16 @@ export function createTangleWorkspaceBranching(
 
     let result: SandboxDeleteAcknowledgementLike;
     try {
-      result = (await awaitWithSignal(child.delete?.(), operation?.signal)) as SandboxDeleteAcknowledgementLike;
+      result = (await awaitWithSignal(
+        child.delete?.(),
+        operation?.signal
+      )) as SandboxDeleteAcknowledgementLike;
     } catch (error) {
       operation?.signal?.throwIfAborted();
       return cleanupTransportFailure(
         request,
         `Sandbox fork destruction failed: ${safeError(error)}`,
-        true,
+        true
       );
     }
     const outcome =
@@ -715,7 +810,7 @@ export function createTangleWorkspaceBranching(
       return cleanupUnknown(
         request,
         "Sandbox did not attest fork destruction",
-        true,
+        true
       );
     }
     const acknowledgement =
@@ -724,7 +819,7 @@ export function createTangleWorkspaceBranching(
         : cleanupAlreadyAbsent(request);
     forgetRecords(
       forks,
-      (record) => record.environment.environmentId === request.targetId,
+      (record) => record.environment.environmentId === request.targetId
     );
     cleanup.set(request.operationId, {
       requestDigest: request.requestDigest,
@@ -746,7 +841,7 @@ export function createTangleWorkspaceBranching(
 /** Capability support requires every operation used by recovery and cleanup. */
 export function supportsWorkspaceBranching(
   box: SandboxInstanceLike,
-  client: SandboxClientLike,
+  client: SandboxClientLike
 ): boolean {
   return (
     typeof client.list === "function" &&
@@ -761,7 +856,10 @@ export function supportsWorkspaceBranching(
 }
 
 /** Drop every in-process record for a resource the platform no longer holds. */
-function forgetRecords<T>(records: Map<string, T>, matches: (record: T) => boolean): void {
+function forgetRecords<T>(
+  records: Map<string, T>,
+  matches: (record: T) => boolean
+): void {
   for (const [key, record] of records) {
     if (matches(record)) records.delete(key);
   }
@@ -770,33 +868,37 @@ function forgetRecords<T>(records: Map<string, T>, matches: (record: T) => boole
 function assertCheckpointSource(
   request: WorkspaceCheckpointRequest,
   provider: string,
-  environmentId: string,
+  environmentId: string
 ): void {
   if (
     request.source.provider !== provider ||
     request.source.environmentId !== environmentId
   ) {
-    throw new Error("Tangle checkpoint source does not belong to this environment");
+    throw new Error(
+      "Tangle checkpoint source does not belong to this environment"
+    );
   }
 }
 
 function assertForkSource(
   request: WorkspaceForkRequest,
   provider: string,
-  environmentId: string,
+  environmentId: string
 ): void {
   if (
     request.checkpoint.provider !== provider ||
     request.checkpoint.source.provider !== provider ||
     request.checkpoint.source.environmentId !== environmentId
   ) {
-    throw new Error("Tangle fork checkpoint does not belong to this environment");
+    throw new Error(
+      "Tangle fork checkpoint does not belong to this environment"
+    );
   }
 }
 
 function assertCleanupProvider(
   request: WorkspaceCleanupRequest,
-  provider: string,
+  provider: string
 ): void {
   if (request.provider !== provider) {
     throw new Error("Tangle cleanup provider does not match this provider");
@@ -805,12 +907,15 @@ function assertCleanupProvider(
 
 function checkpointRecordFromSnapshot(
   request: WorkspaceCheckpointRequest,
-  snapshot: SandboxSnapshotResultLike | SandboxSnapshotInfoLike,
+  snapshot: SandboxSnapshotResultLike | SandboxSnapshotInfoLike
 ): CheckpointRecord | undefined {
   try {
     const createdAt = isoDate(snapshot.createdAt);
     const checkpoint = WorkspaceCheckpointRefSchema.parse({
-      checkpointId: boundedIdentifier(snapshot.snapshotId, "Tangle checkpoint id"),
+      checkpointId: boundedIdentifier(
+        snapshot.snapshotId,
+        "Tangle checkpoint id"
+      ),
       provider: request.source.provider,
       source: request.source,
       idempotencyKey: request.idempotencyKey,
@@ -836,11 +941,14 @@ async function environmentFromChild(
   provider: string,
   createdAt: Date | string | undefined,
   verifier: TangleConfidentialAttestationVerifier | undefined,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ForkedEnvironmentRef | undefined> {
   signal?.throwIfAborted();
   const environmentId = safeIdentifier(child.id);
-  if (!environmentId || environmentId === request.checkpoint.source.environmentId) {
+  if (
+    !environmentId ||
+    environmentId === request.checkpoint.source.environmentId
+  ) {
     return undefined;
   }
   if (createdAt === undefined) return undefined;
@@ -867,7 +975,7 @@ async function environmentFromChild(
       child,
       provider,
       verifier,
-      signal,
+      signal
     );
   }
   const environment = ForkedEnvironmentRefSchema.safeParse({
@@ -881,7 +989,9 @@ async function environmentFromChild(
     createdAt: normalizedCreatedAt,
     placement: request.placement,
     confidentialRequested: request.confidential?.requested === true,
-    ...(attestation === undefined ? {} : { confidentialAttestation: attestation }),
+    ...(attestation === undefined
+      ? {}
+      : { confidentialAttestation: attestation }),
     ...(attestation === undefined ? {} : { confidential: true }),
     ...(metadata === undefined ? {} : { metadata }),
   });
@@ -894,17 +1004,22 @@ async function confidentialAttestationForChild(
   child: SandboxInstanceLike,
   provider: string,
   verifier: TangleConfidentialAttestationVerifier,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ConfidentialAttestation | undefined> {
-  const confidential = ConfidentialExecutionRequestSchema.parse(request.confidential);
-  if (!confidential.requested || typeof child.getTeeAttestation !== "function") {
+  const confidential = ConfidentialExecutionRequestSchema.parse(
+    request.confidential
+  );
+  if (
+    !confidential.requested ||
+    typeof child.getTeeAttestation !== "function"
+  ) {
     return undefined;
   }
   let response: SandboxTeeAttestationResponseLike;
   try {
     response = await awaitWithSignal(
       child.getTeeAttestation({ attestationNonce: confidential.nonce }),
-      signal,
+      signal
     );
   } catch {
     signal?.throwIfAborted();
@@ -919,7 +1034,9 @@ async function confidentialAttestationForChild(
   ) {
     return undefined;
   }
-  const measurement = sha256Bytes(Uint8Array.from(response.attestation.measurement));
+  const measurement = sha256Bytes(
+    Uint8Array.from(response.attestation.measurement)
+  );
   const quote = encodeTangleConfidentialAttestationQuote(response.attestation);
   if (quote === undefined) return undefined;
   let verifiedAt: string;
@@ -955,7 +1072,8 @@ async function confidentialAttestationForChild(
       providerKeyId: "unverified",
       providerSignature: "unverified",
     };
-    const provisionalResult = ConfidentialAttestationSchema.safeParse(provisional);
+    const provisionalResult =
+      ConfidentialAttestationSchema.safeParse(provisional);
     if (!provisionalResult.success) return undefined;
     verification = await verifier({
       report: response.attestation,
@@ -971,7 +1089,8 @@ async function confidentialAttestationForChild(
     !safeIdentifier(verification.providerKeyId) ||
     !safeString(verification.providerSignature) ||
     verification.providerSignature === quote ||
-    (verification.measurement !== undefined && verification.measurement !== measurement)
+    (verification.measurement !== undefined &&
+      verification.measurement !== measurement)
   ) {
     return undefined;
   }
@@ -993,33 +1112,41 @@ async function confidentialAttestationForChild(
 }
 
 function validTeeReport(
-  report: SandboxTeeAttestationResponseLike["attestation"] | undefined,
+  report: SandboxTeeAttestationResponseLike["attestation"] | undefined
 ): report is NonNullable<SandboxTeeAttestationResponseLike["attestation"]> {
-  return !!report &&
+  return (
+    !!report &&
     safeString(report.tee_type) !== undefined &&
     Array.isArray(report.evidence) &&
     report.evidence.length <= MAX_TEE_EVIDENCE_BYTES &&
-    report.evidence.every((value) => Number.isInteger(value) && value >= 0 && value <= 255) &&
+    report.evidence.every(
+      (value) => Number.isInteger(value) && value >= 0 && value <= 255
+    ) &&
     Array.isArray(report.measurement) &&
     report.measurement.length <= MAX_TEE_MEASUREMENT_BYTES &&
-    report.measurement.every((value) => Number.isInteger(value) && value >= 0 && value <= 255) &&
+    report.measurement.every(
+      (value) => Number.isInteger(value) && value >= 0 && value <= 255
+    ) &&
     Number.isFinite(report.timestamp) &&
-    report.timestamp > 0;
+    report.timestamp > 0
+  );
 }
 
 function validSnapshotResult(
-  result: SandboxSnapshotResultLike | undefined,
+  result: SandboxSnapshotResultLike | undefined
 ): result is SandboxSnapshotResultLike {
-  return !!result &&
+  return (
+    !!result &&
     safeIdentifier(result.snapshotId) !== undefined &&
     validDate(result.createdAt) &&
     Array.isArray(result.tags) &&
-    result.tags.every((tag) => safeString(tag) !== undefined);
+    result.tags.every((tag) => safeString(tag) !== undefined)
+  );
 }
 
 function validSnapshotInfo(
   snapshot: SandboxSnapshotInfoLike,
-  sandboxId?: string,
+  sandboxId?: string
 ): boolean {
   return (
     validSnapshotResult(snapshot) &&
@@ -1029,19 +1156,21 @@ function validSnapshotInfo(
 }
 
 function validForkResult(
-  result: SandboxForkAcknowledgementLike | undefined,
+  result: SandboxForkAcknowledgementLike | undefined
 ): result is SandboxForkAcknowledgementLike {
-  return !!result &&
+  return (
+    !!result &&
     Array.isArray(result.children) &&
     result.children.every(
       (child) =>
         child !== null &&
         typeof child === "object" &&
-        safeIdentifier(child.id) !== undefined,
+        safeIdentifier(child.id) !== undefined
     ) &&
     result.requestedCount === 1 &&
     result.materializedCount === result.children.length &&
-    typeof result.complete === "boolean";
+    typeof result.complete === "boolean"
+  );
 }
 
 function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
@@ -1056,12 +1185,14 @@ function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
     "checkpoint",
     request.idempotencyKey,
     request.requestDigest,
-    marker,
+    marker
   );
 }
 
 /** Rebuild the exact tags used by the release before the current safe format. */
-function legacyCheckpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
+function legacyCheckpointMarkerTags(
+  request: WorkspaceCheckpointRequest
+): string[] {
   const marker: CheckpointMarker = {
     version: 1,
     kind: "checkpoint",
@@ -1070,7 +1201,8 @@ function legacyCheckpointMarkerTags(request: WorkspaceCheckpointRequest): string
     request,
   };
   const encoded = encodeJson(marker);
-  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
+  if (encoded === undefined)
+    throw new Error("workspace marker is not JSON serializable");
   const base = `${LEGACY_MARKER_PREFIX}:checkpoint`;
   const chunks = splitIntoChunks(encoded, LEGACY_MARKER_CHUNK_SIZE);
   if (chunks.length > MAX_MARKER_CHUNKS) {
@@ -1079,12 +1211,14 @@ function legacyCheckpointMarkerTags(request: WorkspaceCheckpointRequest): string
   return [
     `${base}:key:${encodeText(request.idempotencyKey)}`,
     `${base}:digest:${request.requestDigest}`,
-    ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
+    ...chunks.map(
+      (chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`
+    ),
   ];
 }
 
 function forkMarkerMetadata(
-  request: WorkspaceForkRequest,
+  request: WorkspaceForkRequest
 ): Record<string, unknown> {
   if (request.metadata && Object.hasOwn(request.metadata, FORK_METADATA_KEY)) {
     throw new Error(`fork metadata reserves ${FORK_METADATA_KEY}`);
@@ -1112,7 +1246,7 @@ function forkMarkerMetadata(
 async function checkpointOperationSucceeded(
   box: SandboxInstanceLike,
   marker: CheckpointMarker,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const lookup = await awaitWithSignal(
     box.getSnapshotOperation?.(marker.idempotencyKey, {
@@ -1120,7 +1254,7 @@ async function checkpointOperationSucceeded(
         ? legacyCheckpointMarkerTags(marker.request)
         : checkpointMarkerTags(marker.request),
     }),
-    signal,
+    signal
   );
   return (
     lookup?.outcome === "found" &&
@@ -1133,14 +1267,14 @@ async function checkpointOperationSucceeded(
 async function forkOperationSucceeded(
   box: SandboxInstanceLike,
   marker: ForkMarker,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const lookup = await awaitWithSignal(
     box.getForkOperation?.(marker.idempotencyKey, {
       count: 1,
       metadata: forkMarkerMetadata(marker.request),
     }),
-    signal,
+    signal
   );
   return (
     lookup?.outcome === "found" &&
@@ -1153,10 +1287,11 @@ function markerTags(
   kind: "checkpoint" | "fork",
   idempotencyKey: string,
   requestDigest: string,
-  marker: CheckpointMarker,
+  marker: CheckpointMarker
 ): string[] {
   const encoded = encodeJson(marker);
-  if (encoded === undefined) throw new Error("workspace marker is not JSON serializable");
+  if (encoded === undefined)
+    throw new Error("workspace marker is not JSON serializable");
   const base = `${MARKER_PREFIX}-${kind}`;
   const chunks = split(encoded);
   if (chunks.length > MAX_MARKER_CHUNKS) {
@@ -1165,7 +1300,9 @@ function markerTags(
   return [
     `${base}-key-${markerKeyDigest(idempotencyKey).replace(":", "-")}`,
     `${base}-digest-${requestDigest.replace(":", "-")}`,
-    ...chunks.map((chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`),
+    ...chunks.map(
+      (chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`
+    ),
   ].map((tag) => {
     if (Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH) {
       throw new Error("workspace marker tag exceeds the platform bound");
@@ -1177,7 +1314,7 @@ function markerTags(
 async function findCheckpointByKey(
   box: SandboxInstanceLike,
   key: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<
   | { snapshot: SandboxSnapshotInfoLike; marker: CheckpointMarker }
   | null
@@ -1225,7 +1362,7 @@ async function findManagedCheckpoint(
   provider: string,
   id: string,
   expected?: WorkspaceCheckpointRef,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<true | false | "unknown"> {
   try {
     const snapshots = await awaitWithSignal(box.listSnapshots?.(), signal);
@@ -1235,7 +1372,10 @@ async function findManagedCheckpoint(
     const snapshot = snapshots.find((candidate) => candidate.snapshotId === id);
     if (!snapshot) return false;
     if (!validSnapshotInfo(snapshot, box.id)) return "unknown";
-    const marker = checkpointMarkerFromTags(snapshot.tags, expected?.idempotencyKey);
+    const marker = checkpointMarkerFromTags(
+      snapshot.tags,
+      expected?.idempotencyKey
+    );
     if (!marker) return expected ? false : "unknown";
     if (
       marker.request.source.provider !== provider ||
@@ -1251,7 +1391,9 @@ async function findManagedCheckpoint(
     ) {
       return false;
     }
-    return (await checkpointOperationSucceeded(box, marker, signal)) ? true : "unknown";
+    return (await checkpointOperationSucceeded(box, marker, signal))
+      ? true
+      : "unknown";
   } catch {
     signal?.throwIfAborted();
     return "unknown";
@@ -1263,20 +1405,23 @@ async function findForkByKey(
   box: SandboxInstanceLike,
   provider: string,
   key: string,
-  signal?: AbortSignal,
-): Promise<{ child: SandboxInstanceLike; marker: ForkMarker } | null | undefined> {
+  signal?: AbortSignal
+): Promise<
+  { child: SandboxInstanceLike; marker: ForkMarker } | null | undefined
+> {
   const candidates = await listMarkedForkChildren(
     client,
     box,
     provider,
     key,
-    signal,
+    signal
   );
   if (candidates === undefined) return undefined;
   let unresolved = false;
   for (const candidate of candidates) {
     try {
-      if (await forkOperationSucceeded(box, candidate.marker, signal)) return candidate;
+      if (await forkOperationSucceeded(box, candidate.marker, signal))
+        return candidate;
       unresolved = true;
     } catch {
       signal?.throwIfAborted();
@@ -1291,16 +1436,22 @@ async function findForkChildById(
   box: SandboxInstanceLike,
   provider: string,
   id: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<SandboxInstanceLike | null | undefined> {
   try {
     if (typeof client.get !== "function") return undefined;
-    const child = await awaitWithSignal(client.get(id, signal ? { signal } : undefined), signal);
+    const child = await awaitWithSignal(
+      client.get(id, signal ? { signal } : undefined),
+      signal
+    );
     if (child === null) return null;
     if (child.id !== id) return undefined;
     const marker = forkMarkerFromMetadata(child.metadata);
-    if (!marker || !markerBelongsToSource(marker, provider, box.id)) return undefined;
-    return (await forkOperationSucceeded(box, marker, signal)) ? child : undefined;
+    if (!marker || !markerBelongsToSource(marker, provider, box.id))
+      return undefined;
+    return (await forkOperationSucceeded(box, marker, signal))
+      ? child
+      : undefined;
   } catch {
     signal?.throwIfAborted();
     return undefined;
@@ -1308,27 +1459,39 @@ async function findForkChildById(
 }
 
 /**
- * Resolve a complete child identity when an inventory entry omits its time.
+ * Resolve a complete child identity when an acknowledgement omits durable data.
  *
- * The current Sandbox SDK includes `createdAt` on branch children. A provider
- * wrapper may omit it, so recover the same child by id before claiming a
- * durable environment instead of inventing a timestamp.
+ * A branch response can precede a richer registry read during a rolling
+ * deployment. Recover the exact child when its creation time or provider
+ * marker is absent. Never invent either field from the request.
  */
 async function completeForkChild(
   client: SandboxClientLike,
   child: SandboxInstanceLike,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<SandboxInstanceLike | undefined> {
-  if (child.createdAt !== undefined) return child;
-  if (typeof client.get !== "function" || safeIdentifier(child.id) === undefined) {
+  if (
+    child.createdAt !== undefined &&
+    forkMarkerFromMetadata(child.metadata) !== undefined
+  ) {
+    return child;
+  }
+  if (
+    typeof client.get !== "function" ||
+    safeIdentifier(child.id) === undefined
+  ) {
     return undefined;
   }
   try {
     const resolved = await awaitWithSignal(
       client.get(child.id, signal ? { signal } : undefined),
-      signal,
+      signal
     );
-    if (!resolved || resolved.id !== child.id || resolved.createdAt === undefined) {
+    if (
+      !resolved ||
+      resolved.id !== child.id ||
+      resolved.createdAt === undefined
+    ) {
       return undefined;
     }
     return resolved;
@@ -1338,19 +1501,52 @@ async function completeForkChild(
   }
 }
 
+type ForkCompensation =
+  | "destroyed"
+  | "already_absent"
+  | "unconfirmed"
+  | "not_attempted";
+
+/** Remove only a child this exact call confirmed it created. */
+async function compensateUnmarkedForkChild(
+  result: SandboxForkAcknowledgementLike,
+  child: SandboxInstanceLike,
+  signal?: AbortSignal
+): Promise<ForkCompensation> {
+  if (result.idempotency?.outcome !== "created") return "not_attempted";
+  if (typeof child.delete !== "function") return "unconfirmed";
+  try {
+    const acknowledgement = (await awaitWithSignal(
+      child.delete(),
+      signal
+    )) as SandboxDeleteAcknowledgementLike;
+    if (
+      acknowledgement?.sandboxId !== child.id ||
+      (acknowledgement.outcome !== "destroyed" &&
+        acknowledgement.outcome !== "already_absent")
+    ) {
+      return "unconfirmed";
+    }
+    return acknowledgement.outcome;
+  } catch {
+    signal?.throwIfAborted();
+    return "unconfirmed";
+  }
+}
+
 async function findBlockingForks(
   box: SandboxInstanceLike,
   client: SandboxClientLike,
   provider: string,
   checkpointId: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<string[] | undefined> {
   const candidates = await listMarkedForkChildren(
     client,
     box,
     provider,
     undefined,
-    signal,
+    signal
   );
   if (candidates === undefined) return undefined;
   const blocking = new Set<string>();
@@ -1359,7 +1555,8 @@ async function findBlockingForks(
     try {
       // A candidate that cannot be confirmed leaves the dependency set
       // unknown, so cleanup must not proceed on a partial answer.
-      if (!(await forkOperationSucceeded(box, marker, signal))) return undefined;
+      if (!(await forkOperationSucceeded(box, marker, signal)))
+        return undefined;
       blocking.add(child.id);
     } catch {
       signal?.throwIfAborted();
@@ -1379,7 +1576,7 @@ async function findBlockingForks(
  */
 async function listAllSandboxChildren(
   client: SandboxClientLike,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<SandboxInstanceLike[] | undefined> {
   if (typeof client.list !== "function") return undefined;
   const children: SandboxInstanceLike[] = [];
@@ -1396,7 +1593,7 @@ async function listAllSandboxChildren(
           limit: SANDBOX_LIST_PAGE_SIZE,
           offset,
         }),
-        signal,
+        signal
       );
       if (!Array.isArray(listed) || listed.length > SANDBOX_LIST_PAGE_SIZE) {
         return undefined;
@@ -1441,13 +1638,17 @@ async function listMarkedForkChildren(
   box: SandboxInstanceLike,
   provider: string,
   key?: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<{ child: SandboxInstanceLike; marker: ForkMarker }[] | undefined> {
   const children = await listAllSandboxChildren(client, signal);
   if (children === undefined) return undefined;
   const marked: { child: SandboxInstanceLike; marker: ForkMarker }[] = [];
   for (const child of children) {
-    if (!child || typeof child !== "object" || safeIdentifier(child.id) === undefined) {
+    if (
+      !child ||
+      typeof child !== "object" ||
+      safeIdentifier(child.id) === undefined
+    ) {
       return undefined;
     }
     if (child.id === box.id) continue;
@@ -1461,7 +1662,7 @@ async function listMarkedForkChildren(
 function markerBelongsToSource(
   marker: ForkMarker,
   provider: string,
-  sourceEnvironmentId: string,
+  sourceEnvironmentId: string
 ): boolean {
   return (
     marker.request.checkpoint.provider === provider &&
@@ -1471,7 +1672,7 @@ function markerBelongsToSource(
 
 function checkpointMarkerFromTags(
   tags: string[] | undefined,
-  key?: string,
+  key?: string
 ): CheckpointMarker | undefined {
   if (
     !Array.isArray(tags) ||
@@ -1486,8 +1687,11 @@ function checkpointMarkerFromTags(
   const hasCurrentTags = tags.some((tag) => tag.startsWith(`${currentBase}-`));
   const hasLegacyTags = tags.some((tag) => tag.startsWith(`${legacyBase}:`));
   if (hasCurrentTags === hasLegacyTags) return undefined;
-  if (hasLegacyTags) return legacyCheckpointMarkerFromTags(tags, key, legacyBase);
-  if (tags.some((tag) => Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH)) {
+  if (hasLegacyTags)
+    return legacyCheckpointMarkerFromTags(tags, key, legacyBase);
+  if (
+    tags.some((tag) => Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH)
+  ) {
     return undefined;
   }
   return currentCheckpointMarkerFromTags(tags, key, currentBase);
@@ -1496,22 +1700,32 @@ function checkpointMarkerFromTags(
 function currentCheckpointMarkerFromTags(
   tags: string[],
   key: string | undefined,
-  base: string,
+  base: string
 ): CheckpointMarker | undefined {
   const keyTag = tags.find((tag) => tag.startsWith(`${base}-key-`));
   if (
     keyTag &&
     key !== undefined &&
-    keyTag.slice(`${base}-key-`.length) !== markerKeyDigest(key).replace(":", "-")
+    keyTag.slice(`${base}-key-`.length) !==
+      markerKeyDigest(key).replace(":", "-")
   ) {
     return undefined;
   }
   const chunks = tags
     .map((tag) => {
-      const match = tag.match(new RegExp(`^${escapeRegExp(base)}-material-(\\d+)-(\\d+)-([A-Za-z0-9_-]+)$`));
-      return match ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] } : undefined;
+      const match = tag.match(
+        new RegExp(
+          `^${escapeRegExp(base)}-material-(\\d+)-(\\d+)-([A-Za-z0-9_-]+)$`
+        )
+      );
+      return match
+        ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] }
+        : undefined;
     })
-    .filter((value): value is { index: number; total: number; chunk: string } => value !== undefined)
+    .filter(
+      (value): value is { index: number; total: number; chunk: string } =>
+        value !== undefined
+    )
     .sort((left, right) => left.index - right.index);
   if (
     chunks.length === 0 ||
@@ -1523,7 +1737,7 @@ function currentCheckpointMarkerFromTags(
         !Number.isSafeInteger(chunk.index) ||
         !Number.isSafeInteger(chunk.total) ||
         chunk.index !== index ||
-        chunk.total !== chunks[0].total,
+        chunk.total !== chunks[0].total
     )
   ) {
     return undefined;
@@ -1535,7 +1749,7 @@ function currentCheckpointMarkerFromTags(
 function legacyCheckpointMarkerFromTags(
   tags: string[],
   key: string | undefined,
-  base: string,
+  base: string
 ): CheckpointMarker | undefined {
   const keyTag = tags.find((tag) => tag.startsWith(`${base}:key:`));
   if (
@@ -1548,7 +1762,9 @@ function legacyCheckpointMarkerFromTags(
   const chunks = tags
     .map((tag) => {
       const match = tag.match(
-        new RegExp(`^${escapeRegExp(base)}:material:(\\d+):(\\d+):([A-Za-z0-9_-]+)$`),
+        new RegExp(
+          `^${escapeRegExp(base)}:material:(\\d+):(\\d+):([A-Za-z0-9_-]+)$`
+        )
       );
       return match
         ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] }
@@ -1556,7 +1772,7 @@ function legacyCheckpointMarkerFromTags(
     })
     .filter(
       (value): value is { index: number; total: number; chunk: string } =>
-        value !== undefined,
+        value !== undefined
     )
     .sort((left, right) => left.index - right.index);
   if (
@@ -1569,7 +1785,7 @@ function legacyCheckpointMarkerFromTags(
         !Number.isSafeInteger(chunk.index) ||
         !Number.isSafeInteger(chunk.total) ||
         chunk.index !== index ||
-        chunk.total !== chunks[0].total,
+        chunk.total !== chunks[0].total
     )
   ) {
     return undefined;
@@ -1581,14 +1797,25 @@ function legacyCheckpointMarkerFromTags(
 function checkpointMarkerFromUnknown(
   value: unknown,
   key?: string,
-  legacy = false,
+  legacy = false
 ): CheckpointMarker | undefined {
   if (!value || typeof value !== "object") return undefined;
   const parsed = value as Partial<CheckpointMarker>;
-  if (parsed.version !== 1 || parsed.kind !== "checkpoint" || typeof parsed.idempotencyKey !== "string" || typeof parsed.requestDigest !== "string") return undefined;
+  if (
+    parsed.version !== 1 ||
+    parsed.kind !== "checkpoint" ||
+    typeof parsed.idempotencyKey !== "string" ||
+    typeof parsed.requestDigest !== "string"
+  )
+    return undefined;
   if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
   const request = WorkspaceCheckpointRequestSchema.safeParse(parsed.request);
-  if (!request.success || request.data.idempotencyKey !== parsed.idempotencyKey || request.data.requestDigest !== parsed.requestDigest) return undefined;
+  if (
+    !request.success ||
+    request.data.idempotencyKey !== parsed.idempotencyKey ||
+    request.data.requestDigest !== parsed.requestDigest
+  )
+    return undefined;
   return {
     version: 1,
     kind: "checkpoint",
@@ -1601,7 +1828,7 @@ function checkpointMarkerFromUnknown(
 
 function forkMarkerFromMetadata(
   metadata: Record<string, unknown> | undefined,
-  key?: string,
+  key?: string
 ): ForkMarker | undefined {
   if (
     !metadata ||
@@ -1613,11 +1840,28 @@ function forkMarkerFromMetadata(
   const value = metadata[FORK_METADATA_KEY];
   if (!value || typeof value !== "object") return undefined;
   const parsed = value as Partial<ForkMarker>;
-  if (parsed.version !== 1 || parsed.kind !== "fork" || typeof parsed.idempotencyKey !== "string" || typeof parsed.requestDigest !== "string") return undefined;
+  if (
+    parsed.version !== 1 ||
+    parsed.kind !== "fork" ||
+    typeof parsed.idempotencyKey !== "string" ||
+    typeof parsed.requestDigest !== "string"
+  )
+    return undefined;
   if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
   const request = WorkspaceForkRequestSchema.safeParse(parsed.request);
-  if (!request.success || request.data.idempotencyKey !== parsed.idempotencyKey || request.data.requestDigest !== parsed.requestDigest) return undefined;
-  return { version: 1, kind: "fork", idempotencyKey: parsed.idempotencyKey, requestDigest: parsed.requestDigest, request: request.data };
+  if (
+    !request.success ||
+    request.data.idempotencyKey !== parsed.idempotencyKey ||
+    request.data.requestDigest !== parsed.requestDigest
+  )
+    return undefined;
+  return {
+    version: 1,
+    kind: "fork",
+    idempotencyKey: parsed.idempotencyKey,
+    requestDigest: parsed.requestDigest,
+    request: request.data,
+  };
 }
 
 /**
@@ -1630,13 +1874,13 @@ function forkMarkerFromMetadata(
 async function checkpointConflictFromRemote(
   box: SandboxInstanceLike,
   request: WorkspaceCheckpointRequest,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<WorkspaceCheckpointResult | undefined> {
   signal?.throwIfAborted();
   const recovered = await findCheckpointByKey(
     box,
     request.idempotencyKey,
-    signal,
+    signal
   );
   signal?.throwIfAborted();
   if (!recovered) return undefined;
@@ -1645,7 +1889,7 @@ async function checkpointConflictFromRemote(
   }
   const record = checkpointRecordFromSnapshot(
     recovered.marker.request,
-    recovered.snapshot,
+    recovered.snapshot
   );
   return record === undefined
     ? undefined
@@ -1659,14 +1903,14 @@ async function forkConflictFromRemote(
   provider: string,
   request: WorkspaceForkRequest,
   verifier: TangleConfidentialAttestationVerifier | undefined,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<WorkspaceForkResult | undefined> {
   const recovered = await findForkByKey(
     client,
     box,
     provider,
     request.idempotencyKey,
-    signal,
+    signal
   );
   if (!recovered) return undefined;
   if (recovered.marker.requestDigest !== request.requestDigest) {
@@ -1680,7 +1924,7 @@ async function forkConflictFromRemote(
     provider,
     child.createdAt,
     verifier,
-    signal,
+    signal
   );
   return environment === undefined
     ? undefined
@@ -1696,20 +1940,32 @@ async function forkConflictFromRemote(
  */
 function lookupOutcomeFromSandbox(
   lookup: SandboxWorkspaceOperationLookupLike | undefined,
-  kind: "checkpoint" | "fork",
+  kind: "checkpoint" | "fork"
 ): { absent: true } | { absent: false; message: string; retryable: boolean } {
   if (!lookup || lookup.kind !== kind) {
-    return { absent: false, message: `Sandbox returned no ${kind} lookup`, retryable: true };
+    return {
+      absent: false,
+      message: `Sandbox returned no ${kind} lookup`,
+      retryable: true,
+    };
   }
   if (lookup.outcome === "conflict") {
     return {
       absent: false,
-      message: "Sandbox found a conflicting operation without provider identity",
+      message:
+        "Sandbox found a conflicting operation without provider identity",
       retryable: false,
     };
   }
-  if (lookup.outcome !== "not_found" && (lookup.outcome === "unknown" || lookup.state !== "succeeded")) {
-    return { absent: false, message: `Sandbox ${kind} operation is not decided`, retryable: true };
+  if (
+    lookup.outcome !== "not_found" &&
+    (lookup.outcome === "unknown" || lookup.state !== "succeeded")
+  ) {
+    return {
+      absent: false,
+      message: `Sandbox ${kind} operation is not decided`,
+      retryable: true,
+    };
   }
   return { absent: true };
 }
@@ -1717,90 +1973,249 @@ function lookupOutcomeFromSandbox(
 function checkpointSuccess(
   request: WorkspaceCheckpointRequest,
   checkpoint: WorkspaceCheckpointRef,
-  status: "created" | "replayed",
+  status: "created" | "replayed"
 ): WorkspaceCheckpointResult {
-  return WorkspaceCheckpointResultSchema.parse({ status, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, checkpoint });
+  return WorkspaceCheckpointResultSchema.parse({
+    status,
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    checkpoint,
+  });
 }
 
-function checkpointConflict(request: WorkspaceCheckpointRequest, existingRequestDigest: string): WorkspaceCheckpointResult {
-  return WorkspaceCheckpointResultSchema.parse({ status: "conflict", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, existingRequestDigest });
+function checkpointConflict(
+  request: WorkspaceCheckpointRequest,
+  existingRequestDigest: string
+): WorkspaceCheckpointResult {
+  return WorkspaceCheckpointResultSchema.parse({
+    status: "conflict",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    existingRequestDigest,
+  });
 }
 
-function checkpointUnknown(request: WorkspaceCheckpointRequest, message: string, retryable: boolean): WorkspaceCheckpointResult {
-  return WorkspaceCheckpointResultSchema.parse({ status: "unknown", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, message: boundedString(message, "Tangle checkpoint error"), retryable });
+function checkpointUnknown(
+  request: WorkspaceCheckpointRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceCheckpointResult {
+  return WorkspaceCheckpointResultSchema.parse({
+    status: "unknown",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    message: boundedString(message, "Tangle checkpoint error"),
+    retryable,
+  });
 }
 
-function checkpointFound(request: WorkspaceOperationLookupRequest, checkpoint: WorkspaceCheckpointRef): WorkspaceCheckpointLookupResult {
-  return WorkspaceCheckpointLookupResultSchema.parse({ status: "found", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, checkpoint });
+function checkpointFound(
+  request: WorkspaceOperationLookupRequest,
+  checkpoint: WorkspaceCheckpointRef
+): WorkspaceCheckpointLookupResult {
+  return WorkspaceCheckpointLookupResultSchema.parse({
+    status: "found",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    checkpoint,
+  });
 }
 
-function checkpointNotFound(request: WorkspaceOperationLookupRequest): WorkspaceCheckpointLookupResult {
-  return WorkspaceCheckpointLookupResultSchema.parse({ status: "not_found", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest });
+function checkpointNotFound(
+  request: WorkspaceOperationLookupRequest
+): WorkspaceCheckpointLookupResult {
+  return WorkspaceCheckpointLookupResultSchema.parse({
+    status: "not_found",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+  });
 }
 
-function checkpointLookupConflict(request: WorkspaceOperationLookupRequest, existingRequestDigest: string): WorkspaceCheckpointLookupResult {
-  return WorkspaceCheckpointLookupResultSchema.parse({ status: "conflict", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, existingRequestDigest });
+function checkpointLookupConflict(
+  request: WorkspaceOperationLookupRequest,
+  existingRequestDigest: string
+): WorkspaceCheckpointLookupResult {
+  return WorkspaceCheckpointLookupResultSchema.parse({
+    status: "conflict",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    existingRequestDigest,
+  });
 }
 
-function checkpointLookupUnknown(request: WorkspaceOperationLookupRequest, message: string, retryable: boolean): WorkspaceCheckpointLookupResult {
-  return WorkspaceCheckpointLookupResultSchema.parse({ status: "unknown", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, message: boundedString(message, "Tangle checkpoint lookup error"), retryable });
+function checkpointLookupUnknown(
+  request: WorkspaceOperationLookupRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceCheckpointLookupResult {
+  return WorkspaceCheckpointLookupResultSchema.parse({
+    status: "unknown",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    message: boundedString(message, "Tangle checkpoint lookup error"),
+    retryable,
+  });
 }
 
-function forkSuccess(request: WorkspaceForkRequest, environment: ForkedEnvironmentRef, status: "created" | "replayed"): WorkspaceForkResult {
-  return WorkspaceForkResultSchema.parse({ status, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, environment });
+function forkSuccess(
+  request: WorkspaceForkRequest,
+  environment: ForkedEnvironmentRef,
+  status: "created" | "replayed"
+): WorkspaceForkResult {
+  return WorkspaceForkResultSchema.parse({
+    status,
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    environment,
+  });
 }
 
-function forkConflict(request: WorkspaceForkRequest, existingRequestDigest: string): WorkspaceForkResult {
-  return WorkspaceForkResultSchema.parse({ status: "conflict", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, existingRequestDigest });
+function forkConflict(
+  request: WorkspaceForkRequest,
+  existingRequestDigest: string
+): WorkspaceForkResult {
+  return WorkspaceForkResultSchema.parse({
+    status: "conflict",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    existingRequestDigest,
+  });
 }
 
-function forkUnknown(request: WorkspaceForkRequest, message: string, retryable: boolean): WorkspaceForkResult {
-  return WorkspaceForkResultSchema.parse({ status: "unknown", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, message: boundedString(message, "Tangle fork error"), retryable });
+function forkUnknown(
+  request: WorkspaceForkRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceForkResult {
+  return WorkspaceForkResultSchema.parse({
+    status: "unknown",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    message: boundedString(message, "Tangle fork error"),
+    retryable,
+  });
 }
 
-function forkFound(request: WorkspaceOperationLookupRequest, environment: ForkedEnvironmentRef): WorkspaceForkLookupResult {
-  return WorkspaceForkLookupResultSchema.parse({ status: "found", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, environment });
+function forkFound(
+  request: WorkspaceOperationLookupRequest,
+  environment: ForkedEnvironmentRef
+): WorkspaceForkLookupResult {
+  return WorkspaceForkLookupResultSchema.parse({
+    status: "found",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    environment,
+  });
 }
 
-function forkNotFound(request: WorkspaceOperationLookupRequest): WorkspaceForkLookupResult {
-  return WorkspaceForkLookupResultSchema.parse({ status: "not_found", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest });
+function forkNotFound(
+  request: WorkspaceOperationLookupRequest
+): WorkspaceForkLookupResult {
+  return WorkspaceForkLookupResultSchema.parse({
+    status: "not_found",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+  });
 }
 
-function forkLookupConflict(request: WorkspaceOperationLookupRequest, existingRequestDigest: string): WorkspaceForkLookupResult {
-  return WorkspaceForkLookupResultSchema.parse({ status: "conflict", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, existingRequestDigest });
+function forkLookupConflict(
+  request: WorkspaceOperationLookupRequest,
+  existingRequestDigest: string
+): WorkspaceForkLookupResult {
+  return WorkspaceForkLookupResultSchema.parse({
+    status: "conflict",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    existingRequestDigest,
+  });
 }
 
-function forkLookupUnknown(request: WorkspaceOperationLookupRequest, message: string, retryable: boolean): WorkspaceForkLookupResult {
-  return WorkspaceForkLookupResultSchema.parse({ status: "unknown", idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest, message: boundedString(message, "Tangle fork lookup error"), retryable });
+function forkLookupUnknown(
+  request: WorkspaceOperationLookupRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceForkLookupResult {
+  return WorkspaceForkLookupResultSchema.parse({
+    status: "unknown",
+    idempotencyKey: request.idempotencyKey,
+    requestDigest: request.requestDigest,
+    message: boundedString(message, "Tangle fork lookup error"),
+    retryable,
+  });
 }
 
-function cleanupDeleted(request: WorkspaceCleanupRequest): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "deleted" });
+function cleanupDeleted(
+  request: WorkspaceCleanupRequest
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "deleted",
+  });
 }
 
-function cleanupAlreadyAbsent(request: WorkspaceCleanupRequest): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "already_absent" });
+function cleanupAlreadyAbsent(
+  request: WorkspaceCleanupRequest
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "already_absent",
+  });
 }
 
-function cleanupConflict(request: WorkspaceCleanupRequest, existingRequestDigest: string): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "conflict", existingRequestDigest, message: "Cleanup operation id is bound to another target" });
+function cleanupConflict(
+  request: WorkspaceCleanupRequest,
+  existingRequestDigest: string
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "conflict",
+    existingRequestDigest,
+    message: "Cleanup operation id is bound to another target",
+  });
 }
 
-function cleanupInUse(request: WorkspaceCleanupRequest, blockingTargetIds: string[]): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "in_use", blockingTargetIds, message: "Checkpoint is still referenced by forked environments" });
+function cleanupInUse(
+  request: WorkspaceCleanupRequest,
+  blockingTargetIds: string[]
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "in_use",
+    blockingTargetIds,
+    message: "Checkpoint is still referenced by forked environments",
+  });
 }
 
-function cleanupUnknown(request: WorkspaceCleanupRequest, message: string, retryable: boolean): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "unknown", message: boundedString(message, "Tangle cleanup error"), retryable });
+function cleanupUnknown(
+  request: WorkspaceCleanupRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "unknown",
+    message: boundedString(message, "Tangle cleanup error"),
+    retryable,
+  });
 }
 
-function cleanupTransportFailure(request: WorkspaceCleanupRequest, message: string, retryable: boolean): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({ ...request, status: "transport_failure", message: boundedString(message, "Tangle cleanup transport error"), retryable });
+function cleanupTransportFailure(
+  request: WorkspaceCleanupRequest,
+  message: string,
+  retryable: boolean
+): WorkspaceCleanupAcknowledgement {
+  return WorkspaceCleanupAcknowledgementSchema.parse({
+    ...request,
+    status: "transport_failure",
+    message: boundedString(message, "Tangle cleanup transport error"),
+    retryable,
+  });
 }
 
 function isoDate(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) throw new Error("Sandbox returned an invalid workspace timestamp");
+  if (!Number.isFinite(date.getTime()))
+    throw new Error("Sandbox returned an invalid workspace timestamp");
   return date.toISOString();
 }
 
@@ -1816,12 +2231,23 @@ function cloneJson<T>(value: T): T {
 }
 
 function safeIdentifier(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0 || value.length > 512 || value.trim() !== value) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value.trim() !== value
+  )
+    return undefined;
   return value;
 }
 
 function safeString(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_STRING_LENGTH) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_STRING_LENGTH
+  )
+    return undefined;
   return value;
 }
 
@@ -1859,7 +2285,9 @@ function encodeJson(value: unknown): string | undefined {
 
 function decodeJson(value: string): unknown {
   try {
-    return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    return JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8")
+    ) as unknown;
   } catch {
     return undefined;
   }
