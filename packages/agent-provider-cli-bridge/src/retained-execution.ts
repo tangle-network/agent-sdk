@@ -1,4 +1,8 @@
-import type { StreamEvent, TokenUsage } from "@tangle-network/agent-interface";
+import {
+  AgentTurnResultSchema,
+  type StreamEvent,
+  type TokenUsage,
+} from "@tangle-network/agent-interface";
 import type {
   AgentEnvironmentEvent,
   AgentSessionRef,
@@ -41,6 +45,8 @@ import {
 } from "./transport.js";
 import { modelRequestCount } from "./wire.js";
 import { lookupCliBridgeContext } from "./context-transfer.js";
+
+const MAX_CLI_BRIDGE_RESULT_EVENTS = 1_024;
 
 export async function* streamTrackedCliBridgeTurn(
   options: CliBridgeProviderOptions,
@@ -403,6 +409,7 @@ export async function collectCliBridgeTurnResult(
   signal?: AbortSignal,
 ): Promise<AgentTurnResult> {
   const events: AgentEnvironmentEvent[] = [];
+  let eventCount = 0;
   let text = "";
   let usage: TokenUsage | undefined;
   let observedModelRequests = 0;
@@ -413,7 +420,9 @@ export async function collectCliBridgeTurnResult(
   let streamError: unknown;
   try {
     for await (const event of source) {
-      events.push(event);
+      if (eventCount < MAX_CLI_BRIDGE_RESULT_EVENTS) events.push(event);
+      else events[eventCount % MAX_CLI_BRIDGE_RESULT_EVENTS] = event;
+      eventCount += 1;
       const finalText = event.data.finalText;
       if (typeof finalText === "string") {
         text = finalText;
@@ -452,7 +461,13 @@ export async function collectCliBridgeTurnResult(
     throw new Error(`cli-bridge run "${run.id}" has no terminal result`);
   }
   const success = snapshot.status === "done" && streamError === undefined;
-  return {
+  const resultEvents = eventCount <= MAX_CLI_BRIDGE_RESULT_EVENTS
+    ? events
+    : [
+        ...events.slice(eventCount % MAX_CLI_BRIDGE_RESULT_EVENTS),
+        ...events.slice(0, eventCount % MAX_CLI_BRIDGE_RESULT_EVENTS),
+      ];
+  return AgentTurnResultSchema.parse({
     text,
     success,
     ...(!success
@@ -480,8 +495,8 @@ export async function collectCliBridgeTurnResult(
       ...(servedModel === undefined ? {} : { model: servedModel }),
       ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
     },
-    events,
-  };
+    events: resultEvents,
+  });
 }
 
 /** Keep reasoning and tool updates out of the assistant's visible result text. */
