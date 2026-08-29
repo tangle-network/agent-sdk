@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.14.3
+
+### Patch Changes
+
+- 6451a40: Preserve each bounded Sandbox HTTP status and service error code in provider failure reasons.
+
 ## 0.14.2
 
 ### Patch Changes
