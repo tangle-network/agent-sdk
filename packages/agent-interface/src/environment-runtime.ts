@@ -6,8 +6,8 @@ import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
 import type { TokenUsage } from "./execution-types.js";
 import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
-import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
-import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
+import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
+import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentExactRunControlRef, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
 import type {
   AgentWorkspaceBranching,
   AgentWorkspaceBranchingProvider,
@@ -157,11 +157,71 @@ export const AgentNativeContextContinuationResultSchema = z.union([
 ]);
 export type AgentNativeContextContinuationResult = z.infer<typeof AgentNativeContextContinuationResultSchema>;
 
+/** Exact continued-run identity returned after durable admission. */
+export const AgentNativeContextContinuationAdmissionSchema = z
+  .strictObject({
+    phase: z.literal("admitted"),
+    acknowledgement: z.strictObject({
+      operationId: boundedIdentifierSchema,
+      requestDigest: AgentExactRunControlRefSchema.shape.requestDigest,
+      historyMessagesSent: z.literal(0),
+      actualBoundary: NativeContextBoundaryProofSchema,
+    }),
+    controlRef: AgentExactRunControlRefSchema,
+  })
+  .superRefine((admission, refinement) => {
+    const source = admission.acknowledgement.actualBoundary;
+    const current = admission.controlRef;
+    if (
+      source.provider !== current.provider ||
+      source.environmentId !== current.environmentId ||
+      source.sessionId !== current.sessionId
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["controlRef"],
+        message: "native continuation admission must stay in the retained session",
+      });
+    }
+  });
+export type AgentNativeContextContinuationAdmission = z.infer<
+  typeof AgentNativeContextContinuationAdmissionSchema
+>;
+
+/** Cross-check one early admission against its exact continuation request. */
+export function agentNativeContextContinuationAdmissionMatchesRequest(
+  request: NativeContextContinuationRequest,
+  admission: AgentNativeContextContinuationAdmission,
+): boolean {
+  const parsedRequest = NativeContextContinuationRequestSchema.safeParse(request);
+  const parsedAdmission = AgentNativeContextContinuationAdmissionSchema.safeParse(admission);
+  if (!parsedRequest.success || !parsedAdmission.success) return false;
+  const expected = parsedRequest.data;
+  const actual = parsedAdmission.data;
+  const boundary = actual.acknowledgement.actualBoundary;
+  return (
+    actual.acknowledgement.operationId === expected.operationId &&
+    actual.acknowledgement.requestDigest === expected.requestDigest &&
+    boundary.runId === expected.run.runId &&
+    boundary.provider === expected.run.provider &&
+    boundary.environmentId === expected.run.environmentId &&
+    boundary.sessionId === expected.run.sessionId &&
+    boundary.executionId === expected.run.executionId &&
+    boundary.requestDigest === expected.run.requestDigest
+  );
+}
+
 /** Runtime-only controls kept outside the digest-bound user turn. */
 export interface AgentNativeContextContinuationOptions {
   turn: NativeContextContinuationTurn;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Receives the exact new run identity after durable admission and before the
+   * provider waits for terminal output. Providers call this once only when
+   * `nativeContinuation.admissionControl` is true.
+   */
+  onAdmission?: (controlRef: AgentExactRunControlRef) => void;
 }
 
 /** Cross-check a successful native continuation against its retained session. */
@@ -363,6 +423,8 @@ export interface AgentEnvironmentCapabilities {
   nativeContinuation?: {
     atomicBoundary: boolean;
     requestIdempotency: boolean;
+    /** The provider exposes the exact continued run before terminal output. */
+    admissionControl?: boolean;
   };
   /** Absent when the provider cannot originate or answer interactions. */
   interactions?: InteractionCapabilities;
@@ -452,6 +514,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
       .strictObject({
         atomicBoundary: z.boolean(),
         requestIdempotency: z.boolean(),
+        admissionControl: z.boolean().optional(),
       })
       .optional(),
     interactions: InteractionCapabilitiesSchema.optional(),
@@ -546,6 +609,16 @@ export const AgentEnvironmentCapabilitiesSchema = z
         path: ["nativeContinuation"],
         message:
           "native continuation requires session continuation, atomic boundary admission, and request idempotency together",
+      });
+    }
+    if (
+      capabilities.nativeContinuation?.admissionControl === true &&
+      capabilities.retainedControl === undefined
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["nativeContinuation", "admissionControl"],
+        message: "native continuation requires retained control for early admission",
       });
     }
     const durableBranching = [

@@ -46,6 +46,7 @@ import {
   continueCliBridgeNative,
   readCliBridgeNativeContextBoundary,
   supportsCliBridgeNativeContinuation,
+  supportsCliBridgeNativeAdmissionControl,
   supportsCliBridgeNativeInteractions,
   type CliBridgeNativeSessionCache,
 } from "./retained-native.js";
@@ -521,6 +522,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
               request,
               continuationOptions,
               args.runs,
+              supportsCliBridgeNativeAdmissionControl(args.capabilities),
             );
             if ("result" in result && result.result.usage !== undefined) {
               args.usageLog.record(result.controlRef.executionId, result.result.usage);

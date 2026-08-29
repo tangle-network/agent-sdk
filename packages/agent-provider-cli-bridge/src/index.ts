@@ -272,6 +272,7 @@ export function defaultCliBridgeCapabilities(
           nativeContinuation: {
             atomicBoundary: true,
             requestIdempotency: true,
+            admissionControl: true,
           },
         }
       : {}),
