@@ -4,6 +4,7 @@ import type {
   SandboxEvent,
   SandboxRuntimeCapabilities,
 } from "@tangle-network/sandbox";
+import { Sandbox, SandboxInstance } from "@tangle-network/sandbox";
 import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
 import { agentRunCancellationRequestDigest } from "@tangle-network/agent-interface";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
@@ -35,7 +36,11 @@ const PUBLISHED_DOCUMENT: SandboxRuntimeCapabilities = {
   sidecarVersion: "1.2.3",
   image: `example/sidecar@sha256:${"b".repeat(64)}`,
   dispatch: { runControlRef: true, executionIdOnAdmission: true },
-  cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
+  cancel: {
+    canonicalRunCancellation: true,
+    digestBound: true,
+    idempotent: true,
+  },
   runs: { executionScopedStatus: true, eventReplay: true },
   interactions: {},
 };
@@ -114,7 +119,9 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
   const box: SandboxInstanceLike = {
     id: "sbx-sdk-backed",
     status: "running",
-    connection: { runtimeUrl: "https://sbx-sdk-backed.runtime.example:8443/v1" },
+    connection: {
+      runtimeUrl: "https://sbx-sdk-backed.runtime.example:8443/v1",
+    },
     gpuLease: {
       accelerator: { kind: "nvidia-h100", count: 1 },
       estimatedCustomerCostUsd: 2.5,
@@ -179,13 +186,40 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
   };
 }
 
+/** Inspect the linked SDK directly, without using the provider detector. */
+function linkedInteractiveAgentSurface(): boolean {
+  const client = new Sandbox({
+    baseUrl: "https://sandbox.tangle.tools",
+    apiKey: "surface-probe-only",
+  });
+  const box = new SandboxInstance(client, {
+    id: "surface-probe",
+    status: "stopped",
+    createdAt: new Date(0),
+  });
+  const handle = box.session("__tangle-interactive-probe__").interactive();
+  return [
+    "start",
+    "claimControl",
+    "status",
+    "attachAgentTerminal",
+    "validateControl",
+    "sendPrompt",
+    "stop",
+  ].every(
+    (method) =>
+      typeof (handle as unknown as Record<string, unknown>)[method] ===
+      "function"
+  );
+}
+
 /**
  * Every claim a capability document carries, addressed by path. A relation
  * between two documents is stated over all of them rather than over a chosen
  * few, so a claim the schema gains later joins the comparison on its own.
  */
 function capabilityClaims(
-  document: AgentEnvironmentCapabilities,
+  document: AgentEnvironmentCapabilities
 ): Map<string, boolean> {
   const claims = new Map<string, boolean>();
   const walk = (value: unknown, path: string): void => {
@@ -215,7 +249,7 @@ const DEPLOYMENT_DECIDED_CLAIMS = [
 
 function decidedByDeployment(path: string): boolean {
   return DEPLOYMENT_DECIDED_CLAIMS.some(
-    (claim) => path === claim || path.startsWith(`${claim}.`),
+    (claim) => path === claim || path.startsWith(`${claim}.`)
   );
 }
 
@@ -234,17 +268,19 @@ function deploymentDecidedClaims(document: AgentEnvironmentCapabilities) {
 }
 
 function claimsTheDeploymentDoesNotDecide(
-  document: AgentEnvironmentCapabilities,
+  document: AgentEnvironmentCapabilities
 ): Record<string, boolean> {
   return Object.fromEntries(
-    [...capabilityClaims(document)].filter(([path]) => !decidedByDeployment(path)),
+    [...capabilityClaims(document)].filter(
+      ([path]) => !decidedByDeployment(path)
+    )
   );
 }
 
 /** The paths where one document claims what the other does not back. */
 function claimsBeyond(
   document: AgentEnvironmentCapabilities,
-  ceiling: AgentEnvironmentCapabilities,
+  ceiling: AgentEnvironmentCapabilities
 ): string[] {
   const bound = capabilityClaims(ceiling);
   return [...capabilityClaims(document)]
@@ -276,7 +312,7 @@ describe("Tangle deployment capability discovery", () => {
       session.cancelRun!({
         ...material,
         requestDigest: agentRunCancellationRequestDigest(material),
-      }),
+      })
     ).resolves.toMatchObject({ status: "accepted", run });
   });
 
@@ -394,7 +430,9 @@ describe("Tangle deployment capability discovery", () => {
       const { provider, sessionId } = deployedProvider({
         capabilities: async () => testCase.document,
       });
-      const environment = await provider.create({ profile: { name: "worker" } });
+      const environment = await provider.create({
+        profile: { name: "worker" },
+      });
       const claimed = environment.capabilities!;
 
       expect({
@@ -412,12 +450,12 @@ describe("Tangle deployment capability discovery", () => {
       // A partial document keeps every operation its remaining flags back, so
       // the exposed operations follow the claims that survived the missing one.
       expect(typeof environment.dispatch === "function").toBe(
-        claimed.streaming.detach,
+        claimed.streaming.detach
       );
       expect(typeof environment.session === "function").toBe(
         claimed.streaming.detach ||
           claimed.streaming.replay ||
-          claimed.sessions.continue,
+          claimed.sessions.continue
       );
       expect(environment.session!(sessionId).cancelRun).toBeUndefined();
     }
@@ -427,22 +465,28 @@ describe("Tangle deployment capability discovery", () => {
     // Discovery runs against a sandbox a cold provision has already paid for.
     // A failed read is not evidence about the deployment, so the adapter
     // claims nothing, reports the failure, and keeps the sandbox.
-    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warned = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     try {
       const { provider, deleted } = deployedProvider({
         capabilities: async () => {
-          throw new Error("Capability discovery returned a non-object document");
+          throw new Error(
+            "Capability discovery returned a non-object document"
+          );
         },
       });
 
-      const environment = await provider.create({ profile: { name: "worker" } });
+      const environment = await provider.create({
+        profile: { name: "worker" },
+      });
 
       expect(deleted).not.toHaveBeenCalled();
       expect(environment.dispatch).toBeUndefined();
       expect(environment.session).toBeUndefined();
       expect(warned).toHaveBeenCalledWith(
         expect.stringContaining("Tangle capability discovery failed"),
-        expect.any(Error),
+        expect.any(Error)
       );
     } finally {
       warned.mockRestore();
@@ -460,7 +504,10 @@ describe("Tangle deployment capability discovery", () => {
     });
 
     await expect(
-      provider.create({ profile: { name: "worker" }, signal: controller.signal }),
+      provider.create({
+        profile: { name: "worker" },
+        signal: controller.signal,
+      })
     ).rejects.toThrow(/caller cancelled/);
     expect(deleted).toHaveBeenCalledTimes(1);
   });
@@ -470,7 +517,9 @@ describe("Tangle deployment capability discovery", () => {
     // read claims nothing, but only about a deployment that was asked: this
     // read reported on the caller, so the abort leaves the boundary instead
     // of resolving into a fact and instead of reaching the warning channel.
-    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warned = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     try {
       const controller = new AbortController();
       const box: SandboxInstanceLike = {
@@ -489,7 +538,7 @@ describe("Tangle deployment capability discovery", () => {
       };
 
       await expect(
-        readDeploymentCapabilitySupport(box, { signal: controller.signal }),
+        readDeploymentCapabilitySupport(box, { signal: controller.signal })
       ).rejects.toThrow(/caller cancelled the read/);
       expect(warned).not.toHaveBeenCalled();
     } finally {
@@ -557,7 +606,7 @@ describe("Tangle deployment capability discovery", () => {
         continued: true,
         retainedControl: true,
         interactions: true,
-        interactiveAgent: false,
+        interactiveAgent: linkedInteractiveAgentSurface(),
       });
       expect({
         deployment: testCase.deployment,
@@ -574,18 +623,20 @@ describe("Tangle deployment capability discovery", () => {
       });
       expect(claimsBeyond(sandboxStage, clientStage)).toEqual([]);
       expect(claimsTheDeploymentDoesNotDecide(sandboxStage)).toEqual(
-        claimsTheDeploymentDoesNotDecide(clientStage),
+        claimsTheDeploymentDoesNotDecide(clientStage)
       );
 
-      const environment = await provider.create({ profile: { name: "worker" } });
+      const environment = await provider.create({
+        profile: { name: "worker" },
+      });
       expect(environment.capabilities).toEqual(sandboxStage);
       expect(typeof environment.dispatch === "function").toBe(
-        sandboxStage.streaming.detach,
+        sandboxStage.streaming.detach
       );
       expect(typeof environment.session === "function").toBe(
         sandboxStage.streaming.detach ||
           sandboxStage.streaming.replay ||
-          sandboxStage.sessions.continue,
+          sandboxStage.sessions.continue
       );
     }
   });
@@ -620,7 +671,7 @@ describe("Tangle deployment capability discovery", () => {
     });
     expect(deploymentCapabilitySupport(null)).toEqual(UNPROVEN_DEPLOYMENT);
     expect(deploymentCapabilitySupport({ schema: 1 })).toEqual(
-      UNPROVEN_DEPLOYMENT,
+      UNPROVEN_DEPLOYMENT
     );
   });
 });

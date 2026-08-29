@@ -1,10 +1,13 @@
 import {
   AgentInteractiveSessionControlClaimAcknowledgementSchema,
+  AgentInteractiveSessionControlClaimSchema,
   AgentInteractiveSessionControlClaimRequestSchema,
   AgentInteractiveSessionPromptAcknowledgementSchema,
   AgentInteractiveSessionRefSchema,
   AgentInteractiveSessionStopAcknowledgementSchema,
+  AgentInteractiveSessionStopCommandSchema,
   agentInteractiveSessionControlClaimRequestDigest,
+  agentInteractiveSessionStopRequestDigest,
   agentInteractiveSessionRunRef,
   buildAgentExecutionPreparationReceipt,
   buildAgentWorkspaceLeaseRecord,
@@ -20,18 +23,20 @@ import {
   type AgentInteractiveSessionStopAcknowledgement,
   type AgentInteractiveSessionStopCommand,
   type AgentInteractiveSessionRef,
+  type AgentInteractiveSessionStatus,
+  type AgentInteractiveTerminalSession,
   type AgentProfile,
 } from "@tangle-network/agent-interface";
 import { runInteractiveSessionConformance } from "@tangle-network/agent-provider-testkit";
+import { Sandbox, SandboxInstance } from "@tangle-network/sandbox";
 import { describe, expect, it, vi } from "vitest";
-import { createTangleInteractiveAgentRegistry } from "./tangle-interactive.js";
+import {
+  createTangleInteractiveAgentRegistry,
+  sandboxBacksInteractiveAgent,
+} from "./tangle-interactive.js";
 import type {
   SandboxInstanceLike,
-  SandboxInteractiveSessionInfoLike,
   SandboxInteractiveSessionLike,
-  SandboxInteractiveSessionStatusLike,
-  SandboxTerminalHandlersLike,
-  SandboxTerminalStreamLike,
 } from "./tangle-types.js";
 
 const sha = (digit: string) => `sha256:${digit.repeat(64)}` as const;
@@ -68,7 +73,7 @@ const incarnationId = "interactive-incarnation-1";
 
 function preparationReceiptFor(
   requestDigest: `sha256:${string}`,
-  authoredProfile: AgentProfile,
+  authoredProfile: AgentProfile
 ): AgentExecutionPreparationReceipt {
   const sourceSnapshotPolicy = {
     kind: "provider-declared" as const,
@@ -104,7 +109,7 @@ function preparationReceiptFor(
       disposition: "behavior" as const,
       owner: "executor" as const,
       mechanism: "sandbox-profile-materializer",
-    }),
+    })
   );
   return buildAgentExecutionPreparationReceipt({
     preparationId: "sandbox-preparation-1",
@@ -134,25 +139,22 @@ function preparationReceiptFor(
   });
 }
 
-interface FakeInteractiveOptions {
-  restored?: boolean;
-}
-
-function fakeInteractive(options: FakeInteractiveOptions = {}) {
-  const refInfo: SandboxInteractiveSessionInfoLike = {
-    sessionId: run.sessionId,
-    harness: "pi",
-    startedAt,
-    streamUrl: `/terminals/${run.sessionId}/ws`,
-    incarnationId,
+function fakeInteractive() {
+  const ref = AgentInteractiveSessionRefSchema.parse({
+    run,
     preparationReceipt,
-  };
-  let lifecycle: SandboxInteractiveSessionStatusLike = {
-    state: "running",
-    ...refInfo,
-  };
+    incarnationId,
+    startedAt,
+  });
   let currentGeneration = 1;
-  let currentControl: AgentInteractiveSessionControlClaim | undefined;
+  let currentControl = AgentInteractiveSessionControlClaimSchema.parse({
+    refDigest: canonicalCandidateDigest(ref),
+    generation: currentGeneration,
+    leaseId: "interactive-lease-1",
+    holderId: "tangle-sidecar",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  let lifecycle: AgentInteractiveSessionStatus = { state: "running", ref };
   let starts = 0;
   const claimLedger = new Map<
     string,
@@ -168,247 +170,314 @@ function fakeInteractive(options: FakeInteractiveOptions = {}) {
   >();
   const writes: Array<string | Uint8Array> = [];
   const resizes: Array<{ cols: number; rows: number }> = [];
-  const attach = vi.fn(
-    async (attachOptions: {
-      control: AgentInteractiveSessionControlClaim;
-      cols?: number;
-      rows?: number;
-      handlers?: SandboxTerminalHandlersLike;
-    }): Promise<SandboxTerminalStreamLike> => {
-      await validateControl(attachOptions.control);
-      const ready = {
-        connectionId: run.sessionId,
-        sessionId: run.sessionId,
-        restored: options.restored ?? true,
-        detachTimeoutMs: 300_000,
-      };
-      let open = true;
-      const stream: SandboxTerminalStreamLike = {
-        connectionId: run.sessionId,
-        ready,
-        get isOpen() {
-          return open;
-        },
-        write(data) {
-          writes.push(data);
-        },
-        resize(cols, rows) {
-          resizes.push({ cols, rows });
-        },
-        async close() {
-          open = false;
-          attachOptions.handlers?.onClose?.(1000, "detached");
-        },
-      };
-      attachOptions.handlers?.onReady?.(ready);
-      attachOptions.handlers?.onData?.(new TextEncoder().encode("Pi is ready.\r\n"));
-      return stream;
-    },
+
+  const validateControl = vi.fn(
+    async (
+      control: AgentInteractiveSessionControlClaim,
+      options?: { signal?: AbortSignal }
+    ): Promise<void> => {
+      options?.signal?.throwIfAborted();
+      if (
+        canonicalCandidateDigest(currentControl) !==
+          canonicalCandidateDigest(control) ||
+        Date.parse(control.expiresAt) <= Date.now()
+      ) {
+        throw new Error("stale or expired interactive control");
+      }
+    }
   );
 
-  async function validateControl(control: AgentInteractiveSessionControlClaim): Promise<void> {
-    if (
-      currentControl === undefined ||
-      canonicalCandidateDigest(currentControl) !== canonicalCandidateDigest(control) ||
-      Date.parse(control.expiresAt) <= Date.now()
-    ) {
-      throw new Error("stale or expired interactive control");
+  const attachAgentTerminal = vi.fn(
+    async (
+      attachRequest: Parameters<
+        SandboxInteractiveSessionLike["attachAgentTerminal"]
+      >[0],
+      options?: { signal?: AbortSignal }
+    ): Promise<AgentInteractiveTerminalSession> => {
+      await validateControl(attachRequest.control, options);
+      let detached = false;
+      return {
+        ref: {
+          terminalSessionId: run.sessionId,
+          parentExecutionId: run.executionId,
+          name: "interactive-pi",
+          shell: "/bin/bash",
+          command: "pi",
+          cwd: "/workspace",
+          cols: attachRequest.cols ?? 120,
+          rows: attachRequest.rows ?? 40,
+          connectionId: run.sessionId,
+          createdAt: startedAt,
+          lastActivityAt: startedAt,
+          expiresAt: attachRequest.control.expiresAt,
+          isRunning: true,
+          attachCount: 1,
+        },
+        cursors: { earliest: 0, latest: 0 },
+        control: attachRequest.control,
+        async input(input, operation) {
+          operation?.signal?.throwIfAborted();
+          if (detached) throw new Error("terminal is detached");
+          writes.push(input.data);
+        },
+        async resize(resize, operation) {
+          operation?.signal?.throwIfAborted();
+          if (detached) throw new Error("terminal is detached");
+          resizes.push(resize);
+        },
+        async detach(operation) {
+          operation?.signal?.throwIfAborted();
+          detached = true;
+          return {
+            status: "detached" as const,
+            terminalSessionId: run.sessionId,
+            connectionId: run.sessionId,
+          };
+        },
+        async close(operation) {
+          operation?.signal?.throwIfAborted();
+          detached = true;
+          return {
+            status: "unknown" as const,
+            terminalSessionId: run.sessionId,
+            message: "The terminal detached without stopping the agent.",
+            retryable: false,
+          };
+        },
+        async *events() {
+          yield { type: "ready" as const };
+        },
+      };
     }
-  }
+  );
 
   const start = vi.fn(
-    async (request: Parameters<SandboxInteractiveSessionLike["start"]>[0]) => {
-      if (request.requestDigest !== run.requestDigest) {
+    async (
+      startRequest: Parameters<SandboxInteractiveSessionLike["start"]>[0],
+      options?: { signal?: AbortSignal }
+    ) => {
+      options?.signal?.throwIfAborted();
+      if (
+        canonicalCandidateDigest(startRequest) !==
+        canonicalCandidateDigest({ run, ...startInput })
+      ) {
         throw new Error("interactive start operation conflict");
       }
       starts += starts === 0 ? 1 : 0;
-      return refInfo;
-    },
+      if (lifecycle.state === "running") {
+        return {
+          state: "running" as const,
+          ref: lifecycle.ref,
+          control: currentControl,
+          streamUrl: `/terminals/${run.sessionId}/ws`,
+        };
+      }
+      if (lifecycle.state === "unknown") {
+        throw new Error("interactive session state is unknown");
+      }
+      return {
+        state: "exited" as const,
+        ref: lifecycle.ref,
+        control: currentControl,
+        endedAt: lifecycle.endedAt,
+        reason: lifecycle.reason,
+        ...(lifecycle.exitCode === undefined
+          ? {}
+          : { exitCode: lifecycle.exitCode }),
+        ...(lifecycle.exitSignal === undefined
+          ? {}
+          : { exitSignal: lifecycle.exitSignal }),
+      };
+    }
   );
-  const claimControl = vi.fn(async (
-    request: AgentInteractiveSessionControlClaimRequest,
-  ): Promise<AgentInteractiveSessionControlClaimAcknowledgement> => {
-    const previous = claimLedger.get(request.operationId);
-    if (previous !== undefined) {
-      if (previous.requestDigest !== request.requestDigest) {
+  const claimControl = vi.fn(
+    async (
+      request: AgentInteractiveSessionControlClaimRequest
+    ): Promise<AgentInteractiveSessionControlClaimAcknowledgement> => {
+      const previous = claimLedger.get(request.operationId);
+      if (previous !== undefined) {
+        if (previous.requestDigest !== request.requestDigest) {
+          return {
+            operationId: request.operationId,
+            requestDigest: request.requestDigest,
+            ref: request.ref,
+            status: "conflict" as const,
+            conflictReason: "operation_reuse" as const,
+            currentGeneration,
+            existingRequestDigest: previous.requestDigest,
+          };
+        }
+        return AgentInteractiveSessionControlClaimAcknowledgementSchema.parse({
+          ...(previous.acknowledgement as object),
+          status: "replayed",
+        });
+      }
+      if (request.expectedGeneration !== currentGeneration) {
         return {
           operationId: request.operationId,
           requestDigest: request.requestDigest,
           ref: request.ref,
           status: "conflict" as const,
-          conflictReason: "operation_reuse" as const,
+          conflictReason: "generation_mismatch" as const,
           currentGeneration,
-          existingRequestDigest: previous.requestDigest,
         };
       }
-      return AgentInteractiveSessionControlClaimAcknowledgementSchema.parse({
-        ...(previous.acknowledgement as object),
-        status: "replayed",
+      currentGeneration += 1;
+      currentControl = AgentInteractiveSessionControlClaimSchema.parse({
+        refDigest: canonicalCandidateDigest(request.ref),
+        generation: currentGeneration,
+        leaseId: `interactive-lease-${currentGeneration}`,
+        holderId: request.holderId,
+        expiresAt: "2099-01-01T00:00:00.000Z",
       });
-    }
-    if (request.expectedGeneration !== currentGeneration) {
-      return {
+      const acknowledgement = {
         operationId: request.operationId,
         requestDigest: request.requestDigest,
         ref: request.ref,
-        status: "conflict" as const,
-        conflictReason: "generation_mismatch" as const,
-        currentGeneration,
+        status: "accepted" as const,
+        control: currentControl,
       };
-    }
-    currentGeneration += 1;
-    currentControl = {
-      refDigest: canonicalCandidateDigest(request.ref),
-      generation: currentGeneration,
-      leaseId: `interactive-lease-${currentGeneration}`,
-      holderId: request.holderId,
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    };
-    const acknowledgement = {
-      operationId: request.operationId,
-      requestDigest: request.requestDigest,
-      ref: request.ref,
-      status: "accepted" as const,
-      control: currentControl,
-    };
-    claimLedger.set(request.operationId, {
-      requestDigest: request.requestDigest,
-      acknowledgement,
-    });
-    return AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
-      acknowledgement,
-    );
-  });
-  const sendPrompt = vi.fn(async (
-    command: AgentInteractiveSessionPromptCommand,
-  ): Promise<AgentInteractiveSessionPromptAcknowledgement> => {
-    await validateControl(command.control);
-    const previous = promptLedger.get(command.operationId);
-    if (previous !== undefined) {
-      if (previous.requestDigest !== command.requestDigest) {
-        return {
-          operationId: command.operationId,
-          requestDigest: command.requestDigest,
-          ref: command.ref,
-          control: command.control,
-          status: "conflict" as const,
-          existingRequestDigest: previous.requestDigest,
-        };
-      }
-      return AgentInteractiveSessionPromptAcknowledgementSchema.parse({
-        ...(previous.acknowledgement as object),
-        status: "replayed",
+      claimLedger.set(request.operationId, {
+        requestDigest: request.requestDigest,
+        acknowledgement,
       });
+      return AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
+        acknowledgement
+      );
     }
-    const acknowledgement: AgentInteractiveSessionPromptAcknowledgement = {
-      operationId: command.operationId,
-      requestDigest: command.requestDigest,
-      ref: command.ref,
-      control: command.control,
-      status: "accepted",
-    };
-    promptLedger.set(command.operationId, {
-      requestDigest: command.requestDigest,
-      acknowledgement,
-    });
-    return AgentInteractiveSessionPromptAcknowledgementSchema.parse(
-      acknowledgement,
-    );
-  });
-  const stop = vi.fn(async (
-    command: AgentInteractiveSessionStopCommand,
-  ): Promise<AgentInteractiveSessionStopAcknowledgement> => {
-    await validateControl(command.control);
-    const previous = stopLedger.get(command.operationId);
-    if (previous !== undefined) {
-      if (previous.requestDigest !== command.requestDigest) {
-        return {
-          operationId: command.operationId,
-          requestDigest: command.requestDigest,
-          ref: command.ref,
-          control: command.control,
-          status: "conflict" as const,
-          effect: "unknown" as const,
-          existingRequestDigest: previous.requestDigest,
-        };
+  );
+  const sendPrompt = vi.fn(
+    async (
+      command: AgentInteractiveSessionPromptCommand
+    ): Promise<AgentInteractiveSessionPromptAcknowledgement> => {
+      await validateControl(command.control);
+      const previous = promptLedger.get(command.operationId);
+      if (previous !== undefined) {
+        if (previous.requestDigest !== command.requestDigest) {
+          return {
+            operationId: command.operationId,
+            requestDigest: command.requestDigest,
+            ref: command.ref,
+            control: command.control,
+            status: "conflict" as const,
+            existingRequestDigest: previous.requestDigest,
+          };
+        }
+        return AgentInteractiveSessionPromptAcknowledgementSchema.parse({
+          ...(previous.acknowledgement as object),
+          status: "replayed",
+        });
       }
-      return AgentInteractiveSessionStopAcknowledgementSchema.parse({
-        ...(previous.acknowledgement as object),
-        status: "replayed",
+      const acknowledgement: AgentInteractiveSessionPromptAcknowledgement = {
+        operationId: command.operationId,
+        requestDigest: command.requestDigest,
+        ref: command.ref,
+        control: command.control,
+        status: "accepted",
+      };
+      promptLedger.set(command.operationId, {
+        requestDigest: command.requestDigest,
+        acknowledgement,
       });
+      return AgentInteractiveSessionPromptAcknowledgementSchema.parse(
+        acknowledgement
+      );
     }
-    lifecycle = {
-      state: "exited",
-      ...refInfo,
-      endedAt,
-      reason: "stopped",
-      exitCode: 0,
-    };
-    const acknowledgement: AgentInteractiveSessionStopAcknowledgement = {
-      operationId: command.operationId,
-      requestDigest: command.requestDigest,
-      ref: command.ref,
-      control: command.control,
-      status: "accepted",
-      effect: "stopped",
-    };
-    stopLedger.set(command.operationId, {
-      requestDigest: command.requestDigest,
-      acknowledgement,
-    });
-    return AgentInteractiveSessionStopAcknowledgementSchema.parse(acknowledgement);
-  });
+  );
+  const stop = vi.fn(
+    async (
+      command: AgentInteractiveSessionStopCommand
+    ): Promise<AgentInteractiveSessionStopAcknowledgement> => {
+      await validateControl(command.control);
+      const previous = stopLedger.get(command.operationId);
+      if (previous !== undefined) {
+        if (previous.requestDigest !== command.requestDigest) {
+          return {
+            operationId: command.operationId,
+            requestDigest: command.requestDigest,
+            ref: command.ref,
+            control: command.control,
+            status: "conflict" as const,
+            effect: "unknown" as const,
+            existingRequestDigest: previous.requestDigest,
+          };
+        }
+        return AgentInteractiveSessionStopAcknowledgementSchema.parse({
+          ...(previous.acknowledgement as object),
+          status: "replayed",
+        });
+      }
+      lifecycle = {
+        state: "exited",
+        ref,
+        endedAt,
+        reason: "stopped",
+        exitCode: 0,
+      };
+      const acknowledgement: AgentInteractiveSessionStopAcknowledgement = {
+        operationId: command.operationId,
+        requestDigest: command.requestDigest,
+        ref: command.ref,
+        control: command.control,
+        status: "accepted",
+        effect: "stopped",
+      };
+      stopLedger.set(command.operationId, {
+        requestDigest: command.requestDigest,
+        acknowledgement,
+      });
+      return AgentInteractiveSessionStopAcknowledgementSchema.parse(
+        acknowledgement
+      );
+    }
+  );
   const handle: SandboxInteractiveSessionLike = {
     start,
     claimControl,
     status: vi.fn(async () => lifecycle),
-    attach,
+    attachAgentTerminal,
     validateControl,
     sendPrompt,
     stop,
   };
+  const interactive = vi.fn(
+    (_options?: {
+      ref?: AgentInteractiveSessionRef;
+      control?: AgentInteractiveSessionControlClaim;
+    }) => handle
+  );
   const box: SandboxInstanceLike = {
     id: run.environmentId,
     status: "running",
     async *streamPrompt() {},
     session: (id) => ({
       id,
-      interactive: () => handle,
+      interactive,
       status: async () => null,
       async *events() {},
       result: async () => ({ success: true, status: "success", durationMs: 1 }),
       prompt: async () => ({ success: true, status: "success", durationMs: 1 }),
       interrupt: async () => ({ cancelled: false }),
     }),
-    terminals: {
-      get: vi.fn(async (sessionId) => ({
-        sessionId,
-        connectionId: sessionId,
-        name: "Interactive pi",
-        shell: "/bin/bash",
-        command: "pi",
-        cwd: "/workspace",
-        cols: 120,
-        rows: 40,
-        createdAt: startedAt,
-        lastActivityAt: startedAt,
-        isRunning: true,
-      })),
-      attach: vi.fn(async () => {
-        throw new Error("generic terminal attach must not be called");
-      }),
-    },
   };
   const replaceProcessIdentity = (
-    identity: Partial<SandboxInteractiveSessionInfoLike>,
+    identity: Partial<AgentInteractiveSessionRef>
   ) => {
-    lifecycle = { state: "running", ...refInfo, ...identity };
+    lifecycle = { state: "running", ref: { ...ref, ...identity } };
+  };
+  const replaceControlExpiration = (expiresAt: string) => {
+    currentControl = AgentInteractiveSessionControlClaimSchema.parse({
+      ...currentControl,
+      expiresAt,
+    });
   };
   return {
     box,
     handle,
-    attach,
+    interactive,
+    attach: attachAgentTerminal,
     claimControl,
+    replaceControlExpiration,
     replaceProcessIdentity,
     start,
     starts: () => starts,
@@ -425,7 +494,7 @@ function claimRequest(
   ref: ReturnType<typeof AgentInteractiveSessionRefSchema.parse>,
   operationId: string,
   holderId: string,
-  expectedGeneration: number,
+  expectedGeneration: number
 ) {
   const material = { operationId, ref, holderId, expectedGeneration };
   return AgentInteractiveSessionControlClaimRequestSchema.parse({
@@ -435,12 +504,43 @@ function claimRequest(
 }
 
 describe("Tangle exact interactive agent sessions", () => {
+  it("matches the exact interactive handle surface in the linked Sandbox SDK", () => {
+    const client = new Sandbox({
+      baseUrl: "https://sandbox.tangle.tools",
+      apiKey: "surface-probe-only",
+    });
+    const box = new SandboxInstance(client, {
+      id: "surface-probe",
+      status: "stopped",
+      createdAt: new Date(0),
+    });
+
+    const handle = box.session("__tangle-interactive-probe__").interactive();
+    const requiredMethods = [
+      "start",
+      "claimControl",
+      "status",
+      "attachAgentTerminal",
+      "validateControl",
+      "sendPrompt",
+      "stop",
+    ];
+    const hasExactSurface = requiredMethods.every(
+      (method) =>
+        typeof (handle as unknown as Record<string, unknown>)[method] ===
+        "function"
+    );
+    expect(
+      sandboxBacksInteractiveAgent(box as unknown as SandboxInstanceLike)
+    ).toBe(hasExactSurface);
+  });
+
   it("passes the complete exact-session conformance suite", async () => {
     const test = fakeInteractive();
     const registry = createTangleInteractiveAgentRegistry(
       test.box,
       coordinates.provider,
-      coordinates.environmentId,
+      coordinates.environmentId
     );
     const report = await runInteractiveSessionConformance({
       name: "tangle-sandbox",
@@ -467,16 +567,16 @@ describe("Tangle exact interactive agent sessions", () => {
         "stale-attach-rejection",
         "stale-stop-rejection",
         "start-replay-exited",
-      ]),
+      ])
     );
   });
 
-  it("returns the server receipt and derives Sandbox creation identity from the exact run", async () => {
+  it("returns the server receipt and forwards the exact start request", async () => {
     const test = fakeInteractive();
     const registry = createTangleInteractiveAgentRegistry(
       test.box,
       coordinates.provider,
-      coordinates.environmentId,
+      coordinates.environmentId
     );
     const ref = await registry.start(request());
 
@@ -492,10 +592,68 @@ describe("Tangle exact interactive agent sessions", () => {
     });
     expect(test.start).toHaveBeenCalledWith(
       expect.objectContaining({
-        idempotencyKey: run.runId,
-        requestDigest: run.requestDigest,
+        run,
+        profile,
       }),
+      undefined
     );
+  });
+
+  it("replays an exited session after its write lease expires", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId
+    );
+    const ref = await registry.start(request());
+    const session = registry.get(ref);
+    const claim = await session.claimControl(
+      claimRequest(ref, "claim-before-exit", "coordinator", 1)
+    );
+    if (claim.status !== "accepted" || claim.control === undefined) {
+      throw new Error("control claim setup failed");
+    }
+    const stopMaterial = {
+      operationId: "stop-before-expiry",
+      ref,
+      control: claim.control,
+    };
+    await session.stop(
+      AgentInteractiveSessionStopCommandSchema.parse({
+        ...stopMaterial,
+        requestDigest: agentInteractiveSessionStopRequestDigest(stopMaterial),
+      })
+    );
+    test.replaceControlExpiration("2020-01-01T00:00:00.000Z");
+
+    await expect(registry.start(request())).resolves.toEqual(ref);
+  });
+
+  it("reconstructs a mutation handle with the persisted control claim", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId
+    );
+    const ref = await registry.start(request());
+    const claim = await registry
+      .get(ref)
+      .claimControl(
+        claimRequest(ref, "claim-before-restart", "coordinator", 1)
+      );
+    if (claim.status !== "accepted" || claim.control === undefined) {
+      throw new Error("control claim setup failed");
+    }
+
+    const terminal = await registry.get(ref).attach({ control: claim.control });
+    await terminal.detach();
+
+    expect(test.interactive).toHaveBeenCalledWith({
+      ref,
+      control: claim.control,
+    });
   });
 
   it("rejects every complete reference mismatch before reaching Sandbox", async () => {
@@ -503,7 +661,7 @@ describe("Tangle exact interactive agent sessions", () => {
     const registry = createTangleInteractiveAgentRegistry(
       test.box,
       coordinates.provider,
-      coordinates.environmentId,
+      coordinates.environmentId
     );
     const ref = await registry.start(request());
     const changedReceiptMaterial = {
@@ -538,8 +696,8 @@ describe("Tangle exact interactive agent sessions", () => {
       const before = test.claimControl.mock.calls.length;
       await expect(
         session.claimControl(
-          claimRequest(changedRef, `mismatch-${label}`, "coordinator", 1),
-        ),
+          claimRequest(changedRef, `mismatch-${label}`, "coordinator", 1)
+        )
       ).rejects.toThrow(/different interactive session ref/);
       expect(test.claimControl).toHaveBeenCalledTimes(before);
     }
@@ -550,14 +708,14 @@ describe("Tangle exact interactive agent sessions", () => {
     const registry = createTangleInteractiveAgentRegistry(
       test.box,
       coordinates.provider,
-      coordinates.environmentId,
+      coordinates.environmentId
     );
     const ref = await registry.start(request());
 
     test.replaceProcessIdentity({ incarnationId: "interactive-incarnation-2" });
 
     await expect(registry.get(ref).status()).rejects.toThrow(
-      /different interactive agent session identity/,
+      /different interactive agent session identity/
     );
   });
 
@@ -566,23 +724,22 @@ describe("Tangle exact interactive agent sessions", () => {
     const registry = createTangleInteractiveAgentRegistry(
       test.box,
       coordinates.provider,
-      coordinates.environmentId,
+      coordinates.environmentId
     );
     const ref = await registry.start(request());
-    const claim = await registry.get(ref).claimControl(
-      claimRequest(ref, "claim", "coordinator", 1),
-    );
-    const exactClaim = AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(
-      claim,
-    ).control!;
+    const claim = await registry
+      .get(ref)
+      .claimControl(claimRequest(ref, "claim", "coordinator", 1));
+    const exactClaim =
+      AgentInteractiveSessionControlClaimAcknowledgementSchema.parse(claim)
+        .control!;
     const controller = new AbortController();
     controller.abort();
 
     await expect(
-      registry.get(ref).attach(
-        { control: exactClaim },
-        { signal: controller.signal },
-      ),
+      registry
+        .get(ref)
+        .attach({ control: exactClaim }, { signal: controller.signal })
     ).rejects.toThrow(/aborted/i);
     expect(test.attach).not.toHaveBeenCalled();
   });

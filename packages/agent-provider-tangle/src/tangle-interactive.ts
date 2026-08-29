@@ -1,5 +1,6 @@
 import {
   AgentInteractiveSessionAttachSchema,
+  AgentInteractiveSessionControlClaimSchema,
   AgentInteractiveSessionControlClaimAcknowledgementSchema,
   AgentInteractiveSessionControlClaimRequestSchema,
   AgentInteractiveSessionPromptAcknowledgementSchema,
@@ -8,10 +9,13 @@ import {
   AgentInteractiveSessionStatusSchema,
   AgentInteractiveSessionStopAcknowledgementSchema,
   AgentInteractiveSessionStopCommandSchema,
+  TerminalReplayWindowSchema,
+  TerminalSessionRefSchema,
   agentInteractiveSessionControlClaimAcknowledgementMatchesRequest,
   agentInteractiveSessionControlClaimMatchesRef,
   agentInteractiveSessionPromptAcknowledgementMatchesCommand,
   agentInteractiveSessionRefMatchesStart,
+  agentInteractiveSessionStatusMatchesRef,
   agentInteractiveSessionStopAcknowledgementMatchesCommand,
   canonicalCandidateDigest,
   exactAgentInteractiveSessionStart,
@@ -28,27 +32,18 @@ import type {
   AgentInteractiveSessionStopCommand,
   AgentInteractiveTerminalSession,
 } from "@tangle-network/agent-interface";
-import { parseBackendType } from "@tangle-network/sandbox";
 import { assertOptionKeys } from "./tangle-environment-validation.js";
 import { transportFailureReason } from "./tangle-failure-reason.js";
-import {
-  bindTangleInteractiveControl,
-  closeTangleStreamQuietly,
-  createTangleTerminalStreamCapture,
-  prepareTangleTerminalAttachment,
-} from "./tangle-terminal.js";
 import type {
   SandboxInstanceLike,
   SandboxInteractiveSessionLike,
-  SandboxInteractiveSessionStatusLike,
-  SandboxTerminalStreamLike,
 } from "./tangle-types.js";
 
 /** Exact coding-agent TUI operations for one sandbox environment. */
 export interface TangleInteractiveAgentRegistry {
   start(
     request: AgentInteractiveSessionStart,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal }
   ): Promise<AgentInteractiveSessionRef>;
   get(ref: AgentInteractiveSessionRef): AgentInteractiveSession;
 }
@@ -56,17 +51,18 @@ export interface TangleInteractiveAgentRegistry {
 /**
  * Test the linked SDK surface without accepting any older interactive shape.
  *
- * The current public Sandbox release fails this test. That is intentional:
- * it has no receipt, control claim, or mutation acknowledgement protocol.
+ * Sandbox owns the exact reference, control claim, terminal binding, and
+ * mutation acknowledgements. An older handle shape fails this test closed.
  */
-export function sandboxBacksInteractiveAgent(box: SandboxInstanceLike): boolean {
+export function sandboxBacksInteractiveAgent(
+  box: SandboxInstanceLike
+): boolean {
   if (typeof box.session !== "function") return false;
   try {
-    const candidate = box.session("__tangle-interactive-probe__").interactive?.();
-    return (
-      isSandboxInteractiveSession(candidate) &&
-      typeof box.terminals?.get === "function"
-    );
+    const candidate = box
+      .session("__tangle-interactive-probe__")
+      .interactive?.();
+    return isSandboxInteractiveSession(candidate);
   } catch {
     return false;
   }
@@ -82,27 +78,35 @@ export function sandboxBacksInteractiveAgent(box: SandboxInstanceLike): boolean 
 export function createTangleInteractiveAgentRegistry(
   box: SandboxInstanceLike,
   providerName: string,
-  environmentId: string,
+  environmentId: string
 ): TangleInteractiveAgentRegistry {
-  const exactHandle = (sessionId: string): SandboxInteractiveSessionLike => {
+  const exactHandle = (
+    sessionId: string,
+    binding?: {
+      ref?: AgentInteractiveSessionRef;
+      control?: AgentInteractiveSessionControlClaim;
+    }
+  ): SandboxInteractiveSessionLike => {
     const session = box.session?.(sessionId);
-    const candidate = session?.interactive?.();
+    const candidate = session?.interactive?.(binding);
     if (!isSandboxInteractiveSession(candidate)) {
       throw new Error(
-        "the linked Sandbox SDK does not expose the exact interactive control API",
+        "the linked Sandbox SDK does not expose the exact interactive control API"
       );
     }
     return candidate;
   };
 
-  const exactRef = (value: AgentInteractiveSessionRef): AgentInteractiveSessionRef => {
+  const exactRef = (
+    value: AgentInteractiveSessionRef
+  ): AgentInteractiveSessionRef => {
     const ref = AgentInteractiveSessionRefSchema.parse(value);
     if (
       ref.run.provider !== providerName ||
       ref.run.environmentId !== environmentId
     ) {
       throw new Error(
-        "the interactive agent reference belongs to a different environment",
+        "the interactive agent reference belongs to a different environment"
       );
     }
     return ref;
@@ -110,20 +114,31 @@ export function createTangleInteractiveAgentRegistry(
 
   const assertRef = (
     expected: AgentInteractiveSessionRef,
-    candidate: AgentInteractiveSessionRef,
+    candidate: AgentInteractiveSessionRef
   ): void => {
     if (!sameExactSessionRef(expected, candidate)) {
-      throw new Error("the Sandbox returned a different interactive session ref");
+      throw new Error(
+        "the Sandbox returned a different interactive session ref"
+      );
     }
   };
 
-  const assertControl = (
+  const assertControlMatchesRef = (
     ref: AgentInteractiveSessionRef,
-    control: AgentInteractiveSessionControlClaim,
+    control: AgentInteractiveSessionControlClaim
   ): void => {
     if (!agentInteractiveSessionControlClaimMatchesRef(ref, control)) {
-      throw new Error("the interactive control claim belongs to another process");
+      throw new Error(
+        "the interactive control claim belongs to another process"
+      );
     }
+  };
+
+  const assertActiveControl = (
+    ref: AgentInteractiveSessionRef,
+    control: AgentInteractiveSessionControlClaim
+  ): void => {
+    assertControlMatchesRef(ref, control);
     if (Date.parse(control.expiresAt) <= Date.now()) {
       throw new Error("the interactive control claim has expired");
     }
@@ -133,46 +148,35 @@ export function createTangleInteractiveAgentRegistry(
     async start(request, options): Promise<AgentInteractiveSessionRef> {
       assertOptionKeys(options, ["signal"], "Tangle interactive agent start");
       const exactRequest = exactAgentInteractiveSessionStart(request);
-      const requestedHarness = exactRequest.profile.harness;
-      if (requestedHarness === undefined) {
-        throw new Error("interactive agent sessions require AgentProfile.harness");
-      }
-      let harness: ReturnType<typeof parseBackendType>;
-      try {
-        harness = parseBackendType(requestedHarness);
-      } catch {
+      if (exactRequest.profile.harness === undefined) {
         throw new Error(
-          "the requested AgentProfile harness has no Tangle Sandbox runner",
+          "interactive agent sessions require AgentProfile.harness"
         );
       }
       options?.signal?.throwIfAborted();
       const handle = exactHandle(exactRequest.run.sessionId);
       let observed;
       try {
-        observed = await handle.start({
-          harness,
-          ...(exactRequest.profile.model?.default === undefined
-            ? {}
-            : { model: exactRequest.profile.model.default }),
-          ...(exactRequest.cwd === undefined ? {} : { cwd: exactRequest.cwd }),
-          ...(exactRequest.cols === undefined ? {} : { cols: exactRequest.cols }),
-          ...(exactRequest.rows === undefined ? {} : { rows: exactRequest.rows }),
-          profile: exactRequest.profile,
-          ...(exactRequest.initialPrompt === undefined
-            ? {}
-            : { initialPrompt: exactRequest.initialPrompt }),
-          idempotencyKey: exactRequest.run.runId,
-          requestDigest: exactRequest.run.requestDigest,
-        });
+        observed = await handle.start(exactRequest, options);
       } catch (error) {
         options?.signal?.throwIfAborted();
         throw new Error(transportFailureReason("interactive start", error));
       }
       options?.signal?.throwIfAborted();
-      const ref = refFromStart(exactRequest, observed);
+      const ref = AgentInteractiveSessionRefSchema.parse(observed.ref);
+      const control = AgentInteractiveSessionControlClaimSchema.parse(
+        observed.control
+      );
       if (!agentInteractiveSessionRefMatchesStart(exactRequest, ref)) {
         throw new Error(
-          "the Sandbox returned an interactive session with a different admission receipt",
+          "the Sandbox returned an interactive session with a different admission receipt"
+        );
+      }
+      assertControlMatchesRef(ref, control);
+      if (observed.state === "running") assertActiveControl(ref, control);
+      if (observed.state === "running" && observed.streamUrl.length === 0) {
+        throw new Error(
+          "the Sandbox returned a running session without a stream"
         );
       }
       return ref;
@@ -180,31 +184,54 @@ export function createTangleInteractiveAgentRegistry(
 
     get(value): AgentInteractiveSession {
       const ref = exactRef(value);
-      const handle = exactHandle(ref.run.sessionId);
-      const readStatus = async (
-        options?: { signal?: AbortSignal },
-      ): Promise<AgentInteractiveSessionStatus> => {
-        assertOptionKeys(options, ["signal"], "Tangle interactive agent status");
+      const handle = exactHandle(ref.run.sessionId, { ref });
+      const mutationHandle = (
+        control: AgentInteractiveSessionControlClaim
+      ): SandboxInteractiveSessionLike =>
+        exactHandle(ref.run.sessionId, { ref, control });
+      const readStatus = async (options?: {
+        signal?: AbortSignal;
+      }): Promise<AgentInteractiveSessionStatus> => {
+        assertOptionKeys(
+          options,
+          ["signal"],
+          "Tangle interactive agent status"
+        );
         options?.signal?.throwIfAborted();
-        let observed: SandboxInteractiveSessionStatusLike | null;
+        let observed;
         try {
-          observed = await handle.status();
+          observed = await handle.status(options);
         } catch (error) {
           options?.signal?.throwIfAborted();
           throw new Error(transportFailureReason("interactive status", error));
         }
         options?.signal?.throwIfAborted();
-        return statusFromSandbox(ref, observed);
+        if (observed === null) {
+          return AgentInteractiveSessionStatusSchema.parse({
+            state: "unknown",
+            ref,
+            message:
+              "the Sandbox no longer knows this interactive agent session",
+            retryable: false,
+          });
+        }
+        const status = AgentInteractiveSessionStatusSchema.parse(observed);
+        if (!agentInteractiveSessionStatusMatchesRef(ref, status)) {
+          throw new Error(
+            "the Sandbox reported a different interactive agent session identity"
+          );
+        }
+        return status;
       };
 
       const validateControl = async (
         control: AgentInteractiveSessionControlClaim,
-        options?: { signal?: AbortSignal },
+        options?: { signal?: AbortSignal }
       ): Promise<void> => {
-        assertControl(ref, control);
+        assertActiveControl(ref, control);
         options?.signal?.throwIfAborted();
         try {
-          await handle.validateControl(control);
+          await mutationHandle(control).validateControl(control, options);
         } catch (error) {
           options?.signal?.throwIfAborted();
           throw new Error(transportFailureReason("interactive control", error));
@@ -215,18 +242,23 @@ export function createTangleInteractiveAgentRegistry(
       return {
         ref,
         async claimControl(request, options) {
-          assertOptionKeys(options, ["signal"], "Tangle interactive control claim");
-          const exactRequest = AgentInteractiveSessionControlClaimRequestSchema.parse(
-            request,
+          assertOptionKeys(
+            options,
+            ["signal"],
+            "Tangle interactive control claim"
           );
+          const exactRequest =
+            AgentInteractiveSessionControlClaimRequestSchema.parse(request);
           assertRef(ref, exactRequest.ref);
           options?.signal?.throwIfAborted();
           let raw;
           try {
-            raw = await handle.claimControl(exactRequest);
+            raw = await handle.claimControl(exactRequest, options);
           } catch (error) {
             options?.signal?.throwIfAborted();
-            throw new Error(transportFailureReason("interactive control claim", error));
+            throw new Error(
+              transportFailureReason("interactive control claim", error)
+            );
           }
           options?.signal?.throwIfAborted();
           const acknowledgement =
@@ -234,99 +266,93 @@ export function createTangleInteractiveAgentRegistry(
           if (
             !agentInteractiveSessionControlClaimAcknowledgementMatchesRequest(
               exactRequest,
-              acknowledgement,
+              acknowledgement
             )
           ) {
             throw new Error(
-              "the Sandbox returned a control claim acknowledgement for another request",
+              "the Sandbox returned a control claim acknowledgement for another request"
             );
           }
           return acknowledgement;
         },
         status: readStatus,
-        async attach(request, options): Promise<AgentInteractiveTerminalSession> {
-          assertOptionKeys(options, ["signal"], "Tangle interactive agent attach");
+        async attach(
+          request,
+          options
+        ): Promise<AgentInteractiveTerminalSession> {
+          assertOptionKeys(
+            options,
+            ["signal"],
+            "Tangle interactive agent attach"
+          );
           const exactRequest = AgentInteractiveSessionAttachSchema.parse(
-            request ?? {},
+            request ?? {}
           );
           await validateControl(exactRequest.control, options);
-          const before = await readStatus(options);
-          if (before.state !== "running") {
-            throw new Error("the exact interactive agent session is not running");
-          }
-          const terminals = box.terminals;
-          if (terminals === undefined || typeof terminals.get !== "function") {
-            throw new Error(
-              "the Sandbox client cannot read exact interactive terminal metadata",
-            );
-          }
-          const capture = createTangleTerminalStreamCapture(exactRequest);
-          let stream: SandboxTerminalStreamLike;
+          let terminal: AgentInteractiveTerminalSession;
           try {
-            stream = await handle.attach({
-              control: exactRequest.control,
-              ...(exactRequest.cols === undefined ? {} : { cols: exactRequest.cols }),
-              ...(exactRequest.rows === undefined ? {} : { rows: exactRequest.rows }),
-              handlers: capture.handlers,
-            });
+            terminal = await mutationHandle(
+              exactRequest.control
+            ).attachAgentTerminal(exactRequest, options);
           } catch (error) {
             options?.signal?.throwIfAborted();
-            throw new Error(transportFailureReason("interactive attach", error));
-          }
-          if (options?.signal?.aborted) {
-            await closeTangleStreamQuietly(stream);
-            options.signal.throwIfAborted();
-          }
-          const prepared = await prepareTangleTerminalAttachment({
-            stream,
-            capture,
-            terminals,
-            parentExecutionId: ref.run.executionId,
-            expectedSessionId: ref.run.sessionId,
-            signal: options?.signal,
-            beforeMutation: (operation) => {
-              if (operation === "detach") return Promise.resolve();
-              return validateControl(exactRequest.control, options);
-            },
-          });
-          if (prepared.status === "unknown") {
-            throw new Error(prepared.message);
-          }
-          if (prepared.acknowledgement.restored !== true) {
-            await prepared.session.detach();
             throw new Error(
-              "the exact interactive attach did not restore the coding-agent PTY",
+              transportFailureReason("interactive attach", error)
             );
           }
-          const after = await readStatus(options);
-          if (after.state !== "running") {
-            await prepared.session.detach();
-            throw new Error(
-              "the exact interactive agent exited while its terminal attached",
-            );
+          try {
+            options?.signal?.throwIfAborted();
+            const returnedControl =
+              AgentInteractiveSessionControlClaimSchema.parse(terminal.control);
+            const returnedRef = TerminalSessionRefSchema.parse(terminal.ref);
+            TerminalReplayWindowSchema.parse(terminal.cursors);
+            if (
+              canonicalCandidateDigest(returnedControl) !==
+                canonicalCandidateDigest(exactRequest.control) ||
+              returnedRef.terminalSessionId !== ref.run.sessionId ||
+              returnedRef.parentExecutionId !== ref.run.executionId ||
+              returnedRef.expiresAt !== exactRequest.control.expiresAt ||
+              !returnedRef.isRunning
+            ) {
+              throw new Error(
+                "the Sandbox returned a terminal with a different interactive identity"
+              );
+            }
+          } catch (error) {
+            await terminal.detach().catch(() => undefined);
+            throw error;
           }
-          const terminal = bindTangleInteractiveControl(
-            prepared.session,
+          return validatedTerminal(
+            terminal,
             exactRequest.control,
+            validateControl,
+            ref
           );
-          return terminal;
         },
         async sendPrompt(
           command: AgentInteractiveSessionPromptCommand,
-          options?: { signal?: AbortSignal },
+          options?: { signal?: AbortSignal }
         ): Promise<AgentInteractiveSessionPromptAcknowledgement> {
-          assertOptionKeys(options, ["signal"], "Tangle interactive agent prompt");
-          const exactCommand = AgentInteractiveSessionPromptCommandSchema.parse(
-            command,
+          assertOptionKeys(
+            options,
+            ["signal"],
+            "Tangle interactive agent prompt"
           );
+          const exactCommand =
+            AgentInteractiveSessionPromptCommandSchema.parse(command);
           assertRef(ref, exactCommand.ref);
           await validateControl(exactCommand.control, options);
           let raw;
           try {
-            raw = await handle.sendPrompt(exactCommand);
+            raw = await mutationHandle(exactCommand.control).sendPrompt(
+              exactCommand,
+              options
+            );
           } catch (error) {
             options?.signal?.throwIfAborted();
-            throw new Error(transportFailureReason("interactive prompt", error));
+            throw new Error(
+              transportFailureReason("interactive prompt", error)
+            );
           }
           options?.signal?.throwIfAborted();
           const acknowledgement =
@@ -334,28 +360,34 @@ export function createTangleInteractiveAgentRegistry(
           if (
             !agentInteractiveSessionPromptAcknowledgementMatchesCommand(
               exactCommand,
-              acknowledgement,
+              acknowledgement
             )
           ) {
             throw new Error(
-              "the Sandbox returned a prompt acknowledgement for another request",
+              "the Sandbox returned a prompt acknowledgement for another request"
             );
           }
           return acknowledgement;
         },
         async stop(
           command: AgentInteractiveSessionStopCommand,
-          options?: { signal?: AbortSignal },
+          options?: { signal?: AbortSignal }
         ): Promise<AgentInteractiveSessionStopAcknowledgement> {
-          assertOptionKeys(options, ["signal"], "Tangle interactive agent stop");
-          const exactCommand = AgentInteractiveSessionStopCommandSchema.parse(
-            command,
+          assertOptionKeys(
+            options,
+            ["signal"],
+            "Tangle interactive agent stop"
           );
+          const exactCommand =
+            AgentInteractiveSessionStopCommandSchema.parse(command);
           assertRef(ref, exactCommand.ref);
           await validateControl(exactCommand.control, options);
           let raw;
           try {
-            raw = await handle.stop(exactCommand);
+            raw = await mutationHandle(exactCommand.control).stop(
+              exactCommand,
+              options
+            );
           } catch (error) {
             options?.signal?.throwIfAborted();
             throw new Error(transportFailureReason("interactive stop", error));
@@ -366,11 +398,11 @@ export function createTangleInteractiveAgentRegistry(
           if (
             !agentInteractiveSessionStopAcknowledgementMatchesCommand(
               exactCommand,
-              acknowledgement,
+              acknowledgement
             )
           ) {
             throw new Error(
-              "the Sandbox returned a stop acknowledgement for another request",
+              "the Sandbox returned a stop acknowledgement for another request"
             );
           }
           return acknowledgement;
@@ -381,7 +413,7 @@ export function createTangleInteractiveAgentRegistry(
 }
 
 function isSandboxInteractiveSession(
-  value: unknown,
+  value: unknown
 ): value is SandboxInteractiveSessionLike {
   if (value === null || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -389,80 +421,62 @@ function isSandboxInteractiveSession(
     "start",
     "claimControl",
     "status",
-    "attach",
+    "attachAgentTerminal",
     "validateControl",
     "sendPrompt",
     "stop",
   ].every((key) => typeof candidate[key] === "function");
 }
 
-function refFromStart(
-  request: AgentInteractiveSessionStart,
-  observed: Awaited<ReturnType<SandboxInteractiveSessionLike["start"]>>,
-): AgentInteractiveSessionRef {
-  if (
-    observed.sessionId !== request.run.sessionId ||
-    observed.harness !== request.profile.harness
-  ) {
-    throw new Error("the Sandbox returned a different interactive session identity");
-  }
-  return AgentInteractiveSessionRefSchema.parse({
-    run: request.run,
-    preparationReceipt: observed.preparationReceipt,
-    incarnationId: observed.incarnationId,
-    startedAt: observed.startedAt,
-  });
-}
-
-function statusFromSandbox(
-  ref: AgentInteractiveSessionRef,
-  observed: SandboxInteractiveSessionStatusLike | null,
-): AgentInteractiveSessionStatus {
-  if (observed === null) {
-    return AgentInteractiveSessionStatusSchema.parse({
-      state: "unknown",
-      ref,
-      message: "the Sandbox no longer knows this interactive agent session",
-      retryable: false,
-    });
-  }
-  const observedRef = AgentInteractiveSessionRefSchema.parse({
-    run: { ...ref.run, sessionId: observed.sessionId },
-    preparationReceipt: observed.preparationReceipt,
-    incarnationId: observed.incarnationId,
-    startedAt: observed.startedAt,
-  });
-  if (
-    observed.harness !== ref.preparationReceipt.harness ||
-    !sameExactSessionRef(ref, observedRef)
-  ) {
-    throw new Error(
-      "the Sandbox reported a different interactive agent session identity",
-    );
-  }
-  if (observed.state === "running") {
-    if (observed.streamUrl.length === 0) {
-      throw new Error("the Sandbox reported a running session without a stream");
-    }
-    return AgentInteractiveSessionStatusSchema.parse({ state: "running", ref });
-  }
-  return AgentInteractiveSessionStatusSchema.parse({
-    state: "exited",
-    ref,
-    endedAt: observed.endedAt,
-    reason: observed.reason,
-    ...(Number.isSafeInteger(observed.exitCode)
-      ? { exitCode: observed.exitCode }
-      : {}),
-    ...(typeof observed.exitSignal === "string" && observed.exitSignal.length > 0
-      ? { exitSignal: observed.exitSignal }
-      : {}),
-  });
+function validatedTerminal(
+  terminal: AgentInteractiveTerminalSession,
+  control: AgentInteractiveSessionControlClaim,
+  validate: (
+    control: AgentInteractiveSessionControlClaim,
+    options?: { signal?: AbortSignal }
+  ) => Promise<void>,
+  expectedRef: AgentInteractiveSessionRef
+): AgentInteractiveTerminalSession {
+  const boundControl = Object.freeze({ ...control });
+  return {
+    get ref() {
+      const ref = TerminalSessionRefSchema.parse(terminal.ref);
+      if (
+        ref.terminalSessionId !== expectedRef.run.sessionId ||
+        ref.parentExecutionId !== expectedRef.run.executionId
+      ) {
+        throw new Error(
+          "the Sandbox terminal changed its interactive session identity"
+        );
+      }
+      return ref;
+    },
+    get cursors() {
+      return TerminalReplayWindowSchema.parse(terminal.cursors);
+    },
+    control: boundControl,
+    async input(input, options) {
+      await validate(boundControl, options);
+      await terminal.input(input, options);
+    },
+    async resize(resize, options) {
+      await validate(boundControl, options);
+      await terminal.resize(resize, options);
+    },
+    detach: (options) => terminal.detach(options),
+    async close(options) {
+      await validate(boundControl, options);
+      return terminal.close(options);
+    },
+    events: (options) => terminal.events(options),
+  };
 }
 
 function sameExactSessionRef(
   expected: AgentInteractiveSessionRef,
-  candidate: AgentInteractiveSessionRef,
+  candidate: AgentInteractiveSessionRef
 ): boolean {
-  return canonicalCandidateDigest(expected) === canonicalCandidateDigest(candidate);
+  return (
+    canonicalCandidateDigest(expected) === canonicalCandidateDigest(candidate)
+  );
 }

@@ -8,12 +8,14 @@ import {
   confidentialExecutionRequestDigest,
   forkedEnvironmentConfidentialityVerified,
   sha256Bytes,
+  workspaceCleanupRequestDigest,
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
 } from "@tangle-network/agent-interface";
 import type {
   WorkspaceCheckpointRequest,
   WorkspaceCheckpointRef,
+  WorkspaceCleanupRequest,
   WorkspaceForkRequest,
 } from "@tangle-network/agent-interface";
 import { runWorkspaceBranchingConformance } from "@tangle-network/agent-provider-testkit";
@@ -23,10 +25,7 @@ import {
 } from "./tangle-workspace-branching.js";
 import { decodeTangleConfidentialAttestationQuote } from "./tangle-confidential-attestation.js";
 import { createTangleProvider } from "./tangle-provider.js";
-import type {
-  SandboxClientLike,
-  SandboxInstanceLike,
-} from "./tangle-types.js";
+import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 const provider = "tangle-sandbox";
 const sourceEnvironmentId = "sandbox-parent";
@@ -66,8 +65,8 @@ function createFakeSandbox(): {
       if (previousDigest !== undefined) {
         const snapshot = snapshots.find((item) =>
           item.tags.includes(
-            `server-${canonicalCandidateDigest(key).replace(":", "-")}`,
-          ),
+            `server-${canonicalCandidateDigest(key).replace(":", "-")}`
+          )
         );
         if (!snapshot) throw new Error("snapshot ledger lost its resource");
         return {
@@ -75,7 +74,10 @@ function createFakeSandbox(): {
           createdAt: snapshot.createdAt,
           tags: snapshot.tags,
           idempotency: {
-            outcome: previousDigest === digest ? ("replayed" as const) : ("replayed" as const),
+            outcome:
+              previousDigest === digest
+                ? ("replayed" as const)
+                : ("replayed" as const),
             requestDigest: previousDigest,
           },
         };
@@ -100,7 +102,9 @@ function createFakeSandbox(): {
       return snapshots;
     },
     async deleteSnapshot(snapshotId) {
-      const index = snapshots.findIndex((item) => item.snapshotId === snapshotId);
+      const index = snapshots.findIndex(
+        (item) => item.snapshotId === snapshotId
+      );
       if (index < 0) return { snapshotId, outcome: "already_absent" as const };
       snapshots.splice(index, 1);
       return { snapshotId, outcome: "deleted" as const };
@@ -121,7 +125,7 @@ function createFakeSandbox(): {
       const previousDigest = forkKeys.get(key);
       if (previousDigest !== undefined) {
         const child = [...children.values()].find(
-          (item) => item.metadata?.serverForkKey === key,
+          (item) => item.metadata?.serverForkKey === key
         );
         if (!child) throw new Error("fork ledger lost its child");
         return {
@@ -130,7 +134,10 @@ function createFakeSandbox(): {
           materializedCount: 1,
           complete: true,
           idempotency: {
-            outcome: previousDigest === digest ? ("replayed" as const) : ("replayed" as const),
+            outcome:
+              previousDigest === digest
+                ? ("replayed" as const)
+                : ("replayed" as const),
             requestDigest: previousDigest,
           },
         };
@@ -158,7 +165,11 @@ function createFakeSandbox(): {
     },
     async getForkOperation(idempotencyKey) {
       return forkKeys.has(idempotencyKey)
-        ? { outcome: "found" as const, kind: "fork" as const, state: "succeeded" as const }
+        ? {
+            outcome: "found" as const,
+            kind: "fork" as const,
+            state: "succeeded" as const,
+          }
         : { outcome: "not_found" as const, kind: "fork" as const };
     },
   };
@@ -176,7 +187,11 @@ function createFakeSandbox(): {
 }
 
 function checkpointRequest(): WorkspaceCheckpointRequest {
-  const material = { source, name: "before-analysis", metadata: { suite: "provider" } };
+  const material = {
+    source,
+    name: "before-analysis",
+    metadata: { suite: "provider" },
+  };
   return {
     ...material,
     idempotencyKey: "checkpoint-operation",
@@ -205,13 +220,17 @@ describe("Tangle workspace branching", () => {
     expect(
       supportsWorkspaceBranching(
         { id: sourceEnvironmentId, async *streamPrompt() {} },
-        client,
-      ),
+        client
+      )
     ).toBe(false);
   });
   it("passes exact checkpoint, fork, recovery, conflict, and cleanup conformance", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     expect(operations).toBeDefined();
     const result = await runWorkspaceBranchingConformance({
       name: "fake Sandbox",
@@ -231,7 +250,11 @@ describe("Tangle workspace branching", () => {
       snapshotCalls += 1;
       return snapshot!(options);
     };
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const result = await operations!.checkpoint(checkpointRequest());
     expect(result).toMatchObject({ status: "unknown", retryable: true });
     expect(snapshotCalls).toBe(0);
@@ -249,7 +272,11 @@ describe("Tangle workspace branching", () => {
       ...checkpointRequest(),
       idempotencyKey: "k".repeat(512),
     };
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const result = await operations!.checkpoint(request);
     if (result.status !== "created") {
       throw new Error(`long-key checkpoint failed: ${JSON.stringify(result)}`);
@@ -258,8 +285,9 @@ describe("Tangle workspace branching", () => {
     expect(
       observedTags!.every(
         (tag) =>
-          Buffer.byteLength(tag, "utf8") <= 128 && /^[A-Za-z0-9._-]+$/u.test(tag),
-      ),
+          Buffer.byteLength(tag, "utf8") <= 128 &&
+          /^[A-Za-z0-9._-]+$/u.test(tag)
+      )
     ).toBe(true);
   });
 
@@ -273,16 +301,22 @@ describe("Tangle workspace branching", () => {
       requestDigest: request.requestDigest,
       request,
     };
-    const encoded = Buffer.from(JSON.stringify(marker), "utf8").toString("base64url");
+    const encoded = Buffer.from(JSON.stringify(marker), "utf8").toString(
+      "base64url"
+    );
     const chunks: string[] = [];
     for (let index = 0; index < encoded.length; index += 240) {
       chunks.push(encoded.slice(index, index + 240));
     }
     const base = "tangle-agent-sdk:workspace:v1:checkpoint";
     const legacyTags = [
-      `${base}:key:${Buffer.from(request.idempotencyKey, "utf8").toString("base64url")}`,
+      `${base}:key:${Buffer.from(request.idempotencyKey, "utf8").toString(
+        "base64url"
+      )}`,
       `${base}:digest:${request.requestDigest}`,
-      ...chunks.map((chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`),
+      ...chunks.map(
+        (chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`
+      ),
     ];
     const snapshot = {
       snapshotId: "legacy-checkpoint",
@@ -295,11 +329,19 @@ describe("Tangle workspace branching", () => {
     box.getSnapshotOperation = async (_id, options) => {
       observedTags.push(options?.tags ?? []);
       return options?.tags?.join("|") === legacyTags.join("|")
-        ? { outcome: "found" as const, kind: "checkpoint" as const, state: "succeeded" as const }
+        ? {
+            outcome: "found" as const,
+            kind: "checkpoint" as const,
+            state: "succeeded" as const,
+          }
         : { outcome: "not_found" as const, kind: "checkpoint" as const };
     };
 
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const result = await operations!.lookupCheckpoint({
       idempotencyKey: request.idempotencyKey,
       requestDigest: request.requestDigest,
@@ -320,11 +362,18 @@ describe("Tangle workspace branching", () => {
 
   it("forks a checkpoint immediately when its inventory view still lags", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
     box.listSnapshots = async () => [];
-    await expect(operations!.fork(forkRequest(checkpoint.checkpoint))).resolves.toMatchObject({
+    await expect(
+      operations!.fork(forkRequest(checkpoint.checkpoint))
+    ).resolves.toMatchObject({
       status: "created",
     });
   });
@@ -339,7 +388,11 @@ describe("Tangle workspace branching", () => {
       if (snapshotAttempts === 1) throw new Error("response lost after commit");
       return result;
     };
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     expect(checkpoint).toMatchObject({ status: "replayed" });
 
@@ -354,15 +407,22 @@ describe("Tangle workspace branching", () => {
     if (checkpoint.status !== "replayed" && checkpoint.status !== "created") {
       throw new Error("checkpoint recovery did not produce a reference");
     }
-    const forkResult = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    const forkResult = await operations!.fork(
+      forkRequest(checkpoint.checkpoint)
+    );
     expect(forkResult).toMatchObject({ status: "replayed" });
   });
 
   it("rehydrates a branch child when an acknowledgement omits createdAt", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
     const fork = box.fork!;
     box.fork = async (count, options) => {
       const result = await fork(count, options);
@@ -376,6 +436,252 @@ describe("Tangle workspace branching", () => {
     };
     const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
     expect(result).toMatchObject({ status: "created" });
+  });
+
+  it("rehydrates a branch child when an acknowledgement omits recovery metadata", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const fork = box.fork!;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      return {
+        ...result,
+        children: result.children.map((child) => {
+          const { metadata: _metadata, ...withoutMetadata } = child;
+          return withoutMetadata;
+        }),
+      };
+    };
+    const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    expect(result).toMatchObject({ status: "created" });
+  });
+
+  it("removes a newly created child when no durable recovery marker exists", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const fork = box.fork!;
+    let childId: string | undefined;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      const child = result.children[0];
+      if (!child) throw new Error("fork setup returned no child");
+      childId = child.id;
+      child.metadata = { serverForkKey: options?.idempotencyKey };
+      return result;
+    };
+
+    const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    expect(result).toMatchObject({
+      status: "unknown",
+      retryable: false,
+      message: expect.stringContaining("newly created child was removed"),
+    });
+    expect(childId).toBeDefined();
+    expect(await client.get!(childId!)).toBeNull();
+  });
+
+  it("does not remove a child marked for another fork operation", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const fork = box.fork!;
+    let childId: string | undefined;
+    const otherMaterial = {
+      checkpoint: request.checkpoint,
+      name: "other-worker",
+      metadata: { lane: "other" },
+      placement: { kind: "sandbox", sandboxId: "fork-placement" } as const,
+    };
+    const otherRequest: WorkspaceForkRequest = {
+      ...otherMaterial,
+      idempotencyKey: "other-fork-operation",
+      requestDigest: workspaceForkRequestDigest(otherMaterial),
+    };
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      const child = result.children[0];
+      if (!child) throw new Error("fork setup returned no child");
+      childId = child.id;
+      child.metadata = {
+        __tangle_agent_workspace_v1: {
+          version: 1,
+          kind: "fork",
+          idempotencyKey: otherRequest.idempotencyKey,
+          requestDigest: otherRequest.requestDigest,
+          request: otherRequest,
+        },
+      };
+      return result;
+    };
+
+    await expect(operations!.fork(request)).resolves.toMatchObject({
+      status: "conflict",
+      existingRequestDigest: otherRequest.requestDigest,
+    });
+    expect(childId).toBeDefined();
+    expect(await client.get!(childId!)).not.toBeNull();
+  });
+
+  it("removes a newly created child when identity recovery is unavailable", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const fork = box.fork!;
+    let childId: string | undefined;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      const child = result.children[0];
+      if (!child) throw new Error("fork setup returned no child");
+      childId = child.id;
+      const {
+        createdAt: _createdAt,
+        metadata: _metadata,
+        ...withoutIdentity
+      } = child;
+      return { ...result, children: [withoutIdentity] };
+    };
+    client.get = async (id) => (id === sourceEnvironmentId ? box : null);
+
+    await expect(
+      operations!.fork(forkRequest(checkpoint.checkpoint))
+    ).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+      message: expect.stringContaining("newly created child was removed"),
+    });
+    expect(childId).toBeDefined();
+    expect(await client.get!(childId!)).toBeNull();
+  });
+
+  it("never removes a replayed child whose durable recovery marker is unavailable", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await first!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const created = await first!.fork(request);
+    if (created.status !== "created") throw new Error("fork setup failed");
+    const child = await client.get!(created.environment.environmentId);
+    if (!child) throw new Error("fork child setup failed");
+    let deleteCalls = 0;
+    const remove = child.delete!;
+    child.delete = async () => {
+      deleteCalls += 1;
+      return remove();
+    };
+    child.metadata = { serverForkKey: request.idempotencyKey };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const replay = await restarted!.fork(request);
+    expect(replay).toMatchObject({ status: "unknown", retryable: true });
+    expect(deleteCalls).toBe(0);
+    expect(await client.get!(child.id)).not.toBeNull();
+  });
+
+  it("uses the reconstructed fork child for replay cleanup", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await first!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const created = await first!.fork(request);
+    if (created.status !== "created") throw new Error("fork setup failed");
+    const child = await client.get!(created.environment.environmentId);
+    if (!child) throw new Error("fork child setup failed");
+
+    const list = client.list!;
+    client.list = async (options) => {
+      const children = await list(options);
+      return children.map((candidate) => {
+        if (candidate.id !== child.id) return candidate;
+        const { createdAt: _createdAt, delete: _delete, ...incomplete } =
+          candidate;
+        return incomplete;
+      });
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const replay = await restarted!.fork(request);
+    expect(replay).toMatchObject({ status: "replayed" });
+
+    const material = {
+      kind: "fork" as const,
+      targetId: child.id,
+      provider,
+    };
+    const cleanup: WorkspaceCleanupRequest & { kind: "fork" } = {
+      ...material,
+      operationId: "cleanup-reconstructed-fork",
+      requestDigest: workspaceCleanupRequestDigest(material),
+    };
+    await expect(restarted!.destroyFork(cleanup)).resolves.toMatchObject({
+      status: "deleted",
+    });
+    expect(await client.get!(child.id)).toBeNull();
+  });
+
+  it("reports uncertain cleanup when a newly created unmarked child cannot be removed", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const fork = box.fork!;
+    let childId: string | undefined;
+    box.fork = async (count, options) => {
+      const result = await fork(count, options);
+      const child = result.children[0];
+      if (!child) throw new Error("fork setup returned no child");
+      childId = child.id;
+      child.metadata = { serverForkKey: options?.idempotencyKey };
+      child.delete = async () => ({
+        sandboxId: child.id,
+        outcome: "unknown" as const,
+      });
+      return result;
+    };
+
+    const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    expect(result).toMatchObject({
+      status: "unknown",
+      retryable: true,
+      message: expect.stringContaining("cleanup was not confirmed"),
+    });
+    expect(childId).toBeDefined();
+    expect(await client.get!(childId!)).not.toBeNull();
   });
 
   it("propagates cancellation without starting recovery traffic", async () => {
@@ -392,7 +698,11 @@ describe("Tangle workspace branching", () => {
       await new Promise<void>(() => undefined);
       return snapshot(options);
     };
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const controller = new AbortController();
     const pending = operations!.checkpoint(checkpointRequest(), {
       signal: controller.signal,
@@ -405,9 +715,14 @@ describe("Tangle workspace branching", () => {
 
   it("continues account inventory after a full Sandbox page", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
     const forkInput = forkRequest(checkpoint.checkpoint);
     const fork = await operations!.fork(forkInput);
     if (fork.status !== "created") throw new Error("fork setup failed");
@@ -431,7 +746,10 @@ describe("Tangle workspace branching", () => {
       idempotencyKey: forkInput.idempotencyKey,
       requestDigest: forkInput.requestDigest,
     });
-    expect(result).toMatchObject({ status: "found", environment: fork.environment });
+    expect(result).toMatchObject({
+      status: "found",
+      environment: fork.environment,
+    });
     expect(calls).toEqual([
       { limit: 1_000, offset: 0 },
       { limit: 1_000, offset: 1_000 },
@@ -440,9 +758,14 @@ describe("Tangle workspace branching", () => {
 
   it("fails closed when a full page continuation is unavailable", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
     const forkInput = forkRequest(checkpoint.checkpoint);
     const fork = await operations!.fork(forkInput);
     if (fork.status !== "created") throw new Error("fork setup failed");
@@ -455,7 +778,8 @@ describe("Tangle workspace branching", () => {
     const calls: Array<{ limit?: number; offset?: number }> = [];
     client.list = async (options) => {
       calls.push({ limit: options?.limit, offset: options?.offset });
-      if ((options?.offset ?? 0) > 0) throw new Error("continuation unavailable");
+      if ((options?.offset ?? 0) > 0)
+        throw new Error("continuation unavailable");
       const inventory = [...filler, ...(await originalList())];
       return inventory.slice(0, options?.limit ?? inventory.length);
     };
@@ -465,7 +789,7 @@ describe("Tangle workspace branching", () => {
       restarted!.lookupFork({
         idempotencyKey: forkInput.idempotencyKey,
         requestDigest: forkInput.requestDigest,
-      }),
+      })
     ).resolves.toMatchObject({ status: "unknown", retryable: true });
     expect(calls).toEqual([
       { limit: 1_000, offset: 0 },
@@ -487,7 +811,11 @@ describe("Tangle workspace branching", () => {
       return inventory;
     };
 
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const result = await operations!.lookupFork({
       idempotencyKey: "missing-fork",
       requestDigest: workspaceForkRequestDigest({
@@ -519,7 +847,11 @@ describe("Tangle workspace branching", () => {
       return inventory.slice(0, options?.limit ?? inventory.length);
     };
 
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const result = await operations!.lookupFork({
       idempotencyKey: "missing-fork",
       requestDigest: workspaceForkRequestDigest({
@@ -540,13 +872,20 @@ describe("Tangle workspace branching", () => {
 
   it("coalesces concurrent retries with deterministic provider markers", async () => {
     const { box, client } = createFakeSandbox();
-    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
     const request = checkpointRequest();
     const [first, second] = await Promise.all([
       operations!.checkpoint(request),
       operations!.checkpoint(request),
     ]);
-    expect([first.status, second.status].sort()).toEqual(["created", "replayed"]);
+    expect([first.status, second.status].sort()).toEqual([
+      "created",
+      "replayed",
+    ]);
     if (first.status === "unknown" || first.status === "conflict") {
       throw new Error("first concurrent checkpoint did not succeed");
     }
@@ -577,7 +916,8 @@ describe("Tangle workspace branching", () => {
     const first = createTangleWorkspaceBranching({ box, client, provider });
     const checkpoint = await first!.checkpoint(checkpointRequest());
     expect(checkpoint.status).toBe("created");
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
     const fork = await first!.fork(forkRequest(checkpoint.checkpoint));
     expect(fork.status).toBe("created");
     if (fork.status !== "created") throw new Error("fork setup failed");
@@ -587,19 +927,25 @@ describe("Tangle workspace branching", () => {
       idempotencyKey: checkpointRequest().idempotencyKey,
       requestDigest: checkpointRequest().requestDigest,
     });
-    expect(checkpointLookup).toMatchObject({ status: "found", checkpoint: checkpoint.checkpoint });
+    expect(checkpointLookup).toMatchObject({
+      status: "found",
+      checkpoint: checkpoint.checkpoint,
+    });
     const forkLookup = await restarted!.lookupFork({
       idempotencyKey: forkRequest(checkpoint.checkpoint).idempotencyKey,
       requestDigest: forkRequest(checkpoint.checkpoint).requestDigest,
     });
-    expect(forkLookup).toMatchObject({ status: "found", environment: fork.environment });
+    expect(forkLookup).toMatchObject({
+      status: "found",
+      environment: fork.environment,
+    });
   });
 
   it("reconstructs the source-scoped handle from the provider after restart", async () => {
     const { box, client } = createFakeSandbox();
     const firstProvider = createTangleProvider({ client, name: provider });
     const first = await firstProvider.workspaceBranching?.forEnvironment(
-      sourceEnvironmentId,
+      sourceEnvironmentId
     );
     expect(first).toBeDefined();
     const checkpoint = await first!.checkpoint(checkpointRequest());
@@ -608,17 +954,17 @@ describe("Tangle workspace branching", () => {
     const restartedProvider = createTangleProvider({ client, name: provider });
     const restarted =
       await restartedProvider.workspaceBranching?.forEnvironment(
-        sourceEnvironmentId,
+        sourceEnvironmentId
       );
     expect(restarted).toBeDefined();
     expect(
       await restarted!.lookupCheckpoint({
         idempotencyKey: checkpointRequest().idempotencyKey,
         requestDigest: checkpointRequest().requestDigest,
-      }),
+      })
     ).toMatchObject({ status: "found" });
     expect(
-      await restartedProvider.workspaceBranching?.forEnvironment("missing"),
+      await restartedProvider.workspaceBranching?.forEnvironment("missing")
     ).toBeNull();
     expect(box.id).toBe(sourceEnvironmentId);
   });
@@ -630,7 +976,10 @@ describe("Tangle workspace branching", () => {
       async getTeeAttestation(options) {
         return {
           sandbox_id: "fork-tee",
-          attestationNonce: options?.attestationNonce === "wrong" ? "other" : options?.attestationNonce,
+          attestationNonce:
+            options?.attestationNonce === "wrong"
+              ? "other"
+              : options?.attestationNonce,
           attestation: {
             tee_type: "tdx",
             evidence: [1, 2, 3],
@@ -640,7 +989,11 @@ describe("Tangle workspace branching", () => {
         };
       },
     };
-    const verifier = async ({ attestation }: { attestation: { measurement: `sha256:${string}` } }) => ({
+    const verifier = async ({
+      attestation,
+    }: {
+      attestation: { measurement: `sha256:${string}` };
+    }) => ({
       providerKeyId: "provider-key-1",
       providerSignature: "signature-1",
       measurement: attestation.measurement,
@@ -686,8 +1039,16 @@ describe("Tangle workspace branching", () => {
       placement: request.placement,
       confidentialRequested: true,
     };
-    expect(forkedEnvironmentConfidentialityVerified(request, environment, () => false)).toBe(false);
-    expect(confidentialExecutionRequestDigest(request.confidential!)).toMatch(/^sha256:/);
+    expect(
+      forkedEnvironmentConfidentialityVerified(
+        request,
+        environment,
+        () => false
+      )
+    ).toBe(false);
+    expect(confidentialExecutionRequestDigest(request.confidential!)).toMatch(
+      /^sha256:/
+    );
   });
 
   it("carries the real Nitro report through the branching attestation path", async () => {
@@ -697,12 +1058,15 @@ describe("Tangle workspace branching", () => {
       client,
       provider,
     });
-    const checkpoint = await checkpointOperations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const checkpoint = await checkpointOperations!.checkpoint(
+      checkpointRequest()
+    );
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
 
     const fixturePath = resolve(
       dirname(fileURLToPath(import.meta.url)),
-      "../test/fixtures/aws-nitro-document.cbor",
+      "../test/fixtures/aws-nitro-document.cbor"
     );
     const evidence = Array.from(readFileSync(fixturePath));
     expect(evidence).toHaveLength(4_461);
@@ -732,7 +1096,9 @@ describe("Tangle workspace branching", () => {
     };
 
     const verifier = ({ attestation }: { attestation: { quote: string } }) => {
-      const decoded = decodeTangleConfidentialAttestationQuote(attestation.quote);
+      const decoded = decodeTangleConfidentialAttestationQuote(
+        attestation.quote
+      );
       expect(decoded).toEqual(report);
       return {
         providerKeyId: "provider-key-real-nitro",
@@ -766,7 +1132,7 @@ describe("Tangle workspace branching", () => {
     }
     const confidentialAttestation = result.environment.confidentialAttestation;
     expect(
-      ConfidentialAttestationSchema.safeParse(confidentialAttestation).success,
+      ConfidentialAttestationSchema.safeParse(confidentialAttestation).success
     ).toBe(true);
     expect(confidentialAttestation).toMatchObject({
       providerKeyId: "provider-key-real-nitro",
@@ -774,7 +1140,7 @@ describe("Tangle workspace branching", () => {
     });
     expect(
       decodeTangleConfidentialAttestationQuote(confidentialAttestation?.quote)
-        ?.evidence,
+        ?.evidence
     ).toHaveLength(4_461);
   });
 
@@ -785,8 +1151,11 @@ describe("Tangle workspace branching", () => {
       client,
       provider,
     });
-    const checkpoint = await checkpointOperations!.checkpoint(checkpointRequest());
-    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const checkpoint = await checkpointOperations!.checkpoint(
+      checkpointRequest()
+    );
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
 
     const attestationBox: SandboxInstanceLike = {
       ...box,
@@ -803,10 +1172,10 @@ describe("Tangle workspace branching", () => {
           ...(options?.attestationNonce === "nonce-mismatch"
             ? { attestationNonce: "different-nonce" }
             : options?.attestationNonce === "nonce-missing"
-              ? {}
-              : options?.attestationNonce === undefined
-                ? {}
-                : { attestationNonce: options.attestationNonce }),
+            ? {}
+            : options?.attestationNonce === undefined
+            ? {}
+            : { attestationNonce: options.attestationNonce }),
           attestation: {
             tee_type: "tdx",
             evidence: [1, 2, 3],
@@ -825,7 +1194,10 @@ describe("Tangle workspace branching", () => {
       report: { measurement: number[] };
       attestation: { nonce: string; measurement: `sha256:${string}` };
     }) => {
-      if (attestation.nonce !== "nonce-measurement" && report.measurement[0] === 4) {
+      if (
+        attestation.nonce !== "nonce-measurement" &&
+        report.measurement[0] === 4
+      ) {
         return {
           providerKeyId: "provider-key-1",
           providerSignature: "provider-signature-1",
@@ -844,7 +1216,10 @@ describe("Tangle workspace branching", () => {
       provider,
       confidentialAttestationVerifier: verifier,
     });
-    const makeRequest = (idempotencyKey: string, nonce: string): WorkspaceForkRequest => {
+    const makeRequest = (
+      idempotencyKey: string,
+      nonce: string
+    ): WorkspaceForkRequest => {
       const material = {
         checkpoint: checkpoint.checkpoint,
         placement: { kind: "sandbox", sandboxId: sourceEnvironmentId } as const,
@@ -868,18 +1243,21 @@ describe("Tangle workspace branching", () => {
       provider,
     });
     await expect(
-      withoutVerifier!.fork(makeRequest("fork-without-verifier", "nonce-without-verifier")),
+      withoutVerifier!.fork(
+        makeRequest("fork-without-verifier", "nonce-without-verifier")
+      )
     ).resolves.toMatchObject({ status: "unknown", retryable: false });
 
     const acceptedRequest = makeRequest("fork-accepted", "nonce-accepted");
     const accepted = await operations!.fork(acceptedRequest);
     expect(accepted.status).toBe("created");
-    if (accepted.status !== "created") throw new Error("accepted fork setup failed");
+    if (accepted.status !== "created")
+      throw new Error("accepted fork setup failed");
     expect(accepted.environment.confidentialAttestation).toBeDefined();
     expect(
       decodeTangleConfidentialAttestationQuote(
-        accepted.environment.confidentialAttestation?.quote,
-      ),
+        accepted.environment.confidentialAttestation?.quote
+      )
     ).toEqual({
       tee_type: "tdx",
       evidence: [1, 2, 3],
@@ -890,33 +1268,38 @@ describe("Tangle workspace branching", () => {
       forkedEnvironmentConfidentialityVerified(
         acceptedRequest,
         accepted.environment,
-        () => true,
-      ),
+        () => true
+      )
     ).toBe(true);
 
     const nonceRejected = await operations!.fork(
-      makeRequest("fork-rejected-nonce", "nonce-mismatch"),
+      makeRequest("fork-rejected-nonce", "nonce-mismatch")
     );
     expect(nonceRejected.status).toBe("created");
-    if (nonceRejected.status !== "created") throw new Error("nonce fork setup failed");
+    if (nonceRejected.status !== "created")
+      throw new Error("nonce fork setup failed");
     expect(nonceRejected.environment.confidentialRequested).toBe(true);
     expect(nonceRejected.environment.confidentialAttestation).toBeUndefined();
 
     const missingNonce = await operations!.fork(
-      makeRequest("fork-rejected-missing-nonce", "nonce-missing"),
+      makeRequest("fork-rejected-missing-nonce", "nonce-missing")
     );
     expect(missingNonce.status).toBe("created");
-    if (missingNonce.status !== "created") throw new Error("missing nonce fork setup failed");
+    if (missingNonce.status !== "created")
+      throw new Error("missing nonce fork setup failed");
     expect(missingNonce.environment.confidentialAttestation).toBeUndefined();
 
     const measurementRejected = await operations!.fork(
-      makeRequest("fork-rejected-measurement", "nonce-measurement"),
+      makeRequest("fork-rejected-measurement", "nonce-measurement")
     );
     expect(measurementRejected.status).toBe("created");
-    if (measurementRejected.status !== "created") throw new Error("measurement fork setup failed");
-    expect(measurementRejected.environment.confidentialAttestation).toBeUndefined();
+    if (measurementRejected.status !== "created")
+      throw new Error("measurement fork setup failed");
+    expect(
+      measurementRejected.environment.confidentialAttestation
+    ).toBeUndefined();
     expect(sha256Bytes(Uint8Array.from([4, 5, 6]))).toBe(
-      accepted.environment.confidentialAttestation?.measurement,
+      accepted.environment.confidentialAttestation?.measurement
     );
   });
 });

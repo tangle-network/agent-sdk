@@ -212,7 +212,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
-    "typescript": "^6.0.3",
+    "typescript": "7.0.2",
     "vitest": "catalog:"
   }
 }

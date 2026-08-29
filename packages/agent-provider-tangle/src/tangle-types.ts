@@ -11,15 +11,18 @@ import type {
 import type {
   AgentRunCancellationAcknowledgement,
   AgentRunCancellationRequest,
-  AgentExecutionPreparationReceipt,
   AgentInteractiveSessionControlClaim,
   AgentInteractiveSessionControlClaimAcknowledgement,
   AgentInteractiveSessionControlClaimRequest,
+  AgentInteractiveSessionAttach,
   AgentInteractiveSessionPromptAcknowledgement,
   AgentInteractiveSessionPromptCommand,
+  AgentInteractiveSessionRef,
+  AgentInteractiveSessionStart,
+  AgentInteractiveSessionStatus,
   AgentInteractiveSessionStopAcknowledgement,
   AgentInteractiveSessionStopCommand,
-  AgentProfile,
+  AgentInteractiveTerminalSession,
   ConfidentialAttestation,
   ConfidentialExecutionEnvironment,
   InputPart,
@@ -50,7 +53,7 @@ export interface TangleExactProcessOptions {
 export interface SandboxClientLike {
   create(
     options?: CreateSandboxOptions,
-    requestOptions?: { signal?: AbortSignal; timeoutMs?: number },
+    requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
   ): Promise<SandboxInstanceLike>;
   /**
    * SDK HttpClient transport, present on `Sandbox` and `TangleSandboxClient`.
@@ -63,13 +66,16 @@ export interface SandboxClientLike {
   fetch?(
     path: string,
     options?: RequestInit,
-    fetchOptions?: { timeoutMs?: number },
+    fetchOptions?: { timeoutMs?: number }
   ): Promise<Response>;
   /** Canonical backend catalog served by authenticated `/v1/backends`. */
   listBackends?(): Promise<BackendRegistryResponse>;
   /** Lookup over the same canonical backend catalog, when the SDK provides it. */
   getBackend?(type: string): Promise<BackendRegistryEntry | undefined>;
-  get?(id: string, requestOptions?: { signal?: AbortSignal }): Promise<SandboxInstanceLike | null>;
+  get?(
+    id: string,
+    requestOptions?: { signal?: AbortSignal }
+  ): Promise<SandboxInstanceLike | null>;
   list?(options?: {
     scope?: string;
     limit?: number;
@@ -198,7 +204,7 @@ export interface SandboxProcessManagerLike {
       stdin?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
-    },
+    }
   ): Promise<SandboxProcessLike>;
 }
 
@@ -388,70 +394,57 @@ export interface SandboxTerminalsLike {
       command?: string;
       cwd?: string;
       handlers?: SandboxTerminalHandlersLike;
-    },
+    }
   ): Promise<SandboxTerminalStreamLike>;
 }
 
-/** Identity returned by the Sandbox exact interactive-session route. */
-export interface SandboxInteractiveSessionIdentityLike {
-  sessionId: string;
-  harness: BackendType;
-  startedAt: string;
-  /** Provider-issued process incarnation. Replays return this exact value. */
-  incarnationId: string;
-  /** Canonical provider admission receipt for the effective route. */
-  preparationReceipt: AgentExecutionPreparationReceipt;
-}
-
-/** Start acknowledgement from the canonical Sandbox interactive API. */
-export interface SandboxInteractiveSessionInfoLike
-  extends SandboxInteractiveSessionIdentityLike {
-  streamUrl: string;
-}
-
-/** Lifecycle returned by the Sandbox exact interactive-session route. */
-export type SandboxInteractiveSessionStatusLike =
-  | (SandboxInteractiveSessionInfoLike & { state: "running" })
-  | (SandboxInteractiveSessionIdentityLike & {
+/** Start result returned by the Sandbox exact interactive-session route. */
+export type SandboxInteractiveSessionStartResultLike =
+  | {
+      state: "running";
+      ref: AgentInteractiveSessionRef;
+      control: AgentInteractiveSessionControlClaim;
+      streamUrl: string;
+    }
+  | {
       state: "exited";
+      ref: AgentInteractiveSessionRef;
+      control: AgentInteractiveSessionControlClaim;
       endedAt: string;
       exitCode?: number;
       exitSignal?: string;
       reason: "exited" | "stopped" | "lost";
-    });
+    };
 
 /** Existing Sandbox SDK handle for one coding harness's native TUI. */
 export interface SandboxInteractiveSessionLike {
-  start(options: {
-    harness: BackendType;
-    model?: string;
-    cwd?: string;
-    cols?: number;
-    rows?: number;
-    profile: AgentProfile;
-    initialPrompt?: string;
-    /** Derived from the exact run; owned by the Sandbox creation ledger. */
-    idempotencyKey: string;
-    /** Exact request digest paired with the idempotency key. */
-    requestDigest: `sha256:${string}`;
-  }): Promise<SandboxInteractiveSessionInfoLike>;
+  start(
+    request: AgentInteractiveSessionStart,
+    options?: { signal?: AbortSignal }
+  ): Promise<SandboxInteractiveSessionStartResultLike>;
   claimControl(
     request: AgentInteractiveSessionControlClaimRequest,
+    options?: { signal?: AbortSignal }
   ): Promise<AgentInteractiveSessionControlClaimAcknowledgement>;
-  status(): Promise<SandboxInteractiveSessionStatusLike | null>;
-  attach(options: {
-    control: AgentInteractiveSessionControlClaim;
-    cols?: number;
-    rows?: number;
-    handlers?: SandboxTerminalHandlersLike;
-  }): Promise<SandboxTerminalStreamLike>;
-  /** Validate the current generation before each PTY mutation. */
-  validateControl(control: AgentInteractiveSessionControlClaim): Promise<void>;
+  status(options?: {
+    signal?: AbortSignal;
+  }): Promise<AgentInteractiveSessionStatus | null>;
+  attachAgentTerminal(
+    request: AgentInteractiveSessionAttach,
+    options?: { signal?: AbortSignal }
+  ): Promise<AgentInteractiveTerminalSession>;
+  /** Confirm that this claim is still the current writable generation. */
+  validateControl(
+    control: AgentInteractiveSessionControlClaim,
+    options?: { signal?: AbortSignal }
+  ): Promise<void>;
   sendPrompt(
     command: AgentInteractiveSessionPromptCommand,
+    options?: { signal?: AbortSignal }
   ): Promise<AgentInteractiveSessionPromptAcknowledgement>;
   stop(
     command: AgentInteractiveSessionStopCommand,
+    options?: { signal?: AbortSignal }
   ): Promise<AgentInteractiveSessionStopAcknowledgement>;
 }
 
@@ -468,19 +461,35 @@ export interface SandboxInstanceLike {
   createdAt?: Date | string;
   /** GPU lease attached at create time, when one was requested. */
   gpuLease?: SandboxGpuLeaseLike;
-  streamPrompt(message: string | InputPart[], options?: PromptOptions): AsyncIterable<SandboxEvent>;
-  prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
-  dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
+  streamPrompt(
+    message: string | InputPart[],
+    options?: PromptOptions
+  ): AsyncIterable<SandboxEvent>;
+  prompt?(
+    message: string | InputPart[],
+    options?: PromptOptions
+  ): Promise<PromptResult>;
+  dispatchPrompt?(
+    message: string | InputPart[],
+    options?: PromptOptions
+  ): Promise<unknown>;
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
-  read?(path: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<string>;
-  write?(path: string, content: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<unknown>;
+  read?(
+    path: string,
+    options?: { sessionId?: string; signal?: AbortSignal }
+  ): Promise<string>;
+  write?(
+    path: string,
+    content: string,
+    options?: { sessionId?: string; signal?: AbortSignal }
+  ): Promise<unknown>;
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
   fs?: {
     supportsWriteMode?: true;
     stat(path: string): Promise<{ size: number; isFile: boolean }>;
     readBatch(
       paths: string[],
-      options?: { encoding?: "utf8" | "base64" },
+      options?: { encoding?: "utf8" | "base64" }
     ): Promise<{
       files: Array<{
         path: string;
@@ -493,7 +502,7 @@ export interface SandboxInstanceLike {
     write(
       path: string,
       content: string,
-      options: { encoding: "base64"; mode: number },
+      options: { encoding: "base64"; mode: number }
     ): Promise<unknown>;
   };
   process?: SandboxProcessManagerLike;
@@ -532,17 +541,17 @@ export interface SandboxInstanceLike {
   /** Delete one managed checkpoint. */
   deleteSnapshot?(
     snapshotId: string,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number }
   ): Promise<SandboxSnapshotDeleteAcknowledgementLike>;
   /** Ask the service for the state of a keyed checkpoint operation. */
   getSnapshotOperation?(
     idempotencyKey: string,
-    options?: { tags?: string[] },
+    options?: { tags?: string[] }
   ): Promise<SandboxWorkspaceOperationLookupLike>;
   /** Managed copy-on-write fork operation. */
   fork?(
     count: number,
-    options?: { metadata?: Record<string, unknown>; idempotencyKey?: string },
+    options?: { metadata?: Record<string, unknown>; idempotencyKey?: string }
   ): Promise<SandboxForkAcknowledgementLike>;
   /** Recover fork state after a provider process restart. */
   getForkOperation?(
@@ -550,7 +559,7 @@ export interface SandboxInstanceLike {
     options: {
       count: number;
       metadata?: Record<string, unknown>;
-    },
+    }
   ): Promise<SandboxWorkspaceOperationLookupLike>;
   /** Raw TEE quote and measurement; verification stays outside Sandbox. */
   getTeeAttestation?(options?: {
@@ -561,19 +570,31 @@ export interface SandboxInstanceLike {
 export interface SandboxSessionLike {
   readonly id: string;
   /** Exact native coding-agent TUI bound to this session id. */
-  interactive?(): unknown;
+  interactive?(options?: {
+    ref?: AgentInteractiveSessionRef;
+    control?: AgentInteractiveSessionControlClaim;
+  }): unknown;
   status(options?: { signal?: AbortSignal }): Promise<unknown | null>;
   events(options?: {
     since?: string;
     executionId?: string;
     signal?: AbortSignal;
   }): AsyncIterable<SandboxEvent>;
-  result(options?: { executionId?: string; signal?: AbortSignal }): Promise<PromptResult>;
-  prompt(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
-  interrupt(options?: { executionId?: string; signal?: AbortSignal }): Promise<{ cancelled: boolean }>;
+  result(options?: {
+    executionId?: string;
+    signal?: AbortSignal;
+  }): Promise<PromptResult>;
+  prompt(
+    message: string | InputPart[],
+    options?: PromptOptions
+  ): Promise<PromptResult>;
+  interrupt(options?: {
+    executionId?: string;
+    signal?: AbortSignal;
+  }): Promise<{ cancelled: boolean }>;
   cancelRun?(
     request: AgentRunCancellationRequest,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal }
   ): Promise<AgentRunCancellationAcknowledgement>;
   /**
    * Every ask still awaiting a response on this session. The adapter reads the
@@ -594,7 +615,7 @@ export interface SandboxSessionLike {
    */
   respondToInteraction?(
     command: InteractionResponseCommand,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal }
   ): Promise<SandboxInteractionCommandResultLike>;
 }
 
@@ -621,7 +642,11 @@ export interface TangleProviderOptions {
   client: SandboxClientLike;
   name?: string;
   defaultBackend?: BackendType;
-  capabilities?: AgentEnvironmentCapabilities | (() => AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities>);
+  capabilities?:
+    | AgentEnvironmentCapabilities
+    | (() =>
+        | AgentEnvironmentCapabilities
+        | Promise<AgentEnvironmentCapabilities>);
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
