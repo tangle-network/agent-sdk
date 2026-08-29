@@ -37,6 +37,8 @@
     "dist/environment-identity.js",
     "dist/capability-discovery.d.ts",
     "dist/capability-discovery.js",
+    "dist/context-transfer.d.ts",
+    "dist/context-transfer.js",
     "dist/interaction-response.d.ts",
     "dist/interaction-response.js",
     "dist/observation.d.ts",

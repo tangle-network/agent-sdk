@@ -102,7 +102,9 @@ Pi retained sessions also expose typed permission interactions and native contin
 The provider stores the selected harness, exact model route, and canonical create digest inside its opaque environment identifier.
 This identifier lets `provider.get()` reconstruct profile-selected routes after process death without a cache or repeated configuration.
 The create digest prevents an altered profile or workspace from reusing the previous retained identity.
-`provider.get()` accepts only identifiers created by this provider and rejects plain caller identifiers.
+An accepted portable-context destination can supply its exact environment identifier through `requestedId`.
+The provider recovers that caller-owned route from cli-bridge's durable transfer receipt.
+An unknown caller-owned identifier returns `null`.
 The provider queries `/v1/capabilities` for each retained route restored through `provider.get()`.
 `provider.capabilities()` queries the configured default route before the Runtime selects retained execution.
 The provider shares concurrent discovery requests and refreshes every later query.

@@ -104,6 +104,19 @@ export function narrowCliBridgeCapabilities(
             : {}),
         }
       : undefined;
+  const contextTransfer =
+    adapter.contextTransfer?.freshSession === true &&
+    adapter.contextTransfer.requestIdempotency === true &&
+    adapter.contextTransfer.lookup === true &&
+    reported.contextTransfer?.freshSession === true &&
+    reported.contextTransfer.requestIdempotency === true &&
+    reported.contextTransfer.lookup === true
+      ? {
+          freshSession: true,
+          requestIdempotency: true,
+          lookup: true,
+        }
+      : undefined;
   const sessions = {
     continue: adapter.sessions.continue && reported.sessions.continue,
     // The Bridge can list and inspect sessions, but this adapter exposes neither method.
@@ -164,6 +177,7 @@ export function narrowCliBridgeCapabilities(
     sessions,
     ...(retainedControl === undefined ? {} : { retainedControl }),
     ...(nativeContinuation === undefined ? {} : { nativeContinuation }),
+    ...(contextTransfer === undefined ? {} : { contextTransfer }),
     ...(interactions === undefined ? {} : { interactions }),
     // Remote workspace support cannot create absent adapter methods.
     workspace: {
