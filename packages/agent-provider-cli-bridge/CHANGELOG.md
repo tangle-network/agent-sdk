@@ -1,5 +1,18 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.11.0
+
+### Minor Changes
+
+- 1b7c003: Add provider-owned, retry-safe portable context transfer for exact fresh sessions.
+  
+  Allow an accepted destination contract to select its exact environment identifier.
+
+### Patch Changes
+
+- Updated dependencies [1b7c003]
+  - @tangle-network/agent-interface@1.9.0
+
 ## 0.10.0
 
 ### Minor Changes
