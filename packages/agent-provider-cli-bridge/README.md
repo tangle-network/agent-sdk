@@ -85,6 +85,8 @@ The returned `AgentSession` exposes status, cursor-based event replay, the termi
 Cancellation returns only after cli-bridge confirms the run is terminal.
 A direct stream treats a finish frame as provisional until cli-bridge returns the same run's aggregate result.
 A retained replay confirms its terminal state from the retained run endpoint.
+Terminal results retain the newest 1,024 events and preserve full text and usage totals.
+Use `session.events()` when a caller needs the complete retained event history.
 Retained native runs use canonical runtime envelopes and finish with a terminal status event.
 Pass any emitted event `id` back as `since` to resume after that event.
 The canonical envelope identity remains available as `event.data.eventId`.
