@@ -102,6 +102,22 @@ function receipt(
 }
 
 describe("CLI Bridge portable context", () => {
+  it("does not advertise transfer until the exact Bridge route confirms it", async () => {
+    let called = false;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async () => {
+        called = true;
+        return new Response();
+      },
+    });
+
+    const environment = await provider.create({ profile, backend: "codex" });
+
+    expect(environment.capabilities?.contextTransfer).toBeUndefined();
+    expect(called).toBe(false);
+  });
+
   it("transfers and looks up the exact durable receipt", async () => {
     const transfer = request();
     const calls: Array<{ method: string; url: string; body: unknown }> = [];

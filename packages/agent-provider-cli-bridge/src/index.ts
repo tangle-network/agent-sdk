@@ -223,6 +223,7 @@ function withoutRemoteRetainedCapabilities(
   const {
     retainedControl: _retainedControl,
     nativeContinuation: _nativeContinuation,
+    contextTransfer: _contextTransfer,
     interactions: _interactions,
     ...local
   } = capabilities;
