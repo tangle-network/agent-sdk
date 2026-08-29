@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 1.9.0
+
+### Minor Changes
+
+- 1b7c003: Add provider-owned, retry-safe portable context transfer for exact fresh sessions.
+  
+  Allow an accepted destination contract to select its exact environment identifier.
+
 ## 1.8.0
 
 ### Minor Changes
