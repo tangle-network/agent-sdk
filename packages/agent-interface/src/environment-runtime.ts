@@ -6,7 +6,7 @@ import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
 import type { TokenUsage } from "./execution-types.js";
 import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
-import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
+import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type ContextTransferResult, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentExactRunControlRef, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
 import type {
   AgentWorkspaceBranching,
@@ -426,6 +426,12 @@ export interface AgentEnvironmentCapabilities {
     /** The provider exposes the exact continued run before terminal output. */
     admissionControl?: boolean;
   };
+  /** Present only when fresh-session portable context transfer is durable. */
+  contextTransfer?: {
+    freshSession: boolean;
+    requestIdempotency: boolean;
+    lookup: boolean;
+  };
   /** Absent when the provider cannot originate or answer interactions. */
   interactions?: InteractionCapabilities;
   workspace: {
@@ -515,6 +521,13 @@ export const AgentEnvironmentCapabilitiesSchema = z
         atomicBoundary: z.boolean(),
         requestIdempotency: z.boolean(),
         admissionControl: z.boolean().optional(),
+      })
+      .optional(),
+    contextTransfer: z
+      .strictObject({
+        freshSession: z.boolean(),
+        requestIdempotency: z.boolean(),
+        lookup: z.boolean(),
       })
       .optional(),
     interactions: InteractionCapabilitiesSchema.optional(),
@@ -621,6 +634,19 @@ export const AgentEnvironmentCapabilitiesSchema = z
         message: "native continuation requires retained control for early admission",
       });
     }
+    if (
+      capabilities.contextTransfer !== undefined &&
+      (!capabilities.contextTransfer.freshSession ||
+        !capabilities.contextTransfer.requestIdempotency ||
+        !capabilities.contextTransfer.lookup)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["contextTransfer"],
+        message:
+          "context transfer requires fresh-session admission, request idempotency, and lookup together",
+      });
+    }
     const durableBranching = [
       capabilities.branching.retrySafe ?? false,
       capabilities.branching.lookup ?? false,
@@ -718,6 +744,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
 
 export interface CreateAgentEnvironmentInput {
   profile: AgentProfileRef;
+  /** Exact caller-owned id required by an accepted destination contract. */
+  requestedId?: string;
   /** Agent backend inside the provider, for example "opencode" or "codex". */
   backend?: string;
   workspace?: WorkspaceRequest;
@@ -840,6 +868,8 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
+  /** Durable fresh-session portable context admission, when supported. */
+  readonly contextTransfer?: AgentContextTransferProvider;
   /**
    * Reconstruct a source-scoped branching handle after a coordinator restart.
    *
@@ -865,4 +895,16 @@ export interface AgentEnvironmentProvider {
   create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;
   get?(id: string, options?: { signal?: AbortSignal }): Promise<AgentEnvironment | null>;
   list?(query?: AgentEnvironmentQuery, options?: { signal?: AbortSignal }): Promise<AgentEnvironmentSummary[]>;
+}
+
+/** Provider-owned portable context admission with retry-safe lookup. */
+export interface AgentContextTransferProvider {
+  transfer(
+    request: ContextTransferRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<ContextTransferResult>;
+  lookup(
+    request: ContextTransferRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<ContextTransferResult | undefined>;
 }

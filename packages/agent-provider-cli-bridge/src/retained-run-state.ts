@@ -9,6 +9,7 @@ import type {
   AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
+import type { ContextTransferReceipt } from "@tangle-network/agent-interface";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import {
   assertCliBridgeRunId,
@@ -28,6 +29,7 @@ export interface CliBridgeRun {
   requestDigest?: Sha256Digest;
   controlRef?: AgentExactRunControlRef;
   cancellation?: Promise<CliBridgeRunSnapshot>;
+  contextTransferReceipt?: ContextTransferReceipt;
 }
 
 export interface CliBridgeSessionState {
@@ -161,9 +163,19 @@ export function prepareCliBridgeRun(
     throw new Error("native cli-bridge turns require stable turnId and executionId");
   }
   const turnId = validatedTurn.turnId ?? crypto.randomUUID();
-  const runId = cliBridgeRunId(environmentId, validatedTurn, turnId);
-  const sessionId = validatedTurn.sessionId ?? runId;
-  const executionId = validatedTurn.executionId ?? runId;
+  const destination = validatedTurn.contextTransfer?.plan.destination;
+  const runId = destination?.runId ?? cliBridgeRunId(environmentId, validatedTurn, turnId);
+  const sessionId = validatedTurn.sessionId ?? destination?.sessionId ?? runId;
+  const executionId = validatedTurn.executionId ?? destination?.executionId ?? runId;
+  if (
+    destination !== undefined &&
+    (destination.provider !== providerName ||
+      destination.environmentId !== environmentId ||
+      destination.sessionId !== sessionId ||
+      destination.executionId !== executionId)
+  ) {
+    throw new Error("cli-bridge context transfer targets another destination");
+  }
   const turn = {
     ...validatedTurn,
     turnId,

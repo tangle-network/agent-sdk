@@ -81,6 +81,14 @@ export function cliBridgeEnvironmentRoute(
   };
 }
 
+/** Parse a provider-owned route, or identify a caller-owned destination id. */
+export function optionalCliBridgeEnvironmentRoute(
+  id: string,
+): CliBridgeEnvironmentRoute | undefined {
+  if (!id.startsWith(CLI_BRIDGE_ENVIRONMENT_ID_PREFIX)) return undefined;
+  return cliBridgeEnvironmentRoute(id);
+}
+
 function optionalRouteValue(value: unknown): value is string | null {
   return value === null || routeValue(value);
 }

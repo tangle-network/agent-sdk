@@ -40,6 +40,7 @@ import {
   trimSlash,
 } from "./transport.js";
 import { modelRequestCount } from "./wire.js";
+import { lookupCliBridgeContext } from "./context-transfer.js";
 
 export async function* streamTrackedCliBridgeTurn(
   options: CliBridgeProviderOptions,
@@ -127,6 +128,7 @@ export async function* streamTrackedCliBridgeTurn(
         yield event;
       }
     }
+    await confirmCliBridgeContextTransfer(options, originalTurn, run, signal);
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } catch (error) {
@@ -249,6 +251,7 @@ export async function dispatchCliBridgeTurn(
     }
     const controlRef = exactControlRefForRun(run, providerName);
     run.controlRef = controlRef;
+    await confirmCliBridgeContextTransfer(options, prepared.turn, run, signal);
     if (responseBody) {
       await detachCliBridgeReader(responseBody);
       responseBody = undefined;
@@ -257,6 +260,9 @@ export async function dispatchCliBridgeTurn(
       id: run.sessionId!,
       provider: providerName,
       controlRef,
+      ...(run.contextTransferReceipt === undefined
+        ? {}
+        : { contextTransferReceipt: run.contextTransferReceipt }),
       metadata: {
         runId: run.id,
         requestDigest: run.requestDigest,
@@ -295,6 +301,23 @@ export async function dispatchCliBridgeTurn(
     restoreCliBridgeSession(run, previousSessionRun, sessions);
     throw failure;
   }
+}
+
+async function confirmCliBridgeContextTransfer(
+  options: CliBridgeProviderOptions,
+  turn: import("@tangle-network/agent-interface/environment-provider").AgentTurnInput,
+  run: CliBridgeRun,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (turn.contextTransfer === undefined) return;
+  const transfer = await lookupCliBridgeContext(options, turn.contextTransfer, signal);
+  if (
+    transfer === undefined ||
+    (transfer.status !== "accepted" && transfer.status !== "replayed")
+  ) {
+    throw new Error("cli-bridge did not confirm admitted portable context");
+  }
+  run.contextTransferReceipt = transfer;
 }
 
 export async function* streamCliBridgeSessionEvents(
@@ -440,6 +463,9 @@ export async function collectCliBridgeTurnResult(
         }
       : {}),
     ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+    ...(run.contextTransferReceipt === undefined
+      ? {}
+      : { contextTransferReceipt: run.contextTransferReceipt }),
     ...(usage ? { usage } : {}),
     metadata: {
       runId: run.id,

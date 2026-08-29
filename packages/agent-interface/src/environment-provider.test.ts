@@ -100,6 +100,9 @@ describe("generic environment create idempotency", () => {
     expect(
       agentEnvironmentCreateInputDigest({ ...input, metadata: { a: 3, z: 1 } }),
     ).not.toBe(agentEnvironmentCreateInputDigest(input));
+    expect(
+      agentEnvironmentCreateInputDigest({ ...input, requestedId: "environment-exact" }),
+    ).not.toBe(agentEnvironmentCreateInputDigest(input));
   });
 
   type FakeEnvironment = {
@@ -327,6 +330,23 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
         },
       }),
     ).toThrow(/retained control for early admission/);
+  });
+
+  it("advertises context transfer only with every durable admission guarantee", () => {
+    const contextTransfer = {
+      freshSession: true,
+      requestIdempotency: true,
+      lookup: true,
+    };
+    expect(
+      AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities, contextTransfer }),
+    ).toMatchObject({ contextTransfer });
+    for (const field of Object.keys(contextTransfer) as Array<keyof typeof contextTransfer>) {
+      expect(() => AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        contextTransfer: { ...contextTransfer, [field]: false },
+      })).toThrow(/fresh-session admission, request idempotency, and lookup together/);
+    }
   });
 
   it("advertises retained run control only with every identity guarantee", () => {

@@ -69,6 +69,9 @@ Partial input or output always requires explicit user or policy acceptance, even
 `ContextTransferRequest` binds an operation identifier to that accepted plan, while `ContextTransferResult` distinguishes first admission, exact replay, changed-input conflict, and unknown transport outcome.
 `contextTransferResultMatchesRequest()` checks the operation identifier and request digest for every outcome before a caller accepts, retries, or reports it.
 Its successful receipt repeats the exact destination and carries the provider's session-creation operation and timestamp, identifying the one fresh provider session that admitted the context.
+Providers expose this operation through `AgentEnvironmentProvider.contextTransfer`.
+They advertise `contextTransfer` only when transfer, retry idempotency, and lookup are all durable.
+An accepted destination can set `CreateAgentEnvironmentInput.requestedId` to bind environment creation to its exact identifier.
 `NativeContextBoundaryProof` is the separate path for same-session continuation and includes the exact run identity.
 `NativeContextContinuationRequest.turnDigest` binds the operation to the exact new JSON-stable user turn; timeout and abort controls live outside that turn under `AgentNativeContextContinuationOptions`.
 Continuation is valid only when the provider atomically proves the recorded token, revision, digest, or message boundary, sends zero copied history, and applies retry or changed-input conflict semantics.

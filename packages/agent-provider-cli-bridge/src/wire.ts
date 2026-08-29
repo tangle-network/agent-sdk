@@ -51,6 +51,9 @@ export function toChatCompletionsBody(
     ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
     ...(execution ? { execution } : {}),
     ...(interactions === undefined ? {} : { interactions }),
+    ...(turn.contextTransfer === undefined
+      ? {}
+      : { context_transfer: turn.contextTransfer }),
     metadata: {
       ...(environmentInput.metadata ?? {}),
       ...(turn.context ?? {}),
@@ -141,6 +144,9 @@ export function toRetainedTurnBody(
     provider: providerName,
     environment_id: run.environmentId,
     ...(turn.interactions === undefined ? {} : { interactions }),
+    ...(turn.contextTransfer === undefined
+      ? {}
+      : { context_transfer: turn.contextTransfer }),
     ...(turn.context !== undefined ? { context: turn.context } : {}),
     ...(turn.providerOptions !== undefined
       ? { provider_options: turn.providerOptions }
@@ -152,7 +158,6 @@ function assertRetainedTurnInputSupported(turn: AgentTurnInput): void {
   const unsupported: string[] = [];
   if (turn.timeoutMs !== undefined) unsupported.push("timeoutMs");
   if (turn.controlRef !== undefined) unsupported.push("controlRef");
-  if (turn.contextTransfer !== undefined) unsupported.push("contextTransfer");
   if (turn.nativeContinuation !== undefined) unsupported.push("nativeContinuation");
   // `detach` controls the provider's response reader. The bridge request stays unchanged.
   // The streaming path rejects detached turns before it calls this encoder.

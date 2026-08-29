@@ -523,12 +523,14 @@ describe("cli-bridge native retained sessions", () => {
     expect(calls).toBe(0);
   });
 
-  it("retains a profile-selected Pi route and rejects caller-owned ids", async () => {
+  it("retains a profile-selected Pi route and returns null for unknown caller-owned ids", async () => {
     const provider = createCliBridgeProvider({
       baseUrl,
       defaultModel: "codex/model",
       capabilities: defaultCliBridgeCapabilities("pi"),
-      fetch: async (_url, init) => new Response("data: [DONE]\n\n", {
+      fetch: async (url, init) => new URL(String(url)).pathname.startsWith("/v1/context-transfer-environments/")
+        ? Response.json({ error: { type: "not_found_error" } }, { status: 404 })
+        : new Response("data: [DONE]\n\n", {
         status: 200,
         headers: {
           "content-type": "text/event-stream",
@@ -547,9 +549,7 @@ describe("cli-bridge native retained sessions", () => {
     const reconnectedPi = await provider.get!(pi.id);
     expect(reconnectedPi?.capabilities?.interactions?.responseIdempotency).toBe(true);
     expect(reconnectedPi?.respondToInteraction).toBeTypeOf("function");
-    await expect(provider.get!("pi-environment")).rejects.toThrow(
-      "not a provider-owned retained identity",
-    );
+    await expect(provider.get!("pi-environment")).resolves.toBeNull();
     const codex = await provider.create({
       idempotencyKey: "codex-environment",
       profile: { name: "codex", harness: "codex" },

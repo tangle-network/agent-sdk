@@ -31,13 +31,17 @@ import {
   supportsCliBridgeNativeInteractions,
 } from "./retained-native.js";
 import {
+  createCliBridgeContextTransfer,
+  lookupCliBridgeContextByEnvironment,
+} from "./context-transfer.js";
+import {
   assertCliBridgeProviderOptions,
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
 import { narrowedCliBridgeObservation } from "./observation.js";
 import {
   cliBridgeEnvironmentId,
-  cliBridgeEnvironmentRoute,
+  optionalCliBridgeEnvironmentRoute,
 } from "./environment-identity.js";
 import { resolveBridgeModel } from "./wire.js";
 
@@ -131,11 +135,12 @@ export function createCliBridgeProvider(
     const model = hasEnvironmentModel
       ? resolveBridgeModel(options, environmentInput, {}, profile)
       : undefined;
-    const environmentId = cliBridgeEnvironmentId(
+    const environmentId = input.requestedId ?? cliBridgeEnvironmentId(
       { backend: selectedBackend, model },
       agentEnvironmentCreateInputDigest(environmentInput),
       input.idempotencyKey,
     );
+    assertRequestedEnvironmentId(environmentId);
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -157,6 +162,7 @@ export function createCliBridgeProvider(
   };
   return {
     name,
+    contextTransfer: createCliBridgeContextTransfer(options),
     lookupRun: (input) => lookupExactCliBridgeRun(options, name, input),
     capabilities: () => {
       if (options.defaultModel !== undefined) {
@@ -171,30 +177,41 @@ export function createCliBridgeProvider(
         () => createEnvironment(input),
       );
     },
-    async get(id) {
+    async get(id, getOptions) {
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
-      const route = cliBridgeEnvironmentRoute(id);
+      const ownedRoute = optionalCliBridgeEnvironmentRoute(id);
+      const transfer = ownedRoute === undefined
+        ? await lookupCliBridgeContextByEnvironment(options, id, getOptions?.signal)
+        : undefined;
+      const backend = ownedRoute?.backend ?? transfer?.destination.runner;
+      const destinationModel = transfer?.destination.model;
+      const model = ownedRoute?.model ?? (
+        destinationModel === undefined || destinationModel === backend || destinationModel.startsWith(`${backend}/`)
+          ? destinationModel ?? backend
+          : `${backend}/${destinationModel}`
+      );
+      if (ownedRoute === undefined && transfer === undefined) return null;
       return createCliBridgeEnvironment({
         options,
         providerName: name,
         environmentInput: {
           profile: { name: "reconnected" },
-          ...(route.backend === undefined ? {} : { backend: route.backend }),
+          ...(backend === undefined ? {} : { backend }),
           idempotencyKey: id,
         },
         environmentId: id,
         allowDispatch: false,
         cancelRunsOnDestroy: false,
         capabilities: await resolveCapabilities(
-          route.backend,
-          route.model,
+          backend,
+          model,
           true,
           true,
         ),
-        selectedBackend: route.backend,
-        selectedModel: route.model,
+        selectedBackend: backend,
+        selectedModel: model,
       });
     },
   };
@@ -227,6 +244,18 @@ function selectedBackendFromRoute(route: string | undefined): HarnessType | unde
   const candidate = route?.split("/", 1)[0];
   const parsed = harnessTypeSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
+}
+
+function assertRequestedEnvironmentId(value: string): void {
+  if (
+    value.length === 0 ||
+    value.length > 256 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
+  ) {
+    throw new Error(
+      "cli-bridge requested environment id must be 1-256 URL-safe characters",
+    );
+  }
 }
 
 /**
@@ -266,6 +295,11 @@ export function defaultCliBridgeCapabilities(
       resultIdentity: true,
       eventIdentity: true,
       cancellationIdempotency: true,
+    },
+    contextTransfer: {
+      freshSession: true,
+      requestIdempotency: true,
+      lookup: true,
     },
     ...(harness === "pi"
       ? {
