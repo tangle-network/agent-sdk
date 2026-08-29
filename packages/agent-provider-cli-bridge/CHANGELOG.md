@@ -1,5 +1,18 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.10.0
+
+### Minor Changes
+
+- 069e9cd: Expose the exact continued run after durable admission and before terminal output.
+
+  The CLI Bridge provider can now hand control to runtimes before it waits for the continued turn to finish.
+
+### Patch Changes
+
+- Updated dependencies [069e9cd]
+  - @tangle-network/agent-interface@1.8.0
+
 ## 0.9.6
 
 ### Patch Changes
