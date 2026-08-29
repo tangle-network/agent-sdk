@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.11.1
+
+### Patch Changes
+
+- a8c09d0: Bound retained result events while preserving complete text and usage totals.
+
 ## 0.11.0
 
 ### Minor Changes
