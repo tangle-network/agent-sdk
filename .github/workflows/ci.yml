@@ -31,10 +31,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - id: cli-bridge-source
+        name: Read pinned CLI Bridge source
+        shell: bash
+        run: |
+          echo "repository=$(jq -r '.cliBridge.repository' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(jq -r '.cliBridge.commit' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
-          repository: drewstone/cli-bridge
-          ref: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
+          repository: ${{ steps.cli-bridge-source.outputs.repository }}
+          ref: ${{ steps.cli-bridge-source.outputs.commit }}
           path: cli-bridge
           fetch-depth: 1
           persist-credentials: false

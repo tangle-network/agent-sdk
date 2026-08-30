@@ -35,6 +35,14 @@ const PACKAGE_DIRECTORIES = {
   "@tangle-network/agent-provider-tangle": "agent-provider-tangle",
 };
 
+const upstreamSources = JSON.parse(
+  readFileSync(join(root, "scripts", "upstream-sources.json"), "utf8"),
+);
+const expectedCliBridgeCommit = upstreamSources.cliBridge?.commit;
+if (!/^[a-f0-9]{40}$/u.test(expectedCliBridgeCommit ?? "")) {
+  throw new Error("scripts/upstream-sources.json has no valid CLI Bridge commit");
+}
+
 function packageVersion(name) {
   const directory = PACKAGE_DIRECTORIES[name];
   if (!directory) throw new Error(`unknown package ${name}`);
@@ -283,6 +291,11 @@ function cliBridgeCommit(directory) {
   if (result.status !== 0 || !/^[a-f0-9]{40}$/u.test(commit)) {
     throw new Error(
       `could not resolve the cli-bridge commit at ${directory}: ${result.stderr}`,
+    );
+  }
+  if (commit !== expectedCliBridgeCommit) {
+    throw new Error(
+      `cli-bridge checkout ${commit} differs from pinned evidence source ${expectedCliBridgeCommit}`,
     );
   }
   return commit;
