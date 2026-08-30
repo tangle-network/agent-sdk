@@ -1,9 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.34.0 <1.0.0`, and this package is developed and tested against 0.34.3.
-The floor is 0.34.0 because workspace branching uses the keyed snapshot, fork,
-lookup, and cleanup operations added to that SDK.
+The peer range is `>=0.34.4 <1.0.0`, and this package is developed and tested against 0.34.4.
+The floor is 0.34.4 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshot, fork, lookup, and cleanup operations.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
