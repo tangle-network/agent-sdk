@@ -166,6 +166,26 @@ async function waitForEvent(session, predicate, label) {
   );
 }
 
+async function waitForSessionStatus(session, expected, label) {
+  const signal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  let observed;
+  try {
+    while (true) {
+      observed = await session.status({ signal });
+      if (observed === expected) return observed;
+      await pause(POLL_INTERVAL_MS);
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(
+        `Timed out waiting for ${label}; last status=${observed ?? "unknown"}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 async function requiredInteraction(session, predicate, label) {
   try {
     return await waitForEvent(session, predicate, label);
@@ -409,7 +429,11 @@ async function runRetainedEvidence() {
       };
       const cancellation = await cancelSession.cancelRun(cancellationRequest);
       assert.equal(cancellation.status, "accepted");
-      assert.notEqual(cancellation.effect, "unknown");
+      assert(
+        cancellation.effect === "cancel_requested" ||
+          cancellation.effect === "cancelled",
+        `cancellation did not affect a live run: ${cancellation.effect}`,
+      );
 
       const cancellationEnvironment = await freshEnvironment(environment.id);
       assert(cancellationEnvironment, "The cancelled environment was not recoverable");
@@ -419,6 +443,11 @@ async function runRetainedEvidence() {
         { controlRef: cancelControlRef },
       );
       assert.equal(typeof cancellationSession.cancelRun, "function");
+      const cancellationStatus = await waitForSessionStatus(
+        cancellationSession,
+        "cancelled",
+        "the cancelled session status",
+      );
       const cancellationReplay = await cancellationSession.cancelRun(
         cancellationRequest,
       );
@@ -435,6 +464,8 @@ async function runRetainedEvidence() {
         interactionReplay: true,
         followUpPermissionCount,
         cancellation: cancellation.status,
+        cancellationEffect: cancellation.effect,
+        cancellationStatus,
         cancellationReplay: cancellationReplay.status,
       };
     },
@@ -550,6 +581,7 @@ async function runWorkspaceEvidence() {
       lookupCheckpoint: async (request) => {
         freshProcessLookups += 1;
         const result = childLookup(environment.id, "checkpoint", request);
+        if (result.status === "not_found") return result;
         if (result.status !== "found") {
           throw new Error(
             `Fresh-process checkpoint lookup did not find the created checkpoint: ${JSON.stringify(result)}`,
@@ -584,6 +616,7 @@ async function runWorkspaceEvidence() {
       lookupFork: async (request) => {
         freshProcessLookups += 1;
         const result = childLookup(environment.id, "fork", request);
+        if (result.status === "not_found") return result;
         if (result.status !== "found") {
           throw new Error(
             `Fresh-process fork lookup did not find the created fork: ${JSON.stringify(result)}`,

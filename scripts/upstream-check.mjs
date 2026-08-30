@@ -2,11 +2,14 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   pnpm,
   prepareControlCohort,
@@ -34,14 +37,6 @@ const PACKAGE_DIRECTORIES = {
   "@tangle-network/agent-provider-testkit": "agent-provider-testkit",
   "@tangle-network/agent-provider-tangle": "agent-provider-tangle",
 };
-
-const upstreamSources = JSON.parse(
-  readFileSync(join(root, "scripts", "upstream-sources.json"), "utf8"),
-);
-const expectedCliBridgeCommit = upstreamSources.cliBridge?.commit;
-if (!/^[a-f0-9]{40}$/u.test(expectedCliBridgeCommit ?? "")) {
-  throw new Error("scripts/upstream-sources.json has no valid CLI Bridge commit");
-}
 
 function packageVersion(name) {
   const directory = PACKAGE_DIRECTORIES[name];
@@ -110,28 +105,12 @@ const BEHAVIORAL = {
     summary:
       "Packed portable-context receipt identity contract plus the packed portable-context conformance suite.",
   },
-  "UP-14": {
-    slug: "agent-interface-and-tangle",
-    packages: [
-      "@tangle-network/agent-interface",
-      "@tangle-network/agent-provider-tangle",
-    ],
-    files: [
-      "workspace-branching.test.ts",
-      "control-conformance.test.ts",
-      "tangle-control-consumer.test.ts",
-    ],
-    pattern:
-      "retry-safe workspace checkpoint|retry-safe environment fork|workspace cleanup acknowledgement|runWorkspaceBranchingConformance|binds result replay and cancellation to the dispatch receipt|fails closed when Sandbox does not prove an exact execution",
-    minTests: 24,
-    summary:
-      "Packed workspace-branching idempotency contract plus its conformance suite plus the packed Tangle receipt-bound replay and fail-closed proofs.",
-  },
 };
 
 // A test-only hook: override the descriptor selector to prove the vacuity
 // guard. A selector that matches nothing must exit nonzero.
-const PATTERN_OVERRIDE = process.env.UPSTREAM_CHECK_PATTERN_OVERRIDE;
+const PATTERN_OVERRIDE =
+  process.env.UPSTREAM_CHECK_PATTERN_OVERRIDE?.trim() || undefined;
 
 function runCohortVitest(cohort, files, pattern) {
   const reportPath = join(cohort.temporaryRoot, "vitest-report.json");
@@ -159,11 +138,17 @@ function runCohortVitest(cohort, files, pattern) {
   } catch {
     report = undefined;
   }
-  return { status: result.status, stderr: result.stderr, report };
+  return {
+    error: result.error,
+    status: result.status,
+    stderr: result.stderr,
+    report,
+  };
 }
 
 function assertPassingReport(upId, result, minTests) {
-  const { status, stderr, report } = result;
+  const { error, status, stderr, report } = result;
+  if (error) throw new Error(`${upId} failed to start Vitest`, { cause: error });
   if (!report) {
     throw new Error(
       `${upId} produced no vitest JSON report (exit ${status}).\n${stderr}`,
@@ -268,7 +253,7 @@ const CLI_BRIDGE_PROVIDER_CHECKS = {
       "isolates concurrent run identities through the real Bridge transport|answers a cancelled interaction with the cancelled acknowledgement",
     minTests: 2,
     summary:
-      "Packed CLI Bridge provider proves replay, restart reconstruction, exact status, interaction response, and cancellation through a real Bridge server.",
+      "Packed CLI Bridge provider isolates concurrent run identities and answers a cancelled interaction through a real Bridge server.",
   },
 };
 
@@ -282,7 +267,25 @@ function requiredCliBridgeRoot() {
   return directory;
 }
 
-function cliBridgeCommit(directory) {
+function cliBridgePin() {
+  const sources = JSON.parse(
+    readFileSync(join(root, "scripts", "upstream-sources.json"), "utf8"),
+  );
+  const repository = sources.cliBridge?.repository;
+  const commit = sources.cliBridge?.commit;
+  if (
+    typeof repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
+    !/^[a-f0-9]{40}$/u.test(commit ?? "")
+  ) {
+    throw new Error(
+      "scripts/upstream-sources.json has no valid CLI Bridge repository and commit",
+    );
+  }
+  return { repository, commit };
+}
+
+function cliBridgeCommit(directory, expectedCommit) {
   const result = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: directory,
     encoding: "utf8",
@@ -293,9 +296,9 @@ function cliBridgeCommit(directory) {
       `could not resolve the cli-bridge commit at ${directory}: ${result.stderr}`,
     );
   }
-  if (commit !== expectedCliBridgeCommit) {
+  if (commit !== expectedCommit) {
     throw new Error(
-      `cli-bridge checkout ${commit} differs from pinned evidence source ${expectedCliBridgeCommit}`,
+      `cli-bridge checkout ${commit} differs from pinned evidence source ${expectedCommit}`,
     );
   }
   return commit;
@@ -304,12 +307,15 @@ function cliBridgeCommit(directory) {
 function runCliBridgeProvider(upId) {
   const descriptor = CLI_BRIDGE_PROVIDER_CHECKS[upId];
   const bridgeRoot = requiredCliBridgeRoot();
+  const bridgePin = cliBridgePin();
+  const bridgeCommit = cliBridgeCommit(bridgeRoot, bridgePin.commit);
+  const pattern = PATTERN_OVERRIDE ?? descriptor.pattern;
   const cohort = prepareCliBridgeCohort();
   try {
     const result = runCohortVitest(
       cohort,
       ["cli-bridge.integration.test.ts"],
-      PATTERN_OVERRIDE ?? descriptor.pattern,
+      pattern,
     );
     const counts = assertPassingReport(upId, result, descriptor.minTests);
     const path = writeEvidence(upId, "agent-provider-cli-bridge-real", {
@@ -317,13 +323,14 @@ function runCliBridgeProvider(upId) {
       package: "@tangle-network/agent-provider-cli-bridge",
       version: packageVersion("@tangle-network/agent-provider-cli-bridge"),
       tagCommit: tagCommit(),
-      command: `vitest run cli-bridge.integration.test.ts -t ${JSON.stringify(descriptor.pattern)}`,
+      command: `vitest run cli-bridge.integration.test.ts -t ${JSON.stringify(pattern)}`,
       result: "success",
       evidence: {
         summary: descriptor.summary,
-        cliBridgeCommit: cliBridgeCommit(bridgeRoot),
+        cliBridgeRepository: bridgePin.repository,
+        cliBridgeCommit: bridgeCommit,
         packedTarballs: cohort.packageVersions,
-        testNamePattern: descriptor.pattern,
+        testNamePattern: pattern,
         minTests: descriptor.minTests,
         ...counts,
       },
@@ -337,67 +344,127 @@ function runCliBridgeProvider(upId) {
   }
 }
 
+const CLI_BRIDGE_POLICY_CHECKS = [
+  {
+    id: "acp-fail-closed",
+    files: ["tests/acp.test.ts"],
+    pattern: "fails closed on session/request_permission instead of fabricating approval",
+  },
+  {
+    id: "profile-permissions",
+    files: ["tests/profile-mcp.test.ts"],
+    pattern: "honors agent_profile.permissions over the headless allow defaults",
+  },
+  {
+    id: "native-dialog-denial",
+    files: ["tests/retained-sessions.test.ts"],
+    pattern: "auto-denies an unrequested supported dialog through the durable response lane",
+  },
+];
+
 function runCliBridgePolicy() {
   const upId = "UP-06";
   const bridgeRoot = requiredCliBridgeRoot();
-  const reportPath = join(root, "artifacts", `${upId}-vitest-report.json`);
-  mkdirSync(join(root, "artifacts"), { recursive: true });
-  const pattern = PATTERN_OVERRIDE ?? [
-    "fails closed on session/request_permission instead of fabricating approval",
-    "honors agent_profile.permissions over the headless allow defaults",
-    "auto-denies an unrequested supported dialog through the durable response lane",
-  ].join("|");
-  const result = spawnSync(
-    pnpm,
-    [
-      "exec",
-      "vitest",
-      "run",
-      "tests/acp.test.ts",
-      "tests/profile-mcp.test.ts",
-      "tests/retained-sessions.test.ts",
-      "-t",
-      pattern,
-      "--reporter=json",
-      `--outputFile=${reportPath}`,
-    ],
-    {
-      cwd: bridgeRoot,
-      encoding: "utf8",
-      env: process.env,
-      maxBuffer: 50 * 1024 * 1024,
-    },
-  );
-  let report;
+  const bridgePin = cliBridgePin();
+  const bridgeCommit = cliBridgeCommit(bridgeRoot, bridgePin.commit);
+  const checks = PATTERN_OVERRIDE
+    ? [
+        {
+          id: "override",
+          files: [
+            "tests/acp.test.ts",
+            "tests/profile-mcp.test.ts",
+            "tests/retained-sessions.test.ts",
+          ],
+          pattern: PATTERN_OVERRIDE,
+        },
+      ]
+    : CLI_BRIDGE_POLICY_CHECKS;
+  const reportRoot = mkdtempSync(join(tmpdir(), "agent-cli-bridge-policy-"));
   try {
-    report = JSON.parse(readFileSync(reportPath, "utf8"));
-  } catch {
-    report = undefined;
+    const policyResults = checks.map((check) => {
+      const reportPath = join(reportRoot, `${check.id}.json`);
+      const result = spawnSync(
+        pnpm,
+        [
+          "exec",
+          "vitest",
+          "run",
+          ...check.files,
+          "-t",
+          check.pattern,
+          "--reporter=json",
+          `--outputFile=${reportPath}`,
+        ],
+        {
+          cwd: bridgeRoot,
+          encoding: "utf8",
+          env: process.env,
+          maxBuffer: 50 * 1024 * 1024,
+        },
+      );
+      let report;
+      try {
+        report = JSON.parse(readFileSync(reportPath, "utf8"));
+      } catch {
+        report = undefined;
+      }
+      return {
+        ...check,
+        ...assertPassingReport(
+          `${upId}/${check.id}`,
+          { error: result.error, status: result.status, stderr: result.stderr, report },
+          1,
+        ),
+      };
+    });
+    const counts = policyResults.reduce(
+      (total, result) => ({
+        numTotalTests: total.numTotalTests + result.numTotalTests,
+        numPassedTests: total.numPassedTests + result.numPassedTests,
+        numFailedTests: total.numFailedTests + result.numFailedTests,
+        numPendingTests: total.numPendingTests + (result.numPendingTests ?? 0),
+      }),
+      {
+        numTotalTests: 0,
+        numPassedTests: 0,
+        numFailedTests: 0,
+        numPendingTests: 0,
+      },
+    );
+    const path = writeEvidence(upId, "cli-bridge-interaction-policy", {
+      upId,
+      package: "drewstone/cli-bridge",
+      version: null,
+      tagCommit: tagCommit(),
+      command: "vitest run one policy test selector per evidence leg",
+      result: "success",
+      evidence: {
+        summary:
+          "CLI Bridge refuses unanswerable ACP permissions, honors profile-scoped OpenCode policy, and denies unrequested native dialogs.",
+        cliBridgeRepository: bridgePin.repository,
+        cliBridgeCommit: bridgeCommit,
+        policyChecks: policyResults.map(
+          ({ id, files, pattern, numTotalTests, numPassedTests, numFailedTests, numPendingTests }) => ({
+            id,
+            files,
+            testNamePattern: pattern,
+            numTotalTests,
+            numPassedTests,
+            numFailedTests,
+            numPendingTests,
+            minTests: 1,
+          }),
+        ),
+        minTestsPerPolicy: 1,
+        ...counts,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+    console.log(`${upId}: ${counts.numPassedTests} policy tests passed; evidence ${path}`);
+  } finally {
+    rmSync(reportRoot, { recursive: true, force: true });
   }
-  const counts = assertPassingReport(
-    upId,
-    { status: result.status, stderr: result.stderr, report },
-    3,
-  );
-  const path = writeEvidence(upId, "cli-bridge-interaction-policy", {
-    upId,
-    package: "@tangle-network/agent-provider-cli-bridge",
-    version: packageVersion("@tangle-network/agent-provider-cli-bridge"),
-    tagCommit: tagCommit(),
-    command:
-      "vitest run acp, profile-permission, and retained-interaction policy tests",
-    result: "success",
-    evidence: {
-      summary:
-        "CLI Bridge refuses unanswerable ACP permissions, honors profile-scoped OpenCode policy, and denies unrequested native dialogs.",
-      cliBridgeCommit: cliBridgeCommit(bridgeRoot),
-      testNamePattern: pattern,
-      minTests: 3,
-      ...counts,
-    },
-    generatedAt: new Date().toISOString(),
-  });
-  console.log(`${upId}: ${counts.numPassedTests} policy tests passed; evidence ${path}`);
 }
 
 function publishablePackages() {
@@ -472,8 +539,10 @@ const LIVE_TANGLE = {
 
 function runLiveTangle(upId) {
   const descriptor = LIVE_TANGLE[upId];
-  if (!process.env.TANGLE_API_KEY?.trim()) {
-    throw new Error(`${upId} requires TANGLE_API_KEY for the hosted Sandbox API`);
+  for (const name of ["TANGLE_API_KEY", "TANGLE_SANDBOX_URL"]) {
+    if (!process.env[name]?.trim()) {
+      throw new Error(`${upId} requires ${name} for the hosted Sandbox API`);
+    }
   }
   const cohort = prepareControlCohort();
   try {

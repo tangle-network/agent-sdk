@@ -32,11 +32,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: cli-bridge-source
-        name: Read pinned CLI Bridge source
+        name: Validate allowlisted CLI Bridge source
         shell: bash
+        env:
+          EXPECTED_REPOSITORY: drewstone/cli-bridge
+          EXPECTED_COMMIT: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
         run: |
-          echo "repository=$(jq -r '.cliBridge.repository' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(jq -r '.cliBridge.commit' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
+          repository="$(jq -er '.cliBridge.repository' scripts/upstream-sources.json)"
+          commit="$(jq -er '.cliBridge.commit' scripts/upstream-sources.json)"
+          if [[ "$repository" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "CLI Bridge repository is not allowlisted: $repository" >&2
+            exit 1
+          fi
+          if [[ "$commit" != "$EXPECTED_COMMIT" || ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "CLI Bridge commit is not the allowlisted immutable pin" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: ${{ steps.cli-bridge-source.outputs.repository }}

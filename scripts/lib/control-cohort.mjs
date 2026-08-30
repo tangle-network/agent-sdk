@@ -5,12 +5,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
-  pnpm,
   preparePackedTestCohort,
   root,
-  run,
-  tsc,
-  vitest,
 } from "./packed-test-cohort.mjs";
 
 export { pnpm, root, run, tsc, vitest } from "./packed-test-cohort.mjs";

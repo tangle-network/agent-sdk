@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,6 +16,15 @@ export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 export const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 export const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const executableSuffix = process.platform === "win32" ? ".cmd" : "";
+
+function catalogVersion(name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8").match(
+    new RegExp(`^  ["']${escapedName}["']:\\s+([^\\s#]+)\\s*$`, "mu"),
+  );
+  if (!match) throw new Error(`pnpm catalog has no version for ${name}`);
+  return match[1];
+}
 
 export const vitest = join(
   root,
@@ -78,6 +88,18 @@ function tarballName(tarball) {
  * consumer. The caller copies only the fixtures required for its proof.
  */
 export function preparePackedTestCohort(options) {
+  const packageKeys = new Set();
+  const packageNames = new Set();
+  for (const entry of options.packages) {
+    if (packageKeys.has(entry.key)) {
+      throw new Error(`duplicate packed cohort package key: ${entry.key}`);
+    }
+    if (packageNames.has(entry.name)) {
+      throw new Error(`duplicate packed cohort package name: ${entry.name}`);
+    }
+    packageKeys.add(entry.key);
+    packageNames.add(entry.name);
+  }
   for (const entry of options.packages) {
     run(pnpm, ["--filter", entry.name, "build"]);
   }
@@ -110,7 +132,7 @@ export function preparePackedTestCohort(options) {
         private: true,
         type: "module",
         dependencies: {
-          "@types/node": "25.6.0",
+          "@types/node": catalogVersion("@types/node"),
           ...options.dependencies,
           ...packedDependencies,
         },
@@ -128,8 +150,16 @@ export function preparePackedTestCohort(options) {
       npm_config_update_notifier: "false",
     },
   });
+  const vitestSource = options.packages
+    .map((entry) =>
+      join(root, "packages", entry.directory, "node_modules", "vitest"),
+    )
+    .find((path) => existsSync(path));
+  if (!vitestSource) {
+    throw new Error("packed cohort requires Vitest in one package workspace");
+  }
   symlinkSync(
-    join(root, "packages", "agent-provider-testkit", "node_modules", "vitest"),
+    vitestSource,
     join(consumer, "node_modules", "vitest"),
     "dir",
   );

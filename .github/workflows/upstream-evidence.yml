@@ -10,18 +10,25 @@
 # It does not claim a live provider or use a mock Bridge HTTP server.
 #
 # UP-09 and UP-14 use the public Sandbox control plane with TANGLE_API_KEY and
-# explicit staging URL and model variables. The release detector and manual
-# dispatch bound this live spend to release evidence.
+# explicit staging URL and model variables. The dispatch input binds this live
+# spend to one exact release commit.
 
 name: Upstream Evidence
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact package release commit to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: upstream-evidence-${{ inputs.release_sha }}
+  cancel-in-progress: true
 
 jobs:
   release-commit:
@@ -32,21 +39,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
       - id: release
-        name: Detect package version changes
+        name: Validate release commit
         shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a 40-character commit SHA" >&2
+            exit 1
           fi
-          if git diff --unified=0 HEAD^ HEAD -- 'packages/*/package.json' \
-            | grep -Eq '^\+  "version":'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
+          if [[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]]; then
+            echo "checked out $(git rev-parse HEAD), expected $RELEASE_SHA" >&2
+            exit 1
           fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
 
   control-contracts:
     name: ${{ matrix.check }}
@@ -59,6 +68,8 @@ jobs:
         check: [UP-01, UP-02, UP-11, UP-12, UP-13]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -86,12 +97,27 @@ jobs:
         check: [UP-05, UP-06, UP-07, UP-08]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
       - id: cli-bridge-source
-        name: Read pinned CLI Bridge source
+        name: Validate allowlisted CLI Bridge source
         shell: bash
+        env:
+          EXPECTED_REPOSITORY: drewstone/cli-bridge
+          EXPECTED_COMMIT: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
         run: |
-          echo "repository=$(jq -r '.cliBridge.repository' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(jq -r '.cliBridge.commit' scripts/upstream-sources.json)" >> "$GITHUB_OUTPUT"
+          repository="$(jq -er '.cliBridge.repository' scripts/upstream-sources.json)"
+          commit="$(jq -er '.cliBridge.commit' scripts/upstream-sources.json)"
+          if [[ "$repository" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "CLI Bridge repository is not allowlisted: $repository" >&2
+            exit 1
+          fi
+          if [[ "$commit" != "$EXPECTED_COMMIT" || ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "CLI Bridge commit is not the allowlisted immutable pin" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: ${{ steps.cli-bridge-source.outputs.repository }}
@@ -155,6 +181,8 @@ jobs:
         check: [UP-09, UP-14]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
