@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.14.4
+
+### Patch Changes
+
+- b9c6441: Require Sandbox 0.34.4 or newer for exact interactive terminal attachment.
+  Sandbox 0.34.4 preserves the runtime receiver while reading terminal metadata.
+
 ## 0.14.3
 
 ### Patch Changes
