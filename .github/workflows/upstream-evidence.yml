@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: upstream-evidence-${{ inputs.release_sha }}
+  group: upstream-evidence-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -39,20 +39,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
-          fetch-depth: 1
+          ref: ${{ github.sha }}
+          fetch-depth: 2
       - id: release
         name: Validate release commit
         shell: bash
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
+          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            echo "upstream evidence must dispatch from main, received $WORKFLOW_REF" >&2
+            exit 1
+          fi
           if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "release_sha must be a 40-character commit SHA" >&2
             exit 1
           fi
-          if [[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]]; then
-            echo "checked out $(git rev-parse HEAD), expected $RELEASE_SHA" >&2
+          if [[ "$RELEASE_SHA" != "$WORKFLOW_SHA" ]]; then
+            echo "release_sha $RELEASE_SHA is not the workflow main SHA $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "checked out $(git rev-parse HEAD), expected $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          if ! git diff --unified=0 HEAD^ HEAD -- 'packages/*/package.json' \
+            | grep -Eq '^\+  "version":'; then
+            echo "release SHA does not change a publishable package version" >&2
             exit 1
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
@@ -69,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -98,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
       - id: cli-bridge-source
         name: Validate allowlisted CLI Bridge source
         shell: bash
@@ -182,7 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
