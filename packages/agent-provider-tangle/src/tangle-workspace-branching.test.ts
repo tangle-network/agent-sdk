@@ -953,8 +953,8 @@ describe("Tangle workspace branching", () => {
     if (fork.status !== "created") throw new Error("fork setup failed");
 
     const listSnapshots = box.listSnapshots!;
-    box.listSnapshots = async (options) =>
-      (await listSnapshots(options)).map((snapshot) => ({
+    box.listSnapshots = async () =>
+      (await listSnapshots()).map((snapshot) => ({
         ...snapshot,
         createdAt: new Date("2026-08-29T00:00:00.000Z"),
       }));
