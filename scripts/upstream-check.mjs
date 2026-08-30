@@ -38,6 +38,10 @@ const PACKAGE_DIRECTORIES = {
   "@tangle-network/agent-provider-tangle": "agent-provider-tangle",
 };
 
+const ALLOWED_CLI_BRIDGE_REPOSITORY = "drewstone/cli-bridge";
+const ALLOWED_CLI_BRIDGE_COMMIT =
+  "e94e87ba55dcc5a57f07b0f3ca2540fa382350f3";
+
 function packageVersion(name) {
   const directory = PACKAGE_DIRECTORIES[name];
   if (!directory) throw new Error(`unknown package ${name}`);
@@ -274,12 +278,12 @@ function cliBridgePin() {
   const repository = sources.cliBridge?.repository;
   const commit = sources.cliBridge?.commit;
   if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
-    !/^[a-f0-9]{40}$/u.test(commit ?? "")
+    repository !== ALLOWED_CLI_BRIDGE_REPOSITORY ||
+    commit !== ALLOWED_CLI_BRIDGE_COMMIT ||
+    !/^[a-f0-9]{40}$/u.test(commit)
   ) {
     throw new Error(
-      "scripts/upstream-sources.json has no valid CLI Bridge repository and commit",
+      "scripts/upstream-sources.json does not match the allowlisted CLI Bridge source",
     );
   }
   return { repository, commit };
