@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -17,7 +25,7 @@ import {
   type NativeContextContinuationTurn,
 } from "@tangle-network/agent-interface";
 import { describe, expect, it } from "vitest";
-import { createCliBridgeProvider } from "../src/index.js";
+import { createCliBridgeProvider } from "@tangle-network/agent-provider-cli-bridge";
 
 const BRIDGE_ROOT = process.env.CLI_BRIDGE_INTEGRATION_ROOT?.trim();
 const describeActualBridge = BRIDGE_ROOT ? describe : describe.skip;
@@ -70,12 +78,26 @@ for line in sys.stdin:
     kind = message.get("type")
     if kind == "prompt":
         turns += 1
-        record({"kind": "command", "pid": os.getpid(), "type": "prompt", "turn": turns, "message": message.get("message")})
+        prompt_message = str(message.get("message") or "")
+        record({"kind": "command", "pid": os.getpid(), "type": "prompt", "turn": turns, "message": prompt_message})
         send({"id": message.get("id"), "type": "response", "command": "prompt", "success": True})
         send({"type": "session", "id": "actual-bridge-pi-session"})
         send({"type": "agent_start"})
         send({"type": "turn_start"})
+        identity_marker = None
+        if "identity-a" in prompt_message:
+            identity_marker = "identity-a"
+        elif "identity-b" in prompt_message:
+            identity_marker = "identity-b"
+        if identity_marker is not None:
+            send({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": identity_marker}})
+            send({"type": "turn_end", "message": {"usage": {"input": 3, "output": 1}}})
+            send({"type": "agent_end"})
+            send({"type": "agent_settled"})
+            continue
         if turns == 1:
+            send({"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "contentIndex": 0, "delta": "native reasoning"}})
+            send({"type": "plan_submitted", "plan": {"id": "native-plan", "revision": 1, "title": "Native plan", "body": "Use the retained interaction path.", "submittedAt": "2026-08-28T00:00:00.000Z"}})
             send({"type": "extension_ui_request", "id": "native-permission", "method": "select", "title": permission_title, "options": ["allow_once", "deny"]})
         else:
             send({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "native continuation accepted"}})
@@ -86,6 +108,7 @@ for line in sys.stdin:
         value = str(message.get("value"))
         send({"type": "extension_ui_request", "id": "marker-notification", "method": "notify", "message": "cli-bridge.permission-applied.v1:" + permission_token + ":" + value})
         send({"type": "tool_execution_start", "toolCallId": "actual-tool", "toolName": "bash", "args": {"command": "printf integration"}})
+        send({"type": "tool_execution_end", "toolCallId": "actual-tool", "toolName": "bash", "args": {"command": "printf integration"}, "result": "integration", "isError": False})
         send({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "native response accepted"}})
         send({"type": "turn_end", "message": {"usage": {"input": 4, "output": 3}}})
         send({"type": "agent_end"})
@@ -115,7 +138,86 @@ interface RunningBridge {
 }
 
 describeActualBridge("actual cli-bridge native interaction contract", () => {
-  it("dispatches, replays from a nonzero cursor, survives Bridge restart, and retries idempotently", async () => {
+  it("carries a canonical event stream through the real Bridge transport", async () => {
+    const bridge = await startActualBridge();
+    const requests: Array<{ method: string; pathname: string }> = [];
+    const bridgeFetch: typeof fetch = async (url, init) => {
+      requests.push({
+        method: init?.method ?? "GET",
+        pathname: new URL(String(url)).pathname,
+      });
+      return fetch(url, init);
+    };
+
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: bridge.baseUrl,
+        defaultModel: "pi/tangle-router/sdk-integration-model",
+        fetch: bridgeFetch,
+      });
+      const environment = await provider.create({
+        idempotencyKey: "sdk-cli-bridge-canonical-stream-environment",
+        profile: { name: "canonical-stream", harness: "pi" },
+        workspace: { cwd: bridge.projectDir },
+      });
+      const reference = await environment.dispatch!({
+        prompt: "prove the canonical stream",
+        sessionId: "sdk-cli-bridge-canonical-stream-session",
+        turnId: "sdk-cli-bridge-canonical-stream-turn",
+        executionId: "sdk-cli-bridge-canonical-stream-run",
+        interactions: { permission: true },
+      });
+      const controlRef = reference.controlRef as AgentExactRunControlRef | undefined;
+      if (!controlRef) throw new Error("the actual Bridge did not return an exact native control reference");
+      const session = environment.session!(controlRef.sessionId, { controlRef });
+      const events: AgentEnvironmentEvent[] = [];
+      for await (const event of session.events({ since: "0" })) {
+        events.push(event);
+        if (event.normalized?.type !== "interaction") continue;
+        const request = event.normalized.request;
+        const binding = { ...request.binding, requestDigest: request.requestDigest };
+        const response: InteractionResponse = {
+          id: request.id,
+          outcome: "accepted",
+          data: { grant: ["allow_once"] },
+        };
+        await environment.respondToInteraction!({
+          operationId: "sdk-cli-bridge-canonical-stream-response",
+          binding,
+          response,
+          commandDigest: interactionResponseCommandDigest({ binding, response }),
+        });
+      }
+      expect(events.length).toBeGreaterThan(7);
+      const ids = events.map((event) => event.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids.every((id) => /^\d+$/u.test(id))).toBe(true);
+      const types = new Set(events.map((event) => event.normalized?.type));
+      expect(types.has("interaction")).toBe(true);
+      expect(types.has("plan.submitted")).toBe(true);
+      expect(types.has("message.part.updated")).toBe(true);
+      expect(events.some((event) => event.usage !== undefined)).toBe(true);
+      expect(types.has("status")).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.normalized?.type === "message.part.updated" &&
+            event.normalized.part.type === "tool" &&
+            event.normalized.part.state.status === "completed",
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) => event.normalized?.type === "status" && event.normalized.status === "completed",
+        ),
+      ).toBe(true);
+      expect(requests.some((request) => request.pathname === "/v1/chat/completions")).toBe(false);
+    } finally {
+      await bridge.stop();
+    }
+  }, 30_000);
+
+  it("reattaches and replays a resolved interaction after Bridge restart", async () => {
     const bridge = await startActualBridge();
     const requests: Array<{ method: string; pathname: string; lastEventId: string | null }> = [];
     const bridgeFetch: typeof fetch = async (url, init) => {
@@ -140,7 +242,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       expect(capabilities.profile.resources.tools).toBe(false);
       expect(capabilities.profile.validation).toBe(false);
       expect(capabilities.sessions).toEqual({ continue: true, list: false, messages: false });
-      expect(capabilities.nativeContinuation).toEqual({
+      expect(capabilities.nativeContinuation).toMatchObject({
         atomicBoundary: true,
         requestIdempotency: true,
       });
@@ -222,6 +324,39 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       expect(
         firstEvents.some((event) => event.normalized?.type === "status" && event.normalized.status === "completed"),
         "native event stream must reach completed",
+      ).toBe(true);
+      expect(
+        firstEvents.some(
+          (event) =>
+            event.normalized?.type === "message.part.updated" &&
+            event.normalized.part.type === "reasoning",
+        ),
+        "native event stream must preserve reasoning",
+      ).toBe(true);
+      expect(
+        firstEvents.some(
+          (event) =>
+            event.normalized?.type === "message.part.updated" &&
+            event.normalized.part.type === "text",
+        ),
+        "native event stream must preserve text",
+      ).toBe(true);
+      expect(
+        firstEvents.some(
+          (event) =>
+            event.normalized?.type === "message.part.updated" &&
+            event.normalized.part.type === "tool" &&
+            event.normalized.part.state.status === "completed",
+        ),
+        "native event stream must preserve completed tools",
+      ).toBe(true);
+      expect(
+        firstEvents.some((event) => event.normalized?.type === "plan.submitted"),
+        "native event stream must preserve plans",
+      ).toBe(true);
+      expect(
+        firstEvents.some((event) => event.usage !== undefined),
+        "native event stream must preserve usage",
       ).toBe(true);
       expect(
         requests.some((request) => request.pathname === "/v1/chat/completions"),
@@ -397,6 +532,74 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\nActual Bridge output:\n${bridge.logs()}`,
       );
+    } finally {
+      await bridge.stop();
+    }
+  }, 30_000);
+
+  it("isolates concurrent run identities through the real Bridge transport", async () => {
+    const bridge = await startActualBridge();
+    try {
+      const provider = createCliBridgeProvider({
+        baseUrl: bridge.baseUrl,
+        defaultModel: "pi/tangle-router/sdk-integration-model",
+      });
+      const environment = await provider.create({
+        idempotencyKey: "sdk-cli-bridge-run-identity-environment",
+        profile: { name: "run-identity", harness: "pi" },
+        workspace: { cwd: bridge.projectDir },
+      });
+      const [referenceA, referenceB] = await Promise.all([
+        environment.dispatch!({
+          prompt: "emit identity-a only",
+          sessionId: "sdk-cli-bridge-run-identity-session-a",
+          turnId: "sdk-cli-bridge-run-identity-turn-a",
+          executionId: "sdk-cli-bridge-run-identity-execution-a",
+        }),
+        environment.dispatch!({
+          prompt: "emit identity-b only",
+          sessionId: "sdk-cli-bridge-run-identity-session-b",
+          turnId: "sdk-cli-bridge-run-identity-turn-b",
+          executionId: "sdk-cli-bridge-run-identity-execution-b",
+        }),
+      ]);
+      const collect = async (
+        reference: typeof referenceA,
+        marker: string,
+      ) => {
+        const controlRef = reference.controlRef as AgentExactRunControlRef | undefined;
+        if (!controlRef) throw new Error("the actual Bridge did not return an exact run identity");
+        const session = environment.session!(controlRef.sessionId, { controlRef });
+        const events: AgentEnvironmentEvent[] = [];
+        for await (const event of session.events({ since: "0" })) events.push(event);
+        const result = await session.result();
+        expect(result).toMatchObject({
+          success: true,
+          sessionId: controlRef.sessionId,
+          metadata: {
+            runId: controlRef.runId,
+            executionId: controlRef.executionId,
+          },
+        });
+        expect(result.text).toContain(marker);
+        expect(result.text).not.toContain(marker === "identity-a" ? "identity-b" : "identity-a");
+        expect(events.length).toBeGreaterThan(3);
+        expect(
+          events.some(
+            (event) => event.normalized?.type === "status" && event.normalized.status === "completed",
+          ),
+        ).toBe(true);
+        return controlRef;
+      };
+      const [controlRefA, controlRefB] = await Promise.all([
+        collect(referenceA, "identity-a"),
+        collect(referenceB, "identity-b"),
+      ]);
+      expect(controlRefA.environmentId).toBe(environment.id);
+      expect(controlRefB.environmentId).toBe(environment.id);
+      expect(controlRefA.sessionId).not.toBe(controlRefB.sessionId);
+      expect(controlRefA.runId).not.toBe(controlRefB.runId);
+      expect(controlRefA.executionId).not.toBe(controlRefB.executionId);
     } finally {
       await bridge.stop();
     }
@@ -768,6 +971,9 @@ async function startActualBridge(): Promise<RunningBridge> {
     stopped = true;
     await stopChild(child);
     rmSync(fixtureRoot, { recursive: true, force: true });
+    if (existsSync(fixtureRoot)) {
+      throw new Error("actual Bridge fixture cleanup left its temporary root");
+    }
   };
   try {
     await waitForBridge(child, `http://127.0.0.1:${port}`, () => output);

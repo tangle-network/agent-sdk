@@ -254,6 +254,8 @@ export interface SandboxWorkspaceOperationLookupLike {
   outcome: "found" | "not_found" | "conflict" | "unknown";
   kind: "checkpoint" | "fork";
   state?: "pending" | "succeeded" | "failed";
+  /** The durable operation result, when the service records one. */
+  result?: Record<string, unknown>;
 }
 
 /** Fan-out acknowledgement returned by SandboxInstance.fork(). */

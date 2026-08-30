@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.8.5
+
+### Patch Changes
+
+- Refresh release evidence against the current Bridge and Sandbox control contracts.
+- Updated dependencies
+  - @tangle-network/agent-interface@1.9.1
+
 ## 0.8.4
 
 ### Patch Changes

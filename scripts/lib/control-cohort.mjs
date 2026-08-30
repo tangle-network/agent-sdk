@@ -57,6 +57,7 @@ export const interfaceTests = [
 // into the consumer next to the interface tests.
 export const testkitTest = "control-conformance.test.ts";
 export const tangleFixtureTest = "tangle-control-consumer.test.ts";
+export const tangleLiveFixture = "tangle-live-control.mjs";
 
 export function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -80,7 +81,7 @@ export function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 
-function pack(packageDirectory, destination) {
+export function pack(packageDirectory, destination) {
   const output = run(
     pnpm,
     ["pack", "--json", "--pack-destination", destination],
@@ -93,7 +94,7 @@ function pack(packageDirectory, destination) {
   return result.filename;
 }
 
-function tarballName(tarball) {
+export function tarballName(tarball) {
   const filename = tarball.split(/[\\/]/).at(-1);
   return filename ?? tarball;
 }
@@ -200,6 +201,10 @@ export function prepareControlCohort() {
     join(root, "scripts", "fixtures", "tangle-control-consumer.test.ts"),
     join(consumer, tangleFixtureTest),
   );
+  copyFileSync(
+    join(root, "scripts", "fixtures", tangleLiveFixture),
+    join(consumer, tangleLiveFixture),
+  );
 
   const shimSources = {
     "environment-provider": "@tangle-network/agent-interface",
@@ -263,6 +268,9 @@ export function prepareControlCohort() {
     packageVersions,
     cleanup() {
       rmSync(temporaryRoot, { recursive: true, force: true });
+      if (existsSync(temporaryRoot)) {
+        throw new Error("control cohort cleanup left its temporary root");
+      }
     },
   };
 }

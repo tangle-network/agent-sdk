@@ -48,10 +48,13 @@ function acknowledge(
 }
 
 /**
- * The coordinates this environment can answer for. A command naming another
- * provider, environment, or session is refused here rather than sent, because
- * the Sandbox SDK rejects such a command by throwing, and a caller holding a
- * durable operation needs the refusal as an acknowledgement it can record.
+ * The coordinates this environment can answer for before the command reaches
+ * the deployment. Tangle hosts a backend adapter inside the sandbox, so the
+ * interaction binding's provider names that inner adapter (for example,
+ * `opencode`) rather than this outer provider. The deployment compares that
+ * provider with its durable interaction record. Environment and session are
+ * still checked here because the Sandbox SDK rejects those coordinates before
+ * it can return an acknowledgement.
  */
 function foreignBinding(
   command: InteractionResponseCommand,
@@ -59,14 +62,13 @@ function foreignBinding(
 ): InteractionAcknowledgement | undefined {
   const binding = command.binding;
   if (
-    binding.provider === options.provider &&
     binding.environmentId === options.environmentId &&
     binding.sessionId === options.sessionId
   ) {
     return undefined;
   }
   return acknowledge(command, "binding_mismatch", {
-    message: `response command binding names another provider, environment, or session than ${options.provider}/${options.environmentId}/${options.sessionId}`,
+    message: `response command binding names another environment or session than ${options.environmentId}/${options.sessionId}`,
   });
 }
 

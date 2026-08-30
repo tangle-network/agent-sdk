@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 0.11.2
+
+### Patch Changes
+
+- Refresh release evidence against the current Bridge and Sandbox control contracts.
+- Updated dependencies
+  - @tangle-network/agent-interface@1.9.1
+
 ## 0.11.1
 
 ### Patch Changes

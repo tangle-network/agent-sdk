@@ -11,14 +11,15 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
       # Required for npm OIDC trusted publishing (tokenless) + provenance.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -33,7 +34,8 @@ jobs:
       - run: pnpm -r build
       - run: pnpm check:package-artifacts
       - run: pnpm check:control-artifacts
-      - uses: changesets/action@v2.1.1
+      - id: changesets
+        uses: changesets/action@v2.1.1
         with:
           version-script: pnpm changeset:version
           publish-script: pnpm changeset:publish
@@ -43,3 +45,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+      # The changesets action pushes with GITHUB_TOKEN, which does not start a
+      # second push workflow. Dispatch the evidence workflow after the release
+      # action so it checks the commit the action just versioned and tagged.
+      - name: Dispatch upstream evidence
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REF: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          jq -cn --arg ref "$RELEASE_REF" '{ref: $ref}' |
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --url "https://api.github.com/repos/$REPOSITORY/actions/workflows/upstream-evidence.yml/dispatches" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --header "Content-Type: application/json" \
+              --data-binary @-

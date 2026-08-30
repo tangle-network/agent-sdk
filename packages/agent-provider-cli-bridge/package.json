@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-cli-bridge",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "AgentEnvironmentProvider adapter for cli-bridge retained sessions and one-shot turns",
   "type": "module",
   "license": "MIT",
@@ -77,7 +77,7 @@
     "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; vitest run tests/cli-bridge.integration.test.ts"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^1.9.0",
+    "@tangle-network/agent-interface": "^1.9.1",
     "undici": "catalog:"
   },
   "devDependencies": {

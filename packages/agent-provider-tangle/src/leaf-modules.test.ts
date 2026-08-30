@@ -481,6 +481,35 @@ describe("Tangle split leaf modules", () => {
       unsupported: undefined,
     } as never)).toThrow(/JSON bound/);
     expect(agentTurnResultFromPromptRecord(validatedSandboxPromptResult(promptResult()), { sessionId: "session-1" })).toMatchObject({ text: "done", success: true });
+    const awaitingInteraction = validatedSandboxPromptResult({
+      success: false,
+      status: "awaiting_interaction",
+      durationMs: 1,
+      executionId: "execution-1",
+      interaction: {
+        id: "interaction-1",
+        kind: "permission",
+        title: "Allow bash?",
+        answerSpec: { fields: [] },
+        binding: {
+          runId: "run-1",
+          provider: "opencode",
+          environmentId: "environment-1",
+          sessionId: "session-1",
+          executionId: "execution-1",
+          interactionId: "interaction-1",
+        },
+        requestDigest: `sha256:${"a".repeat(64)}`,
+      },
+    } as never);
+    expect(agentTurnResultFromPromptRecord(awaitingInteraction, { sessionId: "session-1" })).toMatchObject({
+      success: false,
+      metadata: {
+        status: "awaiting_interaction",
+        awaitingInteraction: true,
+        terminal: false,
+      },
+    });
     const semanticInput = { prompt: "hello", turnId: "turn-1" } as never;
     const baseRequestDigest = sessionPromptRequestDigest(
       semanticInput,

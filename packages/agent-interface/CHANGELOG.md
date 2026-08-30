@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 1.9.1
+
+### Patch Changes
+
+- Refresh release evidence against the current Bridge and Sandbox control contracts.
+
 ## 1.9.0
 
 ### Minor Changes

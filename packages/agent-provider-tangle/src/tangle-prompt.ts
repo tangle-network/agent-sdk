@@ -108,6 +108,7 @@ type SandboxRunStatus =
   | "failed"
   | "blocked_on_approval"
   | "awaiting_question"
+  | "awaiting_interaction"
   | "awaiting_plan_decision";
 
 type ValidatedSandboxPromptResult = Record<string, unknown> & {
@@ -165,6 +166,7 @@ export function validatedSandboxPromptResult(
     "failed",
     "blocked_on_approval",
     "awaiting_question",
+    "awaiting_interaction",
     "awaiting_plan_decision",
   ]);
   if (
@@ -209,6 +211,7 @@ export function validatedSandboxPromptResult(
 const AWAITING_STATUSES = new Set<SandboxRunStatus>([
   "blocked_on_approval",
   "awaiting_question",
+  "awaiting_interaction",
   "awaiting_plan_decision",
 ]);
 

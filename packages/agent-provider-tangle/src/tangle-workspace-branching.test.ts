@@ -941,6 +941,121 @@ describe("Tangle workspace branching", () => {
     });
   });
 
+  it("recovers exact refs from operation results when inventory timestamps drift", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointInput = checkpointRequest();
+    const checkpoint = await first!.checkpoint(checkpointInput);
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await first!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    const listSnapshots = box.listSnapshots!;
+    box.listSnapshots = async (options) =>
+      (await listSnapshots(options)).map((snapshot) => ({
+        ...snapshot,
+        createdAt: new Date("2026-08-29T00:00:00.000Z"),
+      }));
+    const listEnvironments = client.list!;
+    client.list = async (options) =>
+      (await listEnvironments(options)).map((environment) => ({
+        ...environment,
+        createdAt: new Date("2026-08-29T00:00:01.000Z"),
+      }));
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: checkpoint.checkpoint.checkpointId,
+        createdAt: checkpoint.checkpoint.createdAt,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          {
+            sandboxId: fork.environment.environmentId,
+            createdAt: fork.environment.createdAt,
+          },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointLookup = await restarted!.lookupCheckpoint({
+      idempotencyKey: checkpointInput.idempotencyKey,
+      requestDigest: checkpointInput.requestDigest,
+    });
+    expect(checkpointLookup.status).toBe("found");
+    if (checkpointLookup.status !== "found")
+      throw new Error("checkpoint lookup did not recover a ref");
+    expect(checkpointLookup.checkpoint).toEqual(checkpoint.checkpoint);
+
+    const forkLookup = await restarted!.lookupFork({
+      idempotencyKey: forkInput.idempotencyKey,
+      requestDigest: forkInput.requestDigest,
+    });
+    expect(forkLookup.status).toBe("found");
+    if (forkLookup.status !== "found")
+      throw new Error("fork lookup did not recover a ref");
+    expect(forkLookup.environment).toEqual(fork.environment);
+  });
+
+  it("fails closed when an operation result names different resources", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointInput = checkpointRequest();
+    const checkpoint = await first!.checkpoint(checkpointInput);
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await first!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: "different-checkpoint",
+        createdAt: checkpoint.checkpoint.createdAt,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          {
+            sandboxId: "different-fork",
+            createdAt: fork.environment.createdAt,
+          },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: checkpointInput.idempotencyKey,
+        requestDigest: checkpointInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+    await expect(
+      restarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+  });
+
   it("reconstructs the source-scoped handle from the provider after restart", async () => {
     const { box, client } = createFakeSandbox();
     const firstProvider = createTangleProvider({ client, name: provider });

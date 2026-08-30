@@ -263,6 +263,31 @@ describe("Tangle interaction responses", () => {
     expect(commands[0]!.binding.interactionId).toBe(request.id);
   });
 
+  it("forwards the inner backend provider binding to the deployment", async () => {
+    const request = interactionRequest({
+      id: "ask-inner-provider",
+      kind: InteractionKind.Permission,
+      fields: permissionAnswerSpec({ responseScopes: ["interaction"] })
+        .fields as InteractionField[],
+      responseScopes: ["interaction"],
+      binding: { provider: "opencode" },
+    });
+    const command = responseCommand(request, {
+      id: request.id,
+      outcome: "accepted",
+      data: { grant: ["allow_once"] },
+    });
+    const { environment, commands } = await harness({
+      outstanding: [request],
+    });
+
+    const acknowledgement = await environment.respondToInteraction!(command);
+
+    expect(acknowledgement.status).toBe("accepted");
+    expect(commands).toHaveLength(1);
+    expect(commands[0]!.binding.provider).toBe("opencode");
+  });
+
   it("reports the deployment's replay as already resolved with the same answer", async () => {
     const request = interactionRequest({
       id: "ask-replay",

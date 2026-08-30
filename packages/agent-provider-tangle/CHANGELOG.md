@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-tangle
 
+## 0.14.5
+
+### Patch Changes
+
+- Forward each interaction's inner runner binding to the Sandbox deployment.
+- Keep `awaiting_interaction` runs reconnectable instead of treating them as terminal failures.
+- Recover exact checkpoint and fork timestamps from durable operation results after restart.
+- Refresh release evidence against the current Bridge and Sandbox control contracts.
+- Updated dependencies
+  - @tangle-network/agent-interface@1.9.1
+
 ## 0.14.4
 
 ### Patch Changes

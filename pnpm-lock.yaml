@@ -184,8 +184,8 @@ importers:
         specifier: workspace:*
         version: link:../agent-provider-testkit
       '@tangle-network/agent-runtime':
-        specifier: 0.178.0
-        version: 0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
+        specifier: 0.182.0
+        version: 0.182.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
       '@tangle-network/sandbox':
         specifier: 0.34.4
         version: 0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
@@ -1111,14 +1111,14 @@ packages:
     peerDependencies:
       '@tangle-network/agent-interface': workspace:*
 
-  '@tangle-network/agent-runtime@0.178.0':
-    resolution: {integrity: sha512-CltB1+dhcIOVKj+t2jpW4cM7qn8aLuY039RlfssZ+VTID0tBeXJZUa+G9dQIMTMLJA3qn2hxuh2u+dRgwhmnUQ==}
+  '@tangle-network/agent-runtime@0.182.0':
+    resolution: {integrity: sha512-0uCrvS73+ZFNBJIMhJxCCg1fnmstvf56vjP15GIPFjhlg+WtxjoHWt7TPswqG8ZKH0BPJUnmVAJ2eYaNvzH8ew==}
     engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
-      '@tangle-network/agent-eval': '>=0.163.2 <0.171.0'
+      '@tangle-network/agent-eval': '>=0.170.0 <0.171.0'
       '@tangle-network/agent-interface': workspace:*
-      '@tangle-network/sandbox': '>=0.34.0 <0.35.0'
+      '@tangle-network/sandbox': '>=0.34.3 <0.35.0'
     peerDependenciesMeta:
       '@tangle-network/sandbox':
         optional: true
@@ -2484,8 +2484,8 @@ packages:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
     engines: {node: '>=8'}
 
-  tar-stream@3.2.0:
-    resolution: {integrity: sha512-ojzvCvVaNp6aOTFmG7jaRD0meowIAuPc3cMMhSgKiVWws1GyHbGd/xvnyuRKcKlMpt3qvxx6r0hreCNITP9hIg==}
+  tar-stream@3.2.1:
+    resolution: {integrity: sha512-nqsEO8zLZJvrOMdEwkA0QdCLFbetHMn95Zqu4fKwX+hkaTWJPZZOrxx/PwtxoK0MMGQmBQNRW3CPs8IFYQz4cQ==}
 
   tar@7.5.17:
     resolution: {integrity: sha512-wPEBwzapC+2PaTYPH6e2L+cNOEE227S47wUYFqlegcs8zlLLmeb9Fcff1HVZY4Fwku/1Eyv38n7GYwB2aaS71g==}
@@ -3846,7 +3846,7 @@ snapshots:
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
 
-  '@tangle-network/agent-runtime@0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
+  '@tangle-network/agent-runtime@0.182.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
     dependencies:
       '@tangle-network/agent-core': 0.9.5(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
       '@tangle-network/agent-eval': 0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
@@ -3854,7 +3854,7 @@ snapshots:
       '@tangle-network/agent-knowledge': 10.8.0(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)
       '@tangle-network/agent-profile-materialize': 0.17.1(@tangle-network/agent-interface@packages+agent-interface)
       '@tangle-network/agent-trace-contract': 1.0.2
-      tar-stream: 3.2.0
+      tar-stream: 3.2.1
     optionalDependencies:
       '@tangle-network/sandbox': 0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
     transitivePeerDependencies:
@@ -5116,7 +5116,7 @@ snapshots:
     dependencies:
       ansi-regex: 5.0.1
 
-  tar-stream@3.2.0:
+  tar-stream@3.2.1:
     dependencies:
       b4a: 1.8.1
       bare-fs: 4.8.0
