@@ -20,7 +20,6 @@ export interface TangleInteractionResponderOptions {
   session: SandboxSessionLike;
   /** The session the bound ask must belong to. */
   sessionId: string;
-  provider: string;
   environmentId: string;
 }
 

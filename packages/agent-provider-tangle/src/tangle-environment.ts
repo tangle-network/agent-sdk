@@ -316,7 +316,6 @@ export async function sandboxInstanceAsEnvironment(
             return tangleInteractionResponder({
               session,
               sessionId,
-              provider: providerName,
               environmentId,
             })(command, options);
           },
