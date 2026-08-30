@@ -63,6 +63,7 @@ export {
   AgentEnvironmentCreationSchema,
   createAgentEnvironmentWithIdempotency,
   replayedAgentEnvironmentView,
+  WorkspaceRequestSchema,
   TerminalAttachRequestSchema,
   TerminalAttachResultSchema,
   TerminalDetachAckSchema,

@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- Export a strict, bounded `WorkspaceRequestSchema` for runtime validation of portable workspace inputs.
 - Refresh release evidence against the current Bridge and Sandbox control contracts.
 
 ## 1.9.0

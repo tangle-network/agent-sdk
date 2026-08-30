@@ -1,3 +1,10 @@
+import { z } from "zod";
+import {
+  boundedIdentifierSchema,
+  boundedJsonRecordSchema,
+  boundedStringSchema,
+} from "./contract-limits.js";
+
 import type { AgentProfile } from "./agent-profile.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
@@ -31,6 +38,33 @@ export interface WorkspaceRequest {
   /** Opaque provider-native workspace fields. */
   providerOptions?: Record<string, unknown>;
 }
+
+/** Runtime contract for the portable workspace request carried by providers. */
+export const WorkspaceRequestSchema = z
+  .strictObject({
+    environment: boundedIdentifierSchema.optional(),
+    image: boundedStringSchema.min(1).optional(),
+    repoUrl: boundedStringSchema.min(1).optional(),
+    gitRef: boundedIdentifierSchema.optional(),
+    cwd: boundedStringSchema.min(1).optional(),
+    providerOptions: boundedJsonRecordSchema.optional(),
+  })
+  .superRefine((workspace, refinement) => {
+    if (workspace.environment !== undefined && workspace.image !== undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["image"],
+        message: "workspace cannot specify both environment and image",
+      });
+    }
+    if (workspace.gitRef !== undefined && workspace.repoUrl === undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["gitRef"],
+        message: "workspace gitRef requires repoUrl",
+      });
+    }
+  }) satisfies z.ZodType<WorkspaceRequest>;
 
 export interface ResourceRequest {
   cpu?: number;
