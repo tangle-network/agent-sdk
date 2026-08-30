@@ -1007,7 +1007,7 @@ describe("Tangle workspace branching", () => {
     expect(forkLookup.environment).toEqual(fork.environment);
   });
 
-  it("fails closed when an operation result names different resources", async () => {
+  it("fails closed when operation results are invalid or name different resources", async () => {
     const { box, client } = createFakeSandbox();
     const first = createTangleWorkspaceBranching({ box, client, provider });
     const checkpointInput = checkpointRequest();
@@ -1042,6 +1042,42 @@ describe("Tangle workspace branching", () => {
     });
 
     const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: checkpointInput.idempotencyKey,
+        requestDigest: checkpointInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+    await expect(
+      restarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+
+    box.getSnapshotOperation = async () => ({
+      outcome: "found" as const,
+      kind: "checkpoint" as const,
+      state: "succeeded" as const,
+      result: {
+        snapshotId: checkpoint.checkpoint.checkpointId,
+        createdAt: null,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found" as const,
+      kind: "fork" as const,
+      state: "succeeded" as const,
+      result: {
+        children: [
+          {
+            sandboxId: fork.environment.environmentId,
+            createdAt: null,
+          },
+        ],
+      },
+    });
+
     await expect(
       restarted!.lookupCheckpoint({
         idempotencyKey: checkpointInput.idempotencyKey,

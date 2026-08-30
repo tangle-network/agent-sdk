@@ -184,8 +184,8 @@ importers:
         specifier: workspace:*
         version: link:../agent-provider-testkit
       '@tangle-network/agent-runtime':
-        specifier: 0.182.0
-        version: 0.182.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
+        specifier: 0.183.0
+        version: 0.183.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
       '@tangle-network/sandbox':
         specifier: 0.34.4
         version: 0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
@@ -1111,8 +1111,8 @@ packages:
     peerDependencies:
       '@tangle-network/agent-interface': workspace:*
 
-  '@tangle-network/agent-runtime@0.182.0':
-    resolution: {integrity: sha512-0uCrvS73+ZFNBJIMhJxCCg1fnmstvf56vjP15GIPFjhlg+WtxjoHWt7TPswqG8ZKH0BPJUnmVAJ2eYaNvzH8ew==}
+  '@tangle-network/agent-runtime@0.183.0':
+    resolution: {integrity: sha512-xzEQYLW6q1CeDgXIPyg27iXyurY8HGHBjJSy2QE7x4l3hfLqQm0Wu7HXF1o9ACUADJ+1Un/vUtTVCo5GyBbsdg==}
     engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
@@ -3872,7 +3872,7 @@ snapshots:
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
 
-  '@tangle-network/agent-runtime@0.182.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
+  '@tangle-network/agent-runtime@0.183.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
     dependencies:
       '@tangle-network/agent-core': 0.9.5(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
       '@tangle-network/agent-eval': 0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))

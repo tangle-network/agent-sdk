@@ -1173,6 +1173,49 @@ function validForkResult(
   );
 }
 
+type SnapshotOperationResult = {
+  snapshotId: string;
+  createdAt: Date | string;
+};
+
+type ForkOperationChildResult = {
+  sandboxId?: string;
+  id?: string;
+  createdAt: Date | string;
+};
+
+function validOperationRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validOperationDate(value: unknown): value is Date | string {
+  return (
+    (typeof value === "string" || value instanceof Date) && validDate(value)
+  );
+}
+
+function validSnapshotOperationResult(
+  value: unknown
+): value is SnapshotOperationResult {
+  return (
+    validOperationRecord(value) &&
+    safeIdentifier(value.snapshotId) !== undefined &&
+    validOperationDate(value.createdAt)
+  );
+}
+
+function validForkOperationChildResult(
+  value: unknown
+): value is ForkOperationChildResult {
+  return (
+    validOperationRecord(value) &&
+    safeIdentifier(value.sandboxId ?? value.id) !== undefined &&
+    validOperationDate(value.createdAt)
+  );
+}
+
 function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
   const marker: CheckpointMarker = {
     version: 1,
@@ -1388,18 +1431,13 @@ function snapshotFromOperationResult(
   lookup: SandboxWorkspaceOperationLookupLike
 ): SandboxSnapshotInfoLike | undefined {
   if (lookup.result === undefined) return snapshot;
-  const result = lookup.result;
-  if (typeof result !== "object" || Array.isArray(result)) return undefined;
-  const snapshotId = safeIdentifier(result.snapshotId);
-  const createdAt = result.createdAt;
   if (
-    snapshotId !== snapshot.snapshotId ||
-    !(typeof createdAt === "string" || createdAt instanceof Date) ||
-    !validDate(createdAt)
+    !validSnapshotOperationResult(lookup.result) ||
+    lookup.result.snapshotId !== snapshot.snapshotId
   ) {
     return undefined;
   }
-  return { ...snapshot, createdAt };
+  return { ...snapshot, createdAt: lookup.result.createdAt };
 }
 
 /**
@@ -1504,24 +1542,16 @@ function childFromOperationResult(
 ): SandboxInstanceLike | undefined {
   if (lookup.result === undefined) return child;
   const result = lookup.result;
-  if (typeof result !== "object" || Array.isArray(result)) return undefined;
+  if (!validOperationRecord(result)) return undefined;
   const children = result.children;
   if (!Array.isArray(children)) return undefined;
-  const operationChild = children.find((candidate) => {
-    if (!candidate || typeof candidate !== "object") return false;
-    const value = candidate as Record<string, unknown>;
-    return safeIdentifier(value.sandboxId ?? value.id) === child.id;
-  });
-  if (!operationChild || typeof operationChild !== "object") return undefined;
-  const value = operationChild as Record<string, unknown>;
-  const createdAt = value.createdAt;
-  if (
-    !(typeof createdAt === "string" || createdAt instanceof Date) ||
-    !validDate(createdAt)
-  ) {
-    return undefined;
-  }
-  return { ...child, createdAt };
+  const operationChild = children.find(
+    (candidate): candidate is ForkOperationChildResult =>
+      validForkOperationChildResult(candidate) &&
+      (candidate.sandboxId ?? candidate.id) === child.id
+  );
+  if (!operationChild) return undefined;
+  return { ...child, createdAt: operationChild.createdAt };
 }
 
 async function findForkChildById(
