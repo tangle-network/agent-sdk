@@ -185,10 +185,10 @@ importers:
         version: link:../agent-provider-testkit
       '@tangle-network/agent-runtime':
         specifier: 0.178.0
-        version: 0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.3(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
+        version: 0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))
       '@tangle-network/sandbox':
-        specifier: 0.34.3
-        version: 0.34.3(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
+        specifier: 0.34.4
+        version: 0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
       '@types/node':
         specifier: 'catalog:'
         version: 26.4.0
@@ -1126,8 +1126,8 @@ packages:
   '@tangle-network/agent-trace-contract@1.0.2':
     resolution: {integrity: sha512-v7uMh56jkEp4vckevEU9xKsIatbs5dqzGPp69dFLSSXUVit0RP6VD6EANMXVlTCUk+6wVKBLHJx23XspVCEiIA==}
 
-  '@tangle-network/sandbox@0.34.3':
-    resolution: {integrity: sha512-Zy+DsmQD6qG+2yf8Zox3TCLVAcMOUwQsiVs9uz6OTb1rrz3yDemdoT3dGNUrpbV/wmt/62K+e/5nb7E0F2xNfg==}
+  '@tangle-network/sandbox@0.34.4':
+    resolution: {integrity: sha512-j0tkH1zZ0xdk718m4qaZVeUGGh2xA7LhP8uS/VivpEWyFVTrlpJWowMTUD11tNtIFjU3tWrIQRVVhNMk7rBoOw==}
     peerDependencies:
       '@mastra/core': ^1.36.0
       '@modelcontextprotocol/sdk': ^1.30.0
@@ -3846,7 +3846,7 @@ snapshots:
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
 
-  '@tangle-network/agent-runtime@0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.3(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
+  '@tangle-network/agent-runtime@0.178.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@tangle-network/agent-eval@0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)))':
     dependencies:
       '@tangle-network/agent-core': 0.9.5(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
       '@tangle-network/agent-eval': 0.170.0(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
@@ -3856,7 +3856,7 @@ snapshots:
       '@tangle-network/agent-trace-contract': 1.0.2
       tar-stream: 3.2.0
     optionalDependencies:
-      '@tangle-network/sandbox': 0.34.3(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
+      '@tangle-network/sandbox': 0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - bare-abort-controller
@@ -3865,7 +3865,7 @@ snapshots:
 
   '@tangle-network/agent-trace-contract@1.0.2': {}
 
-  '@tangle-network/sandbox@0.34.3(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))':
+  '@tangle-network/sandbox@0.34.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))':
     dependencies:
       '@tangle-network/agent-core': 0.9.5(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))
       '@tangle-network/agent-interface': link:packages/agent-interface
