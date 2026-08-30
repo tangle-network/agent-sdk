@@ -51,23 +51,41 @@ jobs:
         shell: bash
         run: |
           release_sha="$(git rev-parse HEAD)"
-          remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ || "$release_sha" != "$remote_sha" ]]; then
-            echo "release checkout $release_sha is not the current pushed main commit $remote_sha" >&2
+          if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release checkout did not resolve to a commit: $release_sha" >&2
             exit 1
           fi
           echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+      - id: release-ref
+        name: Create immutable release ref
+        if: steps.changesets.outputs.published == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
+        run: |
+          release_tag="agent-sdk-release-${RELEASE_SHA}"
+          remote_sha="$(git ls-remote --refs origin "refs/tags/$release_tag" | cut -f1)"
+          if [[ -n "$remote_sha" && "$remote_sha" != "$RELEASE_SHA" ]]; then
+            echo "release tag $release_tag points to $remote_sha, expected $RELEASE_SHA" >&2
+            exit 1
+          fi
+          if [[ -z "$remote_sha" ]]; then
+            git tag "$release_tag" "$RELEASE_SHA"
+            git push origin "refs/tags/$release_tag"
+          fi
+          echo "ref=$release_tag" >> "$GITHUB_OUTPUT"
       # The changesets action pushes with GITHUB_TOKEN, which does not start a
       # second push workflow. Dispatch the evidence workflow after the release
-      # action so it checks the exact commit the action just versioned and tagged.
+      # action so it checks the exact immutable ref the action just versioned.
       - name: Dispatch upstream evidence
         if: steps.changesets.outputs.published == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
+          RELEASE_REF: ${{ steps.release-ref.outputs.ref }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          jq -cn --arg ref "main" --arg release_sha "$RELEASE_SHA" \
+          jq -cn --arg ref "$RELEASE_REF" --arg release_sha "$RELEASE_SHA" \
             '{ref: $ref, inputs: {release_sha: $release_sha}}' |
             curl --fail-with-body --silent --show-error \
               --request POST \

@@ -1,9 +1,9 @@
 # Braid upstream-evidence checks.
 #
 # Braid reads GitHub API metadata only. Each required UP-id needs a check-run
-# with that exact name and a retained artifact from the package tag commit.
-# The changesets release commit updates package versions and is that tag
-# commit, so the checks run only for that commit or an explicit dispatch.
+# with that exact name and a retained artifact from the package release ref.
+# The release workflow creates an immutable ref for the package release commit,
+# so the checks run only for that commit or an explicit dispatch from main.
 #
 # UP-05..08 use the checked-in CLI Bridge integration cohort. The cohort starts
 # the real Bridge server and a bounded child that speaks its Pi JSONL protocol.
@@ -49,8 +49,16 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.sha }}
         run: |
-          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
-            echo "upstream evidence must dispatch from main, received $WORKFLOW_REF" >&2
+          if [[ "$WORKFLOW_REF" == "refs/heads/main" ]]; then
+            :
+          elif [[ "$WORKFLOW_REF" =~ ^refs/tags/agent-sdk-release-[0-9a-f]{40}$ ]]; then
+            tag_sha="${WORKFLOW_REF#refs/tags/agent-sdk-release-}"
+            if [[ "$tag_sha" != "$RELEASE_SHA" ]]; then
+              echo "release ref $WORKFLOW_REF does not encode release SHA $RELEASE_SHA" >&2
+              exit 1
+            fi
+          else
+            echo "upstream evidence must dispatch from main or an immutable release ref, received $WORKFLOW_REF" >&2
             exit 1
           fi
           if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
