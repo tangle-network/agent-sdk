@@ -1186,7 +1186,7 @@ type SnapshotOperationResult = {
 type ForkOperationChildResult = {
   sandboxId?: string;
   id?: string;
-  createdAt: Date | string;
+  createdAt?: Date | string | null;
 };
 
 function validOperationRecord(
@@ -1217,7 +1217,9 @@ function validForkOperationChildResult(
   return (
     validOperationRecord(value) &&
     safeIdentifier(value.sandboxId ?? value.id) !== undefined &&
-    validOperationDate(value.createdAt)
+    (value.createdAt === undefined ||
+      value.createdAt === null ||
+      validOperationDate(value.createdAt))
   );
 }
 
@@ -1542,6 +1544,8 @@ async function findForkByKey(
  * Fork inventory can report a child timestamp from a later registry read. The
  * operation ledger stores the original child acknowledgement, which is the
  * stable value required to replay one exact fork reference after a restart.
+ * Some Sandbox responses omit that timestamp, so the validated inventory
+ * record supplies it only when the operation result does not.
  */
 function childFromOperationResult(
   child: SandboxInstanceLike,
@@ -1560,7 +1564,9 @@ function childFromOperationResult(
       (candidate.sandboxId ?? candidate.id) === child.id
   );
   if (!operationChild) return undefined;
-  return { child, createdAt: operationChild.createdAt };
+  const createdAt = operationChild.createdAt ?? child.createdAt;
+  if (!validOperationDate(createdAt)) return undefined;
+  return { child, createdAt };
 }
 
 async function findForkChildById(
