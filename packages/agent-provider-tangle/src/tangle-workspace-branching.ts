@@ -1186,7 +1186,7 @@ type SnapshotOperationResult = {
 type ForkOperationChildResult = {
   sandboxId?: string;
   id?: string;
-  createdAt?: Date | string;
+  createdAt?: Date | string | null;
 };
 
 function validOperationRecord(
