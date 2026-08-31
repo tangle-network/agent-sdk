@@ -1008,6 +1008,36 @@ describe("Tangle workspace branching", () => {
     expect(forkLookup.environment).toEqual(fork.environment);
   });
 
+  it("recovers fork children when operation results omit creation timestamps", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await first!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const fork = await first!.fork(request);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [{ sandboxId: fork.environment.environmentId }],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const lookup = await restarted!.lookupFork({
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+    });
+    expect(lookup.status).toBe("found");
+    if (lookup.status !== "found")
+      throw new Error("fork lookup did not recover an omitted timestamp");
+    expect(lookup.environment).toEqual(fork.environment);
+  });
+
   it("preserves SDK child instances when operation results supply timestamps", async () => {
     const { box, client } = createFakeSandbox();
     const first = createTangleWorkspaceBranching({ box, client, provider });
