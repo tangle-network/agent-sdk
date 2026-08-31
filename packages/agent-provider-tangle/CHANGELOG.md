@@ -1,5 +1,17 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.0.0
+
+### Major Changes
+
+- 8b87e06: Replace ambiguous workspace cwd strings with explicitly based repository or host path references.
+  Advertise supported cwd bases in provider capability documents.
+
+### Patch Changes
+
+- Updated dependencies [8b87e06]
+  - @tangle-network/agent-interface@2.0.0
+
 ## 0.14.5
 
 ### Patch Changes
