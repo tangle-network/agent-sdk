@@ -148,6 +148,46 @@ describe("createTangleProvider", () => {
     expect(create).toHaveBeenCalledOnce();
   });
 
+  it("retries a failed keyed create with the same workspace material", async () => {
+    const box: SandboxInstanceLike = {
+      id: "sbx-workspace-retry",
+      async *streamPrompt() {},
+    };
+    const createOptions: CreateSandboxOptions[] = [];
+    let attempts = 0;
+    const create = vi.fn(async (options?: CreateSandboxOptions) => {
+      createOptions.push(options ?? {});
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient create failure");
+      return box;
+    });
+    const provider = createTangleProvider({ client: { create } });
+    const input = {
+      profile: { name: "worker" },
+      workspace: {
+        environment: "universal",
+        repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+        gitRef: "main",
+        cwd: "packages/agent-provider-tangle",
+      },
+      idempotencyKey: "workspace-retry",
+    };
+
+    await expect(provider.create(input)).rejects.toThrow("transient create failure");
+    await provider.create(input);
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(createOptions[1]).toEqual(createOptions[0]);
+    expect(createOptions[1]).toMatchObject({
+      environment: "universal",
+      cwd: "packages/agent-provider-tangle",
+      git: {
+        url: "https://github.com/tangle-network/agent-sdk.git",
+        ref: "main",
+      },
+    });
+  });
+
   it("maps the platform create receipt to the environment creation verdict", async () => {
     const boxWithReceipt = (
       id: string,

@@ -60,9 +60,10 @@ export function sandboxOptionsFromCreateInput(
   // no error, surfacing later as an unexplained tool failure.
   const environment = workspace.image ?? workspace.environment;
   const base: CreateSandboxOptions = {};
-  return {
+  const mapped = {
     ...base,
     ...(environment !== undefined ? { environment } : {}),
+    ...(workspace.cwd === undefined ? {} : { cwd: workspace.cwd }),
     ...(workspace.repoUrl
       ? {
           git: {
@@ -83,6 +84,7 @@ export function sandboxOptionsFromCreateInput(
       profile: inlineAgentProfile(input.profile),
     },
   };
+  return mapped;
 }
 
 /** Reject value-bearing secret maps before any custom mapper can drop them. */

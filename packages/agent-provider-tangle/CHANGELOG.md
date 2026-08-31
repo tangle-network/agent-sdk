@@ -7,6 +7,7 @@
 - Forward each interaction's inner runner binding to the Sandbox deployment.
 - Keep `awaiting_interaction` runs reconnectable instead of treating them as terminal failures.
 - Recover exact checkpoint and fork timestamps from durable operation results after restart.
+- Forward the portable workspace working directory to Sandbox and preserve it across keyed retries.
 - Refresh release evidence against the current Bridge and Sandbox control contracts.
 - Updated dependencies
   - @tangle-network/agent-interface@1.9.1

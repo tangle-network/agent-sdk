@@ -260,6 +260,49 @@ describe("Tangle split leaf modules", () => {
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
   });
 
+  it.each([".", "packages/agent-provider-tangle"])(
+    "forwards the portable workspace cwd %s without changing the repository inputs",
+    (cwd) => {
+      const mapped = sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: {
+            environment: "universal",
+            repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+            gitRef: "main",
+            cwd,
+          },
+        },
+        "opencode",
+      );
+
+      expect(mapped).toMatchObject({
+        environment: "universal",
+        cwd,
+        git: {
+          url: "https://github.com/tangle-network/agent-sdk.git",
+          ref: "main",
+        },
+      });
+    },
+  );
+
+  it("omits cwd when the workspace request leaves it undefined", () => {
+    const mapped = sandboxOptionsFromCreateInput(
+      {
+        profile: { name: "worker" },
+        workspace: {
+          environment: "universal",
+          repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+          gitRef: "main",
+        },
+      },
+      "opencode",
+    );
+
+    expect(mapped).not.toHaveProperty("cwd");
+  });
+
   it("attributes session status to an exact execution only with binding evidence", () => {
     const executionId = "execution-bound";
     // The live execution owns the current state.
