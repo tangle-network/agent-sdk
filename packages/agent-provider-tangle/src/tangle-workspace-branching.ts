@@ -1217,7 +1217,9 @@ function validForkOperationChildResult(
   return (
     validOperationRecord(value) &&
     safeIdentifier(value.sandboxId ?? value.id) !== undefined &&
-    (value.createdAt === undefined || validOperationDate(value.createdAt))
+    (value.createdAt === undefined ||
+      value.createdAt === null ||
+      validOperationDate(value.createdAt))
   );
 }
 

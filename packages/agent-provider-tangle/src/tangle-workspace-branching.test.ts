@@ -1167,6 +1167,33 @@ describe("Tangle workspace branching", () => {
         idempotencyKey: forkInput.idempotencyKey,
         requestDigest: forkInput.requestDigest,
       })
+    ).resolves.toMatchObject({
+      status: "found",
+      environment: {
+        environmentId: fork.environment.environmentId,
+        createdAt: fork.environment.createdAt,
+      },
+    });
+
+    const listChildren = client.list;
+    if (listChildren === undefined) throw new Error("the fake client has no list method");
+    const listedChildren = await listChildren();
+    client.list = async () =>
+      listedChildren.map((child) => ({
+        ...child,
+        createdAt: undefined,
+      }));
+
+    const noTimestampRestarted = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    await expect(
+      noTimestampRestarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      })
     ).resolves.toMatchObject({ status: "unknown", retryable: true });
   });
 
