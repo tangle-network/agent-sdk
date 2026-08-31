@@ -4,6 +4,7 @@ import {
   boundedJsonRecordSchema,
   boundedStringSchema,
 } from "./contract-limits.js";
+import { workspaceCwdSchema } from "./workspace-cwd.js";
 
 import type { AgentProfile } from "./agent-profile.js";
 
@@ -33,7 +34,11 @@ export interface WorkspaceRequest {
   repoUrl?: string;
   /** Git ref for {@link repoUrl}. */
   gitRef?: string;
-  /** Initial working directory inside the environment. */
+  /**
+   * Repository-relative POSIX working directory inside the environment.
+   * `.` selects the repository root; redundant `.` segments and separators
+   * are canonicalized before the provider receives the request.
+   */
   cwd?: string;
   /** Opaque provider-native workspace fields. */
   providerOptions?: Record<string, unknown>;
@@ -46,7 +51,7 @@ export const WorkspaceRequestSchema = z
     image: boundedStringSchema.min(1).optional(),
     repoUrl: boundedStringSchema.min(1).optional(),
     gitRef: boundedIdentifierSchema.optional(),
-    cwd: boundedStringSchema.min(1).optional(),
+    cwd: workspaceCwdSchema.optional(),
     providerOptions: boundedJsonRecordSchema.optional(),
   })
   .superRefine((workspace, refinement) => {

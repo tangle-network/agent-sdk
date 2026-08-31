@@ -113,6 +113,7 @@ import {
   TerminalSessionRefSchema,
   terminalSessionUsable,
 } from "./environment-terminal.js";
+import { canonicalWorkspaceCwd, workspaceCwdSchema } from "./workspace-cwd.js";
 
 const digest = (letter: string) => `sha256:${letter.repeat(64)}` as `sha256:${string}`;
 
@@ -221,6 +222,11 @@ describe("interface split leaf modules", () => {
       CONTRACT_MAX_JSON_BYTES,
     );
     expect(() => portableWireDigest(unicodeMaterial)).toThrow(/byte bound/);
+  });
+
+  it("exports the portable workspace cwd leaf contract", () => {
+    expect(canonicalWorkspaceCwd("./packages//braid/.")).toBe("packages/braid");
+    expect(workspaceCwdSchema.safeParse("/workspace/src").success).toBe(false);
   });
 
   it("directly validates profile, environment, and process leaf contracts", () => {

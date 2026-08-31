@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceRequestSchema } from "./environment-provider.js";
+import {
+  MAX_WORKSPACE_CWD_LENGTH,
+  WorkspaceRequestSchema,
+  canonicalWorkspaceCwd,
+  workspaceCwdSchema,
+} from "./environment-provider.js";
 import { CONTRACT_MAX_STRING_LENGTH } from "./contract-limits.js";
 
 describe("WorkspaceRequestSchema", () => {
@@ -8,7 +13,7 @@ describe("WorkspaceRequestSchema", () => {
       environment: "universal",
       repoUrl: "https://example.com/repo.git",
       gitRef: "feature/workspace",
-      cwd: "/workspace",
+      cwd: "workspace",
       providerOptions: { region: "us-east", retries: 2 },
     };
 
@@ -31,6 +36,38 @@ describe("WorkspaceRequestSchema", () => {
         image: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1),
       }),
     ).toThrow();
+  });
+
+  it("canonicalizes portable workspace cwd values", () => {
+    expect(workspaceCwdSchema.parse(".")).toBe(".");
+    expect(workspaceCwdSchema.parse("./packages/braid")).toBe("packages/braid");
+    expect(workspaceCwdSchema.parse("packages//braid/.")).toBe("packages/braid");
+    expect(canonicalWorkspaceCwd("./packages//braid/.")).toBe("packages/braid");
+    expect(WorkspaceRequestSchema.parse({ cwd: "./packages//braid/." })).toEqual({
+      cwd: "packages/braid",
+    });
+  });
+
+  it.each([
+    ["/workspace/src", "Workspace cwd must be relative"],
+    ["../outside", "Workspace cwd cannot leave the workspace root"],
+    ["src/../../outside", "Workspace cwd cannot leave the workspace root"],
+    ["src\\win", "Workspace cwd must use POSIX separators"],
+    ["src\u0000bad", "Workspace cwd cannot contain control characters"],
+  ])("rejects non-portable cwd %j", (cwd, message) => {
+    expect(() => workspaceCwdSchema.parse(cwd)).toThrow(message);
+    expect(() => WorkspaceRequestSchema.parse({ cwd })).toThrow(message);
+  });
+
+  it("rejects an empty cwd", () => {
+    expect(() => workspaceCwdSchema.parse("")).toThrow();
+    expect(() => WorkspaceRequestSchema.parse({ cwd: "" })).toThrow();
+  });
+
+  it("enforces the portable cwd length bound", () => {
+    const cwd = "a".repeat(MAX_WORKSPACE_CWD_LENGTH + 1);
+    expect(() => workspaceCwdSchema.parse(cwd)).toThrow();
+    expect(() => WorkspaceRequestSchema.parse({ cwd })).toThrow();
   });
 
   it("rejects provider-invalid combinations", () => {

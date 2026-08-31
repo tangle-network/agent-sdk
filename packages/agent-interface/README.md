@@ -27,6 +27,11 @@ The portable contract owns only inline profile and harness selection, shared or 
 
 `shared` means ordinary same-computer file visibility. It is not automatic merge behavior or tenant isolation. `isolated` asks the provider for a private writable view and explicit inspect or commit behavior. Providers must reject unsatisfied machine requirements rather than silently replacing or migrating a live environment.
 
+`WorkspaceRequest.cwd` is a repository-relative POSIX path.
+The shared schema rejects absolute paths, parent traversal, backslashes, and control characters.
+It canonicalizes redundant `.` segments and separators.
+Use `.` for the repository root.
+
 The public `AgentInstanceRecord` contains a credential-free profile identity, not the full profile or provider request. Existing session APIs can implement this contract without a new service: one instance maps to one managed session, compatible sessions may reuse a backend process, and stop maps to idempotent session deletion or process release.
 
 ## Durable runs, interactions, and context

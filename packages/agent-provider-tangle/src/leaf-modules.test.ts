@@ -260,9 +260,12 @@ describe("Tangle split leaf modules", () => {
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
   });
 
-  it.each([".", "packages/agent-provider-tangle"])(
-    "forwards the portable workspace cwd %s without changing the repository inputs",
-    (cwd) => {
+  it.each([
+    [".", "."],
+    ["./packages//agent-provider-tangle/.", "packages/agent-provider-tangle"],
+  ])(
+    "forwards the portable workspace cwd %s as %s without changing the repository inputs",
+    (cwd, canonicalCwd) => {
       const mapped = sandboxOptionsFromCreateInput(
         {
           profile: { name: "worker" },
@@ -278,7 +281,7 @@ describe("Tangle split leaf modules", () => {
 
       expect(mapped).toMatchObject({
         environment: "universal",
-        cwd,
+        cwd: canonicalCwd,
         git: {
           url: "https://github.com/tangle-network/agent-sdk.git",
           ref: "main",
