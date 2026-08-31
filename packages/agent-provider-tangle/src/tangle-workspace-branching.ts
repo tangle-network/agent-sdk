@@ -49,7 +49,6 @@ import {
 import type {
   SandboxClientLike,
   SandboxDeleteAcknowledgementLike,
-  SandboxForkAcknowledgementLike,
   SandboxInstanceLike,
   SandboxSnapshotInfoLike,
   SandboxSnapshotDeleteAcknowledgementLike,
@@ -90,6 +89,8 @@ interface ForkMarker {
   idempotencyKey: string;
   requestDigest: `sha256:${string}`;
   request: WorkspaceForkRequest;
+  /** New markers identify children created from the durable checkpoint. */
+  materialization?: "snapshot";
 }
 
 interface CheckpointRecord {
@@ -575,15 +576,50 @@ export function createTangleWorkspaceBranching(
     }
 
     const metadata = forkMarkerMetadata(request);
-    let result: SandboxForkAcknowledgementLike;
+    let returnedChild: SandboxInstanceLike;
+    let outcome: "created" | "replayed";
     try {
-      result = await awaitWithSignal(
-        box.fork?.(1, {
-          metadata,
-          idempotencyKey: request.idempotencyKey,
-        }),
+      // Sandbox fork copies live VM memory, not the durable workspace view.
+      // Restore the checkpoint so files written before the checkpoint survive.
+      returnedChild = await awaitWithSignal(
+        client.create(
+          {
+            fromSnapshot: request.checkpoint.checkpointId,
+            fromSandboxId: box.id,
+            idempotencyKey: request.idempotencyKey,
+            metadata,
+            ...(request.name === undefined ? {} : { name: request.name }),
+          },
+          operation?.signal === undefined
+            ? undefined
+            : { signal: operation.signal }
+        ),
         operation?.signal
       );
+      const receipt = returnedChild.createReceipt?.();
+      if (
+        !receipt ||
+        receipt.idempotencyKeyApplied !== true ||
+        (receipt.outcome !== "created" &&
+          receipt.outcome !== "idempotent_replay")
+      ) {
+        const compensation = await compensateCreatedForkChild(
+          returnedChild,
+          receipt?.outcome === "created" ? "created" : "replayed",
+          operation?.signal
+        );
+        const removed =
+          compensation === "destroyed" || compensation === "already_absent";
+        return forkUnknown(
+          request,
+          removed
+            ? "Sandbox snapshot restore returned no complete create receipt; the newly created child was removed"
+            : "Sandbox snapshot restore returned no complete create receipt; child cleanup was not confirmed",
+          !removed
+        );
+      }
+      outcome =
+        receipt.outcome === "idempotent_replay" ? "replayed" : "created";
     } catch (error) {
       operation?.signal?.throwIfAborted();
       const conflict = await forkConflictFromRemote(
@@ -598,56 +634,52 @@ export function createTangleWorkspaceBranching(
         conflict ??
         forkUnknown(
           request,
-          `Sandbox fork outcome is unresolved: ${safeError(error)}`,
+          `Sandbox snapshot restore outcome is unresolved: ${safeError(error)}`,
           true
         )
       );
     }
     if (
-      !result ||
-      !validForkResult(result) ||
-      result.idempotency === undefined ||
-      (result.idempotency.outcome !== "created" &&
-        result.idempotency.outcome !== "replayed") ||
-      safeString(result.idempotency.requestDigest) === undefined
+      !returnedChild ||
+      typeof returnedChild !== "object" ||
+      safeIdentifier(returnedChild.id) === undefined ||
+      returnedChild.id === box.id
     ) {
+      const compensation = returnedChild
+        ? await compensateCreatedForkChild(
+            returnedChild,
+            outcome,
+            operation?.signal
+          )
+        : "not_attempted";
+      const removed =
+        compensation === "destroyed" || compensation === "already_absent";
       return forkUnknown(
         request,
-        "Sandbox fork returned no complete idempotent acknowledgement",
-        true
+        removed
+          ? "Sandbox snapshot restore returned an invalid child; the newly created child was removed"
+          : "Sandbox snapshot restore returned an invalid child; child cleanup was not confirmed",
+        !removed
       );
     }
-    if (result.children.length !== 1 || result.complete !== true) {
-      return forkUnknown(
-        request,
-        "Sandbox fork did not materialize exactly one complete child",
-        true
-      );
-    }
-    const returnedChild = result.children[0];
     const child = await completeForkChild(
       client,
       returnedChild,
       operation?.signal
     );
     if (!child) {
-      const compensation =
-        forkMarkerFromMetadata(returnedChild.metadata) === undefined
-          ? await compensateUnmarkedForkChild(
-              result,
-              returnedChild,
-              operation?.signal
-            )
-          : "not_attempted";
+      const compensation = await compensateCreatedForkChild(
+        returnedChild,
+        outcome,
+        operation?.signal
+      );
       const removed =
         compensation === "destroyed" || compensation === "already_absent";
       return forkUnknown(
         request,
         removed
-          ? "Sandbox fork returned a child without a complete identity; the newly created child was removed"
-          : compensation === "unconfirmed"
-          ? "Sandbox fork returned a child without a complete identity; child cleanup was not confirmed"
-          : "Sandbox fork returned a child without a complete identity",
+          ? "Sandbox snapshot restore returned a child without a complete identity; the newly created child was removed"
+          : "Sandbox snapshot restore returned a child without a complete identity; child cleanup was not confirmed",
         !removed
       );
     }
@@ -656,7 +688,7 @@ export function createTangleWorkspaceBranching(
       if (!markerBelongsToSource(childMarker, provider, box.id)) {
         return forkUnknown(
           request,
-          "Sandbox fork returned a child marked for another source",
+          "Sandbox snapshot restore returned a child marked for another source",
           true
         );
       }
@@ -668,9 +700,9 @@ export function createTangleWorkspaceBranching(
       }
     }
     if (!childMarker) {
-      const compensation = await compensateUnmarkedForkChild(
-        result,
-        child,
+      const compensation = await compensateCreatedForkChild(
+        returnedChild,
+        outcome,
         operation?.signal
       );
       const removed =
@@ -678,10 +710,8 @@ export function createTangleWorkspaceBranching(
       return forkUnknown(
         request,
         removed
-          ? "Sandbox fork acknowledgement omitted its provider recovery marker; the newly created child was removed"
-          : compensation === "unconfirmed"
-          ? "Sandbox fork acknowledgement omitted its provider recovery marker; child cleanup was not confirmed"
-          : "Sandbox fork acknowledgement omitted its provider recovery marker",
+          ? "Sandbox snapshot restore acknowledgement omitted its provider recovery marker; the newly created child was removed"
+          : "Sandbox snapshot restore acknowledgement omitted its provider recovery marker; child cleanup was not confirmed",
         !removed
       );
     }
@@ -696,13 +726,13 @@ export function createTangleWorkspaceBranching(
     if (!environment) {
       return forkUnknown(
         request,
-        "Sandbox fork returned a child without a valid identity",
+        "Sandbox snapshot restore returned a child without a valid identity",
         true
       );
     }
     const record = { request, environment, child };
     forks.set(request.idempotencyKey, record);
-    return forkSuccess(request, environment, result.idempotency.outcome);
+    return forkSuccess(request, environment, outcome);
   };
 
   const lookupFork = async (
@@ -849,14 +879,13 @@ export function supportsWorkspaceBranching(
   client: SandboxClientLike
 ): boolean {
   return (
+    typeof client.create === "function" &&
     typeof client.list === "function" &&
     typeof client.get === "function" &&
     typeof box.snapshot === "function" &&
     typeof box.listSnapshots === "function" &&
     typeof box.deleteSnapshot === "function" &&
-    typeof box.getSnapshotOperation === "function" &&
-    typeof box.fork === "function" &&
-    typeof box.getForkOperation === "function"
+    typeof box.getSnapshotOperation === "function"
   );
 }
 
@@ -1160,24 +1189,6 @@ function validSnapshotInfo(
   );
 }
 
-function validForkResult(
-  result: SandboxForkAcknowledgementLike | undefined
-): result is SandboxForkAcknowledgementLike {
-  return (
-    !!result &&
-    Array.isArray(result.children) &&
-    result.children.every(
-      (child) =>
-        child !== null &&
-        typeof child === "object" &&
-        safeIdentifier(child.id) !== undefined
-    ) &&
-    result.requestedCount === 1 &&
-    result.materializedCount === result.children.length &&
-    typeof result.complete === "boolean"
-  );
-}
-
 type SnapshotOperationResult = {
   snapshotId: string;
   createdAt: Date | string;
@@ -1268,7 +1279,8 @@ function legacyCheckpointMarkerTags(
 }
 
 function forkMarkerMetadata(
-  request: WorkspaceForkRequest
+  request: WorkspaceForkRequest,
+  materialization: "snapshot" | undefined = "snapshot"
 ): Record<string, unknown> {
   if (request.metadata && Object.hasOwn(request.metadata, FORK_METADATA_KEY)) {
     throw new Error(`fork metadata reserves ${FORK_METADATA_KEY}`);
@@ -1279,6 +1291,7 @@ function forkMarkerMetadata(
     idempotencyKey: request.idempotencyKey,
     requestDigest: request.requestDigest,
     request,
+    ...(materialization === "snapshot" ? { materialization } : {}),
   };
   assertBoundedJson(marker);
   return {
@@ -1322,16 +1335,23 @@ async function checkpointOperationSucceeded(
   );
 }
 
-/** The fork equivalent of {@link checkpointOperationSucceeded}. */
+/** Confirm a fork child through its marker or the legacy fork ledger. */
 async function forkOperationLookup(
   box: SandboxInstanceLike,
   marker: ForkMarker,
   signal?: AbortSignal
 ): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
+  if (marker.materialization === "snapshot") {
+    return {
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+    };
+  }
   const lookup = await awaitWithSignal(
     box.getForkOperation?.(marker.idempotencyKey, {
       count: 1,
-      metadata: forkMarkerMetadata(marker.request),
+      metadata: forkMarkerMetadata(marker.request, marker.materialization),
     }),
     signal
   );
@@ -1645,13 +1665,13 @@ type ForkCompensation =
   | "unconfirmed"
   | "not_attempted";
 
-/** Remove only a child this exact call confirmed it created. */
-async function compensateUnmarkedForkChild(
-  result: SandboxForkAcknowledgementLike,
+/** Remove only a child this exact create call confirmed it created. */
+async function compensateCreatedForkChild(
   child: SandboxInstanceLike,
+  outcome: "created" | "replayed",
   signal?: AbortSignal
 ): Promise<ForkCompensation> {
-  if (result.idempotency?.outcome !== "created") return "not_attempted";
+  if (outcome !== "created") return "not_attempted";
   if (typeof child.delete !== "function") return "unconfirmed";
   try {
     const acknowledgement = (await awaitWithSignal(
@@ -1985,6 +2005,12 @@ function forkMarkerFromMetadata(
     typeof parsed.requestDigest !== "string"
   )
     return undefined;
+  if (
+    parsed.materialization !== undefined &&
+    parsed.materialization !== "snapshot"
+  ) {
+    return undefined;
+  }
   if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
   const request = WorkspaceForkRequestSchema.safeParse(parsed.request);
   if (
@@ -1999,6 +2025,9 @@ function forkMarkerFromMetadata(
     idempotencyKey: parsed.idempotencyKey,
     requestDigest: parsed.requestDigest,
     request: request.data,
+    ...(parsed.materialization === "snapshot"
+      ? { materialization: "snapshot" as const }
+      : {}),
   };
 }
 
