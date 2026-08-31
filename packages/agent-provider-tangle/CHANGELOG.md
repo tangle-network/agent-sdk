@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.0.2
+
+### Patch Changes
+
+- d79b976: Restore Tangle workspace forks from checkpoint snapshots so durable file state survives branching.
+
 ## 1.0.1
 
 ### Patch Changes
