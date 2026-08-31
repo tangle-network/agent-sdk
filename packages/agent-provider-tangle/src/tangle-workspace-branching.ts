@@ -104,6 +104,11 @@ interface ForkRecord {
   child: SandboxInstanceLike;
 }
 
+interface RecoveredForkChild {
+  child: SandboxInstanceLike;
+  createdAt: Date | string | undefined;
+}
+
 interface CleanupRecord {
   requestDigest: `sha256:${string}`;
   acknowledgement: WorkspaceCleanupAcknowledgement;
@@ -254,7 +259,7 @@ export function createTangleWorkspaceBranching(
       recovered.marker.request,
       child,
       provider,
-      child.createdAt,
+      recovered.createdAt ?? child.createdAt,
       options.confidentialAttestationVerifier,
       signal
     );
@@ -1497,7 +1502,9 @@ async function findForkByKey(
   key: string,
   signal?: AbortSignal
 ): Promise<
-  { child: SandboxInstanceLike; marker: ForkMarker } | null | undefined
+  | (RecoveredForkChild & { marker: ForkMarker })
+  | null
+  | undefined
 > {
   const candidates = await listMarkedForkChildren(
     client,
@@ -1518,7 +1525,7 @@ async function findForkByKey(
       ) {
         const authoritative = childFromOperationResult(candidate.child, lookup);
         if (authoritative === undefined) return undefined;
-        return { child: authoritative, marker: candidate.marker };
+        return { ...authoritative, marker: candidate.marker };
       }
       unresolved = true;
     } catch {
@@ -1539,8 +1546,10 @@ async function findForkByKey(
 function childFromOperationResult(
   child: SandboxInstanceLike,
   lookup: SandboxWorkspaceOperationLookupLike
-): SandboxInstanceLike | undefined {
-  if (lookup.result === undefined) return child;
+): RecoveredForkChild | undefined {
+  if (lookup.result === undefined) {
+    return { child, createdAt: child.createdAt };
+  }
   const result = lookup.result;
   if (!validOperationRecord(result)) return undefined;
   const children = result.children;
@@ -1551,7 +1560,7 @@ function childFromOperationResult(
       (candidate.sandboxId ?? candidate.id) === child.id
   );
   if (!operationChild) return undefined;
-  return { ...child, createdAt: operationChild.createdAt };
+  return { child, createdAt: operationChild.createdAt };
 }
 
 async function findForkChildById(
@@ -2045,7 +2054,7 @@ async function forkConflictFromRemote(
     recovered.marker.request,
     child,
     provider,
-    child.createdAt,
+    recovered.createdAt ?? child.createdAt,
     verifier,
     signal
   );

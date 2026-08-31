@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { SandboxInstance } from "@tangle-network/sandbox";
 import {
   ConfidentialAttestationSchema,
   canonicalCandidateDigest,
@@ -1005,6 +1006,53 @@ describe("Tangle workspace branching", () => {
     if (forkLookup.status !== "found")
       throw new Error("fork lookup did not recover a ref");
     expect(forkLookup.environment).toEqual(fork.environment);
+  });
+
+  it("preserves SDK child instances when operation results supply timestamps", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await first!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const marker = {
+      version: 1 as const,
+      kind: "fork" as const,
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+      request,
+    };
+    const child = new SandboxInstance({} as never, {
+      id: "sdk-fork-child",
+      status: "running",
+      createdAt: new Date("2026-08-28T00:00:01.000Z"),
+      metadata: { __tangle_agent_workspace_v1: marker },
+    });
+    const authoritativeCreatedAt = new Date("2026-08-28T00:00:02.000Z");
+    client.list = async () => [child as unknown as SandboxInstanceLike];
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          { sandboxId: child.id, createdAt: authoritativeCreatedAt },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const lookup = await restarted!.lookupFork({
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+    });
+    expect(lookup.status).toBe("found");
+    if (lookup.status !== "found")
+      throw new Error("fork lookup did not recover an SDK child");
+    expect(lookup.environment).toMatchObject({
+      environmentId: child.id,
+      createdAt: authoritativeCreatedAt.toISOString(),
+    });
   });
 
   it("fails closed when operation results are invalid or name different resources", async () => {
