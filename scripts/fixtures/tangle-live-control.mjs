@@ -21,6 +21,10 @@ const DEFAULT_MODEL = "tangle-router/glm-5.3";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const POLL_INTERVAL_MS = 500;
 const ABSENCE_ATTEMPTS = 20;
+const EVIDENCE_REPOSITORY_URL =
+  "https://github.com/tangle-network/agent-sdk.git";
+const EVIDENCE_REPOSITORY_REF = "main";
+const NESTED_WORKSPACE_CWD = "packages/agent-interface";
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
@@ -79,10 +83,46 @@ function sourceInput(proofId, purpose, options = {}) {
   return {
     profile: profile(`${purpose}-${proofId}`, backend, options.permissions),
     backend,
-    workspace: { environment: "universal" },
+    workspace: {
+      environment: "universal",
+      repoUrl: EVIDENCE_REPOSITORY_URL,
+      gitRef: EVIDENCE_REPOSITORY_REF,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    },
     name: `${purpose}-${proofId}`,
     idempotencyKey: `${purpose}-${proofId}`,
     metadata: { owner: OWNER, proofId, purpose },
+  };
+}
+
+async function workspaceCwdObservation(environment) {
+  assert.equal(typeof environment.exec, "function");
+  const result = await environment.exec(
+    "printf '%s\\n' \"$(pwd)\" \"$(git rev-parse --show-toplevel)\" \"$(git rev-parse --show-prefix)\"",
+  );
+  assert.equal(result.exitCode, 0, `workspace cwd probe failed: ${result.stderr}`);
+  assert(result.stdout.endsWith("\n"), "workspace cwd probe omitted its final line");
+  const lines = result.stdout.slice(0, -1).split("\n");
+  assert.equal(lines.length, 3, `workspace cwd probe returned ${JSON.stringify(result.stdout)}`);
+  const [cwd, repositoryRoot, repositoryPrefix] = lines;
+  assert(cwd, "workspace cwd probe returned no current directory");
+  assert(repositoryRoot, "workspace cwd probe returned no repository root");
+  assert(repositoryPrefix !== undefined, "workspace cwd probe returned no repository prefix");
+  return { cwd, repositoryRoot, repositoryPrefix };
+}
+
+async function proveWorkspaceCwd(environment, expectedCwd) {
+  const observed = await workspaceCwdObservation(environment);
+  if (expectedCwd === undefined) {
+    assert.equal(observed.cwd, observed.repositoryRoot);
+    assert.equal(observed.repositoryPrefix, "");
+  } else {
+    assert.equal(observed.repositoryPrefix, `${expectedCwd}/`);
+    assert.notEqual(observed.cwd, observed.repositoryRoot);
+  }
+  return {
+    expected: expectedCwd ?? ".",
+    observed,
   };
 }
 
@@ -296,7 +336,9 @@ async function resolveSubsequentPermissions(session, since, proofId) {
 
 async function runRetainedEvidence() {
   const proofId = randomUUID();
-  const replayInput = sourceInput(proofId, "up09-replay");
+  const replayInput = sourceInput(proofId, "up09-replay", {
+    cwd: NESTED_WORKSPACE_CWD,
+  });
   const replay = await runSessionReplayConformance({
     name: `tangle-live-replay-${proofId}`,
     createProvider: async () => provider(),
@@ -320,8 +362,13 @@ async function runRetainedEvidence() {
     // The generic request_permission MCP tool is the proof boundary. OpenCode
     // must not add a second native bash prompt after that answer, because the
     // hosted sidecar exposes only the generic interaction stream.
+    cwd: NESTED_WORKSPACE_CWD,
     permissions: { bash: "allow" },
   });
+  const nestedCwd = await withOwnedEnvironment(
+    sourceInput(proofId, "up09-cwd", { cwd: NESTED_WORKSPACE_CWD }),
+    async ({ environment }) => proveWorkspaceCwd(environment, NESTED_WORKSPACE_CWD),
+  );
   const interaction = await withOwnedEnvironment(
     interactionInput,
     async ({ environment, environmentProvider }) => {
@@ -474,6 +521,7 @@ async function runRetainedEvidence() {
   return {
     proofId,
     requestedModel: configuredModel().requested,
+    nestedCwd,
     replay,
     interaction,
     cleanupConfirmed: true,
@@ -530,6 +578,7 @@ async function runWorkspaceEvidence() {
   const proofId = randomUUID();
   const input = sourceInput(proofId, "up14-workspace");
   return await withOwnedEnvironment(input, async ({ environment }) => {
+    const defaultCwd = await proveWorkspaceCwd(environment);
     assert.equal(typeof environment.dispatch, "function");
     assert.equal(typeof environment.session, "function");
     assert(environment.workspaceBranching, "Tangle did not grant workspace branching");
@@ -661,6 +710,7 @@ async function runWorkspaceEvidence() {
     return {
       proofId,
       requestedModel: configuredModel().requested,
+      defaultCwd,
       sourceEnvironmentId: environment.id,
       checkpointId: report.checkpointId,
       forkEnvironmentId: report.environmentId,
