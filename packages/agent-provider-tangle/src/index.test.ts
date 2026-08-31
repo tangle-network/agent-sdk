@@ -1490,6 +1490,28 @@ describe("createTangleProvider", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("rejects a workspace gitRef without repoUrl before a custom mapper can drop it", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const mapCreateInput = vi.fn(() => ({
+      backend: { type: "opencode" as const, profile: { name: "worker" } },
+    }));
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput,
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { gitRef: "main" },
+      }),
+    ).rejects.toThrow("workspace gitRef requires repoUrl");
+    expect(mapCreateInput).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("runs the exact-process lifecycle through process-only sandboxes", async () => {
     let firstCreateOptions: ExactCreateOptions | undefined;
     let createRequestOptions:

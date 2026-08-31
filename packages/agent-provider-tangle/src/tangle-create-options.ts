@@ -1,4 +1,7 @@
 import type { BackendType, CreateSandboxOptions } from "@tangle-network/sandbox";
+import {
+  WorkspaceRequestSchema,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentProfileRef,
   CreateAgentEnvironmentInput,
@@ -29,18 +32,13 @@ export function sandboxOptionsFromCreateInput(
   }
   if (input.backend !== undefined) boundedIdentifier(input.backend, "Tangle backend");
   if (input.env !== undefined) assertStringRecord(input.env, "Tangle");
-  const workspace = input.workspace ?? {};
+  const workspace =
+    input.workspace === undefined
+      ? {}
+      : WorkspaceRequestSchema.parse(input.workspace);
   if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
     throw new Error("Tangle workspace providerOptions are not supported");
   }
-  if (workspace.providerOptions) assertBoundedRecord(workspace.providerOptions, "Tangle workspace providerOptions");
-  if (workspace.environment !== undefined) {
-    boundedIdentifier(workspace.environment, "Tangle workspace environment");
-  }
-  if (workspace.image !== undefined) boundedString(workspace.image, "Tangle workspace image");
-  if (workspace.cwd !== undefined) boundedString(workspace.cwd, "Tangle workspace cwd");
-  if (workspace.repoUrl !== undefined) boundedString(workspace.repoUrl, "Tangle repository URL");
-  if (workspace.gitRef !== undefined) boundedIdentifier(workspace.gitRef, "Tangle git ref");
   if (input.resources?.providerOptions && Object.keys(input.resources.providerOptions).length > 0) {
     throw new Error("Tangle resource providerOptions are not supported");
   }
@@ -48,13 +46,7 @@ export function sandboxOptionsFromCreateInput(
   if (input.idempotencyKey !== undefined) {
     boundedIdentifier(input.idempotencyKey, "Tangle idempotency key");
   }
-  if (input.workspace?.cwd === "") throw new Error("Tangle workspace cwd cannot be empty");
-  if (workspace.image === "") throw new Error("Tangle workspace image cannot be empty");
-  if (workspace.repoUrl === "") throw new Error("Tangle repository URL cannot be empty");
   const resources = sandboxResourcesFromResourceRequest(input.resources);
-  if (workspace.environment !== undefined && workspace.image !== undefined) {
-    throw new Error("Tangle workspace cannot specify both environment and image");
-  }
   // Sandbox injects secrets by name from its own store. Accepting a name/value
   // record and dropping it would create an environment with no credentials and
   // no error, surfacing later as an unexplained tool failure.
@@ -99,11 +91,8 @@ export function assertNoInlineSecretValues(input: CreateAgentEnvironmentInput): 
     }
   }
   if (input.workspace?.providerOptions !== undefined) {
-    if (!input.workspace.providerOptions || typeof input.workspace.providerOptions !== "object" || Array.isArray(input.workspace.providerOptions)) {
-      throw new Error("Tangle workspace providerOptions must be a JSON object");
-    }
-    assertBoundedJson(input.workspace.providerOptions);
-    if (Object.keys(input.workspace.providerOptions).length > 0) {
+    const workspace = WorkspaceRequestSchema.parse(input.workspace);
+    if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
       throw new Error("Tangle workspace providerOptions are not supported");
     }
   }
@@ -170,12 +159,7 @@ export function assertCreateInputShape(input: CreateAgentEnvironmentInput): void
     assertBoundedJson(input.profile);
   }
   if (input.workspace !== undefined) {
-    if (!input.workspace || typeof input.workspace !== "object" || Array.isArray(input.workspace)) {
-      throw new Error("Tangle workspace must be an object");
-    }
-    const workspaceKeys = new Set(Object.keys(input.workspace));
-    for (const key of ["environment", "image", "repoUrl", "gitRef", "cwd", "providerOptions"]) workspaceKeys.delete(key);
-    if (workspaceKeys.size > 0) throw new Error("Tangle workspace contains unsupported fields");
+    WorkspaceRequestSchema.parse(input.workspace);
   }
   if (input.resources !== undefined) {
     if (!input.resources || typeof input.resources !== "object" || Array.isArray(input.resources)) {

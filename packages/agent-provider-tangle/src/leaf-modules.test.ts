@@ -303,6 +303,18 @@ describe("Tangle split leaf modules", () => {
     expect(mapped).not.toHaveProperty("cwd");
   });
 
+  it("rejects a workspace gitRef without repoUrl instead of silently dropping it", () => {
+    expect(() =>
+      sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: { gitRef: "main" },
+        },
+        "opencode",
+      ),
+    ).toThrow("workspace gitRef requires repoUrl");
+  });
+
   it("attributes session status to an exact execution only with binding evidence", () => {
     const executionId = "execution-bound";
     // The live execution owns the current state.
