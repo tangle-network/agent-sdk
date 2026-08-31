@@ -5,6 +5,7 @@ import {
 import type {
   AgentProfileRef,
   CreateAgentEnvironmentInput,
+  WorkspaceRequest,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   assertBoundedJson,
@@ -18,9 +19,10 @@ import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
   defaultBackend: BackendType,
+  parsedWorkspace?: WorkspaceRequest,
 ): CreateSandboxOptions {
-  assertCreateInputShape(input);
-  assertNoInlineSecretValues(input);
+  const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
+  assertNoInlineSecretValues(input, workspace);
   if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
     throw new Error("Tangle create providerOptions are not supported");
   }
@@ -32,10 +34,6 @@ export function sandboxOptionsFromCreateInput(
   }
   if (input.backend !== undefined) boundedIdentifier(input.backend, "Tangle backend");
   if (input.env !== undefined) assertStringRecord(input.env, "Tangle");
-  const workspace =
-    input.workspace === undefined
-      ? {}
-      : WorkspaceRequestSchema.parse(input.workspace);
   if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
     throw new Error("Tangle workspace providerOptions are not supported");
   }
@@ -80,7 +78,10 @@ export function sandboxOptionsFromCreateInput(
 }
 
 /** Reject value-bearing secret maps before any custom mapper can drop them. */
-export function assertNoInlineSecretValues(input: CreateAgentEnvironmentInput): void {
+export function assertNoInlineSecretValues(
+  input: CreateAgentEnvironmentInput,
+  parsedWorkspace?: WorkspaceRequest,
+): void {
   if (input.providerOptions !== undefined) {
     if (!input.providerOptions || typeof input.providerOptions !== "object" || Array.isArray(input.providerOptions)) {
       throw new Error("Tangle create providerOptions must be a JSON object");
@@ -91,7 +92,7 @@ export function assertNoInlineSecretValues(input: CreateAgentEnvironmentInput): 
     }
   }
   if (input.workspace?.providerOptions !== undefined) {
-    const workspace = WorkspaceRequestSchema.parse(input.workspace);
+    const workspace = parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
     if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
       throw new Error("Tangle workspace providerOptions are not supported");
     }
@@ -131,7 +132,10 @@ export function assertMappedSecretNames(options: CreateSandboxOptions): void {
   }
 }
 
-export function assertCreateInputShape(input: CreateAgentEnvironmentInput): void {
+export function assertCreateInputShape(
+  input: CreateAgentEnvironmentInput,
+  parsedWorkspace?: WorkspaceRequest,
+): WorkspaceRequest | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Tangle create input must be an object");
   }
@@ -158,9 +162,6 @@ export function assertCreateInputShape(input: CreateAgentEnvironmentInput): void
     }
     assertBoundedJson(input.profile);
   }
-  if (input.workspace !== undefined) {
-    WorkspaceRequestSchema.parse(input.workspace);
-  }
   if (input.resources !== undefined) {
     if (!input.resources || typeof input.resources !== "object" || Array.isArray(input.resources)) {
       throw new Error("Tangle resources must be an object");
@@ -169,6 +170,8 @@ export function assertCreateInputShape(input: CreateAgentEnvironmentInput): void
     for (const key of ["cpu", "memoryMb", "diskMb", "gpu", "providerOptions"]) resourceKeys.delete(key);
     if (resourceKeys.size > 0) throw new Error("Tangle resources contain unsupported fields");
   }
+  if (input.workspace === undefined) return undefined;
+  return parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
 }
 
 export function assertMappedCreateOptions(options: CreateSandboxOptions): void {

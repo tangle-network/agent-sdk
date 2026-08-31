@@ -1115,7 +1115,7 @@ describe("createCliBridgeProvider", () => {
     });
   });
 
-  it("streams canonical text, tool, usage, and result events", async () => {
+  it("preserves an absolute native Bridge cwd while streaming canonical events", async () => {
     let body: Record<string, unknown> | undefined;
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",

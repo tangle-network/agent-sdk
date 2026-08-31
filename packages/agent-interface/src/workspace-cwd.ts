@@ -1,14 +1,21 @@
 import { z } from "zod";
+import {
+  relativePathSafetyIssues,
+  type RelativePathSafetyIssue,
+} from "./agent-candidate-schema-common.js";
 
 /** Maximum number of UTF-16 code units accepted in a portable workspace cwd. */
 export const MAX_WORKSPACE_CWD_LENGTH = 4_096;
 
-function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
-  });
-}
+const workspaceCwdIssueMessages: Partial<
+  Record<RelativePathSafetyIssue, string>
+> = {
+  absolute: "Workspace cwd must be relative",
+  backslash: "Workspace cwd must use POSIX separators",
+  "control-character": "Workspace cwd cannot contain control characters",
+  "parent-traversal": "Workspace cwd cannot leave the workspace root",
+  "malformed-unicode": "Workspace cwd must contain well-formed Unicode",
+};
 
 function normalizeWorkspaceCwd(value: string): string {
   const segments = value
@@ -28,28 +35,12 @@ export const workspaceCwdSchema = z
   .min(1)
   .max(MAX_WORKSPACE_CWD_LENGTH)
   .superRefine((value, refinement) => {
-    if (value.startsWith("/")) {
+    for (const issue of relativePathSafetyIssues(value)) {
+      const message = workspaceCwdIssueMessages[issue];
+      if (message === undefined) continue;
       refinement.addIssue({
         code: "custom",
-        message: "Workspace cwd must be relative",
-      });
-    }
-    if (value.includes("\\")) {
-      refinement.addIssue({
-        code: "custom",
-        message: "Workspace cwd must use POSIX separators",
-      });
-    }
-    if (hasControlCharacter(value)) {
-      refinement.addIssue({
-        code: "custom",
-        message: "Workspace cwd cannot contain control characters",
-      });
-    }
-    if (value.split("/").includes("..")) {
-      refinement.addIssue({
-        code: "custom",
-        message: "Workspace cwd cannot leave the workspace root",
+        message,
       });
     }
   })

@@ -52,8 +52,10 @@ describe("WorkspaceRequestSchema", () => {
     ["/workspace/src", "Workspace cwd must be relative"],
     ["../outside", "Workspace cwd cannot leave the workspace root"],
     ["src/../../outside", "Workspace cwd cannot leave the workspace root"],
+    ["C:/workspace", "Workspace cwd must be relative"],
     ["src\\win", "Workspace cwd must use POSIX separators"],
     ["src\u0000bad", "Workspace cwd cannot contain control characters"],
+    ["\ud800", "Workspace cwd must contain well-formed Unicode"],
   ])("rejects non-portable cwd %j", (cwd, message) => {
     expect(() => workspaceCwdSchema.parse(cwd)).toThrow(message);
     expect(() => WorkspaceRequestSchema.parse({ cwd })).toThrow(message);

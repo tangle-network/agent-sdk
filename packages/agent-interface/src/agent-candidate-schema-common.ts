@@ -36,6 +36,14 @@ const blockedHostnames = new Set([
   "metadata.google",
 ]);
 
+export type RelativePathSafetyIssue =
+  | "empty"
+  | "control-character"
+  | "malformed-unicode"
+  | "absolute"
+  | "backslash"
+  | "parent-traversal";
+
 export const sha256DigestSchema = z
   .string()
   .regex(sha256Pattern) as z.ZodType<Sha256Digest>;
@@ -112,22 +120,24 @@ export function isWellFormedUnicode(value: string): boolean {
   return true;
 }
 
+/** Return shared boundary violations for paths that must stay inside a workspace. */
+export function relativePathSafetyIssues(value: string): RelativePathSafetyIssue[] {
+  const issues: RelativePathSafetyIssue[] = [];
+  if (value.length === 0) issues.push("empty");
+  if (controlCharacterPattern.test(value)) issues.push("control-character");
+  if (!isWellFormedUnicode(value)) issues.push("malformed-unicode");
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value)) issues.push("absolute");
+  if (value.includes("\\")) issues.push("backslash");
+  if (value.split("/").includes("..")) issues.push("parent-traversal");
+  return issues;
+}
+
 export function isSafeRelativePath(value: string, allowDot: boolean): boolean {
-  if (
-    value.length === 0 ||
-    controlCharacterPattern.test(value) ||
-    !isWellFormedUnicode(value) ||
-    value.startsWith("/") ||
-    value.startsWith("\\") ||
-    value.includes("\\") ||
-    /^[A-Za-z]:/.test(value)
-  ) {
-    return false;
-  }
+  if (relativePathSafetyIssues(value).length > 0) return false;
   if (value === ".") return allowDot;
   const parts = value.split("/");
   return (
-    parts.every((part) => part.length > 0 && part !== "." && part !== "..") &&
+    parts.every((part) => part.length > 0 && part !== ".") &&
     !parts.some((part) => reservedWorkspaceRoots.has(part))
   );
 }

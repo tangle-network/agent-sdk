@@ -48,6 +48,8 @@ export function toChatCompletionsBody(
       ? { effort: profile.model.reasoningEffort }
       : {}),
     ...(environmentInput.env ? { env: environmentInput.env } : {}),
+    // CLI Bridge owns a host process, so this cwd uses its native path contract.
+    // Preserve absolute and empty values instead of applying portable cwd rules.
     ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
     ...(execution ? { execution } : {}),
     ...(interactions === undefined ? {} : { interactions }),
@@ -97,6 +99,7 @@ export function toRetainedSessionBody(
     model,
     interaction_policy: "interactive",
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
+    // Retained Bridge sessions preserve their native host cwd, including an empty value.
     ...(environmentInput.workspace?.cwd !== undefined
       ? { cwd: environmentInput.workspace.cwd }
       : {}),
