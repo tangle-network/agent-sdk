@@ -97,9 +97,9 @@ export function createTangleProvider(
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
-    assertCreateInputShape(input);
+    const parsedWorkspace = assertCreateInputShape(input);
     input.signal?.throwIfAborted();
-    assertNoInlineSecretValues(input);
+    assertNoInlineSecretValues(input, parsedWorkspace);
     if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
@@ -110,7 +110,11 @@ export function createTangleProvider(
     narrowedProviderCapabilities(declaredCapabilities);
     const createOptions =
       options.mapCreateInput?.(input) ??
-      sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
+      sandboxOptionsFromCreateInput(
+        input,
+        options.defaultBackend ?? "opencode",
+        parsedWorkspace,
+      );
     assertMappedCreateOptions(createOptions);
     if (
       input.idempotencyKey !== undefined &&

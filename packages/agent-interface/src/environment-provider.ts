@@ -5,3 +5,4 @@ export * from "./environment-observation.js";
 export * from "./environment-terminal.js";
 export * from "./environment-runtime.js";
 export * from "./environment-command-turn.js";
+export * from "./workspace-cwd.js";

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { SandboxInstance } from "@tangle-network/sandbox";
 import {
   ConfidentialAttestationSchema,
   canonicalCandidateDigest,
@@ -939,6 +940,204 @@ describe("Tangle workspace branching", () => {
       status: "found",
       environment: fork.environment,
     });
+  });
+
+  it("recovers exact refs from operation results when inventory timestamps drift", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointInput = checkpointRequest();
+    const checkpoint = await first!.checkpoint(checkpointInput);
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await first!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    const listSnapshots = box.listSnapshots!;
+    box.listSnapshots = async () =>
+      (await listSnapshots()).map((snapshot) => ({
+        ...snapshot,
+        createdAt: new Date("2026-08-29T00:00:00.000Z"),
+      }));
+    const listEnvironments = client.list!;
+    client.list = async (options) =>
+      (await listEnvironments(options)).map((environment) => ({
+        ...environment,
+        createdAt: new Date("2026-08-29T00:00:01.000Z"),
+      }));
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: checkpoint.checkpoint.checkpointId,
+        createdAt: checkpoint.checkpoint.createdAt,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          {
+            sandboxId: fork.environment.environmentId,
+            createdAt: fork.environment.createdAt,
+          },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointLookup = await restarted!.lookupCheckpoint({
+      idempotencyKey: checkpointInput.idempotencyKey,
+      requestDigest: checkpointInput.requestDigest,
+    });
+    expect(checkpointLookup.status).toBe("found");
+    if (checkpointLookup.status !== "found")
+      throw new Error("checkpoint lookup did not recover a ref");
+    expect(checkpointLookup.checkpoint).toEqual(checkpoint.checkpoint);
+
+    const forkLookup = await restarted!.lookupFork({
+      idempotencyKey: forkInput.idempotencyKey,
+      requestDigest: forkInput.requestDigest,
+    });
+    expect(forkLookup.status).toBe("found");
+    if (forkLookup.status !== "found")
+      throw new Error("fork lookup did not recover a ref");
+    expect(forkLookup.environment).toEqual(fork.environment);
+  });
+
+  it("preserves SDK child instances when operation results supply timestamps", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await first!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    const marker = {
+      version: 1 as const,
+      kind: "fork" as const,
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+      request,
+    };
+    const child = new SandboxInstance({} as never, {
+      id: "sdk-fork-child",
+      status: "running",
+      createdAt: new Date("2026-08-28T00:00:01.000Z"),
+      metadata: { __tangle_agent_workspace_v1: marker },
+    });
+    const authoritativeCreatedAt = new Date("2026-08-28T00:00:02.000Z");
+    client.list = async () => [child as unknown as SandboxInstanceLike];
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          { sandboxId: child.id, createdAt: authoritativeCreatedAt },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const lookup = await restarted!.lookupFork({
+      idempotencyKey: request.idempotencyKey,
+      requestDigest: request.requestDigest,
+    });
+    expect(lookup.status).toBe("found");
+    if (lookup.status !== "found")
+      throw new Error("fork lookup did not recover an SDK child");
+    expect(lookup.environment).toMatchObject({
+      environmentId: child.id,
+      createdAt: authoritativeCreatedAt.toISOString(),
+    });
+  });
+
+  it("fails closed when operation results are invalid or name different resources", async () => {
+    const { box, client } = createFakeSandbox();
+    const first = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpointInput = checkpointRequest();
+    const checkpoint = await first!.checkpoint(checkpointInput);
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const forkInput = forkRequest(checkpoint.checkpoint);
+    const fork = await first!.fork(forkInput);
+    if (fork.status !== "created") throw new Error("fork setup failed");
+
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: "different-checkpoint",
+        createdAt: checkpoint.checkpoint.createdAt,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found",
+      kind: "fork",
+      state: "succeeded",
+      result: {
+        children: [
+          {
+            sandboxId: "different-fork",
+            createdAt: fork.environment.createdAt,
+          },
+        ],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: checkpointInput.idempotencyKey,
+        requestDigest: checkpointInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+    await expect(
+      restarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+
+    box.getSnapshotOperation = async () => ({
+      outcome: "found" as const,
+      kind: "checkpoint" as const,
+      state: "succeeded" as const,
+      result: {
+        snapshotId: checkpoint.checkpoint.checkpointId,
+        createdAt: null,
+      },
+    });
+    box.getForkOperation = async () => ({
+      outcome: "found" as const,
+      kind: "fork" as const,
+      state: "succeeded" as const,
+      result: {
+        children: [
+          {
+            sandboxId: fork.environment.environmentId,
+            createdAt: null,
+          },
+        ],
+      },
+    });
+
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: checkpointInput.idempotencyKey,
+        requestDigest: checkpointInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+    await expect(
+      restarted!.lookupFork({
+        idempotencyKey: forkInput.idempotencyKey,
+        requestDigest: forkInput.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
   });
 
   it("reconstructs the source-scoped handle from the provider after restart", async () => {

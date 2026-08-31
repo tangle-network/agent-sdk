@@ -260,6 +260,76 @@ describe("Tangle split leaf modules", () => {
     expect(() => assertRecord({ value: "ok" }, "leaf record")).not.toThrow();
   });
 
+  it.each([
+    [".", "."],
+    ["./packages//agent-provider-tangle/.", "packages/agent-provider-tangle"],
+  ])(
+    "forwards the portable workspace cwd %s as %s without changing the repository inputs",
+    (cwd, canonicalCwd) => {
+      const mapped = sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: {
+            environment: "universal",
+            repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+            gitRef: "main",
+            cwd: { base: "repository", path: cwd },
+          },
+        },
+        "opencode",
+      );
+
+      expect(mapped).toMatchObject({
+        environment: "universal",
+        cwd: canonicalCwd,
+        git: {
+          url: "https://github.com/tangle-network/agent-sdk.git",
+          ref: "main",
+        },
+      });
+    },
+  );
+
+  it("omits cwd when the workspace request leaves it undefined", () => {
+    const mapped = sandboxOptionsFromCreateInput(
+      {
+        profile: { name: "worker" },
+        workspace: {
+          environment: "universal",
+          repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+          gitRef: "main",
+        },
+      },
+      "opencode",
+    );
+
+    expect(mapped).not.toHaveProperty("cwd");
+  });
+
+  it("rejects a host cwd before a custom mapper can bypass the Tangle base", () => {
+    expect(() =>
+      sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: { cwd: { base: "host", path: "/workspace" } },
+        },
+        "opencode",
+      ),
+    ).toThrow('Tangle supports workspace cwd base "repository", not "host"');
+  });
+
+  it("rejects a workspace gitRef without repoUrl instead of silently dropping it", () => {
+    expect(() =>
+      sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: { gitRef: "main" },
+        },
+        "opencode",
+      ),
+    ).toThrow("workspace gitRef requires repoUrl");
+  });
+
   it("attributes session status to an exact execution only with binding evidence", () => {
     const executionId = "execution-bound";
     // The live execution owns the current state.
@@ -481,6 +551,35 @@ describe("Tangle split leaf modules", () => {
       unsupported: undefined,
     } as never)).toThrow(/JSON bound/);
     expect(agentTurnResultFromPromptRecord(validatedSandboxPromptResult(promptResult()), { sessionId: "session-1" })).toMatchObject({ text: "done", success: true });
+    const awaitingInteraction = validatedSandboxPromptResult({
+      success: false,
+      status: "awaiting_interaction",
+      durationMs: 1,
+      executionId: "execution-1",
+      interaction: {
+        id: "interaction-1",
+        kind: "permission",
+        title: "Allow bash?",
+        answerSpec: { fields: [] },
+        binding: {
+          runId: "run-1",
+          provider: "opencode",
+          environmentId: "environment-1",
+          sessionId: "session-1",
+          executionId: "execution-1",
+          interactionId: "interaction-1",
+        },
+        requestDigest: `sha256:${"a".repeat(64)}`,
+      },
+    } as never);
+    expect(agentTurnResultFromPromptRecord(awaitingInteraction, { sessionId: "session-1" })).toMatchObject({
+      success: false,
+      metadata: {
+        status: "awaiting_interaction",
+        awaitingInteraction: true,
+        terminal: false,
+      },
+    });
     const semanticInput = { prompt: "hello", turnId: "turn-1" } as never;
     const baseRequestDigest = sessionPromptRequestDigest(
       semanticInput,

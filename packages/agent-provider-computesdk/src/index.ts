@@ -3,6 +3,8 @@ import {
   createAgentEnvironmentWithIdempotency,
   execOnlyEnvironmentCapabilities,
   execResultFromUnknown,
+  WorkspaceRequestSchema,
+  workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
@@ -63,8 +65,9 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    const normalizedInput = normalizeComputeInput(input);
     const sandbox = await options.compute.sandbox.create(
-      options.mapCreateInput?.(input) ?? computeCreateOptions(input),
+      options.mapCreateInput?.(normalizedInput) ?? computeCreateOptions(normalizedInput),
     );
     return computeSandboxAsEnvironment(options, name, sandbox);
   };
@@ -183,7 +186,7 @@ function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string
     ...(input.workspace?.image ? { image: input.workspace.image } : {}),
     ...(input.workspace?.repoUrl ? { repoUrl: input.workspace.repoUrl } : {}),
     ...(input.workspace?.gitRef ? { gitRef: input.workspace.gitRef } : {}),
-    ...(input.workspace?.cwd ? { cwd: input.workspace.cwd } : {}),
+    ...(input.workspace?.cwd ? { cwd: input.workspace.cwd.path } : {}),
     ...(input.resources ? { resources: input.resources } : {}),
     ...(input.env ? { env: input.env } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
@@ -191,6 +194,13 @@ function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     ...(input.providerOptions ?? {}),
   };
+}
+
+function normalizeComputeInput(input: CreateAgentEnvironmentInput): CreateAgentEnvironmentInput {
+  if (input.workspace === undefined) return input;
+  const workspace = WorkspaceRequestSchema.parse(input.workspace);
+  workspaceCwdPathForBase(workspace.cwd, "repository", "ComputeSDK");
+  return { ...input, workspace };
 }
 
 function sandboxId(sandbox: ComputeSandboxLike): string {
@@ -207,5 +217,6 @@ export function defaultComputeSdkCapabilities(): AgentEnvironmentCapabilities {
     git: false,
     upload: true,
     download: true,
+    cwdBases: { repository: true, host: false },
   });
 }

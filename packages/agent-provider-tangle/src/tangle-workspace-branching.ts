@@ -104,6 +104,11 @@ interface ForkRecord {
   child: SandboxInstanceLike;
 }
 
+interface RecoveredForkChild {
+  child: SandboxInstanceLike;
+  createdAt: Date | string | undefined;
+}
+
 interface CleanupRecord {
   requestDigest: `sha256:${string}`;
   acknowledgement: WorkspaceCleanupAcknowledgement;
@@ -254,7 +259,7 @@ export function createTangleWorkspaceBranching(
       recovered.marker.request,
       child,
       provider,
-      child.createdAt,
+      recovered.createdAt ?? child.createdAt,
       options.confidentialAttestationVerifier,
       signal
     );
@@ -1173,6 +1178,49 @@ function validForkResult(
   );
 }
 
+type SnapshotOperationResult = {
+  snapshotId: string;
+  createdAt: Date | string;
+};
+
+type ForkOperationChildResult = {
+  sandboxId?: string;
+  id?: string;
+  createdAt: Date | string;
+};
+
+function validOperationRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validOperationDate(value: unknown): value is Date | string {
+  return (
+    (typeof value === "string" || value instanceof Date) && validDate(value)
+  );
+}
+
+function validSnapshotOperationResult(
+  value: unknown
+): value is SnapshotOperationResult {
+  return (
+    validOperationRecord(value) &&
+    safeIdentifier(value.snapshotId) !== undefined &&
+    validOperationDate(value.createdAt)
+  );
+}
+
+function validForkOperationChildResult(
+  value: unknown
+): value is ForkOperationChildResult {
+  return (
+    validOperationRecord(value) &&
+    safeIdentifier(value.sandboxId ?? value.id) !== undefined &&
+    validOperationDate(value.createdAt)
+  );
+}
+
 function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
   const marker: CheckpointMarker = {
     version: 1,
@@ -1243,11 +1291,11 @@ function forkMarkerMetadata(
  * A marker only names a candidate resource. Nothing is returned to a caller
  * until the ledger reports the operation succeeded.
  */
-async function checkpointOperationSucceeded(
+async function checkpointOperationLookup(
   box: SandboxInstanceLike,
   marker: CheckpointMarker,
   signal?: AbortSignal
-): Promise<boolean> {
+): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
   const lookup = await awaitWithSignal(
     box.getSnapshotOperation?.(marker.idempotencyKey, {
       tags: marker.legacy
@@ -1256,6 +1304,15 @@ async function checkpointOperationSucceeded(
     }),
     signal
   );
+  return lookup;
+}
+
+async function checkpointOperationSucceeded(
+  box: SandboxInstanceLike,
+  marker: CheckpointMarker,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const lookup = await checkpointOperationLookup(box, marker, signal);
   return (
     lookup?.outcome === "found" &&
     lookup.kind === "checkpoint" &&
@@ -1264,11 +1321,11 @@ async function checkpointOperationSucceeded(
 }
 
 /** The fork equivalent of {@link checkpointOperationSucceeded}. */
-async function forkOperationSucceeded(
+async function forkOperationLookup(
   box: SandboxInstanceLike,
   marker: ForkMarker,
   signal?: AbortSignal
-): Promise<boolean> {
+): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
   const lookup = await awaitWithSignal(
     box.getForkOperation?.(marker.idempotencyKey, {
       count: 1,
@@ -1276,6 +1333,15 @@ async function forkOperationSucceeded(
     }),
     signal
   );
+  return lookup;
+}
+
+async function forkOperationSucceeded(
+  box: SandboxInstanceLike,
+  marker: ForkMarker,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const lookup = await forkOperationLookup(box, marker, signal);
   return (
     lookup?.outcome === "found" &&
     lookup.kind === "fork" &&
@@ -1338,8 +1404,15 @@ async function findCheckpointByKey(
     const marker = checkpointMarkerFromTags(snapshot.tags, key);
     if (!marker) continue;
     try {
-      if (await checkpointOperationSucceeded(box, marker, signal)) {
-        return { snapshot, marker };
+      const lookup = await checkpointOperationLookup(box, marker, signal);
+      if (
+        lookup?.outcome === "found" &&
+        lookup.kind === "checkpoint" &&
+        lookup.state === "succeeded"
+      ) {
+        const authoritative = snapshotFromOperationResult(snapshot, lookup);
+        if (authoritative === undefined) return undefined;
+        return { snapshot: authoritative, marker };
       }
       unresolved = true;
     } catch {
@@ -1348,6 +1421,28 @@ async function findCheckpointByKey(
     }
   }
   return unresolved ? undefined : null;
+}
+
+/**
+ * Prefer the durable operation result over inventory metadata.
+ *
+ * Snapshot inventory and the operation ledger can expose different creation
+ * timestamps. The ledger result is the acknowledgement returned by the
+ * idempotent operation, so recovery must rebuild the exact checkpoint ref
+ * from it when the service provides that result.
+ */
+function snapshotFromOperationResult(
+  snapshot: SandboxSnapshotInfoLike,
+  lookup: SandboxWorkspaceOperationLookupLike
+): SandboxSnapshotInfoLike | undefined {
+  if (lookup.result === undefined) return snapshot;
+  if (
+    !validSnapshotOperationResult(lookup.result) ||
+    lookup.result.snapshotId !== snapshot.snapshotId
+  ) {
+    return undefined;
+  }
+  return { ...snapshot, createdAt: lookup.result.createdAt };
 }
 
 /**
@@ -1407,7 +1502,9 @@ async function findForkByKey(
   key: string,
   signal?: AbortSignal
 ): Promise<
-  { child: SandboxInstanceLike; marker: ForkMarker } | null | undefined
+  | (RecoveredForkChild & { marker: ForkMarker })
+  | null
+  | undefined
 > {
   const candidates = await listMarkedForkChildren(
     client,
@@ -1420,8 +1517,16 @@ async function findForkByKey(
   let unresolved = false;
   for (const candidate of candidates) {
     try {
-      if (await forkOperationSucceeded(box, candidate.marker, signal))
-        return candidate;
+      const lookup = await forkOperationLookup(box, candidate.marker, signal);
+      if (
+        lookup?.outcome === "found" &&
+        lookup.kind === "fork" &&
+        lookup.state === "succeeded"
+      ) {
+        const authoritative = childFromOperationResult(candidate.child, lookup);
+        if (authoritative === undefined) return undefined;
+        return { ...authoritative, marker: candidate.marker };
+      }
       unresolved = true;
     } catch {
       signal?.throwIfAborted();
@@ -1429,6 +1534,33 @@ async function findForkByKey(
     }
   }
   return unresolved ? undefined : null;
+}
+
+/**
+ * Prefer the durable fork result over account-inventory metadata.
+ *
+ * Fork inventory can report a child timestamp from a later registry read. The
+ * operation ledger stores the original child acknowledgement, which is the
+ * stable value required to replay one exact fork reference after a restart.
+ */
+function childFromOperationResult(
+  child: SandboxInstanceLike,
+  lookup: SandboxWorkspaceOperationLookupLike
+): RecoveredForkChild | undefined {
+  if (lookup.result === undefined) {
+    return { child, createdAt: child.createdAt };
+  }
+  const result = lookup.result;
+  if (!validOperationRecord(result)) return undefined;
+  const children = result.children;
+  if (!Array.isArray(children)) return undefined;
+  const operationChild = children.find(
+    (candidate): candidate is ForkOperationChildResult =>
+      validForkOperationChildResult(candidate) &&
+      (candidate.sandboxId ?? candidate.id) === child.id
+  );
+  if (!operationChild) return undefined;
+  return { child, createdAt: operationChild.createdAt };
 }
 
 async function findForkChildById(
@@ -1922,7 +2054,7 @@ async function forkConflictFromRemote(
     recovered.marker.request,
     child,
     provider,
-    child.createdAt,
+    recovered.createdAt ?? child.createdAt,
     verifier,
     signal
   );

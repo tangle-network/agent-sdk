@@ -1,17 +1,15 @@
-import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import {
+  preparePackedTestCohort,
+  root,
+} from "./packed-test-cohort.mjs";
+
+export { pnpm, root, run, tsc, vitest } from "./packed-test-cohort.mjs";
 
 // Shared packer for the "control cohort": the three publishable control
 // contract packages (agent-interface, agent-provider-testkit,
@@ -20,28 +18,6 @@ import { fileURLToPath } from "node:url";
 // Both check-control-contract-artifacts.mjs and upstream-check.mjs build on the
 // same packed consumer so the release-evidence checks and the contract check
 // share one packing path.
-
-export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-export const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-const executableSuffix = process.platform === "win32" ? ".cmd" : "";
-
-export const vitest = join(
-  root,
-  "packages",
-  "agent-provider-testkit",
-  "node_modules",
-  ".bin",
-  `vitest${executableSuffix}`,
-);
-export const tsc = join(
-  root,
-  "packages",
-  "agent-interface",
-  "node_modules",
-  ".bin",
-  `tsc${executableSuffix}`,
-);
 
 // The interface contract test files copied into the packed consumer. Each one
 // imports sibling modules through the re-export shims written below.
@@ -57,46 +33,7 @@ export const interfaceTests = [
 // into the consumer next to the interface tests.
 export const testkitTest = "control-conformance.test.ts";
 export const tangleFixtureTest = "tangle-control-consumer.test.ts";
-
-export function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd ?? root,
-    encoding: "utf8",
-    env: { ...process.env, ...options.env },
-    maxBuffer: 50 * 1024 * 1024,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      [
-        `${command} ${args.join(" ")} exited ${result.status}`,
-        result.stdout.trim(),
-        result.stderr.trim(),
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }
-  return result.stdout.trim();
-}
-
-function pack(packageDirectory, destination) {
-  const output = run(
-    pnpm,
-    ["pack", "--json", "--pack-destination", destination],
-    { cwd: packageDirectory },
-  );
-  const result = JSON.parse(output);
-  if (!result.filename || !existsSync(result.filename)) {
-    throw new Error(`failed to pack ${packageDirectory}`);
-  }
-  return result.filename;
-}
-
-function tarballName(tarball) {
-  const filename = tarball.split(/[\\/]/).at(-1);
-  return filename ?? tarball;
-}
+export const tangleLiveFixture = "tangle-live-control.mjs";
 
 // The consumer must install the same Sandbox version the Tangle provider is
 // developed against. Read it from that package so the pin cannot drift from
@@ -122,63 +59,31 @@ function sandboxVersion() {
 // shims. The caller runs tsc and/or vitest against the returned consumer and
 // then calls cleanup().
 export function prepareControlCohort() {
-  run(pnpm, ["--filter", "@tangle-network/agent-interface", "build"]);
-  run(pnpm, ["--filter", "@tangle-network/agent-provider-testkit", "build"]);
-  run(pnpm, ["--filter", "@tangle-network/agent-provider-tangle", "build"]);
-
-  const temporaryRoot = mkdtempSync(join(tmpdir(), "agent-control-artifacts-"));
-  const tarballsDirectory = join(temporaryRoot, "tarballs");
-  const consumer = join(temporaryRoot, "consumer");
-  const npmCache = join(temporaryRoot, "npm-cache");
-  mkdirSync(tarballsDirectory, { recursive: true });
-  mkdirSync(consumer, { recursive: true });
-
-  const interfaceTarball = pack(
-    join(root, "packages", "agent-interface"),
-    tarballsDirectory,
-  );
-  const testkitTarball = pack(
-    join(root, "packages", "agent-provider-testkit"),
-    tarballsDirectory,
-  );
-  const tangleTarball = pack(
-    join(root, "packages", "agent-provider-tangle"),
-    tarballsDirectory,
-  );
-
-  writeFileSync(
-    join(consumer, "package.json"),
-    `${JSON.stringify(
+  const cohort = preparePackedTestCohort({
+    consumerName: "agent-control-artifact-check",
+    temporaryPrefix: "agent-control-artifacts-",
+    packages: [
       {
-        name: "agent-control-artifact-check",
-        private: true,
-        type: "module",
-        dependencies: {
-          "@tangle-network/agent-interface": `file:${interfaceTarball}`,
-          "@tangle-network/agent-provider-testkit": `file:${testkitTarball}`,
-          "@tangle-network/agent-provider-tangle": `file:${tangleTarball}`,
-          "@tangle-network/sandbox": sandboxVersion(),
-          "@types/node": "25.6.0",
-        },
+        key: "interface",
+        name: "@tangle-network/agent-interface",
+        directory: "agent-interface",
       },
-      null,
-      2,
-    )}\n`,
-  );
-  run(npm, ["install", "--package-lock=false", "--ignore-scripts"], {
-    cwd: consumer,
-    env: {
-      npm_config_audit: "false",
-      npm_config_cache: npmCache,
-      npm_config_fund: "false",
-      npm_config_update_notifier: "false",
+      {
+        key: "testkit",
+        name: "@tangle-network/agent-provider-testkit",
+        directory: "agent-provider-testkit",
+      },
+      {
+        key: "tangle",
+        name: "@tangle-network/agent-provider-tangle",
+        directory: "agent-provider-tangle",
+      },
+    ],
+    dependencies: {
+      "@tangle-network/sandbox": sandboxVersion(),
     },
   });
-  symlinkSync(
-    join(root, "packages", "agent-provider-testkit", "node_modules", "vitest"),
-    join(consumer, "node_modules", "vitest"),
-    "dir",
-  );
+  const { consumer } = cohort;
 
   for (const test of interfaceTests) {
     copyFileSync(
@@ -199,6 +104,10 @@ export function prepareControlCohort() {
   copyFileSync(
     join(root, "scripts", "fixtures", "tangle-control-consumer.test.ts"),
     join(consumer, tangleFixtureTest),
+  );
+  copyFileSync(
+    join(root, "scripts", "fixtures", tangleLiveFixture),
+    join(consumer, tangleLiveFixture),
   );
 
   const shimSources = {
@@ -246,23 +155,5 @@ export function prepareControlCohort() {
     "export default { test: { environment: 'node' } };\n",
   );
 
-  const packageVersions = [
-    interfaceTarball,
-    testkitTarball,
-    tangleTarball,
-  ].map(tarballName);
-
-  return {
-    temporaryRoot,
-    consumer,
-    tarballs: {
-      interface: interfaceTarball,
-      testkit: testkitTarball,
-      tangle: tangleTarball,
-    },
-    packageVersions,
-    cleanup() {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    },
-  };
+  return cohort;
 }

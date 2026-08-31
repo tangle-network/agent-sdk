@@ -8,6 +8,8 @@ import type {
 import {
   AgentExactRunControlRefSchema,
   RequestedInteractionsSchema,
+  WorkspaceRequestSchema,
+  workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface";
 import type {
   AgentTurnInput,
@@ -30,6 +32,7 @@ export function toChatCompletionsBody(
 ): Record<string, unknown> {
   const profile = inlineProfile(environmentInput.profile);
   const execution = executionFromInput(options, environmentInput);
+  const workspaceCwd = bridgeWorkspaceCwd(environmentInput);
   const interactions = turn.interactions === undefined
     ? undefined
     : RequestedInteractionsSchema.parse(turn.interactions);
@@ -48,7 +51,7 @@ export function toChatCompletionsBody(
       ? { effort: profile.model.reasoningEffort }
       : {}),
     ...(environmentInput.env ? { env: environmentInput.env } : {}),
-    ...(environmentInput.workspace?.cwd ? { cwd: environmentInput.workspace.cwd } : {}),
+    ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(execution ? { execution } : {}),
     ...(interactions === undefined ? {} : { interactions }),
     ...(turn.contextTransfer === undefined
@@ -92,14 +95,13 @@ export function toRetainedSessionBody(
   model: string,
 ): Record<string, unknown> {
   const execution = retainedExecutionFromInput(options, environmentInput);
+  const workspaceCwd = bridgeWorkspaceCwd(environmentInput);
   return {
     id: sessionId,
     model,
     interaction_policy: "interactive",
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
-    ...(environmentInput.workspace?.cwd !== undefined
-      ? { cwd: environmentInput.workspace.cwd }
-      : {}),
+    ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(execution !== undefined ? { execution } : {}),
     ...(profile ? { agent_profile: profile } : {}),
     ...(environmentInput.env !== undefined ? { env: environmentInput.env } : {}),
@@ -222,6 +224,15 @@ function retainedExecutionFromInput(
     );
   }
   return execution;
+}
+
+function bridgeWorkspaceCwd(
+  input: CreateAgentEnvironmentInput,
+): string | undefined {
+  const workspace = input.workspace === undefined
+    ? undefined
+    : WorkspaceRequestSchema.parse(input.workspace);
+  return workspaceCwdPathForBase(workspace?.cwd, "host", "CLI Bridge");
 }
 
 export interface CliBridgeSseFrame {

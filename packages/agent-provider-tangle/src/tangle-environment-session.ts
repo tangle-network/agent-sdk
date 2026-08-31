@@ -104,7 +104,6 @@ export function sandboxSessionAsAgentSession(
       ? tangleInteractionResponder({
           session,
           sessionId: session.id,
-          provider,
           environmentId,
         })
       : undefined;

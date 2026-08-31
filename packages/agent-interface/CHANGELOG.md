@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 1.9.1
+
+### Patch Changes
+
+- Export a strict, bounded `WorkspaceRequestSchema` for runtime validation of portable workspace inputs.
+- Validate and canonicalize repository-relative POSIX `WorkspaceCwd` path references at the shared boundary.
+- Refresh release evidence against the current Bridge and Sandbox control contracts.
+
 ## 1.9.0
 
 ### Minor Changes

@@ -70,6 +70,10 @@ describe("createTangleProvider", () => {
     expect(defaultTangleSandboxCapabilities()).not.toHaveProperty(
       "exactProcess",
     );
+    expect(defaultTangleSandboxCapabilities().workspace.cwdBases).toEqual({
+      repository: true,
+      host: false,
+    });
   });
 
   it("declares the prompt intents of the sandbox's harness, and neither without one", async () => {
@@ -146,6 +150,49 @@ describe("createTangleProvider", () => {
       provider.create({ ...input, name: "different-environment" }),
     ).rejects.toThrow(/conflicts with a different create input/);
     expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("retries a failed keyed create with the same workspace material", async () => {
+    const box: SandboxInstanceLike = {
+      id: "sbx-workspace-retry",
+      async *streamPrompt() {},
+    };
+    const createOptions: CreateSandboxOptions[] = [];
+    let attempts = 0;
+    const create = vi.fn(async (options?: CreateSandboxOptions) => {
+      createOptions.push(options ?? {});
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient create failure");
+      return box;
+    });
+    const provider = createTangleProvider({ client: { create } });
+    const input = {
+      profile: { name: "worker" },
+      workspace: {
+        environment: "universal",
+        repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+        gitRef: "main",
+        cwd: {
+          base: "repository" as const,
+          path: "packages/agent-provider-tangle",
+        },
+      },
+      idempotencyKey: "workspace-retry",
+    };
+
+    await expect(provider.create(input)).rejects.toThrow("transient create failure");
+    await provider.create(input);
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(createOptions[1]).toEqual(createOptions[0]);
+    expect(createOptions[1]).toMatchObject({
+      environment: "universal",
+      cwd: "packages/agent-provider-tangle",
+      git: {
+        url: "https://github.com/tangle-network/agent-sdk.git",
+        ref: "main",
+      },
+    });
   });
 
   it("maps the platform create receipt to the environment creation verdict", async () => {
@@ -1447,6 +1494,50 @@ describe("createTangleProvider", () => {
         workspace: { environment: "env-a", image: "env-b" },
       }),
     ).rejects.toThrow("cannot specify both environment and image");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a workspace gitRef without repoUrl before a custom mapper can drop it", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const mapCreateInput = vi.fn(() => ({
+      backend: { type: "opencode" as const, profile: { name: "worker" } },
+    }));
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput,
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { gitRef: "main" },
+      }),
+    ).rejects.toThrow("workspace gitRef requires repoUrl");
+    expect(mapCreateInput).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a host cwd before a custom mapper can bypass the Tangle base", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const mapCreateInput = vi.fn(() => ({
+      backend: { type: "opencode" as const, profile: { name: "worker" } },
+    }));
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput,
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { cwd: { base: "host", path: "/workspace" } },
+      }),
+    ).rejects.toThrow('Tangle supports workspace cwd base "repository", not "host"');
+    expect(mapCreateInput).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });
 

@@ -1,277 +1,227 @@
 # Braid upstream-evidence checks.
 #
-# Braid reads GitHub API metadata only. For each required UP-id it needs a
-# check-run named exactly the UP-id, a run head_sha equal to the release tag
-# commit, and an uploaded artifact whose name carries the UP-id with a sha256
-# digest. The changesets "Version Packages" merge is a push to main whose commit
-# is the tag commit, so this workflow triggers on that push. A tag push cannot
-# trigger a workflow, so this workflow must not key on tags.
+# Braid reads GitHub API metadata only. Each required UP-id needs a check-run
+# with that exact name and a retained artifact from the package release ref.
+# The release workflow creates an immutable ref for the package release commit,
+# so the checks run only for that commit or an explicit dispatch from main.
 #
-# Two operator decisions unblock the gated jobs. Both stay off until an operator
-# sets the repository variable UPSTREAM_LIVE_EVIDENCE to "true".
-#   1. Live cli-bridge (UP-05..08): stand up a bridge server that implements the
-#      bridge wire protocol. Expose its address as the repository variable
-#      CLI_BRIDGE_TEST_SERVER. The shipped cli-bridge tests mock the transport in
-#      process, so the live check needs a packed cli-bridge cohort pointed at the
-#      real server.
-#   2. Live Tangle roundtrip (UP-09): provide the operator secrets
-#      TANGLE_CI_SANDBOX_KEY, TANGLE_CI_SANDBOX_URL, and
-#      TANGLE_CI_SANDBOX_SERVICE_ID. The public Sandbox client is chain-backed, so
-#      the operator inputs map to a private key, an RPC url, and a service id.
+# UP-05..08 use the checked-in CLI Bridge integration cohort. The cohort starts
+# the real Bridge server and a bounded child that speaks its Pi JSONL protocol.
+# It does not claim a live provider or use a mock Bridge HTTP server.
 #
-# A skipped job never reports success, so Braid never counts it. Do not add these
-# checks to branch protection; a skip must not block a merge.
+# UP-09 and UP-14 use the public Sandbox control plane with TANGLE_API_KEY and
+# explicit staging URL and model variables. The dispatch input binds this live
+# spend to one exact release commit.
 
 name: Upstream Evidence
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact package release commit to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: upstream-evidence-${{ github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  UP-01:
-    name: UP-01
+  release-commit:
+    name: Detect release commit
     runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.release.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - id: release
+        name: Validate release commit
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$WORKFLOW_REF" == "refs/heads/main" ]]; then
+            :
+          elif [[ "$WORKFLOW_REF" =~ ^refs/tags/agent-sdk-release-[0-9a-f]{40}$ ]]; then
+            tag_sha="${WORKFLOW_REF#refs/tags/agent-sdk-release-}"
+            if [[ "$tag_sha" != "$RELEASE_SHA" ]]; then
+              echo "release ref $WORKFLOW_REF does not encode release SHA $RELEASE_SHA" >&2
+              exit 1
+            fi
+          else
+            echo "upstream evidence must dispatch from main or an immutable release ref, received $WORKFLOW_REF" >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_SHA" != "$WORKFLOW_SHA" ]]; then
+            echo "release_sha $RELEASE_SHA is not the workflow main SHA $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "checked out $(git rev-parse HEAD), expected $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          if ! git diff --unified=0 HEAD^ HEAD -- 'packages/*/package.json' \
+            | grep -Eq '^\+  "version":'; then
+            echo "release SHA does not change a publishable package version" >&2
+            exit 1
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+  control-contracts:
+    name: ${{ matrix.check }}
+    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    needs: release-commit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-01, UP-02, UP-11, UP-12, UP-13]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-01
-      - uses: actions/upload-artifact@v4
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
+      - uses: actions/upload-artifact@v7
         with:
-          name: UP-01-evidence
-          path: artifacts/
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
           if-no-files-found: error
           retention-days: 90
 
-  UP-02:
-    name: UP-02
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-02
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-02-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-11:
-    name: UP-11
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-11
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-11-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-12:
-    name: UP-12
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-12
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-12-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-13:
-    name: UP-13
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-13
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-13-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-14:
-    name: UP-14
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-14-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  # Gated: live cli-bridge conformance. See operator decision 1 at the top.
-  UP-05:
-    name: UP-05
-    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+  cli-bridge:
+    name: ${{ matrix.check }}
+    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    needs: release-commit
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-05, UP-06, UP-07, UP-08]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - id: cli-bridge-source
+        name: Validate allowlisted CLI Bridge source
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: drewstone/cli-bridge
+          EXPECTED_COMMIT: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
+        run: |
+          repository="$(jq -er '.cliBridge.repository' scripts/upstream-sources.json)"
+          commit="$(jq -er '.cliBridge.commit' scripts/upstream-sources.json)"
+          if [[ "$repository" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "CLI Bridge repository is not allowlisted: $repository" >&2
+            exit 1
+          fi
+          if [[ "$commit" != "$EXPECTED_COMMIT" || ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "CLI Bridge commit is not the allowlisted immutable pin" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.cli-bridge-source.outputs.repository }}
+          ref: ${{ steps.cli-bridge-source.outputs.commit }}
+          path: cli-bridge
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            cli-bridge/pnpm-lock.yaml
+      - name: Enable CLI Bridge filesystem jail
+        shell: bash
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i \
+              's#http://azure.archive.ubuntu.com/ubuntu/#https://archive.ubuntu.com/ubuntu/#g' \
+              /etc/apt/apt-mirrors.txt
+          fi
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 120s apt-get \
+            -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 60s apt-get \
+            install --yes --no-install-recommends bubblewrap
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --unshare-user --ro-bind / / -- true
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-05
+        working-directory: cli-bridge
+      - run: pnpm rebuild better-sqlite3
+        working-directory: cli-bridge
+      - run: pnpm build
+        working-directory: cli-bridge
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
         env:
-          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
-      - uses: actions/upload-artifact@v4
+          CLI_BRIDGE_INTEGRATION_ROOT: ${{ github.workspace }}/cli-bridge
+      - uses: actions/upload-artifact@v7
         with:
-          name: UP-05-evidence
-          path: artifacts/
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
           if-no-files-found: error
           retention-days: 90
 
-  UP-06:
-    name: UP-06
-    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
+  tangle:
+    name: ${{ matrix.check }}
+    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    needs: release-commit
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-09, UP-14]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-06
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
         env:
-          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
-      - uses: actions/upload-artifact@v4
+          TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
+          TANGLE_SANDBOX_URL: ${{ vars.TANGLE_SANDBOX_URL }}
+          TANGLE_MODEL_PROVIDER: tangle-router
+          TANGLE_MODEL: tangle-router/glm-5.3
+      - uses: actions/upload-artifact@v7
         with:
-          name: UP-06-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-07:
-    name: UP-07
-    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-07
-        env:
-          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-07-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  UP-08:
-    name: UP-08
-    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-08
-        env:
-          CLI_BRIDGE_TEST_SERVER: ${{ vars.CLI_BRIDGE_TEST_SERVER }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-08-evidence
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-  # Gated: live Tangle sandbox roundtrip. See operator decision 2 at the top.
-  UP-09:
-    name: UP-09
-    if: ${{ vars.UPSTREAM_LIVE_EVIDENCE == 'true' }}
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs UP-09
-        env:
-          TANGLE_CI_SANDBOX_KEY: ${{ secrets.TANGLE_CI_SANDBOX_KEY }}
-          TANGLE_CI_SANDBOX_URL: ${{ secrets.TANGLE_CI_SANDBOX_URL }}
-          TANGLE_CI_SANDBOX_SERVICE_ID: ${{ secrets.TANGLE_CI_SANDBOX_SERVICE_ID }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UP-09-evidence
-          path: artifacts/
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
           if-no-files-found: error
           retention-days: 90

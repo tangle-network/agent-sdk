@@ -1,4 +1,4 @@
-import { sha256 } from "@noble/hashes/sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { z } from "zod";
 import type {
   AgentCandidateConfigValue,
@@ -35,6 +35,16 @@ const blockedHostnames = new Set([
   "metadata.google.internal",
   "metadata.google",
 ]);
+
+export type RelativePathSafetyIssue =
+  | "empty"
+  | "control-character"
+  | "malformed-unicode"
+  | "absolute"
+  | "backslash"
+  | "parent-traversal";
+
+export type PathSafetyIssue = "control-character" | "malformed-unicode";
 
 export const sha256DigestSchema = z
   .string()
@@ -112,22 +122,30 @@ export function isWellFormedUnicode(value: string): boolean {
   return true;
 }
 
+/** Return shared boundary violations for path strings. */
+export function pathSafetyIssues(value: string): PathSafetyIssue[] {
+  const issues: PathSafetyIssue[] = [];
+  if (controlCharacterPattern.test(value)) issues.push("control-character");
+  if (!isWellFormedUnicode(value)) issues.push("malformed-unicode");
+  return issues;
+}
+
+/** Return shared boundary violations for paths that must stay inside a workspace. */
+export function relativePathSafetyIssues(value: string): RelativePathSafetyIssue[] {
+  const issues: RelativePathSafetyIssue[] = [...pathSafetyIssues(value)];
+  if (value.length === 0) issues.push("empty");
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value)) issues.push("absolute");
+  if (value.includes("\\")) issues.push("backslash");
+  if (value.split("/").includes("..")) issues.push("parent-traversal");
+  return issues;
+}
+
 export function isSafeRelativePath(value: string, allowDot: boolean): boolean {
-  if (
-    value.length === 0 ||
-    controlCharacterPattern.test(value) ||
-    !isWellFormedUnicode(value) ||
-    value.startsWith("/") ||
-    value.startsWith("\\") ||
-    value.includes("\\") ||
-    /^[A-Za-z]:/.test(value)
-  ) {
-    return false;
-  }
+  if (relativePathSafetyIssues(value).length > 0) return false;
   if (value === ".") return allowDot;
   const parts = value.split("/");
   return (
-    parts.every((part) => part.length > 0 && part !== "." && part !== "..") &&
+    parts.every((part) => part.length > 0 && part !== ".") &&
     !parts.some((part) => reservedWorkspaceRoots.has(part))
   );
 }

@@ -2,19 +2,22 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire } from "node:module";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
 import {
   pnpm,
   prepareControlCohort,
   root,
+  tangleLiveFixture,
   vitest,
 } from "./lib/control-cohort.mjs";
+import { prepareCliBridgeCohort } from "./lib/cli-bridge-cohort.mjs";
 
 // Braid upstream-evidence runner. One invocation proves one UP-id and, on
 // success, writes an evidence JSON whose path carries the UP-id. Braid reads
@@ -30,9 +33,14 @@ import {
 // packages/<dir> for each publishable package the checks reference.
 const PACKAGE_DIRECTORIES = {
   "@tangle-network/agent-interface": "agent-interface",
+  "@tangle-network/agent-provider-cli-bridge": "agent-provider-cli-bridge",
   "@tangle-network/agent-provider-testkit": "agent-provider-testkit",
   "@tangle-network/agent-provider-tangle": "agent-provider-tangle",
 };
+
+const ALLOWED_CLI_BRIDGE_REPOSITORY = "drewstone/cli-bridge";
+const ALLOWED_CLI_BRIDGE_COMMIT =
+  "e94e87ba55dcc5a57f07b0f3ca2540fa382350f3";
 
 function packageVersion(name) {
   const directory = PACKAGE_DIRECTORIES[name];
@@ -101,28 +109,12 @@ const BEHAVIORAL = {
     summary:
       "Packed portable-context receipt identity contract plus the packed portable-context conformance suite.",
   },
-  "UP-14": {
-    slug: "agent-interface-and-tangle",
-    packages: [
-      "@tangle-network/agent-interface",
-      "@tangle-network/agent-provider-tangle",
-    ],
-    files: [
-      "workspace-branching.test.ts",
-      "control-conformance.test.ts",
-      "tangle-control-consumer.test.ts",
-    ],
-    pattern:
-      "retry-safe workspace checkpoint|retry-safe environment fork|workspace cleanup acknowledgement|runWorkspaceBranchingConformance|binds result replay and cancellation to the dispatch receipt|fails closed when Sandbox does not prove an exact execution",
-    minTests: 24,
-    summary:
-      "Packed workspace-branching idempotency contract plus its conformance suite plus the packed Tangle receipt-bound replay and fail-closed proofs.",
-  },
 };
 
 // A test-only hook: override the descriptor selector to prove the vacuity
 // guard. A selector that matches nothing must exit nonzero.
-const PATTERN_OVERRIDE = process.env.UPSTREAM_CHECK_PATTERN_OVERRIDE;
+const PATTERN_OVERRIDE =
+  process.env.UPSTREAM_CHECK_PATTERN_OVERRIDE?.trim() || undefined;
 
 function runCohortVitest(cohort, files, pattern) {
   const reportPath = join(cohort.temporaryRoot, "vitest-report.json");
@@ -150,7 +142,52 @@ function runCohortVitest(cohort, files, pattern) {
   } catch {
     report = undefined;
   }
-  return { status: result.status, stderr: result.stderr, report };
+  return {
+    error: result.error,
+    status: result.status,
+    stderr: result.stderr,
+    report,
+  };
+}
+
+function assertPassingReport(upId, result, minTests) {
+  const { error, status, stderr, report } = result;
+  if (error) throw new Error(`${upId} failed to start Vitest`, { cause: error });
+  if (!report) {
+    throw new Error(
+      `${upId} produced no vitest JSON report (exit ${status}).\n${stderr}`,
+    );
+  }
+  const {
+    numTotalTests,
+    numPassedTests,
+    numFailedTests,
+    numPendingTests,
+  } = report;
+  if (
+    typeof numPassedTests !== "number" ||
+    typeof numFailedTests !== "number"
+  ) {
+    throw new Error(
+      `${upId} produced a report without numeric pass/fail counts (passed=${numPassedTests}, failed=${numFailedTests}).\n${stderr}`,
+    );
+  }
+  if (status !== 0 || numFailedTests > 0) {
+    throw new Error(
+      `${upId} failed: ${numFailedTests} failed of ${numTotalTests} (exit ${status}).\n${stderr}`,
+    );
+  }
+  if (numPassedTests < minTests) {
+    throw new Error(
+      `${upId} is vacuous: ${numPassedTests} tests passed, expected at least ${minTests}. The selector matched too few tests.`,
+    );
+  }
+  return {
+    numTotalTests,
+    numPassedTests,
+    numFailedTests,
+    numPendingTests,
+  };
 }
 
 function runBehavioral(upId) {
@@ -159,43 +196,17 @@ function runBehavioral(upId) {
   const command = `vitest run ${descriptor.files.join(" ")} -t ${JSON.stringify(pattern)}`;
   const cohort = prepareControlCohort();
   try {
-    const { status, stderr, report } = runCohortVitest(
+    const result = runCohortVitest(
       cohort,
       descriptor.files,
       pattern,
     );
-    if (!report) {
-      throw new Error(
-        `${upId} produced no vitest JSON report (exit ${status}).\n${stderr}`,
-      );
-    }
     const {
       numTotalTests,
       numPassedTests,
       numFailedTests,
       numPendingTests,
-    } = report;
-    // A reporter that omits a numeric count must fail closed. Without this a
-    // future undefined count would satisfy neither `> 0` nor `< minTests` and
-    // silently bypass the vacuity floor.
-    if (
-      typeof numPassedTests !== "number" ||
-      typeof numFailedTests !== "number"
-    ) {
-      throw new Error(
-        `${upId} produced a report without numeric pass/fail counts (passed=${numPassedTests}, failed=${numFailedTests}).\n${stderr}`,
-      );
-    }
-    if (status !== 0 || numFailedTests > 0) {
-      throw new Error(
-        `${upId} failed: ${numFailedTests} failed of ${numTotalTests} (exit ${status}).\n${stderr}`,
-      );
-    }
-    if (numPassedTests < descriptor.minTests) {
-      throw new Error(
-        `${upId} is vacuous: ${numPassedTests} tests passed, expected at least ${descriptor.minTests}. The selector matched too few tests.`,
-      );
-    }
+    } = assertPassingReport(upId, result, descriptor.minTests);
     const path = writeEvidence(upId, descriptor.slug, {
       upId,
       package: descriptor.packages[0],
@@ -225,6 +236,238 @@ function runBehavioral(upId) {
     );
   } finally {
     cohort.cleanup();
+  }
+}
+
+const CLI_BRIDGE_PROVIDER_CHECKS = {
+  "UP-05": {
+    pattern: "carries a canonical event stream through the real Bridge transport",
+    minTests: 1,
+    summary:
+      "Packed CLI Bridge provider carries canonical reasoning, text, tool, plan, permission, usage, and terminal events through a real Bridge server.",
+  },
+  "UP-07": {
+    pattern: "reattaches and replays a resolved interaction after Bridge restart",
+    minTests: 1,
+    summary:
+      "Packed CLI Bridge provider replays identical interaction responses and rejects changed responses through a real Bridge server.",
+  },
+  "UP-08": {
+    pattern:
+      "isolates concurrent run identities through the real Bridge transport|answers a cancelled interaction with the cancelled acknowledgement",
+    minTests: 2,
+    summary:
+      "Packed CLI Bridge provider isolates concurrent run identities and answers a cancelled interaction through a real Bridge server.",
+  },
+};
+
+function requiredCliBridgeRoot() {
+  const directory = process.env.CLI_BRIDGE_INTEGRATION_ROOT?.trim();
+  if (!directory) {
+    throw new Error(
+      "CLI_BRIDGE_INTEGRATION_ROOT must name an installed cli-bridge source checkout",
+    );
+  }
+  return directory;
+}
+
+function cliBridgePin() {
+  const sources = JSON.parse(
+    readFileSync(join(root, "scripts", "upstream-sources.json"), "utf8"),
+  );
+  const repository = sources.cliBridge?.repository;
+  const commit = sources.cliBridge?.commit;
+  if (
+    repository !== ALLOWED_CLI_BRIDGE_REPOSITORY ||
+    commit !== ALLOWED_CLI_BRIDGE_COMMIT ||
+    !/^[a-f0-9]{40}$/u.test(commit)
+  ) {
+    throw new Error(
+      "scripts/upstream-sources.json does not match the allowlisted CLI Bridge source",
+    );
+  }
+  return { repository, commit };
+}
+
+function cliBridgeCommit(directory, expectedCommit) {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: directory,
+    encoding: "utf8",
+  });
+  const commit = result.stdout?.trim();
+  if (result.status !== 0 || !/^[a-f0-9]{40}$/u.test(commit)) {
+    throw new Error(
+      `could not resolve the cli-bridge commit at ${directory}: ${result.stderr}`,
+    );
+  }
+  if (commit !== expectedCommit) {
+    throw new Error(
+      `cli-bridge checkout ${commit} differs from pinned evidence source ${expectedCommit}`,
+    );
+  }
+  return commit;
+}
+
+function runCliBridgeProvider(upId) {
+  const descriptor = CLI_BRIDGE_PROVIDER_CHECKS[upId];
+  const bridgeRoot = requiredCliBridgeRoot();
+  const bridgePin = cliBridgePin();
+  const bridgeCommit = cliBridgeCommit(bridgeRoot, bridgePin.commit);
+  const pattern = PATTERN_OVERRIDE ?? descriptor.pattern;
+  const cohort = prepareCliBridgeCohort();
+  try {
+    const result = runCohortVitest(
+      cohort,
+      ["cli-bridge.integration.test.ts"],
+      pattern,
+    );
+    const counts = assertPassingReport(upId, result, descriptor.minTests);
+    const path = writeEvidence(upId, "agent-provider-cli-bridge-real", {
+      upId,
+      package: "@tangle-network/agent-provider-cli-bridge",
+      version: packageVersion("@tangle-network/agent-provider-cli-bridge"),
+      tagCommit: tagCommit(),
+      command: `vitest run cli-bridge.integration.test.ts -t ${JSON.stringify(pattern)}`,
+      result: "success",
+      evidence: {
+        summary: descriptor.summary,
+        cliBridgeRepository: bridgePin.repository,
+        cliBridgeCommit: bridgeCommit,
+        packedTarballs: cohort.packageVersions,
+        testNamePattern: pattern,
+        minTests: descriptor.minTests,
+        ...counts,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+    console.log(
+      `${upId}: ${counts.numPassedTests} real Bridge tests passed; evidence ${path}`,
+    );
+  } finally {
+    cohort.cleanup();
+  }
+}
+
+const CLI_BRIDGE_POLICY_CHECKS = [
+  {
+    id: "acp-fail-closed",
+    files: ["tests/acp.test.ts"],
+    pattern: "fails closed on session/request_permission instead of fabricating approval",
+  },
+  {
+    id: "profile-permissions",
+    files: ["tests/profile-mcp.test.ts"],
+    pattern: "honors agent_profile.permissions over the headless allow defaults",
+  },
+  {
+    id: "native-dialog-denial",
+    files: ["tests/retained-sessions.test.ts"],
+    pattern: "auto-denies an unrequested supported dialog through the durable response lane",
+  },
+];
+
+function runCliBridgePolicy() {
+  const upId = "UP-06";
+  const bridgeRoot = requiredCliBridgeRoot();
+  const bridgePin = cliBridgePin();
+  const bridgeCommit = cliBridgeCommit(bridgeRoot, bridgePin.commit);
+  const checks = PATTERN_OVERRIDE
+    ? [
+        {
+          id: "override",
+          files: [
+            "tests/acp.test.ts",
+            "tests/profile-mcp.test.ts",
+            "tests/retained-sessions.test.ts",
+          ],
+          pattern: PATTERN_OVERRIDE,
+        },
+      ]
+    : CLI_BRIDGE_POLICY_CHECKS;
+  const reportRoot = mkdtempSync(join(tmpdir(), "agent-cli-bridge-policy-"));
+  try {
+    const policyResults = checks.map((check) => {
+      const reportPath = join(reportRoot, `${check.id}.json`);
+      const result = spawnSync(
+        pnpm,
+        [
+          "exec",
+          "vitest",
+          "run",
+          ...check.files,
+          "-t",
+          check.pattern,
+          "--reporter=json",
+          `--outputFile=${reportPath}`,
+        ],
+        {
+          cwd: bridgeRoot,
+          encoding: "utf8",
+          env: process.env,
+          maxBuffer: 50 * 1024 * 1024,
+        },
+      );
+      let report;
+      try {
+        report = JSON.parse(readFileSync(reportPath, "utf8"));
+      } catch {
+        report = undefined;
+      }
+      return {
+        ...check,
+        ...assertPassingReport(
+          `${upId}/${check.id}`,
+          { error: result.error, status: result.status, stderr: result.stderr, report },
+          1,
+        ),
+      };
+    });
+    const counts = policyResults.reduce(
+      (total, result) => ({
+        numTotalTests: total.numTotalTests + result.numTotalTests,
+        numPassedTests: total.numPassedTests + result.numPassedTests,
+        numFailedTests: total.numFailedTests + result.numFailedTests,
+        numPendingTests: total.numPendingTests + (result.numPendingTests ?? 0),
+      }),
+      {
+        numTotalTests: 0,
+        numPassedTests: 0,
+        numFailedTests: 0,
+        numPendingTests: 0,
+      },
+    );
+    const path = writeEvidence(upId, "cli-bridge-interaction-policy", {
+      upId,
+      package: "drewstone/cli-bridge",
+      version: null,
+      tagCommit: tagCommit(),
+      command: "vitest run one policy test selector per evidence leg",
+      result: "success",
+      evidence: {
+        summary:
+          "CLI Bridge refuses unanswerable ACP permissions, honors profile-scoped OpenCode policy, and denies unrequested native dialogs.",
+        cliBridgeRepository: bridgePin.repository,
+        cliBridgeCommit: bridgeCommit,
+        policyChecks: policyResults.map(
+          ({ id, files, pattern, numTotalTests, numPassedTests, numFailedTests, numPendingTests }) => ({
+            id,
+            files,
+            testNamePattern: pattern,
+            numTotalTests,
+            numPassedTests,
+            numFailedTests,
+            numPendingTests,
+            minTests: 1,
+          }),
+        ),
+        minTestsPerPolicy: 1,
+        ...counts,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+    console.log(`${upId}: ${counts.numPassedTests} policy tests passed; evidence ${path}`);
+  } finally {
+    rmSync(reportRoot, { recursive: true, force: true });
   }
 }
 
@@ -283,97 +526,91 @@ function runUp11() {
   console.log(`UP-11: ${packages.length} packages checked; evidence ${path}`);
 }
 
-// UP-09 is a live Tangle sandbox roundtrip. Operator decision that unblocks it:
-// provide the CI secrets below and set vars.UPSTREAM_LIVE_EVIDENCE=true. The
-// public @tangle-network/sandbox client is chain-backed, so the "key + url"
-// operator inputs map to a private key, an RPC url, and a Tangle service id.
-async function runUp09() {
-  const privateKey = process.env.TANGLE_CI_SANDBOX_KEY;
-  const rpcUrl = process.env.TANGLE_CI_SANDBOX_URL;
-  const serviceId = process.env.TANGLE_CI_SANDBOX_SERVICE_ID;
-  if (!privateKey || !rpcUrl || !serviceId) {
-    throw new Error(
-      "UP-09 requires TANGLE_CI_SANDBOX_KEY (0x private key), TANGLE_CI_SANDBOX_URL (rpc url), and TANGLE_CI_SANDBOX_SERVICE_ID (service id). These operator secrets unblock the live Tangle roundtrip.",
-    );
+const LIVE_TANGLE = {
+  "UP-09": {
+    mode: "retained",
+    slug: "agent-provider-tangle-live-retained",
+    summary:
+      "Packed Tangle provider proves hosted create replay, retained dispatch, event replay, permission response, cancellation replay, restart lookup, and cleanup.",
+  },
+  "UP-14": {
+    mode: "workspace",
+    slug: "agent-provider-tangle-live-workspace",
+    summary:
+      "Packed Tangle provider proves hosted checkpoint and environment-fork retries, fresh-process lookup, independent workspace state, and confirmed cleanup.",
+  },
+};
+
+function runLiveTangle(upId) {
+  const descriptor = LIVE_TANGLE[upId];
+  for (const name of ["TANGLE_API_KEY", "TANGLE_SANDBOX_URL"]) {
+    if (!process.env[name]?.trim()) {
+      throw new Error(`${upId} requires ${name} for the hosted Sandbox API`);
+    }
   }
-  const sandboxEntry = createRequire(
-    join(root, "packages", "agent-provider-tangle", "package.json"),
-  ).resolve("@tangle-network/sandbox");
-  const { TangleSandboxClient } = await import(
-    pathToFileURL(sandboxEntry).href
-  );
-  const client = new TangleSandboxClient({
-    serviceId: BigInt(serviceId),
-    privateKey,
-    rpcUrl,
-  });
-  const box = await client.create();
+  const cohort = prepareControlCohort();
   try {
-    const result = await box.prompt("Reply with the single word: ready.");
-    if (!result || result.success !== true) {
+    const result = spawnSync(
+      process.execPath,
+      [join(cohort.consumer, tangleLiveFixture), descriptor.mode],
+      {
+        cwd: cohort.consumer,
+        encoding: "utf8",
+        env: process.env,
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 25 * 60 * 1_000,
+      },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
       throw new Error(
-        `UP-09 live prompt did not succeed: status=${result?.status ?? "unknown"}`,
+        `${upId} live Tangle fixture failed (exit ${result.status}).\n${result.stderr}`,
       );
     }
-    const path = writeEvidence("UP-09", "agent-provider-tangle-live", {
-      upId: "UP-09",
+    const lines = result.stdout.trim().split("\n").filter(Boolean);
+    if (lines.length !== 1) {
+      throw new Error(`${upId} live Tangle fixture returned invalid output`);
+    }
+    const report = JSON.parse(lines[0]);
+    const path = writeEvidence(upId, descriptor.slug, {
+      upId,
       package: "@tangle-network/agent-provider-tangle",
       version: packageVersion("@tangle-network/agent-provider-tangle"),
+      packages: [
+        "@tangle-network/agent-interface",
+        "@tangle-network/agent-provider-testkit",
+        "@tangle-network/agent-provider-tangle",
+      ].map((name) => ({ name, version: packageVersion(name) })),
       tagCommit: tagCommit(),
-      command: "live Tangle sandbox create + prompt + delete",
+      command: `node ${tangleLiveFixture} ${descriptor.mode}`,
       result: "success",
       evidence: {
-        summary:
-          "Live Tangle sandbox create, prompt, and delete against the operator endpoint.",
-        sandboxId: box.id ?? null,
-        promptStatus: result.status,
+        summary: descriptor.summary,
+        packedTarballs: cohort.packageVersions,
+        modelProvider: process.env.TANGLE_MODEL_PROVIDER ?? null,
+        model: process.env.TANGLE_MODEL ?? null,
+        report,
       },
       generatedAt: new Date().toISOString(),
     });
-    console.log(`UP-09: live Tangle roundtrip passed; evidence ${path}`);
+    console.log(`${upId}: live Tangle ${descriptor.mode} proof passed; evidence ${path}`);
   } finally {
-    await box.delete();
+    cohort.cleanup();
   }
-}
-
-// UP-05..08 are live cli-bridge conformance checks. Operator decision that
-// unblocks them: stand up a bridge server that implements the bridge wire
-// protocol and expose its address as vars.CLI_BRIDGE_TEST_SERVER. The shipped
-// cli-bridge tests mock the HTTP transport in-process, so a live check needs a
-// packed cli-bridge cohort pointed at the real server. This handler fails loud
-// until that server exists rather than fabricating success.
-const CLI_BRIDGE_BEHAVIORS = {
-  "UP-05": "canonical event stream",
-  "UP-06": "cancellation",
-  "UP-07": "reattach and replay",
-  "UP-08": "run-identity isolation",
-};
-
-function runCliBridgeGated(upId) {
-  const server = process.env.CLI_BRIDGE_TEST_SERVER;
-  if (!server) {
-    throw new Error(
-      `${upId} requires vars.CLI_BRIDGE_TEST_SERVER, a live bridge server address. It is gated behind vars.UPSTREAM_LIVE_EVIDENCE.`,
-    );
-  }
-  const behavior = CLI_BRIDGE_BEHAVIORS[upId];
-  throw new Error(
-    `${upId} (${behavior}) needs a maintainer decision. The shipped cli-bridge tests mock the HTTP transport in-process. A live upstream-evidence check must run the cli-bridge ${behavior} behavior against a bridge conformance server at ${server}. Wire a packed cli-bridge cohort to that server, then implement this handler. This check fails loud until then.`,
-  );
 }
 
 const HANDLERS = {
   "UP-01": () => runBehavioral("UP-01"),
   "UP-02": () => runBehavioral("UP-02"),
-  "UP-05": () => runCliBridgeGated("UP-05"),
-  "UP-06": () => runCliBridgeGated("UP-06"),
-  "UP-07": () => runCliBridgeGated("UP-07"),
-  "UP-08": () => runCliBridgeGated("UP-08"),
-  "UP-09": runUp09,
+  "UP-05": () => runCliBridgeProvider("UP-05"),
+  "UP-06": runCliBridgePolicy,
+  "UP-07": () => runCliBridgeProvider("UP-07"),
+  "UP-08": () => runCliBridgeProvider("UP-08"),
+  "UP-09": () => runLiveTangle("UP-09"),
   "UP-11": runUp11,
   "UP-12": () => runBehavioral("UP-12"),
   "UP-13": () => runBehavioral("UP-13"),
-  "UP-14": () => runBehavioral("UP-14"),
+  "UP-14": () => runLiveTangle("UP-14"),
 };
 
 async function main() {

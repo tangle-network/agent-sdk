@@ -78,6 +78,14 @@ Retained native sessions currently require `kind: 'host'`.
 The provider rejects a sandbox default before it creates the retained session; use one-shot execution for `kind: 'sandbox'`.
 The Bridge currently refuses `netJail` with `kind: 'sandbox'`; use the sandbox's own egress policy.
 
+### Native workspace cwd
+
+CLI Bridge accepts `workspace.cwd` only when its `base` is `"host"`.
+Its `path` is a native host process directory, so it may be absolute or empty.
+The adapter rejects a repository-based cwd before it sends a Bridge request.
+Tangle Sandbox accepts `workspace.cwd` with `base: "repository"` and a portable POSIX path.
+The capability document reports these supported cwd bases under `workspace.cwdBases`.
+
 Passing the same `sessionId` on later turns continues the same CLI conversation while the creating process still holds the environment.
 `executionId` gives a turn stable bridge identity, and `lastEventId` reattaches after a reader failure.
 `dispatch()` starts a bridge-owned durable run and returns after detaching its HTTP reader.
