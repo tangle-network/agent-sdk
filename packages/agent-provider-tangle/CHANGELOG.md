@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.0.1
+
+### Patch Changes
+
+- 9bf2e9a: Recover fork children when Sandbox operation results omit their creation timestamp.
+
 ## 1.0.0
 
 ### Major Changes
