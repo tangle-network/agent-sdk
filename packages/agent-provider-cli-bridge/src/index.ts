@@ -15,6 +15,8 @@ import {
   harnessTypeSchema,
   harnessSystemPromptIntents,
   snapshotAgentProfile,
+  WorkspaceRequestSchema,
+  workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface";
 import {
   createCliBridgeEnvironment,
@@ -120,10 +122,15 @@ export function createCliBridgeProvider(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
       );
     }
+    const workspace = input.workspace === undefined
+      ? undefined
+      : WorkspaceRequestSchema.parse(input.workspace);
+    workspaceCwdPathForBase(workspace?.cwd, "host", "CLI Bridge");
     const profile = snapshotAgentProfile(input.profile);
     const environmentInput: CreateAgentEnvironmentInput = {
       ...input,
       profile,
+      ...(workspace === undefined ? {} : { workspace }),
     };
     const selectedBackend = selectedBackendFromInput(
       environmentInput,
@@ -331,6 +338,7 @@ export function defaultCliBridgeCapabilities(
       git: false,
       upload: false,
       download: false,
+      cwdBases: { repository: false, host: true },
     },
     branching: { checkpoint: false, fork: false },
     placement: true,

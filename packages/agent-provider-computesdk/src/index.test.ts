@@ -42,4 +42,40 @@ describe("createComputeSdkProvider", () => {
     for await (const event of environment.stream({ prompt: "hello" })) events.push(event);
     expect(events.at(-1)).toMatchObject({ data: { finalText: "ran:agent hello" } });
   });
+
+  it("maps repository cwd references and rejects host references", async () => {
+    const createOptions: Array<Record<string, unknown>> = [];
+    let nextId = 0;
+    const compute: ComputeSdkLike = {
+      sandbox: {
+        async create(options) {
+          createOptions.push(options ?? {});
+          nextId += 1;
+          return {
+            sandboxId: `compute-cwd-${nextId}`,
+            runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          };
+        },
+      },
+    };
+    const provider = createComputeSdkProvider({ compute });
+
+    await provider.create({
+      profile: { name: "repository-cwd" },
+      workspace: { cwd: { base: "repository", path: "./packages//agent-interface/." } },
+    });
+    expect(createOptions[0]).toMatchObject({ cwd: "packages/agent-interface" });
+    expect((await provider.capabilities()).workspace.cwdBases).toEqual({
+      repository: true,
+      host: false,
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "host-cwd" },
+        workspace: { cwd: { base: "host", path: "/workspace" } },
+      }),
+    ).rejects.toThrow('ComputeSDK supports workspace cwd base "repository", not "host"');
+    expect(createOptions).toHaveLength(1);
+  });
 });

@@ -157,7 +157,10 @@ export function execOnlyEnvironmentCapabilities(
       turnIdempotency: false,
     },
     sessions: { continue: false, list: false, messages: false },
-    workspace: { ...workspace },
+    workspace: {
+      cwdBases: { repository: false, host: false },
+      ...workspace,
+    },
     branching: { checkpoint: false, fork: false },
     placement: true,
     usage: false,

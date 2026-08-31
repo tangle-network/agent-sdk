@@ -254,6 +254,7 @@ describe("execOnlyEnvironmentCapabilities", () => {
         git: false,
         upload: true,
         download: true,
+        cwdBases: { repository: false, host: false },
       },
       branching: { checkpoint: false, fork: false },
       placement: true,
@@ -270,6 +271,7 @@ describe("execOnlyEnvironmentCapabilities", () => {
       git: true,
       upload: false,
       download: false,
+      cwdBases: { repository: false, host: false },
     });
     expect(capabilities.workspace).toEqual({
       read: true,
@@ -278,6 +280,7 @@ describe("execOnlyEnvironmentCapabilities", () => {
       git: true,
       upload: false,
       download: false,
+      cwdBases: { repository: false, host: false },
     });
   });
 });

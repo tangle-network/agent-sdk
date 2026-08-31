@@ -5,6 +5,7 @@ import {
   boundedStringSchema,
 } from "./contract-limits.js";
 import { workspaceCwdSchema } from "./workspace-cwd.js";
+import type { WorkspaceCwd } from "./workspace-cwd.js";
 
 import type { AgentProfile } from "./agent-profile.js";
 
@@ -35,11 +36,10 @@ export interface WorkspaceRequest {
   /** Git ref for {@link repoUrl}. */
   gitRef?: string;
   /**
-   * Repository-relative POSIX working directory inside the environment.
-   * `.` selects the repository root; redundant `.` segments and separators
-   * are canonicalized before the provider receives the request.
+   * Explicitly based working directory inside the environment or on the host.
+   * Repository paths use `base: "repository"`; host paths use `base: "host"`.
    */
-  cwd?: string;
+  cwd?: WorkspaceCwd;
   /** Opaque provider-native workspace fields. */
   providerOptions?: Record<string, unknown>;
 }

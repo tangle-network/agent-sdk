@@ -27,10 +27,16 @@ The portable contract owns only inline profile and harness selection, shared or 
 
 `shared` means ordinary same-computer file visibility. It is not automatic merge behavior or tenant isolation. `isolated` asks the provider for a private writable view and explicit inspect or commit behavior. Providers must reject unsatisfied machine requirements rather than silently replacing or migrating a live environment.
 
-`WorkspaceRequest.cwd` is a repository-relative POSIX path.
-The shared schema rejects absolute paths, parent traversal, backslashes, and control characters.
-It canonicalizes redundant `.` segments and separators.
+`WorkspaceRequest.cwd` is an explicitly based path reference.
+Use `base: "repository"` for a portable repository-relative POSIX path.
+Use `base: "host"` for a provider-owned native host path.
+The shared schema rejects unsafe repository paths and control characters in both path forms.
+It canonicalizes redundant `.` segments and separators for repository paths.
 Use `.` for the repository root.
+Providers advertise accepted path bases under `AgentEnvironmentCapabilities.workspace.cwdBases`.
+To migrate a string cwd, wrap it in the base that owns its path.
+Use the repository base for Tangle and other portable workspace providers.
+Use the host base for CLI Bridge native process paths.
 
 The public `AgentInstanceRecord` contains a credential-free profile identity, not the full profile or provider request. Existing session APIs can implement this contract without a new service: one instance maps to one managed session, compatible sessions may reuse a backend process, and stop maps to idempotent session deletion or process release.
 

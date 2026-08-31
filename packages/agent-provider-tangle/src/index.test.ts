@@ -70,6 +70,10 @@ describe("createTangleProvider", () => {
     expect(defaultTangleSandboxCapabilities()).not.toHaveProperty(
       "exactProcess",
     );
+    expect(defaultTangleSandboxCapabilities().workspace.cwdBases).toEqual({
+      repository: true,
+      host: false,
+    });
   });
 
   it("declares the prompt intents of the sandbox's harness, and neither without one", async () => {
@@ -168,7 +172,10 @@ describe("createTangleProvider", () => {
         environment: "universal",
         repoUrl: "https://github.com/tangle-network/agent-sdk.git",
         gitRef: "main",
-        cwd: "packages/agent-provider-tangle",
+        cwd: {
+          base: "repository" as const,
+          path: "packages/agent-provider-tangle",
+        },
       },
       idempotencyKey: "workspace-retry",
     };
@@ -1508,6 +1515,28 @@ describe("createTangleProvider", () => {
         workspace: { gitRef: "main" },
       }),
     ).rejects.toThrow("workspace gitRef requires repoUrl");
+    expect(mapCreateInput).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a host cwd before a custom mapper can bypass the Tangle base", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const mapCreateInput = vi.fn(() => ({
+      backend: { type: "opencode" as const, profile: { name: "worker" } },
+    }));
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput,
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { cwd: { base: "host", path: "/workspace" } },
+      }),
+    ).rejects.toThrow('Tangle supports workspace cwd base "repository", not "host"');
     expect(mapCreateInput).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });

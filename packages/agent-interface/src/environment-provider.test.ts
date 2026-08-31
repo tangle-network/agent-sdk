@@ -47,6 +47,7 @@ const capabilities = {
     git: true,
     upload: true,
     download: true,
+    cwdBases: { repository: true, host: true },
   },
   branching: {
     checkpoint: true,
@@ -258,6 +259,15 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
       AgentEnvironmentCapabilitiesSchema.parse({
         ...capabilities,
         providerNativeBypass: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        workspace: {
+          ...capabilities.workspace,
+          cwdBases: { repository: "yes", host: false },
+        },
       }),
     ).toThrow();
   });

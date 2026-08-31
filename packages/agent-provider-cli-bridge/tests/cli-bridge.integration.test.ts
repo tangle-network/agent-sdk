@@ -158,7 +158,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       const environment = await provider.create({
         idempotencyKey: "sdk-cli-bridge-canonical-stream-environment",
         profile: { name: "canonical-stream", harness: "pi" },
-        workspace: { cwd: bridge.projectDir },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const reference = await environment.dispatch!({
         prompt: "prove the canonical stream",
@@ -253,11 +253,12 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
         git: false,
         upload: false,
         download: false,
+        cwdBases: { repository: false, host: true },
       });
       const environment = await provider.create({
         idempotencyKey: environmentId,
         profile: { name: "integration", harness: "pi" },
-        workspace: { cwd: bridge.projectDir },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const reference = await environment.dispatch!({
         prompt: "prove the native interaction path",
@@ -484,7 +485,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       const environment = await provider.create({
         idempotencyKey: "sdk-cli-bridge-cancelled-environment",
         profile: { name: "integration", harness: "pi" },
-        workspace: { cwd: bridge.projectDir },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const reference = await environment.dispatch!({
         prompt: "pause on a permission this run never answers",
@@ -547,7 +548,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       const environment = await provider.create({
         idempotencyKey: "sdk-cli-bridge-run-identity-environment",
         profile: { name: "run-identity", harness: "pi" },
-        workspace: { cwd: bridge.projectDir },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const [referenceA, referenceB] = await Promise.all([
         environment.dispatch!({
@@ -642,7 +643,7 @@ describeActualBridge("actual cli-bridge native interaction contract", () => {
       const environment = await provider.create({
         idempotencyKey: "sdk-cli-bridge-native-continuation-environment",
         profile: { name: "native-continuation", harness: "pi" },
-        workspace: { cwd: bridge.projectDir },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const reference = await environment.dispatch!({
         prompt: firstPrompt,

@@ -107,7 +107,7 @@
     "@tangle-network/agent-interface": "^1.9.1"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.34.4 <1.0.0"
+    "@tangle-network/sandbox": ">=0.34.6 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -117,8 +117,8 @@
   "devDependencies": {
     "@tangle-network/agent-eval": "0.170.0",
     "@tangle-network/agent-provider-testkit": "workspace:*",
-    "@tangle-network/agent-runtime": "0.183.0",
-    "@tangle-network/sandbox": "0.34.4",
+    "@tangle-network/agent-runtime": "0.184.0",
+    "@tangle-network/sandbox": "0.34.6",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"

@@ -405,6 +405,7 @@ describe("cli-bridge native retained sessions", () => {
       git: false,
       upload: false,
       download: false,
+      cwdBases: { repository: false, host: true },
     });
     expect(capabilities.interactions?.kinds).toEqual(["permission"]);
     expect(capabilities.observation?.modelUsage).toBe(true);
@@ -749,7 +750,7 @@ describe("cli-bridge native retained sessions", () => {
     const environment = await provider.create({
       idempotencyKey: environmentId,
       profile: { name: "native-pi", harness: "pi" },
-      workspace: { cwd: "" },
+      workspace: { cwd: { base: "host", path: "" } },
       env: { BRIDGE_TEST_MODE: "retained" },
       metadata: { source: "focused-test" },
       providerOptions: { route: "native" },
@@ -798,7 +799,15 @@ describe("cli-bridge native retained sessions", () => {
       input: Partial<CreateAgentEnvironmentInput>;
     }> = [
       { label: "workspace.repoUrl", input: { workspace: { repoUrl: "https://example.com/repo.git" } } },
-      { label: "workspace.gitRef", input: { workspace: { gitRef: "main" } } },
+      {
+        label: "workspace.gitRef",
+        input: {
+          workspace: {
+            repoUrl: "https://example.com/repo.git",
+            gitRef: "main",
+          },
+        },
+      },
       { label: "workspace.image", input: { workspace: { image: "node:22" } } },
       { label: "workspace.providerOptions", input: { workspace: { providerOptions: { size: "large" } } } },
       { label: "resources", input: { resources: { cpu: 2 } } },

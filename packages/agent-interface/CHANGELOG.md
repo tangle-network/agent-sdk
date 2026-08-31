@@ -5,7 +5,7 @@
 ### Patch Changes
 
 - Export a strict, bounded `WorkspaceRequestSchema` for runtime validation of portable workspace inputs.
-- Validate and canonicalize repository-relative POSIX `WorkspaceRequest.cwd` values at the shared boundary.
+- Validate and canonicalize repository-relative POSIX `WorkspaceCwd` path references at the shared boundary.
 - Refresh release evidence against the current Bridge and Sandbox control contracts.
 
 ## 1.9.0

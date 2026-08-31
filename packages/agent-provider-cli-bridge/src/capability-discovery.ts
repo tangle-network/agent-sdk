@@ -187,6 +187,11 @@ export function narrowCliBridgeCapabilities(
       git: false,
       upload: false,
       download: false,
+      // Host cwd support belongs to this adapter's process transport. The
+      // remote backend document does not own or describe that path.
+      ...(adapter.workspace.cwdBases === undefined
+        ? {}
+        : { cwdBases: adapter.workspace.cwdBases }),
     },
     branching: { checkpoint: false, fork: false },
     placement: adapter.placement && reported.placement,

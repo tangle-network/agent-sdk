@@ -1,6 +1,7 @@
 import type { BackendType, CreateSandboxOptions } from "@tangle-network/sandbox";
 import {
   WorkspaceRequestSchema,
+  workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentProfileRef,
@@ -37,6 +38,11 @@ export function sandboxOptionsFromCreateInput(
   if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
     throw new Error("Tangle workspace providerOptions are not supported");
   }
+  const workspaceCwd = workspaceCwdPathForBase(
+    workspace.cwd,
+    "repository",
+    "Tangle",
+  );
   if (input.resources?.providerOptions && Object.keys(input.resources.providerOptions).length > 0) {
     throw new Error("Tangle resource providerOptions are not supported");
   }
@@ -53,7 +59,7 @@ export function sandboxOptionsFromCreateInput(
   const mapped = {
     ...base,
     ...(environment !== undefined ? { environment } : {}),
-    ...(workspace.cwd === undefined ? {} : { cwd: workspace.cwd }),
+    ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(workspace.repoUrl
       ? {
           git: {
@@ -171,7 +177,9 @@ export function assertCreateInputShape(
     if (resourceKeys.size > 0) throw new Error("Tangle resources contain unsupported fields");
   }
   if (input.workspace === undefined) return undefined;
-  return parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
+  const workspace = parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
+  workspaceCwdPathForBase(workspace.cwd, "repository", "Tangle");
+  return workspace;
 }
 
 export function assertMappedCreateOptions(options: CreateSandboxOptions): void {

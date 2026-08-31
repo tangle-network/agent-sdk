@@ -87,7 +87,9 @@ function sourceInput(proofId, purpose, options = {}) {
       environment: "universal",
       repoUrl: EVIDENCE_REPOSITORY_URL,
       gitRef: EVIDENCE_REPOSITORY_REF,
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.cwd === undefined
+        ? {}
+        : { cwd: { base: "repository", path: options.cwd } }),
     },
     name: `${purpose}-${proofId}`,
     idempotencyKey: `${purpose}-${proofId}`,

@@ -1136,7 +1136,7 @@ describe("createCliBridgeProvider", () => {
     const environment = await provider.create({
       profile: { name: "worker", prompt: { systemPrompt: "system" } },
       backend: "codex",
-      workspace: { cwd: "/workspace" },
+      workspace: { cwd: { base: "host", path: "/workspace" } },
     });
 
     const events = [];
@@ -1198,6 +1198,26 @@ describe("createCliBridgeProvider", () => {
       },
     });
     expect(events.filter((event) => event.data.part && (event.data.part as { type?: string }).type === "tool")).toHaveLength(1);
+  });
+
+  it("rejects a repository cwd before the Bridge receives a request", async () => {
+    let called = false;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex",
+      fetch: async () => {
+        called = true;
+        return new Response();
+      },
+    });
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        workspace: { cwd: { base: "repository" as const, path: "packages/agent-interface" } },
+      }),
+    ).rejects.toThrow('CLI Bridge supports workspace cwd base "host", not "repository"');
+    expect(called).toBe(false);
   });
 
   it("keeps text after tool activity as a separate transcript paragraph", async () => {
@@ -2803,6 +2823,10 @@ describe("createCliBridgeProvider", () => {
     expect(defaultCliBridgeCapabilities().profile.systemPrompt).toEqual({
       replace: false,
       append: false,
+    });
+    expect(defaultCliBridgeCapabilities().workspace.cwdBases).toEqual({
+      repository: false,
+      host: true,
     });
   });
 

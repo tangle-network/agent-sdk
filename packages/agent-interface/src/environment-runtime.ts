@@ -441,6 +441,11 @@ export interface AgentEnvironmentCapabilities {
     git: boolean;
     upload: boolean;
     download: boolean;
+    /** Path bases accepted by the provider's workspace create contract. */
+    cwdBases?: {
+      repository: boolean;
+      host: boolean;
+    };
   };
   branching: {
     checkpoint: boolean;
@@ -538,6 +543,12 @@ export const AgentEnvironmentCapabilitiesSchema = z
       git: z.boolean(),
       upload: z.boolean(),
       download: z.boolean(),
+      cwdBases: z
+        .strictObject({
+          repository: z.boolean(),
+          host: z.boolean(),
+        })
+        .optional(),
     }),
     branching: z.strictObject({
       checkpoint: z.boolean(),

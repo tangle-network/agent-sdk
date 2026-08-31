@@ -96,7 +96,15 @@ export function defaultTangleSandboxCapabilities(
       eventIdentity: true,
       cancellationIdempotency: true,
     },
-    workspace: { read: true, write: true, exec: true, git: false, upload: true, download: true },
+    workspace: {
+      read: true,
+      write: true,
+      exec: true,
+      git: false,
+      upload: true,
+      download: true,
+      cwdBases: { repository: true, host: false },
+    },
     // The complete Sandbox SDK surface backs this contract. Narrowing below
     // removes every flag when any recovery or cleanup method is absent.
     branching: {

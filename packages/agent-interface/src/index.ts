@@ -66,6 +66,7 @@ export {
   canonicalWorkspaceCwd,
   MAX_WORKSPACE_CWD_LENGTH,
   workspaceCwdSchema,
+  workspaceCwdPathForBase,
   WorkspaceRequestSchema,
   TerminalAttachRequestSchema,
   TerminalAttachResultSchema,

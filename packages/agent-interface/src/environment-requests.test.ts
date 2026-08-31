@@ -13,14 +13,20 @@ describe("WorkspaceRequestSchema", () => {
       environment: "universal",
       repoUrl: "https://example.com/repo.git",
       gitRef: "feature/workspace",
-      cwd: "workspace",
+      cwd: { base: "repository", path: "workspace" },
       providerOptions: { region: "us-east", retries: 2 },
     };
 
     expect(WorkspaceRequestSchema.parse(request)).toEqual(request);
     expect(
-      WorkspaceRequestSchema.parse({ image: "node:22", cwd: "." }),
-    ).toEqual({ image: "node:22", cwd: "." });
+      WorkspaceRequestSchema.parse({
+        image: "node:22",
+        cwd: { base: "repository", path: "." },
+      }),
+    ).toEqual({
+      image: "node:22",
+      cwd: { base: "repository", path: "." },
+    });
     expect(WorkspaceRequestSchema.parse({})).toEqual({});
   });
 
@@ -39,12 +45,24 @@ describe("WorkspaceRequestSchema", () => {
   });
 
   it("canonicalizes portable workspace cwd values", () => {
-    expect(workspaceCwdSchema.parse(".")).toBe(".");
-    expect(workspaceCwdSchema.parse("./packages/braid")).toBe("packages/braid");
-    expect(workspaceCwdSchema.parse("packages//braid/.")).toBe("packages/braid");
-    expect(canonicalWorkspaceCwd("./packages//braid/.")).toBe("packages/braid");
-    expect(WorkspaceRequestSchema.parse({ cwd: "./packages//braid/." })).toEqual({
-      cwd: "packages/braid",
+    expect(workspaceCwdSchema.parse({ base: "repository", path: "." })).toEqual({
+      base: "repository",
+      path: ".",
+    });
+    expect(
+      workspaceCwdSchema.parse({ base: "repository", path: "./packages/braid" }),
+    ).toEqual({ base: "repository", path: "packages/braid" });
+    expect(
+      workspaceCwdSchema.parse({ base: "repository", path: "packages//braid/." }),
+    ).toEqual({ base: "repository", path: "packages/braid" });
+    expect(canonicalWorkspaceCwd({ base: "repository", path: "./packages//braid/." })).toEqual({
+      base: "repository",
+      path: "packages/braid",
+    });
+    expect(WorkspaceRequestSchema.parse({
+      cwd: { base: "repository", path: "./packages//braid/." },
+    })).toEqual({
+      cwd: { base: "repository", path: "packages/braid" },
     });
   });
 
@@ -57,19 +75,50 @@ describe("WorkspaceRequestSchema", () => {
     ["src\u0000bad", "Workspace cwd cannot contain control characters"],
     ["\ud800", "Workspace cwd must contain well-formed Unicode"],
   ])("rejects non-portable cwd %j", (cwd, message) => {
-    expect(() => workspaceCwdSchema.parse(cwd)).toThrow(message);
-    expect(() => WorkspaceRequestSchema.parse({ cwd })).toThrow(message);
+    const value = { base: "repository", path: cwd } as const;
+    expect(() => workspaceCwdSchema.parse(value)).toThrow(message);
+    expect(() => WorkspaceRequestSchema.parse({ cwd: value })).toThrow(message);
   });
 
   it("rejects an empty cwd", () => {
-    expect(() => workspaceCwdSchema.parse("")).toThrow();
-    expect(() => WorkspaceRequestSchema.parse({ cwd: "" })).toThrow();
+    const value = { base: "repository", path: "" } as const;
+    expect(() => workspaceCwdSchema.parse(value)).toThrow();
+    expect(() => WorkspaceRequestSchema.parse({ cwd: value })).toThrow();
   });
 
   it("enforces the portable cwd length bound", () => {
     const cwd = "a".repeat(MAX_WORKSPACE_CWD_LENGTH + 1);
-    expect(() => workspaceCwdSchema.parse(cwd)).toThrow();
-    expect(() => WorkspaceRequestSchema.parse({ cwd })).toThrow();
+    const value = { base: "repository", path: cwd } as const;
+    expect(() => workspaceCwdSchema.parse(value)).toThrow();
+    expect(() => WorkspaceRequestSchema.parse({ cwd: value })).toThrow();
+  });
+
+  it("preserves explicitly based native host paths", () => {
+    expect(workspaceCwdSchema.parse({ base: "host", path: "/workspace" })).toEqual({
+      base: "host",
+      path: "/workspace",
+    });
+    expect(workspaceCwdSchema.parse({ base: "host", path: "" })).toEqual({
+      base: "host",
+      path: "",
+    });
+    expect(workspaceCwdSchema.parse({ base: "host", path: "C:\\workspace" })).toEqual({
+      base: "host",
+      path: "C:\\workspace",
+    });
+    expect(() => workspaceCwdSchema.parse({ base: "host", path: "bad\u0000path" })).toThrow(
+      "Workspace cwd cannot contain control characters",
+    );
+  });
+
+  it("rejects an unbased cwd string instead of inferring its provider", () => {
+    expect(() => workspaceCwdSchema.parse("/workspace")).toThrow();
+    expect(() => WorkspaceRequestSchema.parse({ cwd: "/workspace" })).toThrow();
+  });
+
+  it("rejects an unknown cwd base or extra path field", () => {
+    expect(() => workspaceCwdSchema.parse({ base: "connection", path: "/workspace" })).toThrow();
+    expect(() => workspaceCwdSchema.parse({ base: "host", path: "/workspace", extra: true })).toThrow();
   });
 
   it("rejects provider-invalid combinations", () => {

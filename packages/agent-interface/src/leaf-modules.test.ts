@@ -113,7 +113,11 @@ import {
   TerminalSessionRefSchema,
   terminalSessionUsable,
 } from "./environment-terminal.js";
-import { canonicalWorkspaceCwd, workspaceCwdSchema } from "./workspace-cwd.js";
+import {
+  canonicalWorkspaceCwd,
+  workspaceCwdPathForBase,
+  workspaceCwdSchema,
+} from "./workspace-cwd.js";
 
 const digest = (letter: string) => `sha256:${letter.repeat(64)}` as `sha256:${string}`;
 
@@ -225,8 +229,21 @@ describe("interface split leaf modules", () => {
   });
 
   it("exports the portable workspace cwd leaf contract", () => {
-    expect(canonicalWorkspaceCwd("./packages//braid/.")).toBe("packages/braid");
+    expect(canonicalWorkspaceCwd({ base: "repository", path: "./packages//braid/." })).toEqual({
+      base: "repository",
+      path: "packages/braid",
+    });
     expect(workspaceCwdSchema.safeParse("/workspace/src").success).toBe(false);
+    expect(workspaceCwdPathForBase(
+      { base: "repository", path: "packages/agent-interface" },
+      "repository",
+      "test",
+    )).toBe("packages/agent-interface");
+    expect(() => workspaceCwdPathForBase(
+      { base: "host", path: "/workspace" },
+      "repository",
+      "test",
+    )).toThrow('test supports workspace cwd base "repository", not "host"');
   });
 
   it("directly validates profile, environment, and process leaf contracts", () => {

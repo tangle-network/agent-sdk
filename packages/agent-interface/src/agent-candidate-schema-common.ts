@@ -44,6 +44,8 @@ export type RelativePathSafetyIssue =
   | "backslash"
   | "parent-traversal";
 
+export type PathSafetyIssue = "control-character" | "malformed-unicode";
+
 export const sha256DigestSchema = z
   .string()
   .regex(sha256Pattern) as z.ZodType<Sha256Digest>;
@@ -120,12 +122,18 @@ export function isWellFormedUnicode(value: string): boolean {
   return true;
 }
 
-/** Return shared boundary violations for paths that must stay inside a workspace. */
-export function relativePathSafetyIssues(value: string): RelativePathSafetyIssue[] {
-  const issues: RelativePathSafetyIssue[] = [];
-  if (value.length === 0) issues.push("empty");
+/** Return shared boundary violations for path strings. */
+export function pathSafetyIssues(value: string): PathSafetyIssue[] {
+  const issues: PathSafetyIssue[] = [];
   if (controlCharacterPattern.test(value)) issues.push("control-character");
   if (!isWellFormedUnicode(value)) issues.push("malformed-unicode");
+  return issues;
+}
+
+/** Return shared boundary violations for paths that must stay inside a workspace. */
+export function relativePathSafetyIssues(value: string): RelativePathSafetyIssue[] {
+  const issues: RelativePathSafetyIssue[] = [...pathSafetyIssues(value)];
+  if (value.length === 0) issues.push("empty");
   if (value.startsWith("/") || /^[A-Za-z]:/.test(value)) issues.push("absolute");
   if (value.includes("\\")) issues.push("backslash");
   if (value.split("/").includes("..")) issues.push("parent-traversal");

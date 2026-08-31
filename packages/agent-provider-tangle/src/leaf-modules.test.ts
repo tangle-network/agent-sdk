@@ -273,7 +273,7 @@ describe("Tangle split leaf modules", () => {
             environment: "universal",
             repoUrl: "https://github.com/tangle-network/agent-sdk.git",
             gitRef: "main",
-            cwd,
+            cwd: { base: "repository", path: cwd },
           },
         },
         "opencode",
@@ -304,6 +304,18 @@ describe("Tangle split leaf modules", () => {
     );
 
     expect(mapped).not.toHaveProperty("cwd");
+  });
+
+  it("rejects a host cwd before a custom mapper can bypass the Tangle base", () => {
+    expect(() =>
+      sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker" },
+          workspace: { cwd: { base: "host", path: "/workspace" } },
+        },
+        "opencode",
+      ),
+    ).toThrow('Tangle supports workspace cwd base "repository", not "host"');
   });
 
   it("rejects a workspace gitRef without repoUrl instead of silently dropping it", () => {
