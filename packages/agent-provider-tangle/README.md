@@ -1,8 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.34.4 <1.0.0`, and this package is developed and tested against 0.34.4.
-The floor is 0.34.4 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshot, fork, lookup, and cleanup operations.
+The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.34.6.
+The floor is 0.34.6 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshots, durable restores, inventory recovery, and cleanup.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
@@ -112,7 +112,7 @@ and recovering a checkpoint, forking one managed child, and cleaning both
 resources in dependency order.
 The adapter advertises `branching.checkpoint`, `branching.fork`, `retrySafe`,
 `lookup`, and `cleanup` only when the linked SDK exposes the complete managed
-surface: keyed `snapshot` and `fork`, operation lookup, inventory recovery, and
+surface: keyed `snapshot`, durable snapshot restore, inventory recovery, and
 explicit deletion outcomes.
 An incomplete SDK surface clears every branching flag and omits
 `environment.workspaceBranching`.
@@ -122,9 +122,10 @@ calling Sandbox.
 Retries with the same key replay the original resource, while changed material
 returns a conflict containing the original interface digest.
 The provider stores a bounded request marker in snapshot tags and child
-metadata so a fresh process can recover the exact interface digest, but the
-marker only names a candidate: the Sandbox operation ledger still has to report
-a settled success before the adapter returns the resource.
+metadata so a fresh process can recover the exact interface digest.
+Snapshot-created children are validated through the marker and complete
+account inventory, while legacy fork markers also require the Sandbox fork
+ledger to report a settled success.
 Checkpoint deletion reports `in_use` with every verified child that still
 references it; delete the child first, then retry checkpoint deletion.
 The adapter never treats an SDK response without an explicit idempotency or

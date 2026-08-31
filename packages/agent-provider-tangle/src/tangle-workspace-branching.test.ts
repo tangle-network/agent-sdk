@@ -176,7 +176,57 @@ function createFakeSandbox(): {
   };
 
   const client: SandboxClientLike = {
-    create: async () => box,
+    async create(options) {
+      if (
+        options?.fromSnapshot === undefined ||
+        options.fromSandboxId !== sourceEnvironmentId
+      ) {
+        return box;
+      }
+      const key = options.idempotencyKey ?? "without-key";
+      const digest = canonicalCandidateDigest(options);
+      const previousDigest = forkKeys.get(key);
+      if (previousDigest !== undefined) {
+        const child = [...children.values()].find(
+          (item) => item.metadata?.serverForkKey === key
+        );
+        if (!child) throw new Error("snapshot restore ledger lost its child");
+        return {
+          ...child,
+          createReceipt: () => ({
+            outcome: "idempotent_replay" as const,
+            idempotencyKeyApplied: true,
+          }),
+        };
+      }
+      forkKeys.set(key, digest);
+      const childId = `fork-${++childNumber}`;
+      const child: SandboxInstanceLike = {
+        id: childId,
+        createdAt: new Date("2026-08-28T00:00:01.000Z"),
+        metadata: {
+          ...(options.metadata ?? {}),
+          serverForkKey: key,
+        },
+        createReceipt: () => ({
+          outcome: "created" as const,
+          idempotencyKeyApplied: true,
+        }),
+        async *streamPrompt() {},
+        async delete() {
+          children.delete(childId);
+          return { sandboxId: childId, outcome: "destroyed" as const };
+        },
+      };
+      children.set(childId, child);
+      return {
+        ...child,
+        createReceipt: () => ({
+          outcome: "created" as const,
+          idempotencyKeyApplied: true,
+        }),
+      };
+    },
     async list() {
       return [...children.values()];
     },
@@ -240,6 +290,42 @@ describe("Tangle workspace branching", () => {
       forkRequest: (checkpoint) => forkRequest(checkpoint),
     });
     expect(result.checked).toContain("confirmed-cleanup");
+  });
+
+  it("restores each fork from its exact checkpoint snapshot", async () => {
+    const { box, client } = createFakeSandbox();
+    let observedCreate: Parameters<SandboxClientLike["create"]>[0];
+    let forkCalls = 0;
+    const originalFork = box.fork!;
+    box.fork = async (count, options) => {
+      forkCalls += 1;
+      return originalFork(count, options);
+    };
+    const create = client.create;
+    client.create = async (options, requestOptions) => {
+      observedCreate = options;
+      return create(options, requestOptions);
+    };
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const request = forkRequest(checkpoint.checkpoint);
+    await expect(operations!.fork(request)).resolves.toMatchObject({
+      status: "created",
+    });
+    expect(observedCreate).toMatchObject({
+      fromSnapshot: checkpoint.checkpoint.checkpointId,
+      fromSandboxId: sourceEnvironmentId,
+      idempotencyKey: request.idempotencyKey,
+      name: request.name,
+    });
+    expect(observedCreate?.metadata).toMatchObject({ lane: "analysis" });
+    expect(forkCalls).toBe(0);
   });
 
   it("does not create a checkpoint when inventory returns a malformed value", async () => {
@@ -397,10 +483,10 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     expect(checkpoint).toMatchObject({ status: "replayed" });
 
-    const fork = box.fork!;
+    const create = client.create;
     let forkAttempts = 0;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
+    client.create = async (options, requestOptions) => {
+      const result = await create(options, requestOptions);
       forkAttempts += 1;
       if (forkAttempts === 1) throw new Error("response lost after commit");
       return result;
@@ -424,16 +510,11 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
-    const fork = box.fork!;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      return {
-        ...result,
-        children: result.children.map((child) => {
-          const { createdAt: _createdAt, ...withoutCreatedAt } = child;
-          return withoutCreatedAt;
-        }),
-      };
+    const create = client.create;
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
+      const { createdAt: _createdAt, ...withoutCreatedAt } = child;
+      return withoutCreatedAt;
     };
     const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
     expect(result).toMatchObject({ status: "created" });
@@ -449,16 +530,11 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
-    const fork = box.fork!;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      return {
-        ...result,
-        children: result.children.map((child) => {
-          const { metadata: _metadata, ...withoutMetadata } = child;
-          return withoutMetadata;
-        }),
-      };
+    const create = client.create;
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
+      const { metadata: _metadata, ...withoutMetadata } = child;
+      return withoutMetadata;
     };
     const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
     expect(result).toMatchObject({ status: "created" });
@@ -474,15 +550,15 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
-    const fork = box.fork!;
+    const create = client.create;
     let childId: string | undefined;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      const child = result.children[0];
-      if (!child) throw new Error("fork setup returned no child");
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
       childId = child.id;
       child.metadata = { serverForkKey: options?.idempotencyKey };
-      return result;
+      const stored = await client.get!(child.id);
+      if (stored) stored.metadata = child.metadata;
+      return child;
     };
 
     const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
@@ -506,7 +582,7 @@ describe("Tangle workspace branching", () => {
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
     const request = forkRequest(checkpoint.checkpoint);
-    const fork = box.fork!;
+    const create = client.create;
     let childId: string | undefined;
     const otherMaterial = {
       checkpoint: request.checkpoint,
@@ -519,10 +595,8 @@ describe("Tangle workspace branching", () => {
       idempotencyKey: "other-fork-operation",
       requestDigest: workspaceForkRequestDigest(otherMaterial),
     };
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      const child = result.children[0];
-      if (!child) throw new Error("fork setup returned no child");
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
       childId = child.id;
       child.metadata = {
         __tangle_agent_workspace_v1: {
@@ -533,7 +607,9 @@ describe("Tangle workspace branching", () => {
           request: otherRequest,
         },
       };
-      return result;
+      const stored = await client.get!(child.id);
+      if (stored) stored.metadata = child.metadata;
+      return child;
     };
 
     await expect(operations!.fork(request)).resolves.toMatchObject({
@@ -554,19 +630,17 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
-    const fork = box.fork!;
+    const create = client.create;
     let childId: string | undefined;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      const child = result.children[0];
-      if (!child) throw new Error("fork setup returned no child");
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
       childId = child.id;
       const {
         createdAt: _createdAt,
         metadata: _metadata,
         ...withoutIdentity
       } = child;
-      return { ...result, children: [withoutIdentity] };
+      return withoutIdentity;
     };
     client.get = async (id) => (id === sourceEnvironmentId ? box : null);
 
@@ -660,19 +734,19 @@ describe("Tangle workspace branching", () => {
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
-    const fork = box.fork!;
+    const create = client.create;
     let childId: string | undefined;
-    box.fork = async (count, options) => {
-      const result = await fork(count, options);
-      const child = result.children[0];
-      if (!child) throw new Error("fork setup returned no child");
+    client.create = async (options, requestOptions) => {
+      const child = await create(options, requestOptions);
       childId = child.id;
       child.metadata = { serverForkKey: options?.idempotencyKey };
+      const stored = await client.get!(child.id);
+      if (stored) stored.metadata = child.metadata;
       child.delete = async () => ({
         sandboxId: child.id,
         outcome: "unknown" as const,
       });
-      return result;
+      return child;
     };
 
     const result = await operations!.fork(forkRequest(checkpoint.checkpoint));
@@ -952,6 +1026,19 @@ describe("Tangle workspace branching", () => {
     const forkInput = forkRequest(checkpoint.checkpoint);
     const fork = await first!.fork(forkInput);
     if (fork.status !== "created") throw new Error("fork setup failed");
+    const forkChild = await client.get!(fork.environment.environmentId);
+    if (!forkChild) throw new Error("fork child setup failed");
+    const forkMarker = forkChild.metadata?.__tangle_agent_workspace_v1;
+    if (!forkMarker || typeof forkMarker !== "object")
+      throw new Error("fork marker setup failed");
+    const {
+      materialization: _materialization,
+      ...legacyForkMarker
+    } = forkMarker as Record<string, unknown>;
+    forkChild.metadata = {
+      ...forkChild.metadata,
+      __tangle_agent_workspace_v1: legacyForkMarker,
+    };
 
     const listSnapshots = box.listSnapshots!;
     box.listSnapshots = async () =>
@@ -1095,6 +1182,19 @@ describe("Tangle workspace branching", () => {
     const forkInput = forkRequest(checkpoint.checkpoint);
     const fork = await first!.fork(forkInput);
     if (fork.status !== "created") throw new Error("fork setup failed");
+    const forkChild = await client.get!(fork.environment.environmentId);
+    if (!forkChild) throw new Error("fork child setup failed");
+    const forkMarker = forkChild.metadata?.__tangle_agent_workspace_v1;
+    if (!forkMarker || typeof forkMarker !== "object")
+      throw new Error("fork marker setup failed");
+    const {
+      materialization: _materialization,
+      ...legacyForkMarker
+    } = forkMarker as Record<string, unknown>;
+    forkChild.metadata = {
+      ...forkChild.metadata,
+      __tangle_agent_workspace_v1: legacyForkMarker,
+    };
 
     box.getSnapshotOperation = async () => ({
       outcome: "found",
@@ -1338,17 +1438,15 @@ describe("Tangle workspace branching", () => {
         throw new Error("the parent must not be attested");
       },
     };
-    const originalFork = box.fork!;
-    attestationBox.fork = async (count, options) => {
-      const result = await originalFork(count, options);
-      for (const child of result.children) {
-        child.getTeeAttestation = async (attestationOptions) => ({
-          sandbox_id: child.id,
-          attestationNonce: attestationOptions?.attestationNonce,
-          attestation: report,
-        });
-      }
-      return result;
+    const originalCreate = client.create;
+    client.create = async (options, requestOptions) => {
+      const child = await originalCreate(options, requestOptions);
+      child.getTeeAttestation = async (attestationOptions) => ({
+        sandbox_id: child.id,
+        attestationNonce: attestationOptions?.attestationNonce,
+        attestation: report,
+      });
+      return child;
     };
 
     const verifier = ({ attestation }: { attestation: { quote: string } }) => {
@@ -1419,28 +1517,26 @@ describe("Tangle workspace branching", () => {
         throw new Error("the parent must not be attested");
       },
     };
-    const originalFork = box.fork!;
-    attestationBox.fork = async (count, options) => {
-      const result = await originalFork(count, options);
-      for (const child of result.children) {
-        child.getTeeAttestation = async (options) => ({
-          sandbox_id: child.id,
-          ...(options?.attestationNonce === "nonce-mismatch"
-            ? { attestationNonce: "different-nonce" }
-            : options?.attestationNonce === "nonce-missing"
-            ? {}
-            : options?.attestationNonce === undefined
-            ? {}
-            : { attestationNonce: options.attestationNonce }),
-          attestation: {
-            tee_type: "tdx",
-            evidence: [1, 2, 3],
-            measurement: [4, 5, 6],
-            timestamp: 1_756_368_000,
-          },
-        });
-      }
-      return result;
+    const originalCreate = client.create;
+    client.create = async (options, requestOptions) => {
+      const child = await originalCreate(options, requestOptions);
+      child.getTeeAttestation = async (attestationOptions) => ({
+        sandbox_id: child.id,
+        ...(attestationOptions?.attestationNonce === "nonce-mismatch"
+          ? { attestationNonce: "different-nonce" }
+          : attestationOptions?.attestationNonce === "nonce-missing"
+          ? {}
+          : attestationOptions?.attestationNonce === undefined
+          ? {}
+          : { attestationNonce: attestationOptions.attestationNonce }),
+        attestation: {
+          tee_type: "tdx",
+          evidence: [1, 2, 3],
+          measurement: [4, 5, 6],
+          timestamp: 1_756_368_000,
+        },
+      });
+      return child;
     };
 
     const verifier = ({
