@@ -447,6 +447,8 @@ export interface AgentCandidateProfilePlanMaterial {
     relPath: string;
     mode: number;
     contentSha256: Sha256Digest;
+    /** Omit for a workspace-root file; agent-root files must name this root. */
+    root?: "agent";
   }>;
   env: Record<string, AgentCandidateConfigValue>;
   flags: AgentCandidateConfigValue[];

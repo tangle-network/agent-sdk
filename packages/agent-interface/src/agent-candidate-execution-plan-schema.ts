@@ -60,6 +60,13 @@ function pathsOverlap(left: string, right: string): boolean {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
+function profilePlanFileIdentity(file: {
+  relPath: string;
+  root?: "agent";
+}): string {
+  return `${file.root ?? "workspace"}\u0000${file.relPath}`;
+}
+
 function isExactPublicGatewayDomain(value: string): boolean {
   if (
     value.length > 253 ||
@@ -182,6 +189,7 @@ export const agentCandidateProfilePlanMaterialSchema = z
             ),
           mode: z.number().int().min(0).max(0o777),
           contentSha256: sha256DigestSchema,
+          root: z.literal("agent").optional(),
         })
         .strict(),
     ),
@@ -205,20 +213,20 @@ export const agentCandidateProfilePlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
+    const fileIdentities = material.files.map(profilePlanFileIdentity);
     addDuplicateIssues(
-      material.files.map((file) => file.relPath),
+      fileIdentities,
       ["files"],
       ctx,
     );
     for (let index = 1; index < material.files.length; index++) {
       if (
-        (material.files[index - 1]?.relPath ?? "") >=
-        (material.files[index]?.relPath ?? "")
+        (fileIdentities[index - 1] ?? "") >= (fileIdentities[index] ?? "")
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["files", index, "relPath"],
-          message: "profile-plan files must be lexicographically sorted",
+          message: "profile-plan files must be lexicographically sorted by root and path",
         });
       }
     }
