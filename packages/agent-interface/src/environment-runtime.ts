@@ -468,15 +468,23 @@ export interface AgentEnvironmentCapabilities {
    * Present only when create honors {@link CreateAgentEnvironmentInput.egress} or
    * {@link CreateAgentEnvironmentInput.billingOwner}. Absent means neither field is read, so a
    * caller that needs either must not send it and call the result a policy.
+   *
+   * Each member is present only when that field is honored, and the block carries at least one of
+   * them. A provider that takes a billing owner but no caller-controlled egress therefore states
+   * exactly that, instead of advertising an egress mode it does not accept.
    */
   create?: {
-    /** Egress modes create accepts. A mode absent here is refused, never weakened or widened. */
-    egress: readonly AgentEnvironmentEgressMode[];
+    /**
+     * Egress modes create accepts, each named once. A mode absent here is refused, never weakened
+     * or widened. Absent altogether means create does not read
+     * {@link CreateAgentEnvironmentInput.egress} at all.
+     */
+    egress?: readonly AgentEnvironmentEgressMode[];
     /**
      * True when create carries the billing owner to the platform unchanged. The platform still
      * authorizes the caller for that account; this flag states only that the field is not dropped.
      */
-    billingOwner: boolean;
+    billingOwner?: boolean;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -587,8 +595,9 @@ export const AgentEnvironmentCapabilitiesSchema = z
         egress: z
           .array(z.enum(["open", "strict", "blocked"]))
           .min(1)
-          .max(CONTRACT_MAX_ARRAY_LENGTH),
-        billingOwner: z.boolean(),
+          .max(CONTRACT_MAX_ARRAY_LENGTH)
+          .optional(),
+        billingOwner: z.boolean().optional(),
       })
       .optional(),
     observation: z
@@ -706,6 +715,24 @@ export const AgentEnvironmentCapabilitiesSchema = z
         path: ["exactProcess", "egress"],
         message: "exact process egress modes must be unique",
       });
+    }
+    const create = capabilities.create;
+    if (create !== undefined) {
+      if (create.egress === undefined && create.billingOwner === undefined) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["create"],
+          message:
+            "a create capability block must state at least one honored field",
+        });
+      }
+      if (create.egress && new Set(create.egress).size !== create.egress.length) {
+        refinement.addIssue({
+          code: "custom",
+          path: ["create", "egress"],
+          message: "create egress modes must be unique",
+        });
+      }
     }
     const terminal = capabilities.interactiveTerminal;
     if (

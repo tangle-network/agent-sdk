@@ -47,14 +47,30 @@ export type AgentEnvironmentEgressPolicy =
   | { mode: "blocked" }
   | { mode: "strict"; allowDomains?: readonly string[] };
 
+/**
+ * One allowed destination host.
+ *
+ * A whitespace-only or outer-padded entry matches no host, so a policy carrying one is an
+ * allowlist the caller believes is in force and is not. That is the same silent-weakening this
+ * contract refuses everywhere else, so the entry is rejected rather than trimmed: trimming would
+ * accept a typo and change what the caller asked for.
+ */
+const egressAllowDomainSchema = boundedIdentifierSchema;
+
 /** Runtime contract for the portable egress policy carried by providers. */
 export const AgentEnvironmentEgressPolicySchema = z.discriminatedUnion("mode", [
   z.strictObject({ mode: z.literal("open") }),
   z.strictObject({ mode: z.literal("blocked") }),
   z.strictObject({
     mode: z.literal("strict"),
+    /**
+     * Order does not change the policy, but it does change the create identity: this value is
+     * canonicalized into {@link agentEnvironmentCreateInputDigest}, so two same-key creates whose
+     * domains differ only in order are read as different creates and the second is refused. Build
+     * the list in a stable order.
+     */
     allowDomains: z
-      .array(boundedStringSchema.min(1))
+      .array(egressAllowDomainSchema)
       .max(CONTRACT_MAX_ARRAY_LENGTH)
       .optional(),
   }),

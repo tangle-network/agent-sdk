@@ -53,6 +53,30 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates[0]?.billingOwnerId).toBe("usr_funded_account");
   });
 
+  it("projects blocked mode without inventing a domain list", async () => {
+    const { provider, creates } = capturingProvider();
+
+    await provider.create({ profile: { name: "worker" }, egress: { mode: "blocked" } });
+
+    expect(creates[0]?.egressPolicy).toEqual({ mode: "blocked" });
+  });
+
+  it("copies the allowlist, so a caller's later mutation cannot change the sent policy", async () => {
+    const { provider, creates } = capturingProvider();
+    const allowDomains = ["api.example.com"];
+
+    await provider.create({
+      profile: { name: "worker" },
+      egress: { mode: "strict", allowDomains },
+    });
+    allowDomains.push("evil.example.com");
+
+    expect(creates[0]?.egressPolicy).toEqual({
+      mode: "strict",
+      allowDomains: ["api.example.com"],
+    });
+  });
+
   it("carries a strict allowlist and opts into no implicit domains", async () => {
     const { provider, creates } = capturingProvider();
 
@@ -78,7 +102,19 @@ describe("Tangle create input: egress policy and billing owner", () => {
         profile: { name: "worker" },
         egress: { mode: "open", allowDomains: ["api.example.com"] } as never,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/allowDomains|unrecognized|invalid/i);
+    expect(creates).toHaveLength(0);
+  });
+
+  it("refuses a domain that matches no host", async () => {
+    const { provider, creates } = capturingProvider();
+
+    await expect(
+      provider.create({
+        profile: { name: "worker" },
+        egress: { mode: "strict", allowDomains: ["  api.example.com  "] },
+      }),
+    ).rejects.toThrow(/whitespace|invalid|too_big|identifier/i);
     expect(creates).toHaveLength(0);
   });
 
@@ -90,11 +126,54 @@ describe("Tangle create input: egress policy and billing owner", () => {
         profile: { name: "worker" },
         egress: { mode: "permissive" } as never,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/invalid|union|mode/i);
     await expect(
       provider.create({ profile: { name: "worker" }, billingOwner: "" }),
     ).rejects.toThrow("Tangle billing owner is invalid");
     expect(creates).toHaveLength(0);
+  });
+
+  it("holds a custom mapCreateInput to the same shape the default path guarantees", async () => {
+    const box: SandboxInstanceLike = {
+      id: "sbx-mapped",
+      status: "running",
+      async *streamPrompt() {},
+      delete: async () => undefined,
+    };
+    const mapped = (options: CreateSandboxOptions) =>
+      createTangleProvider({
+        client: { create: async () => box },
+        mapCreateInput: () => options,
+      }).create({ profile: { name: "worker" } });
+
+    // A mapper that carries both fields correctly is accepted.
+    await expect(
+      mapped({
+        backend: { type: "opencode", profile: { name: "worker" } },
+        egressPolicy: { mode: "strict", allowDomains: ["api.example.com"] },
+        billingOwnerId: "usr_funded_account",
+      }),
+    ).resolves.toBeDefined();
+
+    // A mapper cannot smuggle past the gates the default path enforces.
+    await expect(
+      mapped({
+        backend: { type: "opencode", profile: { name: "worker" } },
+        egressPolicy: { mode: "open", allowDomains: ["api.example.com"] },
+      }),
+    ).rejects.toThrow("Tangle mapped egress policy allows domains only in strict mode");
+    await expect(
+      mapped({
+        backend: { type: "opencode", profile: { name: "worker" } },
+        egressPolicy: { mode: "strict", allowDomains: [123] as never },
+      }),
+    ).rejects.toThrow("Tangle mapped egress allowed domain is invalid");
+    await expect(
+      mapped({
+        backend: { type: "opencode", profile: { name: "worker" } },
+        billingOwnerId: "",
+      }),
+    ).rejects.toThrow("Tangle mapped billing owner is invalid");
   });
 
   it("still refuses an unknown create field", async () => {

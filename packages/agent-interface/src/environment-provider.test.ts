@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentEnvironmentCreationSchema,
+  AgentEnvironmentEgressPolicySchema,
   AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationAdmissionMatchesRequest,
@@ -638,5 +639,123 @@ describe("AgentNativeContextContinuationResultSchema", () => {
         },
       }),
     ).toThrow(/must be retryable/);
+  });
+});
+
+describe("AgentEnvironmentEgressPolicySchema", () => {
+  it("accepts each mode and carries a strict allowlist", () => {
+    expect(AgentEnvironmentEgressPolicySchema.parse({ mode: "open" })).toEqual({
+      mode: "open",
+    });
+    expect(AgentEnvironmentEgressPolicySchema.parse({ mode: "blocked" })).toEqual({
+      mode: "blocked",
+    });
+    expect(
+      AgentEnvironmentEgressPolicySchema.parse({
+        mode: "strict",
+        allowDomains: ["api.example.com"],
+      }),
+    ).toEqual({ mode: "strict", allowDomains: ["api.example.com"] });
+    expect(AgentEnvironmentEgressPolicySchema.parse({ mode: "strict" })).toEqual({
+      mode: "strict",
+    });
+  });
+
+  it("refuses a domain list outside strict mode rather than carrying an ignored one", () => {
+    for (const mode of ["open", "blocked"]) {
+      expect(() =>
+        AgentEnvironmentEgressPolicySchema.parse({
+          mode,
+          allowDomains: ["api.example.com"],
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("refuses a domain that matches no host", () => {
+    // A whitespace-only or outer-padded entry is an allowlist the caller believes is in force
+    // and is not. It is rejected rather than trimmed: trimming would accept a typo.
+    for (const domain of ["", " ", "  api.example.com  ", "api.example.com "]) {
+      expect(() =>
+        AgentEnvironmentEgressPolicySchema.parse({
+          mode: "strict",
+          allowDomains: [domain],
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("refuses an unknown mode and an unknown field", () => {
+    expect(() =>
+      AgentEnvironmentEgressPolicySchema.parse({ mode: "permissive" }),
+    ).toThrow();
+    expect(() =>
+      AgentEnvironmentEgressPolicySchema.parse({
+        mode: "open",
+        includeImplicitDomains: true,
+      }),
+    ).toThrow();
+  });
+
+  it("makes an egress policy part of the create identity", () => {
+    const base = { profile: { name: "worker" } } as const;
+    const open = agentEnvironmentCreateInputDigest({
+      ...base,
+      egress: { mode: "open" },
+    });
+    const blocked = agentEnvironmentCreateInputDigest({
+      ...base,
+      egress: { mode: "blocked" },
+    });
+    const owned = agentEnvironmentCreateInputDigest({
+      ...base,
+      billingOwner: "usr_funded_account",
+    });
+    expect(open).not.toBe(blocked);
+    expect(open).not.toBe(agentEnvironmentCreateInputDigest(base));
+    expect(owned).not.toBe(agentEnvironmentCreateInputDigest(base));
+  });
+});
+
+describe("AgentEnvironmentCapabilities.create", () => {
+  it("states either honored field on its own", () => {
+    for (const create of [
+      { egress: ["open", "strict", "blocked"] },
+      { billingOwner: true },
+      { egress: ["open"], billingOwner: false },
+    ]) {
+      const document = { ...capabilities, create };
+      expect(AgentEnvironmentCapabilitiesSchema.parse(document)).toEqual(document);
+    }
+  });
+
+  it("refuses a block that states no honored field", () => {
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities, create: {} }),
+    ).toThrow(/at least one honored field/);
+  });
+
+  it("refuses a repeated egress mode, as the exact-process sibling does", () => {
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        create: { egress: ["open", "open"] },
+      }),
+    ).toThrow(/must be unique/);
+  });
+
+  it("refuses an unknown mode and an unknown member", () => {
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        create: { egress: ["permissive"] },
+      }),
+    ).toThrow();
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities,
+        create: { egress: ["open"], secrets: true },
+      }),
+    ).toThrow();
   });
 });
