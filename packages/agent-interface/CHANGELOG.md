@@ -1,5 +1,26 @@
 # @tangle-network/agent-interface
 
+## 2.2.0
+
+### Minor Changes
+
+- 646270c: Carry an egress policy and a billing owner on the generic environment create input.
+  
+  `CreateAgentEnvironmentInput` gains `egress` and `billingOwner`, and `AgentEnvironmentCapabilities` gains an optional `create` document that names the egress modes a provider accepts and whether it carries a billing owner. Each member of that document is itself optional and the block must state at least one, so a provider that takes a billing owner but no caller-controlled egress says exactly that instead of advertising a mode it does not accept. A provider that cannot satisfy the requested mode must fail the create rather than weaken or widen the policy, and a strict allowlist entry that matches no host is rejected rather than trimmed.
+  
+  The Tangle provider maps both fields onto `CreateSandboxOptions.egressPolicy` and `CreateSandboxOptions.billingOwnerId`, and refuses a domain list outside `strict` mode instead of sending one Sandbox ignores. Callers no longer need a private `mapCreateInput` or a `SandboxClient` wrapper to reach either field.
+
+### Patch Changes
+
+- d95d892: Hold the Tangle provider's `create()` until the sandbox reports `running`, so it returns an environment that can accept a turn.
+  The Sandbox client waits by itself only when the create response reports `pending` or `provisioning`, and a sandbox that reports `running` is not usable until its filesystem incarnation is ready.
+  A sandbox that never reaches running fails the create call with the platform's reason, and `readyTimeoutMs` bounds the wait.
+  
+  Forward `AgentTurnInput.providerOptions.backend` to the Sandbox prompt options, so a turn can select its model, its inline profile, or a session credential bundle.
+  Refuse a field the Sandbox prompt options do not declare, read an inline profile with `agentProfileSchema`, and bind the accepted options into the retained request digest without their bearer material.
+  
+  State the readiness rule on `AgentEnvironmentProvider.create`, and require `running` in the provider conformance suite.
+
 ## 2.1.1
 
 ### Patch Changes
