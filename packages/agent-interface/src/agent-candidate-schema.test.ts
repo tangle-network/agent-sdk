@@ -446,6 +446,60 @@ describe("candidate receipts", () => {
     digest: candidateSha("9"),
   } as const;
 
+  const profileFile = (relPath: string, content: string, root?: "agent") => ({
+    ...(root === "agent" ? { root } : {}),
+    relPath,
+    mode: 0o644,
+    contentSha256: sha256(content),
+    content,
+  });
+  const materializationWithProfileFiles = (
+    files: Array<ReturnType<typeof profileFile>>,
+    mountPaths = files
+      .filter((file) => file.root === undefined)
+      .map((file) => file.relPath),
+  ) => {
+    const planFiles = files.map(({ content: _content, ...file }) => file);
+    const nextProfilePlanMaterial = {
+      ...profilePlanMaterial,
+      files: planFiles,
+    };
+    const nextCapturedProfilePlan = capturedMaterial(nextProfilePlanMaterial);
+    const nextProfilePlan = {
+      ...profilePlan,
+      digest: nextCapturedProfilePlan.digest,
+      material: nextProfilePlanMaterial,
+      artifact: nextCapturedProfilePlan.artifact,
+    };
+    const nextExecutionPlanMaterial = {
+      ...executionPlanMaterial,
+      profile: {
+        ...executionPlanMaterial.profile,
+        planDigest: nextProfilePlan.digest,
+        mountPaths,
+      },
+    };
+    const nextCapturedExecutionPlan = capturedMaterial(nextExecutionPlanMaterial);
+    return {
+      ...materialization,
+      profileActivation: {
+        ...materialization.profileActivation,
+        profilePlan: nextProfilePlan,
+        files: files.map(({ content, relPath, mode }) => ({
+          path: relPath,
+          mode,
+          content,
+        })),
+      },
+      executionPlan: {
+        ...materialization.executionPlan,
+        digest: nextCapturedExecutionPlan.digest,
+        material: nextExecutionPlanMaterial,
+        artifact: nextCapturedExecutionPlan.artifact,
+      },
+    };
+  };
+
   it("binds selected OCI bytes, model, tree, entrypoint, and execution plan", () => {
     expect(() =>
       agentCandidateMaterializationReceiptSchema.parse(materialization),
@@ -479,7 +533,37 @@ describe("candidate receipts", () => {
           },
         },
       }),
-    ).toThrow(/every profile mount path/);
+    ).toThrow(/every workspace profile mount path/);
+  });
+
+  it("does not treat agent-root files as workspace mounts", () => {
+    const receipt = materializationWithProfileFiles([
+      profileFile("AGENTS.md", "agent instructions", "agent"),
+    ]);
+    expect(() => agentCandidateMaterializationReceiptSchema.parse(receipt)).not.toThrow();
+    expect(() =>
+      agentCandidateMaterializationReceiptSchema.parse(
+        materializationWithProfileFiles(
+          [profileFile("AGENTS.md", "agent instructions", "agent")],
+          ["AGENTS.md"],
+        ),
+      ),
+    ).toThrow(/workspace profile mount path/);
+  });
+
+  it("binds workspace mounts when agent and workspace files share a path", () => {
+    const files = [
+      profileFile("AGENTS.md", "agent instructions", "agent"),
+      profileFile("AGENTS.md", "workspace instructions"),
+    ];
+    const receipt = materializationWithProfileFiles(files);
+    expect(receipt.executionPlan.material.profile.mountPaths).toEqual(["AGENTS.md"]);
+    expect(() => agentCandidateMaterializationReceiptSchema.parse(receipt)).not.toThrow();
+    expect(() =>
+      agentCandidateMaterializationReceiptSchema.parse(
+        materializationWithProfileFiles(files, []),
+      ),
+    ).toThrow(/workspace profile mount path/);
   });
 
   it("requires captured canonical bytes for both materialization plans", () => {

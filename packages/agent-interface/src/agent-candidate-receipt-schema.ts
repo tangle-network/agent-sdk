@@ -226,10 +226,12 @@ export const agentCandidateMaterializationReceiptSchema = z
       [
         JSON.stringify(plan.profile.mountPaths) ===
           JSON.stringify(
-            receipt.profileActivation.profilePlan.material.files.map((file) => file.relPath),
+            receipt.profileActivation.profilePlan.material.files
+              .filter((file) => file.root === undefined)
+              .map((file) => file.relPath),
           ),
         ["executionPlan", "material", "profile", "mountPaths"],
-        "execution plan must bind every profile mount path",
+        "execution plan must bind every workspace profile mount path",
       ],
       [
         receipt.codeKind === plan.codeKind,
