@@ -6,7 +6,10 @@ import {
   agentCandidateProfilePlanMaterialSchema,
   agentCandidateResolvedModelSchema,
 } from "./agent-candidate-execution-plan-schema.js";
-import { canonicalCandidateJson } from "./agent-candidate-schema-common.js";
+import {
+  canonicalCandidateDigest,
+  canonicalCandidateJson,
+} from "./agent-candidate-schema-common.js";
 import { candidateSha } from "./agent-candidate.test-fixture.js";
 
 function workspace(path: string, digit: string) {
@@ -207,6 +210,146 @@ describe("agentCandidateExecutionPlanMaterialSchema", () => {
       agentCandidateProfileActivationSchema.safeParse({
         ...activation,
         files: [{ ...activation.files[0], content: "different" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("allows workspace and agent files with the same path but rejects same-root duplicates", () => {
+    const base = {
+      sourceProfileDigest: candidateSha("0"),
+      harness: "codex" as const,
+      env: {},
+      flags: [],
+      unsupported: [],
+    };
+    const file = {
+      relPath: "AGENTS.md",
+      mode: 0o644,
+      contentSha256: candidateSha("1"),
+    };
+    const material = {
+      ...base,
+      files: [{ ...file, root: "agent" as const }, file],
+    };
+
+    expect(agentCandidateProfilePlanMaterialSchema.parse(material)).toEqual(
+      material,
+    );
+    expect(
+      agentCandidateProfilePlanMaterialSchema.parse({
+        ...base,
+        files: [
+          { ...file, relPath: "a.md", root: "agent" as const },
+          { ...file, relPath: "z.md", root: "agent" as const },
+          { ...file, relPath: "a.md" },
+        ],
+      }),
+    ).toEqual({
+      ...base,
+      files: [
+        { ...file, relPath: "a.md", root: "agent" as const },
+        { ...file, relPath: "z.md", root: "agent" as const },
+        { ...file, relPath: "a.md" },
+      ],
+    });
+    for (const files of [
+      [{ ...file, root: "agent" as const }, { ...file, root: "agent" as const }],
+      [file, file],
+      [
+        { ...file, relPath: "z.md", root: "agent" as const },
+        { ...file, relPath: "a.md", root: "agent" as const },
+      ],
+    ]) {
+      expect(
+        agentCandidateProfilePlanMaterialSchema.safeParse({ ...base, files })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      agentCandidateProfilePlanMaterialSchema.safeParse({
+        ...base,
+        files: [file, { ...file, root: "agent" as const }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("uses absent root for legacy workspace bytes and includes agent root in new identity bytes", () => {
+    const workspaceMaterial = {
+      sourceProfileDigest: candidateSha("0"),
+      harness: "codex" as const,
+      files: [
+        {
+          relPath: ".codex/instructions.md",
+          mode: 0o664,
+          contentSha256: candidateSha("1"),
+        },
+      ],
+      env: {},
+      flags: [],
+      unsupported: [],
+    };
+    expect(
+      agentCandidateProfilePlanMaterialSchema.parse(workspaceMaterial),
+    ).toEqual(workspaceMaterial);
+    expect(canonicalCandidateJson(workspaceMaterial)).toBe(
+      '{"env":{},"files":[{"contentSha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","mode":436,"relPath":".codex/instructions.md"}],"flags":[],"harness":"codex","sourceProfileDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","unsupported":[]}',
+    );
+    expect(canonicalCandidateDigest(workspaceMaterial)).toBe(
+      "sha256:000347a2a8e222dda8dddacbb3debd71c8eb52fd850873191ca99d79a23316de",
+    );
+
+    const agentMaterial = {
+      ...workspaceMaterial,
+      files: [{ ...workspaceMaterial.files[0], root: "agent" as const }],
+    };
+    expect(agentCandidateProfilePlanMaterialSchema.parse(agentMaterial)).toEqual(
+      agentMaterial,
+    );
+    expect(canonicalCandidateJson(agentMaterial)).toContain('"root":"agent"');
+    expect(canonicalCandidateJson(agentMaterial)).toBe(
+      '{"env":{},"files":[{"contentSha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","mode":436,"relPath":".codex/instructions.md","root":"agent"}],"flags":[],"harness":"codex","sourceProfileDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","unsupported":[]}',
+    );
+    expect(canonicalCandidateDigest(agentMaterial)).toBe(
+      "sha256:6ac3b3e8e7fbe53442ccf10c41b5ca5c9274ff63015b1f6e9af3d6a435815398",
+    );
+    expect(canonicalCandidateDigest(agentMaterial)).not.toBe(
+      canonicalCandidateDigest(workspaceMaterial),
+    );
+  });
+
+  it("keeps the canonical material representation workspace-root-only", () => {
+    const material = {
+      sourceProfileDigest: candidateSha("0"),
+      harness: "codex" as const,
+      files: [
+        {
+          relPath: "AGENTS.md",
+          mode: 0o644,
+          contentSha256: candidateSha("1"),
+        },
+      ],
+      env: {},
+      flags: [],
+      unsupported: [],
+    };
+    for (const [root, expected] of [
+      ["agent", true],
+      ["workspace", false],
+      ["host", false],
+      ["agent-root", false],
+      ["", false],
+    ] as const) {
+      expect(
+        agentCandidateProfilePlanMaterialSchema.safeParse({
+          ...material,
+          files: [{ ...material.files[0], root }],
+        }).success,
+      ).toBe(expected);
+    }
+    expect(
+      agentCandidateProfilePlanMaterialSchema.safeParse({
+        ...material,
+        files: [{ ...material.files[0], root: "agent", extra: true }],
       }).success,
     ).toBe(false);
   });
