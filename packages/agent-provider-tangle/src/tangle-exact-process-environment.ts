@@ -42,6 +42,9 @@ export function sandboxInstanceAsExactProcessEnvironment(
   const process = box.process;
   const fs = box.fs;
   const destroy = box.delete.bind(box);
+  // The same single delete this environment performs, once it is asked for.
+  // See the destroy() below for why one is all the platform accepts.
+  let destruction: Promise<void> | undefined;
   return {
     id: box.id,
     provider: providerName,
@@ -235,7 +238,22 @@ export function sandboxInstanceAsExactProcessEnvironment(
     async destroy(options = {}): Promise<void> {
       assertSignalOptions(options, "Tangle exact process destroy");
       options.signal?.throwIfAborted();
-      await awaitWithSignal(destroy(), options.signal);
+      // Deleting one sandbox twice is refused, not repeated: the platform
+      // holds a per-sandbox lifecycle lease past the first DELETE's own
+      // response while its deferred cleanup runs, so a second DELETE inside
+      // that window answers "A sandbox lifecycle operation is already in
+      // progress". Measured 2026-09-01 (issue #280) on the streaming
+      // environment, which has the same shape and the same platform route.
+      // This environment is destroyed once and later callers join that
+      // answer; a delete that fails is not remembered, so nothing hides a
+      // real error.
+      destruction ??= awaitWithSignal(destroy(), options.signal)
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          destruction = undefined;
+          throw error;
+        });
+      await awaitWithSignal(destruction, options.signal);
       options.signal?.throwIfAborted();
     },
   };

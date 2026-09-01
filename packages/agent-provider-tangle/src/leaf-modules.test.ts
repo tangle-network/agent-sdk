@@ -1238,6 +1238,17 @@ describe("Tangle split leaf modules", () => {
     await environment.writeFile("/tmp/file", Uint8Array.from([1]), { mode: 0o600 });
     await environment.destroy();
     expect(deleted).toHaveBeenCalledOnce();
+    // One exact-process environment, ended by more than one owner, must reach
+    // the platform's DELETE once. The route is guarded by a per-sandbox
+    // lifecycle lease that is still held while the previous delete's deferred
+    // cleanup runs, so a second DELETE inside that window is refused with
+    // "A sandbox lifecycle operation is already in progress" — measured
+    // 2026-09-01 on the streaming environment, same route (issue #280).
+    const endedTwice = sandboxInstanceAsExactProcessEnvironment(exactBox, "tangle-sandbox");
+    const deletesBefore = deleted.mock.calls.length;
+    await Promise.all([endedTwice.destroy(), endedTwice.destroy()]);
+    await endedTwice.destroy();
+    expect(deleted.mock.calls.length - deletesBefore).toBe(1);
     expect(exactProcessRequestDigest(exactInput, "tangle-sandbox", { teamId: "team-1" })).toMatch(/^sha256:/);
     expect(() => validateExactProcessLaunch({ executable: "/bin/echo", args: [], cwd: "/tmp", env: {}, timeoutMs: 1 })).not.toThrow();
     expect(() => validateExactProcessLaunch({ executable: "/tmp/../bin/echo", args: [], cwd: "/tmp", env: {}, timeoutMs: 1 })).toThrow();
