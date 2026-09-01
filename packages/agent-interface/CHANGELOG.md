@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 2.1.0
+
+### Minor Changes
+
+- adc9e23: Add an optional agent-root marker to candidate profile-plan files.
+  Workspace-root files omit the marker, preserving their existing canonical bytes and digests.
+
 ## 2.0.0
 
 ### Major Changes
