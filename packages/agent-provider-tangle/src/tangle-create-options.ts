@@ -1,9 +1,11 @@
 import type { BackendType, CreateSandboxOptions } from "@tangle-network/sandbox";
 import {
+  AgentEnvironmentEgressPolicySchema,
   WorkspaceRequestSchema,
   workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
+  AgentEnvironmentEgressPolicy,
   AgentProfileRef,
   CreateAgentEnvironmentInput,
   WorkspaceRequest,
@@ -50,6 +52,9 @@ export function sandboxOptionsFromCreateInput(
   if (input.idempotencyKey !== undefined) {
     boundedIdentifier(input.idempotencyKey, "Tangle idempotency key");
   }
+  if (input.billingOwner !== undefined) {
+    boundedIdentifier(input.billingOwner, "Tangle billing owner");
+  }
   const resources = sandboxResourcesFromResourceRequest(input.resources);
   // Sandbox injects secrets by name from its own store. Accepting a name/value
   // record and dropping it would create an environment with no credentials and
@@ -71,6 +76,8 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(input.env ? { env: input.env } : {}),
     ...(Array.isArray(input.secrets) ? { secrets: input.secrets } : {}),
+    ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
+    ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
     ...(input.metadata ? { metadata: input.metadata } : {}),
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
@@ -81,6 +88,29 @@ export function sandboxOptionsFromCreateInput(
     },
   };
   return mapped;
+}
+
+/**
+ * Project the portable egress policy onto the Sandbox policy.
+ *
+ * The schema is a strict discriminated union, so a domain list outside `strict` is refused rather
+ * than sent: Sandbox IGNORES `allowDomains` in `open` and `blocked` mode, and a silently ignored
+ * allowlist is a policy the caller believes is in force and is not.
+ *
+ * `includeImplicitDomains` stays unset, which is the Sandbox default of false. A strict policy
+ * therefore reaches the named domains plus the model endpoints the platform provisioned, matching
+ * what {@link AgentEnvironmentEgressPolicy} states; opting in would silently add ~40 hosts,
+ * including public source hosts.
+ */
+function sandboxEgressPolicy(
+  policy: AgentEnvironmentEgressPolicy,
+): NonNullable<CreateSandboxOptions["egressPolicy"]> {
+  const parsed = AgentEnvironmentEgressPolicySchema.parse(policy);
+  if (parsed.mode !== "strict") return { mode: parsed.mode };
+  return {
+    mode: "strict",
+    ...(parsed.allowDomains === undefined ? {} : { allowDomains: [...parsed.allowDomains] }),
+  };
 }
 
 /** Reject value-bearing secret maps before any custom mapper can drop them. */
@@ -153,6 +183,8 @@ export function assertCreateInputShape(
     "resources",
     "env",
     "secrets",
+    "egress",
+    "billingOwner",
     "metadata",
     "name",
     "idempotencyKey",
@@ -195,6 +227,32 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
     if (!options.name) throw new Error("Tangle mapped environment name cannot be empty");
   }
   if (options.idempotencyKey !== undefined) boundedIdentifier(options.idempotencyKey, "Tangle mapped idempotency key");
+  if (options.billingOwnerId !== undefined) boundedIdentifier(options.billingOwnerId, "Tangle mapped billing owner");
+  if (options.egressPolicy !== undefined) {
+    if (!options.egressPolicy || typeof options.egressPolicy !== "object" || Array.isArray(options.egressPolicy)) {
+      throw new Error("Tangle mapped egress policy must be an object");
+    }
+    if (!["open", "strict", "blocked"].includes(options.egressPolicy.mode)) {
+      throw new Error("Tangle mapped egress policy mode is invalid");
+    }
+    if (options.egressPolicy.mode !== "strict" && options.egressPolicy.allowDomains !== undefined) {
+      throw new Error("Tangle mapped egress policy allows domains only in strict mode");
+    }
+    // The default path is schema-checked, so this gate holds a custom mapper to the same shape.
+    // A non-string or padded host reaches the platform, matches nothing, and leaves the caller
+    // believing an allowlist is in force that is not.
+    if (options.egressPolicy.allowDomains !== undefined) {
+      if (!Array.isArray(options.egressPolicy.allowDomains)) {
+        throw new Error("Tangle mapped egress allowed domains must be an array");
+      }
+      if (options.egressPolicy.allowDomains.length > MAX_ARRAY_LENGTH) {
+        throw new Error("Tangle mapped egress allowed domains exceed their bound");
+      }
+      for (const domain of options.egressPolicy.allowDomains) {
+        boundedIdentifier(domain, "Tangle mapped egress allowed domain");
+      }
+    }
+  }
   if (options.env !== undefined) assertStringRecord(options.env, "Tangle mapped");
   assertMappedSecretNames(options);
 }
