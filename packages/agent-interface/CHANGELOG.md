@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.1.1
+
+### Patch Changes
+
+- 07b0e31: Bind candidate materialization receipts to workspace-root profile mounts while preserving agent-root evidence.
+
 ## 2.1.0
 
 ### Minor Changes
