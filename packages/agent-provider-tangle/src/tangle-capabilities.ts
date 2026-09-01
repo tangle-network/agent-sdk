@@ -116,6 +116,13 @@ export function defaultTangleSandboxCapabilities(
     },
     placement: true,
     usage: false,
+    // Create carries both fields to the Sandbox API unchanged. The API still authorizes the
+    // caller for a delegated billing owner, and it rejects the create when it does not, so this
+    // states only that neither field is dropped on the way.
+    create: {
+      egress: ["open", "strict", "blocked"],
+      billingOwner: true,
+    },
     // This is intent only. Narrowing requires both raw TEE evidence and the
     // caller's external provider-key verifier before the flag survives.
     confidential: true,

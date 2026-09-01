@@ -3,6 +3,7 @@ import {
   boundedIdentifierSchema,
   boundedJsonRecordSchema,
   boundedStringSchema,
+  CONTRACT_MAX_ARRAY_LENGTH,
 } from "./contract-limits.js";
 import { workspaceCwdSchema } from "./workspace-cwd.js";
 import type { WorkspaceCwd } from "./workspace-cwd.js";
@@ -25,6 +26,39 @@ export type AgentSessionStatus =
   | AgentEnvironmentStatus
   | "completed"
   | "cancelled";
+
+/** Outbound network modes an ordinary agent environment can request. */
+export type AgentEnvironmentEgressMode = "open" | "strict" | "blocked";
+
+/**
+ * Outbound network policy for one agent environment.
+ *
+ * `open` permits every destination. `strict` permits only the named domains plus the model
+ * endpoints the provider itself provisioned into the environment. `blocked` denies every
+ * destination.
+ *
+ * A provider that cannot satisfy the requested mode must fail the create. It must never weaken
+ * the policy and never widen it: a policy that differs from the request is invisible from inside
+ * the environment, and the refusal it produces there reads as an authorization error that names
+ * nothing.
+ */
+export type AgentEnvironmentEgressPolicy =
+  | { mode: "open" }
+  | { mode: "blocked" }
+  | { mode: "strict"; allowDomains?: readonly string[] };
+
+/** Runtime contract for the portable egress policy carried by providers. */
+export const AgentEnvironmentEgressPolicySchema = z.discriminatedUnion("mode", [
+  z.strictObject({ mode: z.literal("open") }),
+  z.strictObject({ mode: z.literal("blocked") }),
+  z.strictObject({
+    mode: z.literal("strict"),
+    allowDomains: z
+      .array(boundedStringSchema.min(1))
+      .max(CONTRACT_MAX_ARRAY_LENGTH)
+      .optional(),
+  }),
+]) satisfies z.ZodType<AgentEnvironmentEgressPolicy>;
 
 export interface WorkspaceRequest {
   /** Provider-specific environment/template id, for example "universal". */

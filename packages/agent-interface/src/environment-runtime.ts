@@ -15,7 +15,7 @@ import type {
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
 import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
-import type { AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
+import type { AgentEnvironmentEgressMode, AgentEnvironmentEgressPolicy, AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
 import type { AgentEnvironmentObservation } from "./environment-observation.js";
 import type {
@@ -464,6 +464,20 @@ export interface AgentEnvironmentCapabilities {
   exactProcess?: {
     egress: readonly AgentExactProcessEgressMode[];
   };
+  /**
+   * Present only when create honors {@link CreateAgentEnvironmentInput.egress} or
+   * {@link CreateAgentEnvironmentInput.billingOwner}. Absent means neither field is read, so a
+   * caller that needs either must not send it and call the result a policy.
+   */
+  create?: {
+    /** Egress modes create accepts. A mode absent here is refused, never weakened or widened. */
+    egress: readonly AgentEnvironmentEgressMode[];
+    /**
+     * True when create carries the billing owner to the platform unchanged. The platform still
+     * authorizes the caller for that account; this flag states only that the field is not dropped.
+     */
+    billingOwner: boolean;
+  };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
     identity: boolean;
@@ -566,6 +580,15 @@ export const AgentEnvironmentCapabilitiesSchema = z
           .array(z.enum(["blocked", "strict"]))
           .min(1)
           .max(CONTRACT_MAX_ARRAY_LENGTH),
+      })
+      .optional(),
+    create: z
+      .strictObject({
+        egress: z
+          .array(z.enum(["open", "strict", "blocked"]))
+          .min(1)
+          .max(CONTRACT_MAX_ARRAY_LENGTH),
+        billingOwner: z.boolean(),
       })
       .optional(),
     observation: z
@@ -763,6 +786,26 @@ export interface CreateAgentEnvironmentInput {
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: string[] | Record<string, string>;
+  /**
+   * Outbound network policy for this environment.
+   *
+   * When absent the provider applies its own default. That default can be a strict allowlist,
+   * and a model endpoint the environment must reach is then refused inside the environment as an
+   * authorization error that names no policy. Declare the policy whenever the destinations the
+   * environment needs are known.
+   *
+   * A provider that cannot satisfy the requested mode must fail the create rather than weaken or
+   * widen the policy. {@link AgentEnvironmentCapabilities.create} names the modes it accepts.
+   */
+  egress?: AgentEnvironmentEgressPolicy;
+  /**
+   * Platform account whose balance funds this environment's managed model usage.
+   *
+   * A trusted first-party service acting for an authenticated user sets it. The provider honors
+   * it only for a caller its platform has authorized to bill that account, and rejects the create
+   * otherwise. It never grants a caller permission to charge an arbitrary account.
+   */
+  billingOwner?: string;
   metadata?: Record<string, unknown>;
   name?: string;
   /**
