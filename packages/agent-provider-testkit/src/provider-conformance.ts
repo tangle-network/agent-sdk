@@ -38,6 +38,19 @@ export async function runAgentEnvironmentProviderConformance(
   return withEnvironmentCleanup(environment, checked, async () => {
     assert(environment.id, "environment.id must be non-empty", checked);
     assert(environment.provider, "environment.provider must be non-empty", checked);
+    // create() returns an environment that can accept a turn. A provider that
+    // returns a starting environment hands the race to every caller: a runtime
+    // seam streams the first turn immediately after create with nothing in
+    // between. Measured 2026-09-01 on a Tangle sandbox, where the first stream
+    // after create failed with "A sandbox lifecycle operation is already in
+    // progress" because the box was still starting.
+    const createdStatus = await environment.status();
+    assert(
+      createdStatus !== "pending" && createdStatus !== "provisioning",
+      `create() must return a ready environment, and this one reported ${createdStatus}`,
+      checked,
+    );
+    checked.push("create-readiness");
     // Every check below is about this environment, so it binds to the document
     // that describes this environment.
     const environmentCapabilities = environmentCapabilityDocument(
@@ -94,6 +107,31 @@ export async function runAgentEnvironmentProviderConformance(
     }
     checked.push("create");
 
+    // The first turn runs here, before any other call has had time to let the
+    // environment finish starting, so a create that returned early fails this
+    // check instead of an unrelated one later.
+    const events = await collect(
+      environment.stream({
+        prompt: options.prompt ?? "Return the word ok.",
+        sessionId: `${options.name}-session`,
+        turnId: `${options.name}-turn`,
+      }),
+    );
+    assert(events.length > 0, "stream must emit at least one event", checked);
+    assert(
+      events.some(isTerminalEvent),
+      "stream must emit a terminal result/done/status event",
+      checked,
+    );
+    if (options.requireUsage || environmentCapabilities.usage) {
+      assert(
+        events.some((event) => Boolean(event.usage)),
+        "provider declared usage support but emitted no usage",
+        checked,
+      );
+    }
+    checked.push("stream");
+
     const replayInput = Object.fromEntries(
       Object.entries(createInput).reverse(),
     ) as CreateAgentEnvironmentInput;
@@ -140,28 +178,6 @@ export async function runAgentEnvironmentProviderConformance(
       checked,
     );
     checked.push("create-idempotency-collision");
-
-    const events = await collect(
-      environment.stream({
-        prompt: options.prompt ?? "Return the word ok.",
-        sessionId: `${options.name}-session`,
-        turnId: `${options.name}-turn`,
-      }),
-    );
-    assert(events.length > 0, "stream must emit at least one event", checked);
-    assert(
-      events.some(isTerminalEvent),
-      "stream must emit a terminal result/done/status event",
-      checked,
-    );
-    if (options.requireUsage || environmentCapabilities.usage) {
-      assert(
-        events.some((event) => Boolean(event.usage)),
-        "provider declared usage support but emitted no usage",
-        checked,
-      );
-    }
-    checked.push("stream");
 
     if (environmentCapabilities.nativeContinuation !== undefined) {
       assert(

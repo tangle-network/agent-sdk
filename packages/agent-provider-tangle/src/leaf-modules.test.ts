@@ -1222,7 +1222,7 @@ describe("Tangle split leaf modules", () => {
         return [];
       },
     };
-    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox" });
+    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox", readyTimeoutMs: 1_000 });
     const environment = await provider.create(exactInput);
     expect(environment.id).toBe(exactBox.id);
     expect(sandboxInstanceAsExactProcessEnvironment(exactBox, "tangle-sandbox").id).toBe(exactBox.id);
@@ -1318,6 +1318,7 @@ describe("Tangle split leaf modules", () => {
       },
       options: { teamId: "team-1" },
       providerName: "tangle-sandbox",
+      readyTimeoutMs: 1_000,
     });
 
     await expect(
@@ -1359,6 +1360,7 @@ describe("Tangle split leaf modules", () => {
       },
       options: { teamId: "team-1" },
       providerName: "tangle-sandbox",
+      readyTimeoutMs: 1_000,
     });
 
     await expect(provider.create(exactInput)).rejects.toThrow();

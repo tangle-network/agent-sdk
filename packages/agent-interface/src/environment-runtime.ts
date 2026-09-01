@@ -897,7 +897,15 @@ export interface AgentEnvironmentProvider {
     profile: AgentProfileRef,
   ): AgentProfileValidationResult | Promise<AgentProfileValidationResult>;
   /**
-   * Create or reconstruct one environment.
+   * Create or reconstruct one environment that is ready to accept a turn.
+   *
+   * A returned environment answers {@link AgentEnvironment.stream} and every
+   * other operation its capability document claims. A provider whose platform
+   * starts an environment asynchronously holds this call until the environment
+   * is running, and fails the call with the platform's reason when it never
+   * gets there; it never returns a half-started environment for the caller to
+   * poll. Every runtime seam relies on this: a caller streams the first turn
+   * immediately after create, with nothing in between.
    *
    * With `input.idempotencyKey`, the provider must return the same environment
    * for the same canonical input and reject any changed input before creating.

@@ -88,8 +88,10 @@ import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
  * The document is measured once, here. A sandbox that is not yet running
  * cannot answer, so an environment composed during provisioning claims
  * nothing and keeps claiming nothing: the exposed operations and the document
- * are composed together and a caller may already hold either one. Compose the
- * environment again through `provider.get(id)` once the sandbox is running.
+ * are composed together and a caller may already hold either one. This is why
+ * `provider.create()` holds until the sandbox is running before it composes
+ * (see `tangle-readiness.ts`). `provider.get(id)` composes whatever the
+ * sandbox is at that moment, so compose again once a starting sandbox runs.
  *
  * @param request What the create call asked for. An environment rebuilt by id
  * carries none of it, so its observation reports the requested compute shape

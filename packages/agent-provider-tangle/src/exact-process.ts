@@ -21,6 +21,7 @@ import {
   SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 import { sandboxInstanceAsExactProcessEnvironment } from "./tangle-exact-process-environment.js";
+import { awaitSandboxRunning } from "./tangle-readiness.js";
 import {
   assertExactProcessSandbox,
   assertSupportedProviderOptions,
@@ -54,8 +55,10 @@ export function createTangleExactProcessProvider(input: {
   client: SandboxClientLike;
   options: TangleExactProcessOptions;
   providerName: string;
+  /** How long create() waits for the new sandbox to reach `running`. */
+  readyTimeoutMs: number;
 }): AgentExactProcessProvider {
-  const { client, options, providerName } = input;
+  const { client, options, providerName, readyTimeoutMs } = input;
   boundedIdentifier(providerName, "Tangle exact process provider");
   if (options.teamId !== undefined) {
     boundedIdentifier(options.teamId, "Tangle exact process team id");
@@ -100,6 +103,14 @@ export function createTangleExactProcessProvider(input: {
         throw error;
       }
       try {
+        createInput.signal?.throwIfAborted();
+        // A launch starts a process on this sandbox, so create() returns only
+        // after the sandbox can run one. See tangle-readiness.ts for the box
+        // that proved the race.
+        await awaitSandboxRunning(box, client, {
+          timeoutMs: readyTimeoutMs,
+          ...(createInput.signal ? { signal: createInput.signal } : {}),
+        });
         createInput.signal?.throwIfAborted();
         assertExactProcessSandbox(box, providerName, options.teamId, identityDigest);
         return sandboxInstanceAsExactProcessEnvironment(box, providerName);

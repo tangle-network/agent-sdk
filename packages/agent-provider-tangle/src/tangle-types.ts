@@ -76,6 +76,15 @@ export interface SandboxClientLike {
     id: string,
     requestOptions?: { signal?: AbortSignal }
   ): Promise<SandboxInstanceLike | null>;
+  /**
+   * Poll a sandbox to `running` by id, and report a provision failure with the
+   * platform's own reason. It resolves a second instance for the same id, so a
+   * caller that holds the created instance refreshes that instance afterwards.
+   */
+  waitForRunning?(
+    id: string,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<SandboxInstanceLike>;
   list?(options?: {
     scope?: string;
     limit?: number;
@@ -531,6 +540,15 @@ export interface SandboxInstanceLike {
    * by id or when the platform reported no receipt.
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
+  /**
+   * Hold until this sandbox reaches a lifecycle status, refreshing this
+   * instance in place. Preferred over the client-side wait because the created
+   * instance keeps its create receipt and gains its runtime connection.
+   */
+  waitFor?(
+    status: "running",
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<void>;
   refresh?(signal?: AbortSignal): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
   /** Managed whole-workspace checkpoint operation. */
@@ -652,6 +670,11 @@ export interface TangleProviderOptions {
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
+  /**
+   * How long `create()` waits for a new sandbox to reach `running` before it
+   * fails. Defaults to {@link DEFAULT_TANGLE_READY_TIMEOUT_MS}.
+   */
+  readyTimeoutMs?: number;
   /** External provider-key and measurement verifier for confidential forks. */
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
 }

@@ -26,6 +26,10 @@ import {
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
+import {
+  awaitSandboxRunning,
+  DEFAULT_TANGLE_READY_TIMEOUT_MS,
+} from "./tangle-readiness.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
 import type {
   SandboxInstanceLike,
@@ -46,11 +50,19 @@ export function createTangleProvider(
 ): AgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
   boundedIdentifier(providerName, "Tangle provider name");
+  const readyTimeoutMs =
+    options.readyTimeoutMs ?? DEFAULT_TANGLE_READY_TIMEOUT_MS;
+  if (!Number.isFinite(readyTimeoutMs) || readyTimeoutMs <= 0) {
+    throw new Error(
+      "Tangle readyTimeoutMs must be a positive number of milliseconds",
+    );
+  }
   const exactProcess = options.exactProcess
     ? createTangleExactProcessProvider({
         client: options.client,
         options: options.exactProcess,
         providerName,
+        readyTimeoutMs,
       })
     : undefined;
   const resolveDeclaredCapabilities = async (): Promise<AgentEnvironmentCapabilities> => {
@@ -152,6 +164,14 @@ export function createTangleProvider(
       throw error;
     }
     try {
+      input.signal?.throwIfAborted();
+      // The environment this call returns must accept a turn, and composing it
+      // reads a deployment document that a starting sandbox cannot answer.
+      // Both facts wait here, once, so no caller repeats the wait.
+      await awaitSandboxRunning(box, options.client, {
+        timeoutMs: readyTimeoutMs,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
       input.signal?.throwIfAborted();
       const requestedResources = requestedResourceProfile(input.resources);
       const environment = await sandboxInstanceAsEnvironment(

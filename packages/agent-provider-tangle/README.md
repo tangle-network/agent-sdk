@@ -15,6 +15,64 @@ const provider = createTangleProvider({
 });
 ```
 
+## `create()` returns a ready environment
+
+`provider.create()` does not return until the sandbox is running.
+This is the contract `AgentEnvironmentProvider.create` states, and every runtime seam relies on it: a caller streams the first turn immediately after create, with nothing in between.
+A sandbox that never reaches running fails the create call with the platform's reason, and the adapter deletes the sandbox it could not hand over.
+
+The wait belongs here rather than in the caller for two reasons.
+The Sandbox platform refuses a turn on a starting box with "A sandbox lifecycle operation is already in progress", so a caller that streams straight after create loses that race.
+Composing an environment also reads the sandbox's deployment capability document once, and a starting sandbox cannot answer that read, so an environment composed during provisioning would claim nothing for the rest of its life.
+
+`readyTimeoutMs` bounds the wait and defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS` (120 seconds, the Sandbox SDK's own default).
+
+```ts
+const provider = createTangleProvider({
+  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  readyTimeoutMs: 180_000,
+});
+
+const environment = await provider.create({ profile: { name: "worker" } });
+for await (const event of environment.stream({ prompt: "run the task" })) {
+  // The sandbox is running. No caller-side wait, poll, or retry stands here.
+}
+```
+
+The platform owns the wait, and this adapter runs no status loop of its own.
+It calls `waitFor("running")` on the created instance when the linked SDK offers it, because that refreshes the created instance in place and keeps its create receipt.
+It falls back to `client.waitForRunning(id)`, then refreshes the created instance.
+A client that offers neither cannot prove readiness, so a sandbox it returns as `pending` or `provisioning` fails the create call instead of reaching the caller half started.
+
+## Per-turn backend options
+
+`AgentTurnInput.providerOptions.backend` reaches `PromptOptions.backend` on the Sandbox prompt call.
+This is the exact block agent-runtime emits for a per-turn backend or model override, so a turn can select its model, its inline profile, or a session credential bundle without any change to the environment.
+
+```ts
+await environment.stream({
+  prompt: "run the task",
+  providerOptions: {
+    backend: {
+      type: "opencode",
+      model: {
+        provider: "zai",
+        model: "glm-5.2",
+        authMode: "oauth",
+        authFiles: [{ path: ".config/opencode/auth.json", content: seatCredentials, mode: 0o600 }],
+      },
+    },
+  },
+});
+```
+
+A field the Sandbox prompt options do not declare is refused, in `providerOptions`, in `backend`, and in `backend.model`.
+The SDK drops what it does not declare, so a forwarded unknown field would run the turn on different settings with no error anywhere.
+The accepted field sets are pinned to the SDK's `BackendConfig` at compile time, so a field the SDK adds or removes fails this package's build instead of reaching a caller as a wrong refusal.
+`AgentTurnInput.interactions` and `backend.interactions` state the same posture, and a disagreement between them is refused rather than resolved by preference.
+A turn `model` that disagrees with `backend.model.model` is refused for the same reason.
+Backend options are part of the retained request digest, so a retry under the same `turnId` with a changed model, profile, or credential conflicts instead of replaying work that ran on other settings.
+
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
 The adapter validates its complete capability document and omits optional environment methods whose capabilities are disabled.
 Created and reconstructed environments expose a recursively frozen Sandbox metadata snapshot for constant-time annotation checks.
@@ -22,8 +80,6 @@ Sandbox metadata can include caller-authored values and does not authenticate it
 Reconstruct an exact session with `environment.session(reference.id, { controlRef: reference.controlRef })`; replay cursors are exclusive at both the agent interface and Sandbox session stream.
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
-`AgentTurnInput.interactions` maps unchanged to `PromptOptions.backend.interactions` for the selected Sandbox turn.
-The requested posture is part of the retained request digest, so a retry with changed interaction behavior conflicts instead of reusing prior work.
 
 ## Two capability documents
 

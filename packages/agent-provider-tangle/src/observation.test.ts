@@ -223,6 +223,11 @@ describe("Tangle environment observation", () => {
     const bare: SandboxInstanceLike = {
       id: "sbx-bare",
       status: "provisioning",
+      // create() returns only a sandbox that answered the readiness wait, so
+      // this one answers it. It backs nothing else, and it never refreshes,
+      // which is what leaves every observation surface absent and its
+      // lifecycle stale.
+      async waitFor() {},
       async *streamPrompt() {},
     };
     const { observation } = await observeCreated({ create: async () => bare });
