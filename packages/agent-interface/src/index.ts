@@ -120,3 +120,5 @@ export * from "./sandbox-size.js";
 export {
   CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
 } from "./contract-limits.js";
+
+export { AgentEnvironmentEgressPolicySchema } from "./environment-requests.js";
