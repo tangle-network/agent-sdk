@@ -104,15 +104,18 @@ export function createTangleExactProcessProvider(input: {
       }
       try {
         createInput.signal?.throwIfAborted();
+        // Ownership is decided from metadata this call already holds, so it is
+        // decided before the wait. A foreign sandbox returned under a reused
+        // idempotency key is a conflict now, not two minutes from now.
+        assertExactProcessSandbox(box, providerName, options.teamId, identityDigest);
         // A launch starts a process on this sandbox, so create() returns only
-        // after the sandbox can run one. See tangle-readiness.ts for the box
-        // that proved the race.
+        // after the sandbox can run one. The caller's provisioning budget owns
+        // the deadline when it named one.
         await awaitSandboxRunning(box, client, {
-          timeoutMs: readyTimeoutMs,
+          timeoutMs: createInput.provisionTimeoutMs ?? readyTimeoutMs,
           ...(createInput.signal ? { signal: createInput.signal } : {}),
         });
         createInput.signal?.throwIfAborted();
-        assertExactProcessSandbox(box, providerName, options.teamId, identityDigest);
         return sandboxInstanceAsExactProcessEnvironment(box, providerName);
       } catch (error) {
         if (

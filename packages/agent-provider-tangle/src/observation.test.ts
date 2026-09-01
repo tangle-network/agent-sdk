@@ -222,11 +222,10 @@ describe("Tangle environment observation", () => {
   it("reports the freshness state for every surface the sandbox cannot back", async () => {
     const bare: SandboxInstanceLike = {
       id: "sbx-bare",
-      status: "provisioning",
-      // create() returns only a sandbox that answered the readiness wait, so
-      // this one answers it. It backs nothing else, and it never refreshes,
-      // which is what leaves every observation surface absent and its
-      // lifecycle stale.
+      // create() returns only a running sandbox, so this one is running. It
+      // backs nothing else, and it never refreshes, which is what leaves every
+      // observation surface absent and its lifecycle stale.
+      status: "running",
       async waitFor() {},
       async *streamPrompt() {},
     };
@@ -258,7 +257,7 @@ describe("Tangle environment observation", () => {
     expect(observation.identity?.state).toBe("known");
     expect(observation.lifecycle).toMatchObject({
       state: "stale",
-      value: { status: "provisioning" },
+      value: { status: "running" },
       reason: "the Sandbox client cannot refresh this environment",
     });
   });

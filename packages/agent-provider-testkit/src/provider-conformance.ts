@@ -38,16 +38,16 @@ export async function runAgentEnvironmentProviderConformance(
   return withEnvironmentCleanup(environment, checked, async () => {
     assert(environment.id, "environment.id must be non-empty", checked);
     assert(environment.provider, "environment.provider must be non-empty", checked);
-    // create() returns an environment that can accept a turn. A provider that
-    // returns a starting environment hands the race to every caller: a runtime
-    // seam streams the first turn immediately after create with nothing in
-    // between. Measured 2026-09-01 on a Tangle sandbox, where the first stream
-    // after create failed with "A sandbox lifecycle operation is already in
-    // progress" because the box was still starting.
+    // create() returns an environment that can accept a turn, so it reports
+    // running and nothing else. A provider that returns a starting environment
+    // hands the race to every caller: a runtime seam streams the first turn
+    // immediately after create with nothing in between. The check names the one
+    // right answer rather than the wrong ones, because a failed or stopped
+    // environment is no readier than a provisioning one.
     const createdStatus = await environment.status();
     assert(
-      createdStatus !== "pending" && createdStatus !== "provisioning",
-      `create() must return a ready environment, and this one reported ${createdStatus}`,
+      createdStatus === "running",
+      `create() must return a running environment, and this one reported ${createdStatus}`,
       checked,
     );
     checked.push("create-readiness");
