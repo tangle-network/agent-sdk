@@ -147,6 +147,8 @@ export async function sandboxInstanceAsEnvironment(
   // Usage is measured per execution, so the log collects what runs through
   // this handle and the observation reports the newest record it holds.
   const usageLog = createExecutionUsageLog();
+  // The single destroy this handle performs, once it has been asked for.
+  let destruction: Promise<void> | undefined;
   const terminals =
     capabilities.interactiveTerminal?.attach === true
       ? createTangleTerminalRegistry(box)
@@ -443,7 +445,31 @@ export async function sandboxInstanceAsEnvironment(
             if (!box.delete) throw new Error("Tangle sandbox client cannot delete this environment");
             assertOptionKeys(options, ["signal"], "Tangle destroy");
             options?.signal?.throwIfAborted();
-            await awaitWithSignal(box.delete(options), options?.signal);
+            // One environment has more than one owner of its end. A runtime
+            // that destroys on settle AND tears the executor down calls this
+            // twice for the same box, and the platform refuses the second
+            // DELETE with "A sandbox lifecycle operation is already in
+            // progress" while the first one's cleanup still holds the
+            // sandbox's lifecycle lease. Measured 2026-09-01 on
+            // `sandbox-b525e04a551b`: of two concurrent deletes one answered
+            // 200 `destroyed` and the other 409, and a third delete 0.4 s
+            // after the 200 was still refused. That refusal cost two
+            // completed agent turns their result
+            // (tangle-network/agent-sdk#280), because the second destroy ran
+            // in a caller's `finally` and its throw replaced the run's own
+            // outcome.
+            //
+            // So destroy is answered once per environment and every later
+            // caller joins that answer. This is not a retry and hides no
+            // platform error: a delete that fails is not remembered, and the
+            // next caller issues a real one.
+            destruction ??= awaitWithSignal(box.delete(options), options?.signal)
+              .then(() => undefined)
+              .catch((error: unknown) => {
+                destruction = undefined;
+                throw error;
+              });
+            await awaitWithSignal(destruction, options?.signal);
             options?.signal?.throwIfAborted();
           },
         }

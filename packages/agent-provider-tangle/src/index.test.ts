@@ -377,6 +377,53 @@ describe("createTangleProvider", () => {
     expect(deleted).toHaveBeenCalledOnce();
   });
 
+  it("deletes the sandbox once however many owners end the environment", async () => {
+    // MEASURED MOTIVE (2026-09-01, issue #280). A runtime that destroys on
+    // settle and also tears its executor down ends one environment twice. The
+    // platform refuses the second DELETE with "A sandbox lifecycle operation
+    // is already in progress" while the first delete's cleanup still holds the
+    // sandbox's lease, and that refusal cost two completed agent turns their
+    // result because the second destroy ran inside a `finally`.
+    const deleted = vi.fn(async () => {});
+    const box: SandboxInstanceLike = {
+      id: "sbx-delete-twice",
+      status: "running",
+      async *streamPrompt() {},
+      delete: deleted,
+    };
+    const provider = createTangleProvider({
+      client: { create: async () => box },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    await Promise.all([environment.destroy?.(), environment.destroy?.()]);
+    await environment.destroy?.();
+    expect(deleted).toHaveBeenCalledOnce();
+  });
+
+  it("does not remember a delete that failed", async () => {
+    // Joining one answer must never swallow a real platform error, and a
+    // sandbox that is still there after a failed destroy has to be destroyable.
+    const deleted = vi
+      .fn(async () => {})
+      .mockRejectedValueOnce(new Error("delete refused"))
+      .mockResolvedValueOnce(undefined);
+    const box: SandboxInstanceLike = {
+      id: "sbx-delete-retry",
+      status: "running",
+      async *streamPrompt() {},
+      delete: deleted,
+    };
+    const provider = createTangleProvider({
+      client: { create: async () => box },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    await expect(environment.destroy?.()).rejects.toThrow("delete refused");
+    await expect(environment.destroy?.()).resolves.toBeUndefined();
+    expect(deleted).toHaveBeenCalledTimes(2);
+  });
+
   it("checks abort signals after provider effects return", async () => {
     const createAbort = new AbortController();
     const box: SandboxInstanceLike = {
