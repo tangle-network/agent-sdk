@@ -1194,6 +1194,7 @@ describe("Tangle split leaf modules", () => {
     };
     exactBox = {
       id: "exact-environment",
+      status: "running",
       metadata: {},
       async *streamPrompt() {},
       delete: deleted,

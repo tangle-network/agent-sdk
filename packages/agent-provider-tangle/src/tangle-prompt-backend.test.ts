@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { PromptOptions } from "@tangle-network/sandbox";
 import { createTangleProvider, type SandboxInstanceLike } from "./index.js";
 import { sessionPromptRequestDigest } from "./tangle-environment-control.js";
-import { promptOptionsFromTurnInput } from "./tangle-prompt.js";
+import {
+  backendRequestIdentity,
+  promptOptionsFromTurnInput,
+} from "./tangle-prompt.js";
 
 const target = {
   provider: "tangle-sandbox",
@@ -185,6 +188,59 @@ describe("Tangle per-turn backend options", () => {
     ).toThrow(/model conflicts with its backend model/);
   });
 
+  it("refuses a backend model value of the wrong type", () => {
+    for (const model of [
+      { model: 123 },
+      { maxThinkingTokens: 1.5 },
+      { mode: "shell" },
+      { authMode: "device-code" },
+    ]) {
+      expect(() =>
+        promptOptionsFromTurnInput(
+          { prompt: "run", providerOptions: { backend: { model } } },
+          target,
+        ),
+      ).toThrow(/Tangle prompt backend model/);
+    }
+  });
+
+  it("reads an inline profile with the schema that owns profile rules", () => {
+    expect(() =>
+      promptOptionsFromTurnInput(
+        {
+          prompt: "run",
+          providerOptions: { backend: { profile: { name: "worker", tools: "all" } } },
+        },
+        target,
+      ),
+    ).toThrow();
+
+    expect(
+      promptOptionsFromTurnInput(
+        {
+          prompt: "run",
+          providerOptions: { backend: { profile: { name: "worker" } } },
+        },
+        target,
+      ).backend?.profile,
+    ).toMatchObject({ name: "worker" });
+  });
+
+  it("holds trace attributes to the limits the Sandbox platform states", () => {
+    const tooMany = Object.fromEntries(
+      Array.from({ length: 33 }, (_, index) => [`k${index}`, "v"]),
+    );
+    expect(() =>
+      promptOptionsFromTurnInput(
+        {
+          prompt: "run",
+          providerOptions: { backend: { metadata: { traceAttributes: tooMany } } },
+        },
+        target,
+      ),
+    ).toThrow(/traceAttributes exceeds 32 entries/);
+  });
+
   it("binds backend options into the retained request identity", () => {
     const digestFor = (backend: unknown): string =>
       sessionPromptRequestDigest(
@@ -208,5 +264,60 @@ describe("Tangle per-turn backend options", () => {
         "session-1",
       ),
     ).not.toBe(digestFor(SEAT_BACKEND));
+  });
+
+  it("keeps the retained identity stable across a seat token refresh", () => {
+    const digestFor = (backend: unknown): string =>
+      sessionPromptRequestDigest(
+        { prompt: "run", turnId: "turn-1", providerOptions: { backend } },
+        target.provider,
+        target.environmentId,
+        "session-1",
+      );
+    const rotated = {
+      ...SEAT_BACKEND,
+      model: {
+        ...SEAT_BACKEND.model,
+        apiKey: "rotated-key",
+        authFiles: [
+          {
+            ...SEAT_BACKEND.model.authFiles[0],
+            content: '{"zai":{"type":"oauth","access":"rotated-token"}}',
+          },
+        ],
+      },
+    };
+
+    // A rotated token is the same seat running the same work. Binding the
+    // identity to the token bytes would make an ordinary refresh conflict with
+    // the run it continues.
+    expect(digestFor(rotated)).toBe(digestFor(SEAT_BACKEND));
+    // The slot the bundle fills is still part of the identity.
+    expect(
+      digestFor({
+        ...SEAT_BACKEND,
+        model: {
+          ...SEAT_BACKEND.model,
+          authFiles: [{ ...SEAT_BACKEND.model.authFiles[0], path: ".config/other.json" }],
+        },
+      }),
+    ).not.toBe(digestFor(SEAT_BACKEND));
+  });
+
+  it("keeps bearer material out of the retained identity", () => {
+    const identity = backendRequestIdentity(
+      promptOptionsFromTurnInput(
+        { prompt: "run", providerOptions: { backend: SEAT_BACKEND } },
+        target,
+      ).backend,
+    );
+
+    expect(JSON.stringify(identity)).not.toContain("seat-token");
+    expect(identity?.model).toMatchObject({
+      provider: "zai",
+      model: "glm-5.2",
+      authMode: "oauth",
+      authFiles: [{ path: ".config/opencode/auth.json", mode: 0o600 }],
+    });
   });
 });

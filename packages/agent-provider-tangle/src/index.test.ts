@@ -119,6 +119,7 @@ describe("createTangleProvider", () => {
   it("reuses a keyed generic create and rejects changed input", async () => {
     const box: SandboxInstanceLike = {
       id: "sbx-generic-idempotency",
+      status: "running",
       async *streamPrompt() {},
     };
     const create = vi.fn(async (_options?: CreateSandboxOptions) => box);
@@ -155,6 +156,7 @@ describe("createTangleProvider", () => {
   it("retries a failed keyed create with the same workspace material", async () => {
     const box: SandboxInstanceLike = {
       id: "sbx-workspace-retry",
+      status: "running",
       async *streamPrompt() {},
     };
     const createOptions: CreateSandboxOptions[] = [];
@@ -201,6 +203,7 @@ describe("createTangleProvider", () => {
       receipt: { outcome: "created" | "idempotent_replay" | "unknown"; idempotencyKeyApplied: boolean } | null,
     ): SandboxInstanceLike => ({
       id,
+      status: "running",
       async *streamPrompt() {},
       createReceipt: () => receipt,
     });
@@ -231,6 +234,7 @@ describe("createTangleProvider", () => {
 
     const oldSdk = await environmentFor({
       id: "sbx-old-sdk",
+      status: "running",
       async *streamPrompt() {},
     });
     expect(oldSdk.creation).toBeUndefined();
@@ -295,6 +299,7 @@ describe("createTangleProvider", () => {
   it("does not expose operations whose capabilities are disabled", async () => {
     const box: SandboxInstanceLike = {
       id: "sbx-disabled",
+      status: "running",
       async *streamPrompt() {},
       dispatchPrompt: async () => ({
         sessionId: "session-disabled",
@@ -358,6 +363,7 @@ describe("createTangleProvider", () => {
     const deleted = vi.fn(async () => {});
     const box: SandboxInstanceLike = {
       id: "sbx-delete",
+      status: "running",
       async *streamPrompt() {},
       delete: deleted,
     };
@@ -375,6 +381,7 @@ describe("createTangleProvider", () => {
     const createAbort = new AbortController();
     const box: SandboxInstanceLike = {
       id: "sbx-abort-create",
+      status: "running",
       async *streamPrompt() {},
       exec: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
     };
@@ -590,6 +597,7 @@ describe("createTangleProvider", () => {
   it("rejects malformed Sandbox events and exec results", async () => {
     const box: SandboxInstanceLike = {
       id: "sbx-malformed",
+      status: "running",
       async *streamPrompt() {
         yield { type: "result", data: "not-an-object" } as never;
       },
@@ -611,6 +619,7 @@ describe("createTangleProvider", () => {
       client: {
         create: async () => ({
           id: "sbx-unsolicited-event",
+          status: "running",
           async *streamPrompt() {
             yield {
               type: "result",
@@ -942,6 +951,7 @@ describe("createTangleProvider", () => {
     let streamCalls = 0;
     const box: SandboxInstanceLike = {
       id: "sbx-control",
+      status: "running",
       async *streamPrompt(_prompt, options): AsyncIterable<SandboxEvent> {
         streamCalls += 1;
         capturedOptions = options as Record<string, unknown>;

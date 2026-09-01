@@ -17,13 +17,16 @@ const provider = createTangleProvider({
 
 ## `create()` returns a ready environment
 
-`provider.create()` does not return until the sandbox is running.
+`provider.create()` does not return until the sandbox reports `running`.
 This is the contract `AgentEnvironmentProvider.create` states, and every runtime seam relies on it: a caller streams the first turn immediately after create, with nothing in between.
 A sandbox that never reaches running fails the create call with the platform's reason, and the adapter deletes the sandbox it could not hand over.
 
-The wait belongs here rather than in the caller for two reasons.
-The Sandbox platform refuses a turn on a starting box with "A sandbox lifecycle operation is already in progress", so a caller that streams straight after create loses that race.
-Composing an environment also reads the sandbox's deployment capability document once, and a starting sandbox cannot answer that read, so an environment composed during provisioning would claim nothing for the rest of its life.
+The gap this closes is narrow and specific.
+`client.create()` waits by itself only when the create response reports `pending` or `provisioning`.
+A response that already reports `running` skips that wait, and `running` alone is not usable: the SDK's own `waitFor` treats the target as reached only when `filesystemIncarnationReadiness` is `ready`, because the sandbox filesystem is still being built until then.
+So `create()` can return a sandbox that reports `running` while the platform still holds a lifecycle operation on it, and the first turn lands on that lock.
+
+Composing an environment also reads the sandbox's deployment capability document once, and a sandbox that is not yet running cannot answer that read, so an environment composed during provisioning would claim nothing for the rest of its life.
 
 `readyTimeoutMs` bounds the wait and defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS` (120 seconds, the Sandbox SDK's own default).
 
@@ -42,7 +45,10 @@ for await (const event of environment.stream({ prompt: "run the task" })) {
 The platform owns the wait, and this adapter runs no status loop of its own.
 It calls `waitFor("running")` on the created instance when the linked SDK offers it, because that refreshes the created instance in place and keeps its create receipt.
 It falls back to `client.waitForRunning(id)`, then refreshes the created instance.
-A client that offers neither cannot prove readiness, so a sandbox it returns as `pending` or `provisioning` fails the create call instead of reaching the caller half started.
+A client that offers neither cannot prove readiness, so the sandbox it returned has to report `running` by itself or the create call fails.
+
+The adapter reads the platform's answer back rather than trusting the wait to have resolved for the right reason.
+A create call returns only a sandbox that reports `running`: `failed`, `stopped`, and `expired` are refused with the status named, and so is a wait that resolves while the sandbox still reports `provisioning`.
 
 ## Per-turn backend options
 
@@ -68,10 +74,15 @@ await environment.stream({
 
 A field the Sandbox prompt options do not declare is refused, in `providerOptions`, in `backend`, and in `backend.model`.
 The SDK drops what it does not declare, so a forwarded unknown field would run the turn on different settings with no error anywhere.
-The accepted field sets are pinned to the SDK's `BackendConfig` at compile time, so a field the SDK adds or removes fails this package's build instead of reaching a caller as a wrong refusal.
+The accepted field sets are pinned to the SDK's `BackendConfig` at compile time, at all three levels including `authFiles`, so a field the SDK adds or removes fails this package's build instead of reaching a caller as a wrong refusal.
+Values are checked, not just field names: an inline `backend.profile` is read by `agentProfileSchema`, the package that owns profile rules, and `backend.metadata.traceAttributes` is held to the entry and length limits the Sandbox platform states for it.
 `AgentTurnInput.interactions` and `backend.interactions` state the same posture, and a disagreement between them is refused rather than resolved by preference.
 A turn `model` that disagrees with `backend.model.model` is refused for the same reason.
-Backend options are part of the retained request digest, so a retry under the same `turnId` with a changed model, profile, or credential conflicts instead of replaying work that ran on other settings.
+`AgentTurnInput.interactions` still maps to `backend.interactions` for a turn that carries no backend block at all.
+
+Backend options are part of the retained request digest, so a retry under the same `turnId` with a changed model, profile, or seat conflicts instead of replaying work that ran on other settings.
+Bearer material is excluded from that identity: `model.apiKey` is dropped and `authFiles` are reduced to the paths and modes they install.
+A rotated seat token is the same seat running the same work, so an ordinary refresh continues its run rather than conflicting with it.
 
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
 The adapter validates its complete capability document and omits optional environment methods whose capabilities are disabled.

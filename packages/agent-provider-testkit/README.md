@@ -20,9 +20,10 @@ await runAgentEnvironmentProviderConformance({
 
 The checks create an environment, prove it is ready, stream one turn, repeat a keyed create with reordered fields, reject changed keyed input, verify terminal completion, exercise declared workspace methods, and destroy the environment.
 
-The readiness check reads the environment's status before any other call and refuses `pending` or `provisioning`: `create()` must return an environment that can accept a turn.
+The readiness check reads the environment's status before any other call and requires `running`: `create()` must return an environment that can accept a turn.
+It names the one right answer rather than the wrong ones, because a failed or stopped environment is no readier than a provisioning one.
 The first turn then runs immediately after it, before any later call has had time to let a starting environment finish.
-This is the failure the ordering exists for: a Tangle sandbox returned by `create()` while it was still starting failed its first stream with "A sandbox lifecycle operation is already in progress".
+An environment that is still starting fails this check instead of failing an unrelated one later.
 
 `runSessionReplayConformance()` dispatches a detached turn, rejects a competing run reference, requires stable event identifiers, replays after a cursor, and repeats the replay through a reconstructed session client.
 

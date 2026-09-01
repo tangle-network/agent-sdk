@@ -12,13 +12,14 @@ import type {
   InputPart,
 } from "@tangle-network/agent-interface";
 import {
+  agentProfileSchema,
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
   ContextTransferReceiptSchema,
   contextTransferResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
-import { assertBoundedJson } from "./tangle-contract-safety.js";
+import { assertBoundedJson, boundedString } from "./tangle-contract-safety.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
   AgentTurnInputSchema.parse(input);
@@ -172,12 +173,31 @@ type StaleBackendModelField = Exhaustive<
   >
 >;
 
-export type SandboxBackendFieldCoverage = [
+const SANDBOX_AUTH_FILE_FIELD_LIST = ["path", "content", "mode"] as const;
+
+type SandboxAuthFile = NonNullable<SandboxBackendModel["authFiles"]>[number];
+
+type UncoveredAuthFileField = Exhaustive<
+  Exclude<keyof SandboxAuthFile, (typeof SANDBOX_AUTH_FILE_FIELD_LIST)[number]>
+>;
+type StaleAuthFileField = Exhaustive<
+  Exclude<(typeof SANDBOX_AUTH_FILE_FIELD_LIST)[number], keyof SandboxAuthFile>
+>;
+
+type SandboxBackendFieldCoverage = [
   UncoveredBackendField,
   StaleBackendField,
   UncoveredBackendModelField,
   StaleBackendModelField,
+  UncoveredAuthFileField,
+  StaleAuthFileField,
 ];
+
+
+// The tuple exists to be checked by the compiler, not to be read. Every member
+// resolves to `never` while the lists match the SDK, and to the offending field
+// name when they do not.
+export type { SandboxBackendFieldCoverage };
 
 type SandboxPromptBackend = NonNullable<PromptOptions["backend"]>;
 
@@ -194,52 +214,185 @@ export function backendFromTurnProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
 ): SandboxPromptBackend | undefined {
   if (providerOptions === undefined) return undefined;
-  const unsupported = Object.keys(providerOptions).filter(
-    (key) => key !== "backend",
+  assertDeclaredFields(
+    providerOptions,
+    new Set(["backend"]),
+    "Tangle prompt providerOptions",
   );
-  if (unsupported.length > 0) {
-    throw new Error(
-      `Tangle prompt providerOptions are not supported: ${unsupported.sort().join(", ")}`,
-    );
-  }
   if (!Object.hasOwn(providerOptions, "backend")) return undefined;
   return sandboxPromptBackend(providerOptions.backend);
 }
 
 function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
   const present = plainRecord(value, "Tangle prompt backend options");
-  const unsupported = Object.keys(present).filter(
-    (key) => !SANDBOX_BACKEND_FIELDS.has(key),
-  );
-  if (unsupported.length > 0) {
-    throw new Error(
-      `Tangle prompt backend options are not supported: ${unsupported.sort().join(", ")}`,
-    );
-  }
+  assertDeclaredFields(present, SANDBOX_BACKEND_FIELDS, "Tangle prompt backend options");
   const backend = {
-    ...present,
+    ...(present.type === undefined
+      ? {}
+      : { type: boundedString(present.type, "Tangle prompt backend type") }),
+    // The profile decides tools, permissions, mounts, and the security policy
+    // of the turn, so it is read by the schema that owns those rules rather
+    // than passed through as bounded JSON.
+    ...(present.profile === undefined
+      ? {}
+      : { profile: agentProfileSchema.parse(present.profile) }),
     ...(present.model === undefined
       ? {}
       : { model: sandboxPromptBackendModel(present.model) }),
+    ...(present.server === undefined
+      ? {}
+      : { server: sandboxPromptBackendServer(present.server) }),
+    ...(present.interactions === undefined
+      ? {}
+      : { interactions: sandboxPromptInteractions(present.interactions) }),
+    ...(present.metadata === undefined
+      ? {}
+      : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
   assertBoundedJson(backend);
   return backend as SandboxPromptBackend;
 }
 
 function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
-  const present = { ...plainRecord(value, "Tangle prompt backend model options") };
-  const unsupported = Object.keys(present).filter(
-    (key) => !SANDBOX_BACKEND_MODEL_FIELDS.has(key),
+  const present = plainRecord(value, "Tangle prompt backend model options");
+  assertDeclaredFields(
+    present,
+    SANDBOX_BACKEND_MODEL_FIELDS,
+    "Tangle prompt backend model options",
   );
-  if (unsupported.length > 0) {
-    throw new Error(
-      `Tangle prompt backend model options are not supported: ${unsupported.sort().join(", ")}`,
-    );
+  const model: Record<string, unknown> = {};
+  for (const field of ["provider", "model", "apiKey", "baseUrl", "apiKeyEnv"] as const) {
+    if (present[field] === undefined) continue;
+    if (typeof present[field] !== "string" || present[field] === "") {
+      throw new Error(`Tangle prompt backend model ${field} must be a non-empty string`);
+    }
+    model[field] = boundedString(present[field], `Tangle prompt backend model ${field}`);
+  }
+  if (present.maxThinkingTokens !== undefined) {
+    if (
+      !Number.isSafeInteger(present.maxThinkingTokens) ||
+      (present.maxThinkingTokens as number) < 0
+    ) {
+      throw new Error(
+        "Tangle prompt backend model maxThinkingTokens must be a non-negative integer",
+      );
+    }
+    model.maxThinkingTokens = present.maxThinkingTokens;
+  }
+  if (present.mode !== undefined) {
+    if (present.mode !== "api" && present.mode !== "cli") {
+      throw new Error('Tangle prompt backend model mode must be "api" or "cli"');
+    }
+    model.mode = present.mode;
+  }
+  if (present.authMode !== undefined) {
+    if (present.authMode !== "api-key" && present.authMode !== "oauth") {
+      throw new Error(
+        'Tangle prompt backend model authMode must be "api-key" or "oauth"',
+      );
+    }
+    model.authMode = present.authMode;
   }
   if (present.authFiles !== undefined) {
-    present.authFiles = sandboxPromptAuthFiles(present.authFiles);
+    model.authFiles = sandboxPromptAuthFiles(present.authFiles);
   }
-  return present;
+  return model;
+}
+
+function sandboxPromptBackendServer(value: unknown): Record<string, unknown> {
+  const present = plainRecord(value, "Tangle prompt backend server options");
+  assertDeclaredFields(
+    present,
+    new Set(["port", "hostname"]),
+    "Tangle prompt backend server options",
+  );
+  const server: Record<string, unknown> = {};
+  if (present.port !== undefined) {
+    if (
+      !Number.isSafeInteger(present.port) ||
+      (present.port as number) < 1 ||
+      (present.port as number) > 65_535
+    ) {
+      throw new Error("Tangle prompt backend server port must be a TCP port number");
+    }
+    server.port = present.port;
+  }
+  if (present.hostname !== undefined) {
+    if (typeof present.hostname !== "string" || present.hostname === "") {
+      throw new Error("Tangle prompt backend server hostname must be a non-empty string");
+    }
+    server.hostname = boundedString(present.hostname, "Tangle prompt backend server hostname");
+  }
+  return server;
+}
+
+function sandboxPromptInteractions(value: unknown): Record<string, boolean> {
+  const present = plainRecord(value, "Tangle prompt backend interactions");
+  assertDeclaredFields(
+    present,
+    new Set(["permission", "question", "plan"]),
+    "Tangle prompt backend interactions",
+  );
+  const interactions: Record<string, boolean> = {};
+  for (const kind of ["permission", "question", "plan"] as const) {
+    if (present[kind] === undefined) continue;
+    if (typeof present[kind] !== "boolean") {
+      throw new Error(`Tangle prompt backend interaction ${kind} must be a boolean`);
+    }
+    interactions[kind] = present[kind];
+  }
+  return interactions;
+}
+
+/** Sandbox caps trace attributes, and its own documentation forbids secrets there. */
+const MAX_TRACE_ATTRIBUTES = 32;
+const MAX_TRACE_ATTRIBUTE_KEY_LENGTH = 128;
+const MAX_TRACE_ATTRIBUTE_VALUE_LENGTH = 1_024;
+
+function sandboxPromptBackendMetadata(value: unknown): Record<string, unknown> {
+  const present = plainRecord(value, "Tangle prompt backend metadata");
+  assertDeclaredFields(
+    present,
+    new Set(["containerType", "traceAttributes"]),
+    "Tangle prompt backend metadata",
+  );
+  const metadata: Record<string, unknown> = {};
+  if (present.containerType !== undefined) {
+    if (typeof present.containerType !== "string" || present.containerType === "") {
+      throw new Error("Tangle prompt backend metadata containerType must be a non-empty string");
+    }
+    metadata.containerType = boundedString(
+      present.containerType,
+      "Tangle prompt backend metadata containerType",
+    );
+  }
+  if (present.traceAttributes !== undefined) {
+    const attributes = plainRecord(
+      present.traceAttributes,
+      "Tangle prompt backend metadata traceAttributes",
+    );
+    const entries = Object.entries(attributes);
+    if (entries.length > MAX_TRACE_ATTRIBUTES) {
+      throw new Error(
+        `Tangle prompt backend metadata traceAttributes exceeds ${MAX_TRACE_ATTRIBUTES} entries`,
+      );
+    }
+    for (const [key, attribute] of entries) {
+      if (key.length > MAX_TRACE_ATTRIBUTE_KEY_LENGTH) {
+        throw new Error("Tangle prompt backend metadata traceAttributes key exceeds its bound");
+      }
+      if (
+        typeof attribute !== "string" ||
+        attribute.length > MAX_TRACE_ATTRIBUTE_VALUE_LENGTH
+      ) {
+        throw new Error(
+          "Tangle prompt backend metadata traceAttributes value must be a bounded string",
+        );
+      }
+    }
+    metadata.traceAttributes = { ...attributes };
+  }
+  return metadata;
 }
 
 function sandboxPromptAuthFiles(value: unknown): Array<Record<string, unknown>> {
@@ -247,26 +400,38 @@ function sandboxPromptAuthFiles(value: unknown): Array<Record<string, unknown>> 
     throw new Error("Tangle prompt backend authFiles must be an array");
   }
   return value.map((entry) => {
-    const file = plainRecord(entry, "Tangle prompt backend auth file");
-    const unsupported = Object.keys(file).filter(
-      (key) => !["path", "content", "mode"].includes(key),
+    const present = plainRecord(entry, "Tangle prompt backend auth file");
+    assertDeclaredFields(
+      present,
+      new Set<string>(SANDBOX_AUTH_FILE_FIELD_LIST),
+      "Tangle prompt backend auth file fields",
     );
-    if (unsupported.length > 0) {
-      throw new Error(
-        `Tangle prompt backend auth file fields are not supported: ${unsupported.sort().join(", ")}`,
-      );
-    }
-    if (typeof file.path !== "string" || file.path.length === 0) {
+    if (typeof present.path !== "string" || present.path.length === 0) {
       throw new Error("Tangle prompt backend auth file requires a path");
     }
-    if (typeof file.content !== "string") {
+    if (typeof present.content !== "string") {
       throw new Error("Tangle prompt backend auth file requires string content");
     }
-    if (file.mode !== undefined && !Number.isSafeInteger(file.mode)) {
+    if (present.mode !== undefined && !Number.isSafeInteger(present.mode)) {
       throw new Error("Tangle prompt backend auth file mode must be an integer");
     }
-    return file;
+    return {
+      path: boundedString(present.path, "Tangle prompt backend auth file path"),
+      content: present.content,
+      ...(present.mode === undefined ? {} : { mode: present.mode }),
+    };
   });
+}
+
+function assertDeclaredFields(
+  record: Record<string, unknown>,
+  declared: ReadonlySet<string>,
+  label: string,
+): void {
+  const unsupported = Object.keys(record).filter((key) => !declared.has(key));
+  if (unsupported.length > 0) {
+    throw new Error(`${label} are not supported: ${unsupported.sort().join(", ")}`);
+  }
 }
 
 function plainRecord(value: unknown, label: string): Record<string, unknown> {
@@ -280,6 +445,39 @@ function plainRecord(value: unknown, label: string): Record<string, unknown> {
     throw new Error(`${label} must be a JSON object`);
   }
   return value as Record<string, unknown>;
+}
+
+/**
+ * The part of the backend options that decides which work a turn is.
+ *
+ * Bearer material is deliberately absent. A rotated seat token is the same
+ * seat running the same work, so digesting the token bytes would make an
+ * ordinary refresh conflict with the run it is continuing. The auth files are
+ * reduced to the paths and modes they install, which states that the turn
+ * carries a credential bundle and which slots it fills, without binding the
+ * identity to the secret inside.
+ */
+export function backendRequestIdentity(
+  backend: SandboxPromptBackend | undefined,
+): Record<string, unknown> | undefined {
+  if (backend === undefined) return undefined;
+  const model = backend.model;
+  if (model === undefined) return { ...backend };
+  const { apiKey: _apiKey, authFiles, ...rest } = model;
+  return {
+    ...backend,
+    model: {
+      ...rest,
+      ...(authFiles === undefined
+        ? {}
+        : {
+            authFiles: authFiles.map((file) => ({
+              path: file.path,
+              ...(file.mode === undefined ? {} : { mode: file.mode }),
+            })),
+          }),
+    },
+  };
 }
 
 /**

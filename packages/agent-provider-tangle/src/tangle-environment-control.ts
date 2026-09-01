@@ -7,7 +7,10 @@ import type {
   SandboxInstanceLike,
   SandboxSessionLike,
 } from "./tangle-types.js";
-import { backendFromTurnProviderOptions } from "./tangle-prompt.js";
+import {
+  backendFromTurnProviderOptions,
+  backendRequestIdentity,
+} from "./tangle-prompt.js";
 
 export function sessionPromptRequestDigest(
   input: AgentTurnInput,
@@ -16,7 +19,9 @@ export function sessionPromptRequestDigest(
   sessionId: string,
   options: { executionId?: string; nonce?: string } = {},
 ): `sha256:${string}` {
-  const backend = backendFromTurnProviderOptions(input.providerOptions);
+  const backend = backendRequestIdentity(
+    backendFromTurnProviderOptions(input.providerOptions),
+  );
   return canonicalCandidateDigest({
     provider,
     environmentId,
@@ -35,9 +40,11 @@ export function sessionPromptRequestDigest(
     ...(input.interactions === undefined
       ? {}
       : { interactions: input.interactions }),
-    // Per-turn backend options select the model, the profile, and the session
-    // credentials the turn runs on. Leaving them out of the identity would let
-    // a retry under the same turn id reuse work that ran on other settings.
+    // Per-turn backend options select the model, the profile, and the seat the
+    // turn runs on. Leaving them out of the identity would let a retry under
+    // the same turn id reuse work that ran on other settings. The bearer
+    // material inside them is excluded, so a token refresh does not conflict
+    // with the run it continues.
     ...(backend === undefined ? {} : { backend }),
   });
 }

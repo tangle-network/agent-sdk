@@ -672,7 +672,8 @@ export interface TangleProviderOptions {
   exactProcess?: TangleExactProcessOptions;
   /**
    * How long `create()` waits for a new sandbox to reach `running` before it
-   * fails. Defaults to {@link DEFAULT_TANGLE_READY_TIMEOUT_MS}.
+   * fails. Defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS`, exported from this
+   * package, which is the Sandbox SDK's own wait default of 120 seconds.
    */
   readyTimeoutMs?: number;
   /** External provider-key and measurement verifier for confidential forks. */
