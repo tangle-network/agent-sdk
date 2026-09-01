@@ -1,6 +1,7 @@
 export type { TangleExactProcessOptions } from "./tangle-types.js";
 export * from "./tangle-types.js";
 export { createTangleProvider } from "./tangle-provider.js";
+export { DEFAULT_TANGLE_READY_TIMEOUT_MS } from "./tangle-readiness.js";
 export { defaultTangleSandboxCapabilities } from "./tangle-capabilities.js";
 export {
   createTangleWorkspaceBranching,

@@ -1,4 +1,5 @@
 import type {
+  BackendConfig,
   PromptOptions,
   PromptResult,
 } from "@tangle-network/sandbox";
@@ -80,18 +81,14 @@ export function promptOptionsFromTurnInput(
     }
   }
 
-  if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
-    throw new Error("Tangle prompt providerOptions are not supported");
-  }
+  const backend = turnBackendOptions(input);
 
   const sessionId = input.sessionId ?? controlRef?.sessionId;
   const executionId = input.executionId ?? controlRef?.executionId;
   return {
     ...(sessionId ? { sessionId } : {}),
     ...(input.model ? { model: input.model } : {}),
-    ...(input.interactions === undefined
-      ? {}
-      : { backend: { interactions: input.interactions } }),
+    ...(backend === undefined ? {} : { backend }),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.context ? { context: input.context } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
@@ -101,6 +98,231 @@ export function promptOptionsFromTurnInput(
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.detach !== undefined ? { detach: input.detach } : {}),
   };
+}
+
+/**
+ * The `BackendConfig` fields the Sandbox prompt options declare.
+ *
+ * A turn may carry any of them and nothing else. An undeclared field is
+ * refused instead of forwarded, because the SDK drops what it does not
+ * declare: the turn would then run on different settings with no error
+ * anywhere, which is the silent substitution the SDK's own `model` field
+ * exists to prevent.
+ */
+const SANDBOX_BACKEND_FIELD_LIST = [
+  "type",
+  "profile",
+  "model",
+  "server",
+  "interactions",
+  "metadata",
+] as const;
+
+const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
+
+/**
+ * The `BackendConfig["model"]` fields the Sandbox prompt options declare.
+ *
+ * This is the block that carries per-turn credentials — `authMode: "oauth"`
+ * with `authFiles` for a subscription seat — so it is checked field by field
+ * rather than passed through as opaque JSON.
+ */
+const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
+  "provider",
+  "model",
+  "apiKey",
+  "baseUrl",
+  "maxThinkingTokens",
+  "mode",
+  "apiKeyEnv",
+  "authMode",
+  "authFiles",
+] as const;
+
+const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(
+  SANDBOX_BACKEND_MODEL_FIELD_LIST,
+);
+
+/**
+ * The two lists above are the SDK's field sets, restated as values because a
+ * TypeScript type cannot be read at run time. This pin keeps them exact in
+ * both directions: a field the SDK adds, renames, or removes fails the build
+ * here rather than reaching a caller as a wrong refusal or a silent drop.
+ */
+type Exhaustive<T extends never> = T;
+
+type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
+
+type UncoveredBackendField = Exhaustive<
+  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number]>
+>;
+type StaleBackendField = Exhaustive<
+  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
+>;
+type UncoveredBackendModelField = Exhaustive<
+  Exclude<
+    keyof SandboxBackendModel,
+    (typeof SANDBOX_BACKEND_MODEL_FIELD_LIST)[number]
+  >
+>;
+type StaleBackendModelField = Exhaustive<
+  Exclude<
+    (typeof SANDBOX_BACKEND_MODEL_FIELD_LIST)[number],
+    keyof SandboxBackendModel
+  >
+>;
+
+export type SandboxBackendFieldCoverage = [
+  UncoveredBackendField,
+  StaleBackendField,
+  UncoveredBackendModelField,
+  StaleBackendModelField,
+];
+
+type SandboxPromptBackend = NonNullable<PromptOptions["backend"]>;
+
+/**
+ * Read the per-turn backend options a caller sent through `providerOptions`.
+ *
+ * `AgentTurnInput.providerOptions.backend` is the exact shape agent-runtime
+ * emits for a per-turn backend or model override, so refusing it dropped the
+ * caller's model, profile, and session credential bundle at the adapter
+ * boundary. Every field is checked against what the Sandbox prompt options
+ * declare, and the result is bounded JSON the SDK reads once.
+ */
+export function backendFromTurnProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+): SandboxPromptBackend | undefined {
+  if (providerOptions === undefined) return undefined;
+  const unsupported = Object.keys(providerOptions).filter(
+    (key) => key !== "backend",
+  );
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Tangle prompt providerOptions are not supported: ${unsupported.sort().join(", ")}`,
+    );
+  }
+  if (!Object.hasOwn(providerOptions, "backend")) return undefined;
+  return sandboxPromptBackend(providerOptions.backend);
+}
+
+function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
+  const present = plainRecord(value, "Tangle prompt backend options");
+  const unsupported = Object.keys(present).filter(
+    (key) => !SANDBOX_BACKEND_FIELDS.has(key),
+  );
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Tangle prompt backend options are not supported: ${unsupported.sort().join(", ")}`,
+    );
+  }
+  const backend = {
+    ...present,
+    ...(present.model === undefined
+      ? {}
+      : { model: sandboxPromptBackendModel(present.model) }),
+  };
+  assertBoundedJson(backend);
+  return backend as SandboxPromptBackend;
+}
+
+function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
+  const present = { ...plainRecord(value, "Tangle prompt backend model options") };
+  const unsupported = Object.keys(present).filter(
+    (key) => !SANDBOX_BACKEND_MODEL_FIELDS.has(key),
+  );
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Tangle prompt backend model options are not supported: ${unsupported.sort().join(", ")}`,
+    );
+  }
+  if (present.authFiles !== undefined) {
+    present.authFiles = sandboxPromptAuthFiles(present.authFiles);
+  }
+  return present;
+}
+
+function sandboxPromptAuthFiles(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    throw new Error("Tangle prompt backend authFiles must be an array");
+  }
+  return value.map((entry) => {
+    const file = plainRecord(entry, "Tangle prompt backend auth file");
+    const unsupported = Object.keys(file).filter(
+      (key) => !["path", "content", "mode"].includes(key),
+    );
+    if (unsupported.length > 0) {
+      throw new Error(
+        `Tangle prompt backend auth file fields are not supported: ${unsupported.sort().join(", ")}`,
+      );
+    }
+    if (typeof file.path !== "string" || file.path.length === 0) {
+      throw new Error("Tangle prompt backend auth file requires a path");
+    }
+    if (typeof file.content !== "string") {
+      throw new Error("Tangle prompt backend auth file requires string content");
+    }
+    if (file.mode !== undefined && !Number.isSafeInteger(file.mode)) {
+      throw new Error("Tangle prompt backend auth file mode must be an integer");
+    }
+    return file;
+  });
+}
+
+function plainRecord(value: unknown, label: string): Record<string, unknown> {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Combine the turn's requested interaction posture with its backend options.
+ *
+ * agent-runtime emits both: it maps `backend.interactions` onto the canonical
+ * `AgentTurnInput.interactions` and carries the whole backend block through
+ * `providerOptions`. The two must agree, and a disagreement is refused rather
+ * than resolved by preference, because either answer would run the turn on a
+ * posture the caller did not ask for.
+ */
+function turnBackendOptions(
+  input: AgentTurnInput,
+): SandboxPromptBackend | undefined {
+  const backend = backendFromTurnProviderOptions(input.providerOptions);
+  const backendModel = backend?.model?.model;
+  if (
+    input.model !== undefined &&
+    backendModel !== undefined &&
+    backendModel !== input.model
+  ) {
+    throw new Error("Tangle turn model conflicts with its backend model");
+  }
+  if (input.interactions === undefined) return backend;
+  if (backend === undefined) return { interactions: input.interactions };
+  if (
+    backend.interactions !== undefined &&
+    !sameRequestedInteractions(backend.interactions, input.interactions)
+  ) {
+    throw new Error(
+      "Tangle turn interactions conflict with its backend interactions",
+    );
+  }
+  return { ...backend, interactions: input.interactions };
+}
+
+function sameRequestedInteractions(
+  left: { permission?: boolean; question?: boolean; plan?: boolean },
+  right: { permission?: boolean; question?: boolean; plan?: boolean },
+): boolean {
+  return (["permission", "question", "plan"] as const).every(
+    (kind) => (left[kind] ?? false) === (right[kind] ?? false),
+  );
 }
 
 type SandboxRunStatus =
