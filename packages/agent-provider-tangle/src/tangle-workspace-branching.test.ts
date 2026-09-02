@@ -271,6 +271,23 @@ function checkpointRequest(): WorkspaceCheckpointRequest {
   };
 }
 
+async function checkpointWithHiddenInventoryMarker() {
+  const { box, client } = createFakeSandbox();
+  const request = checkpointRequest();
+  const first = createTangleWorkspaceBranching({ box, client, provider });
+  const created = await first!.checkpoint(request);
+  if (created.status !== "created") {
+    throw new Error("checkpoint setup failed");
+  }
+  const snapshots = await box.listSnapshots?.();
+  const snapshot = snapshots?.[0];
+  if (!snapshot) throw new Error("snapshot setup failed");
+  box.listSnapshots = async () => [
+    { ...snapshot, tags: ["storage-inventory-retained"] },
+  ];
+  return { box, client, request, created, snapshot };
+}
+
 function forkRequest(checkpoint: WorkspaceCheckpointRef): WorkspaceForkRequest {
   const material = {
     checkpoint,
@@ -780,7 +797,7 @@ describe("Tangle workspace branching", () => {
     expect(await client.get!(childId!)).not.toBeNull();
   });
 
-  it("propagates cancellation without starting recovery traffic", async () => {
+  it("stops before checkpoint creation when key recovery is cancelled", async () => {
     const { box, client } = createFakeSandbox();
     const snapshot = box.snapshot!;
     let snapshotCalls = 0;
@@ -805,8 +822,43 @@ describe("Tangle workspace branching", () => {
     });
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
-    expect(snapshotCalls).toBe(1);
+    expect(snapshotCalls).toBe(0);
     expect(listCalls).toBe(1);
+  });
+
+  it("does not invoke checkpoint recovery after cancellation", async () => {
+    const { box, client } = createFakeSandbox();
+    let listCalls = 0;
+    let lookupCalls = 0;
+    let snapshotCalls = 0;
+    box.listSnapshots = async () => {
+      listCalls += 1;
+      return [];
+    };
+    box.getSnapshotOperation = async () => {
+      lookupCalls += 1;
+      return { outcome: "not_found", kind: "checkpoint" };
+    };
+    box.snapshot = async () => {
+      snapshotCalls += 1;
+      throw new Error("checkpoint creation must not run");
+    };
+    const operations = createTangleWorkspaceBranching({
+      box,
+      client,
+      provider,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      operations!.checkpoint(checkpointRequest(), {
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(listCalls).toBe(0);
+    expect(lookupCalls).toBe(0);
+    expect(snapshotCalls).toBe(0);
   });
 
   it("continues account inventory after a full Sandbox page", async () => {
@@ -1035,6 +1087,233 @@ describe("Tangle workspace branching", () => {
       status: "found",
       environment: fork.environment,
     });
+  });
+
+  it("recovers a live checkpoint when inventory omits its marker tags", async () => {
+    const { box, client, request, created, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    const lookupOptions: Array<{ tags?: string[] } | undefined> = [];
+    box.getSnapshotOperation = async (_id, options) => {
+      lookupOptions.push(options);
+      return {
+        outcome: "found",
+        kind: "checkpoint",
+        state: "succeeded",
+        result: {
+          snapshotId: snapshot.snapshotId,
+          createdAt: snapshot.createdAt,
+          tags: snapshot.tags,
+        },
+      };
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+      })
+    ).resolves.toMatchObject({
+      status: "found",
+      checkpoint: created.checkpoint,
+    });
+    expect(lookupOptions).toEqual([undefined]);
+  });
+
+  it("fails closed on duplicate snapshot identities during recovery", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    box.listSnapshots = async () => [snapshot, { ...snapshot }];
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
+  });
+
+  it("returns not_found when only the operation record retains a checkpoint", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    box.listSnapshots = async () => [];
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: snapshot.snapshotId,
+        createdAt: snapshot.createdAt,
+        tags: snapshot.tags,
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "not_found" });
+  });
+
+  it("does not create from a settled operation whose snapshot was deleted", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    let snapshotCalls = 0;
+    box.listSnapshots = async () => [];
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: snapshot.snapshotId,
+        createdAt: snapshot.createdAt,
+        tags: snapshot.tags,
+      },
+    });
+    box.snapshot = async () => {
+      snapshotCalls += 1;
+      throw new Error("checkpoint creation must not run");
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(restarted!.checkpoint(request)).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+    });
+    expect(snapshotCalls).toBe(0);
+  });
+
+  it("rejects a replay acknowledgement after the live snapshot disappears", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    let lookupCalls = 0;
+    let snapshotCalls = 0;
+    box.listSnapshots = async () => [];
+    box.getSnapshotOperation = async () => {
+      lookupCalls += 1;
+      if (lookupCalls === 1) {
+        return { outcome: "not_found", kind: "checkpoint" };
+      }
+      return {
+        outcome: "found",
+        kind: "checkpoint",
+        state: "succeeded",
+        result: {
+          snapshotId: snapshot.snapshotId,
+          createdAt: snapshot.createdAt,
+          tags: snapshot.tags,
+        },
+      };
+    };
+    box.snapshot = async () => {
+      snapshotCalls += 1;
+      return {
+        snapshotId: snapshot.snapshotId,
+        sandboxId: sourceEnvironmentId,
+        createdAt: snapshot.createdAt,
+        tags: snapshot.tags,
+        idempotency: {
+          outcome: "replayed",
+          requestDigest: request.requestDigest,
+        },
+      };
+    };
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(restarted!.checkpoint(request)).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+    });
+    expect(snapshotCalls).toBe(1);
+    expect(lookupCalls).toBe(2);
+  });
+
+  it("reconciles a replay acknowledgement when its tags are omitted", async () => {
+    const { box, client, request, created, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    box.snapshot = async () => ({
+      snapshotId: snapshot.snapshotId,
+      sandboxId: sourceEnvironmentId,
+      createdAt: snapshot.createdAt,
+      tags: [],
+      idempotency: {
+        outcome: "replayed",
+        requestDigest: request.requestDigest,
+      },
+    });
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: snapshot.snapshotId,
+        createdAt: snapshot.createdAt,
+        tags: snapshot.tags,
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(restarted!.checkpoint(request)).resolves.toMatchObject({
+      status: "replayed",
+      checkpoint: created.checkpoint,
+    });
+  });
+
+  it("reports the interface conflict carried by operation-result tags", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: snapshot.snapshotId,
+        createdAt: snapshot.createdAt,
+        tags: snapshot.tags,
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: canonicalCandidateDigest({ request: "different" }),
+      })
+    ).resolves.toMatchObject({
+      status: "conflict",
+      existingRequestDigest: request.requestDigest,
+    });
+  });
+
+  it("fails closed when an operation result has no provider marker", async () => {
+    const { box, client, request, snapshot } =
+      await checkpointWithHiddenInventoryMarker();
+    box.getSnapshotOperation = async () => ({
+      outcome: "found",
+      kind: "checkpoint",
+      state: "succeeded",
+      result: {
+        snapshotId: snapshot.snapshotId,
+        createdAt: snapshot.createdAt,
+        tags: ["not-a-provider-marker"],
+      },
+    });
+
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    await expect(
+      restarted!.lookupCheckpoint({
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+      })
+    ).resolves.toMatchObject({ status: "unknown", retryable: true });
   });
 
   it("recovers exact refs from operation results when inventory timestamps drift", async () => {

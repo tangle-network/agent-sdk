@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.34.6.
+The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.36.4.
 The floor is 0.34.6 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshots, durable restores, inventory recovery, and cleanup.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
@@ -205,6 +205,11 @@ cannot prove the complete operation surface.
 Recovery reads the account inventory through Sandbox offset pages of at most
 1,000 sandboxes and continues until a short page proves the inventory is
 complete.
+If a live snapshot loses its marker tags, recovery reads the owner-scoped
+operation record by key and binds its stored result to that live snapshot id.
+The operation record alone never revives a deleted snapshot.
+An older Sandbox deployment that cannot answer the owner-scoped lookup returns
+`unknown` and does not create or mutate a checkpoint.
 The adapter also reads checkpoints from the previous marker format while writing only the current bounded format.
 Malformed, repeated, failed, or over-bound pages return `unknown` and do not
 mutate a resource.
