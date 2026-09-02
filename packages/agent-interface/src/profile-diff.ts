@@ -92,6 +92,11 @@ export interface AgentProfileDiff {
   description?: string;
   rationale?: string;
   source?: {
+    /**
+     * Who produced this change. `frontier-author` is an agent that wrote it —
+     * the same member {@link AgentCandidateLineage}`.source` carries, so the two
+     * enums name one actor with one word.
+     */
     kind:
       | "trace"
       | "frontier-author"

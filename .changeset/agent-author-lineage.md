@@ -2,8 +2,12 @@
 "@tangle-network/agent-interface": minor
 ---
 
-feat(agent-interface): `agentCandidateLineageSchema` accepts an agent-authored candidate
+feat(agent-interface): `agentCandidateLineageSchema` accepts a frontier-authored candidate
 
-`source` gains `agent-author`: a profile that one agent wrote for another from inside a run. That is a shipped capability — a supervising agent authors a child's full `AgentProfile` and may promote it to a sub-supervisor — and no existing member described it. `optimizer` was the closest and was closed to this caller by its own refinement, which mandates a `developmentSplitDigest`; a run-time author has no held-out split, so the field could only be satisfied by fabricating a digest or by declaring `human`.
+`AgentCandidateLineage.source` gains `frontier-author`: a profile one agent wrote for another. That is a shipped capability — a supervising agent authors a child's full `AgentProfile` from inside a run and may promote it to a sub-supervisor — and no existing member described it. `optimizer` was the closest and was closed to this caller by its own refinement, which mandates a `developmentSplitDigest`; a run-time author has no held-out split, so the field could only be satisfied by fabricating a digest or by declaring `human`.
 
-`agent-author` keeps the two requirements that make a generated lineage checkable — it names at least one parent and the run that produced it — and drops the development split, which now applies to `optimizer` and `compound` only. Additive: every lineage that parsed before parses unchanged.
+The member is `frontier-author`, the word `AgentProfileDiff.source.kind` already uses for the same actor, so the two enums name one thing with one word rather than two.
+
+`generatedCandidateSources` and `isGeneratedCandidateSource` are new exports and the single owner of "this candidate was produced from a parent". Three call sites — the lineage refinement and both experiment schemas — branched on `optimizer || compound` independently, so a new generated source was exempt from the "name your baseline" rule in two of them; they now read one list. The development split stays required by `optimizer` and `compound` only.
+
+Additive: every lineage that parsed before parses unchanged.

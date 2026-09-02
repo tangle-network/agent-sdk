@@ -45,6 +45,25 @@ export const agentCandidateMemoryPolicySchema = z.discriminatedUnion("mode", [
     .strict(),
 ]) satisfies z.ZodType<AgentCandidateMemoryPolicy>;
 
+/**
+ * Sources whose candidate was PRODUCED from a parent rather than supplied whole.
+ *
+ * One list, read by the lineage schema and by every experiment schema that gates on it. Three
+ * call sites branched on `optimizer || compound` independently, so adding a fourth generated
+ * source silently exempted it from the "name your baseline" rule in two of them.
+ */
+export const generatedCandidateSources = [
+  "optimizer",
+  "compound",
+  "frontier-author",
+] as const;
+
+export function isGeneratedCandidateSource(
+  source: AgentCandidateLineage["source"],
+): boolean {
+  return (generatedCandidateSources as readonly string[]).includes(source);
+}
+
 export const agentCandidateLineageSchema = z
   .object({
     source: z.enum([
@@ -52,7 +71,7 @@ export const agentCandidateLineageSchema = z
       "human",
       "import",
       "compound",
-      "agent-author",
+      "frontier-author",
     ]),
     parentDigests: z.array(sha256DigestSchema).optional(),
     runIds: z.array(z.string().min(1)).optional(),
@@ -78,11 +97,7 @@ export const agentCandidateLineageSchema = z
     }
     // Every generated lineage names what it came from and the run that produced
     // it, whoever generated it.
-    if (
-      lineage.source === "optimizer" ||
-      lineage.source === "compound" ||
-      lineage.source === "agent-author"
-    ) {
+    if (isGeneratedCandidateSource(lineage.source)) {
       if ((lineage.parentDigests?.length ?? 0) === 0) {
         ctx.addIssue({
           code: "custom",
@@ -101,7 +116,8 @@ export const agentCandidateLineageSchema = z
     // A development split exists only when an offline search produced the
     // candidate. An agent that authors a profile inside a run has no held-out
     // set to pin, so requiring one would force a fabricated digest into the
-    // evidence record.
+    // evidence record. This branch is deliberately NOT the generated-source
+    // list above.
     if (lineage.source === "optimizer" || lineage.source === "compound") {
       if (lineage.developmentSplitDigest === undefined) {
         ctx.addIssue({

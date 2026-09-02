@@ -17,7 +17,10 @@ import type {
 } from "./agent-candidate.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import { changedAgentProfileAxes } from "./profile-diff.js";
-import { agentCandidateLineageSchema } from "./agent-candidate-lineage-schema.js";
+import {
+  agentCandidateLineageSchema,
+  isGeneratedCandidateSource,
+} from "./agent-candidate-lineage-schema.js";
 import {
   canonicalCandidateDigest,
   isCanonicalJsonValue,
@@ -242,7 +245,7 @@ export const agentProfileImprovementExperimentSchema = z
     }
     const source = experiment.candidateLineage.source;
     if (
-      (source === "optimizer" || source === "compound") &&
+      isGeneratedCandidateSource(source) &&
       !experiment.candidateLineage.parentDigests?.includes(experiment.baseline.stateDigest)
     ) {
       ctx.addIssue({

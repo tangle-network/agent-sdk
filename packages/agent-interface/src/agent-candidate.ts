@@ -384,14 +384,17 @@ export interface AgentCandidateLineage {
   /**
    * Who produced this candidate.
    *
-   * `agent-author` is an agent that wrote another agent's profile from inside a
-   * run — the capability `spawn_worker` already exposes, where a supervising
-   * agent authors a child's full `AgentProfile` and may promote it to a
-   * sub-supervisor. It carries `optimizer`'s parent and run requirements and not
-   * its `developmentSplitDigest`: there is no held-out split and no offline
-   * search behind a profile an agent wrote while working.
+   * `frontier-author` is an agent that wrote another agent's profile — the same
+   * member {@link AgentProfileDiff}`.source.kind` already carries, so the two
+   * enums name one actor with one word. It covers a supervising agent authoring
+   * a child's full `AgentProfile` from inside a run, which `spawn_worker`
+   * exposes and a `driver` role promotes to a sub-supervisor.
+   *
+   * It carries `optimizer`'s parent and run requirements and not its
+   * `developmentSplitDigest`: there is no held-out split and no offline search
+   * behind a profile an agent wrote while working.
    */
-  source: "optimizer" | "human" | "import" | "compound" | "agent-author";
+  source: "optimizer" | "human" | "import" | "compound" | "frontier-author";
   parentDigests?: Sha256Digest[];
   runIds?: string[];
   profileDiffIds?: string[];
