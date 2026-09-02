@@ -43,7 +43,11 @@ jobs:
           push-git-tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Tokenless: every public package is registered on npmjs.com as a trusted
+          # publisher for this workflow, so npm mints a short-lived OIDC credential
+          # per publish. A NODE_AUTH_TOKEN here would take precedence over OIDC and
+          # re-introduce the per-package token scope that blocked the provider
+          # packages (2026-09-01: E404 on PUT for agent-provider-tangle/testkit).
           NPM_CONFIG_PROVENANCE: "true"
       - id: release-commit
         name: Resolve published release commit
