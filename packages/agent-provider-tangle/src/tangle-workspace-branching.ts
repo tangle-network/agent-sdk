@@ -122,6 +122,21 @@ type Resolved<TRecord> =
   | { state: "undecided"; message: string }
   | { state: "absent" };
 
+const TANGLE_ATTESTATION_NONCE_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}(?:[0-9a-fA-F]{64})?$/;
+
+function confidentialForkRefusal(request: WorkspaceForkRequest): string | undefined {
+  const confidential = request.confidential;
+  if (confidential?.requested !== true) return undefined;
+  if (
+    confidential.nonce === undefined ||
+    !TANGLE_ATTESTATION_NONCE_PATTERN.test(confidential.nonce)
+  )
+    return "Tangle confidential forks require a 32-64 byte hexadecimal attestation nonce";
+  if (confidential.sealed === true)
+    return "Tangle confidential forks cannot prove sealed no-persistence because the deployed job does not carry that requirement";
+  return "Tangle confidential workspace forks are unavailable because the deployed job does not carry snapshot restore inputs";
+}
+
 export interface TangleWorkspaceBranchingOptions {
   box: SandboxInstanceLike;
   client: SandboxClientLike;
@@ -550,6 +565,11 @@ export function createTangleWorkspaceBranching(
     }
     if (known.state === "known") {
       return forkSuccess(request, known.record.environment, "replayed");
+    }
+
+    const confidentialRefusal = confidentialForkRefusal(request);
+    if (confidentialRefusal !== undefined) {
+      return forkUnknown(request, confidentialRefusal, false);
     }
 
     const checkpoint = [...checkpoints.values()].some(
@@ -1089,6 +1109,7 @@ async function confidentialAttestationForChild(
   const material = {
     provider,
     requested: true as const,
+    tee: response.attestation.tee_type,
     nonce: confidential.nonce,
     measurement,
     environmentId: child.id,
@@ -1150,7 +1171,7 @@ function validTeeReport(
 ): report is NonNullable<SandboxTeeAttestationResponseLike["attestation"]> {
   return (
     !!report &&
-    safeString(report.tee_type) !== undefined &&
+    safeIdentifier(report.tee_type) !== undefined &&
     Array.isArray(report.evidence) &&
     report.evidence.length <= MAX_TEE_EVIDENCE_BYTES &&
     report.evidence.every(

@@ -974,6 +974,7 @@ describe("createTangleProvider", () => {
     expect(capabilities.branching).toEqual({
       checkpoint: false,
       fork: false,
+      confidential: false,
       retrySafe: false,
       lookup: false,
       cleanup: false,

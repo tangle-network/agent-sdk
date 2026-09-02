@@ -19,6 +19,10 @@ export const ConfidentialAttestationSchema = z
   .strictObject({
     provider: idSchema,
     requested: z.literal(true),
+    /** Provider-reported TEE type after external evidence verification. */
+    tee: idSchema.optional(),
+    /** Verified no-persistence posture, when the provider can prove it. */
+    sealed: z.boolean().optional(),
     nonce: idSchema,
     measurement: sha256DigestSchema,
     environmentId: idSchema,
@@ -55,11 +59,19 @@ export type ConfidentialAttestation = z.infer<
 export const ConfidentialExecutionRequestSchema = z
   .strictObject({
     requested: z.boolean(),
+    /** Requested TEE. Omit it to accept any provider-supported TEE. */
+    tee: idSchema.optional(),
+    /** Require the provider to avoid persistence after the environment ends. */
+    sealed: z.boolean().optional(),
     nonce: idSchema.optional(),
     policy: idSchema.optional(),
     profileDigest: sha256DigestSchema.optional(),
   })
   .superRefine((request, refinement) => {
+    const carriesAdmissionField =
+      request.nonce !== undefined ||
+      request.policy !== undefined ||
+      request.profileDigest !== undefined;
     const complete =
       request.nonce !== undefined &&
       request.policy !== undefined &&
@@ -72,18 +84,58 @@ export const ConfidentialExecutionRequestSchema = z
           "a confidential execution request must bind nonce, policy, and profile digest",
       });
     }
-    if (!request.requested && complete) {
+    if (
+      !request.requested &&
+      (carriesAdmissionField ||
+        request.tee !== undefined ||
+        request.sealed !== undefined)
+    ) {
       refinement.addIssue({
         code: "custom",
         path: ["requested"],
         message:
-          "a non-confidential execution request cannot carry confidential admission fields",
+          "a non-confidential execution request cannot carry confidential requirements or admission fields",
       });
     }
   });
 export type ConfidentialExecutionRequest = z.infer<
   typeof ConfidentialExecutionRequestSchema
 >;
+
+function normalizedTeeId(value: string): string {
+  const normalized = value.trim().toLowerCase().replaceAll("_", "-");
+  switch (normalized) {
+    case "aws-nitro":
+    case "aws-nitro-enclave":
+    case "aws-nitro-enclaves":
+      return "nitro";
+    case "intel-tdx":
+      return "tdx";
+    case "amd-sev":
+    case "amd-sev-snp":
+    case "sev":
+      return "sev-snp";
+    case "dstack":
+    case "phala":
+      return "phala-dstack";
+    default:
+      return normalized;
+  }
+}
+
+/** Match one requested TEE against a provider-reported TEE identifier. */
+export function confidentialTeeMatchesRequest(
+  requested: string | undefined,
+  attested: string | undefined,
+): boolean {
+  if (requested === undefined) return true;
+  if (normalizedTeeId(requested) === "any")
+    return attested !== undefined && attested.trim().length > 0;
+  return (
+    attested !== undefined &&
+    normalizedTeeId(attested) === normalizedTeeId(requested)
+  );
+}
 
 export interface ConfidentialExecutionEnvironment {
   provider: string;
@@ -145,6 +197,8 @@ export function confidentialExecutionVerified(input: {
     attestation.nonce !== request.nonce ||
     attestation.policy !== request.policy ||
     attestation.profileDigest !== request.profileDigest ||
+    !confidentialTeeMatchesRequest(request.tee, attestation.tee) ||
+    (request.sealed === true && attestation.sealed !== true) ||
     environment.confidentialRequested !== request.requested
   ) {
     return false;
@@ -159,6 +213,8 @@ export function confidentialExecutionRequestDigest(
   const parsed = ConfidentialExecutionRequestSchema.parse(request);
   return wireDigest({
     requested: parsed.requested,
+    ...(parsed.tee === undefined ? {} : { tee: parsed.tee }),
+    ...(parsed.sealed === undefined ? {} : { sealed: parsed.sealed }),
     ...(parsed.nonce === undefined ? {} : { nonce: parsed.nonce }),
     ...(parsed.policy === undefined ? {} : { policy: parsed.policy }),
     ...(parsed.profileDigest === undefined

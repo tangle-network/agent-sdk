@@ -110,6 +110,8 @@ export function defaultTangleSandboxCapabilities(
     branching: {
       checkpoint: true,
       fork: true,
+      // The deployed Tangle job does not carry snapshot restore inputs.
+      confidential: false,
       retrySafe: true,
       lookup: true,
       cleanup: true,

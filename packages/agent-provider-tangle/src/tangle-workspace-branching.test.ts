@@ -1,10 +1,6 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { SandboxInstance } from "@tangle-network/sandbox";
 import {
-  ConfidentialAttestationSchema,
   canonicalCandidateDigest,
   confidentialExecutionRequestDigest,
   forkedEnvironmentConfidentialityVerified,
@@ -38,6 +34,31 @@ const source = {
   executionId: "execution-parent",
   requestDigest: canonicalCandidateDigest({ request: "parent" }),
 } as const;
+
+function testAttestationNonce(label: string): string {
+  return canonicalCandidateDigest({ nonce: label }).slice("sha256:".length);
+}
+
+async function seedLegacyFork(
+  client: SandboxClientLike,
+  request: WorkspaceForkRequest
+): Promise<SandboxInstanceLike> {
+  return client.create({
+    fromSnapshot: request.checkpoint.checkpointId,
+    fromSandboxId: request.checkpoint.source.environmentId,
+    idempotencyKey: request.idempotencyKey,
+    metadata: {
+      __tangle_agent_workspace_v1: {
+        version: 1,
+        kind: "fork",
+        idempotencyKey: request.idempotencyKey,
+        requestDigest: request.requestDigest,
+        request,
+        materialization: "snapshot",
+      },
+    },
+  });
+}
 
 function createFakeSandbox(): {
   box: SandboxInstanceLike;
@@ -1407,7 +1428,7 @@ describe("Tangle workspace branching", () => {
     );
   });
 
-  it("carries the real Nitro report through the branching attestation path", async () => {
+  it("refuses confidential forks before create when the wire cannot preserve the request", async () => {
     const { box, client } = createFakeSandbox();
     const checkpointOperations = createTangleWorkspaceBranching({
       box,
@@ -1420,82 +1441,89 @@ describe("Tangle workspace branching", () => {
     if (checkpoint.status !== "created")
       throw new Error("checkpoint setup failed");
 
-    const fixturePath = resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      "../test/fixtures/aws-nitro-document.cbor"
-    );
-    const evidence = Array.from(readFileSync(fixturePath));
-    expect(evidence).toHaveLength(4_461);
-    const report = {
-      tee_type: "nitro",
-      evidence,
-      measurement: Array.from({ length: 48 }, (_, index) => index),
-      timestamp: 1_756_368_000,
-    };
     const attestationBox: SandboxInstanceLike = {
       ...box,
       async getTeeAttestation() {
         throw new Error("the parent must not be attested");
       },
     };
-    const originalCreate = client.create;
-    client.create = async (options, requestOptions) => {
-      const child = await originalCreate(options, requestOptions);
-      child.getTeeAttestation = async (attestationOptions) => ({
-        sandbox_id: child.id,
-        attestationNonce: attestationOptions?.attestationNonce,
-        attestation: report,
-      });
-      return child;
-    };
-
-    const verifier = ({ attestation }: { attestation: { quote: string } }) => {
-      const decoded = decodeTangleConfidentialAttestationQuote(
-        attestation.quote
-      );
-      expect(decoded).toEqual(report);
-      return {
-        providerKeyId: "provider-key-real-nitro",
-        providerSignature: "provider-signature-real-nitro",
-      };
+    let createCalls = 0;
+    client.create = async () => {
+      createCalls += 1;
+      throw new Error("create must not run");
     };
     const operations = createTangleWorkspaceBranching({
       box: attestationBox,
       client,
       provider,
-      confidentialAttestationVerifier: verifier,
+      confidentialAttestationVerifier: async () => ({
+        providerKeyId: "provider-key",
+        providerSignature: "provider-signature",
+      }),
     });
-    const material = {
-      checkpoint: checkpoint.checkpoint,
-      placement: { kind: "sandbox", sandboxId: sourceEnvironmentId } as const,
-      confidential: {
-        requested: true as const,
-        nonce: "nonce-real-nitro",
-        policy: "policy-real-nitro",
-        profileDigest: canonicalCandidateDigest({ profile: "worker" }),
-      },
+    const requestFor = (
+      idempotencyKey: string,
+      confidential: NonNullable<WorkspaceForkRequest["confidential"]>
+    ): WorkspaceForkRequest => {
+      const material = {
+        checkpoint: checkpoint.checkpoint,
+        placement: { kind: "sandbox", sandboxId: sourceEnvironmentId } as const,
+        confidential,
+      };
+      return {
+        ...material,
+        idempotencyKey,
+        requestDigest: workspaceForkRequestDigest(material),
+      };
     };
-    const request: WorkspaceForkRequest = {
-      ...material,
-      idempotencyKey: "fork-real-nitro",
-      requestDigest: workspaceForkRequestDigest(material),
-    };
-    const result = await operations!.fork(request);
-    if (result.status !== "created") {
-      throw new Error(`real Nitro fork failed: ${JSON.stringify(result)}`);
-    }
-    const confidentialAttestation = result.environment.confidentialAttestation;
-    expect(
-      ConfidentialAttestationSchema.safeParse(confidentialAttestation).success
-    ).toBe(true);
-    expect(confidentialAttestation).toMatchObject({
-      providerKeyId: "provider-key-real-nitro",
-      providerSignature: "provider-signature-real-nitro",
+    const validNonce = testAttestationNonce("valid");
+    await expect(
+      operations!.fork(
+        requestFor("fork-invalid-nonce", {
+          requested: true,
+          tee: "nitro",
+          nonce: "not-hex",
+          policy: "policy-nitro",
+          profileDigest: canonicalCandidateDigest({ profile: "worker" }),
+        })
+      )
+    ).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+      message: expect.stringMatching(/hexadecimal/),
     });
-    expect(
-      decodeTangleConfidentialAttestationQuote(confidentialAttestation?.quote)
-        ?.evidence
-    ).toHaveLength(4_461);
+    await expect(
+      operations!.fork(
+        requestFor("fork-sealed", {
+          requested: true,
+          tee: "nitro",
+          sealed: true,
+          nonce: validNonce,
+          policy: "policy-nitro",
+          profileDigest: canonicalCandidateDigest({ profile: "worker" }),
+        })
+      )
+    ).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+      message: expect.stringMatching(/sealed/),
+    });
+    await expect(
+      operations!.fork(
+        requestFor("fork-snapshot", {
+          requested: true,
+          tee: "nitro",
+          nonce: validNonce,
+          policy: "policy-nitro",
+          profileDigest: canonicalCandidateDigest({ profile: "worker" }),
+        })
+      )
+    ).resolves.toMatchObject({
+      status: "unknown",
+      retryable: false,
+      message: expect.stringMatching(/snapshot restore/),
+    });
+    expect(createCalls).toBe(0);
   });
 
   it("returns a confidential claim only after the external verifier accepts the raw quote", async () => {
@@ -1518,13 +1546,18 @@ describe("Tangle workspace branching", () => {
       },
     };
     const originalCreate = client.create;
+    const nonceMismatch = testAttestationNonce("mismatch");
+    const nonceMissing = testAttestationNonce("missing");
+    const nonceMeasurement = testAttestationNonce("measurement");
     client.create = async (options, requestOptions) => {
       const child = await originalCreate(options, requestOptions);
-      child.getTeeAttestation = async (attestationOptions) => ({
+      const getTeeAttestation = async (attestationOptions?: {
+        attestationNonce?: string;
+      }) => ({
         sandbox_id: child.id,
-        ...(attestationOptions?.attestationNonce === "nonce-mismatch"
+        ...(attestationOptions?.attestationNonce === nonceMismatch
           ? { attestationNonce: "different-nonce" }
-          : attestationOptions?.attestationNonce === "nonce-missing"
+          : attestationOptions?.attestationNonce === nonceMissing
           ? {}
           : attestationOptions?.attestationNonce === undefined
           ? {}
@@ -1536,6 +1569,11 @@ describe("Tangle workspace branching", () => {
           timestamp: 1_756_368_000,
         },
       });
+      child.getTeeAttestation = getTeeAttestation;
+      const stored = (await client.list?.())?.find(
+        (candidate) => candidate.id === child.id
+      );
+      if (stored) stored.getTeeAttestation = getTeeAttestation;
       return child;
     };
 
@@ -1547,7 +1585,7 @@ describe("Tangle workspace branching", () => {
       attestation: { nonce: string; measurement: `sha256:${string}` };
     }) => {
       if (
-        attestation.nonce !== "nonce-measurement" &&
+        attestation.nonce !== nonceMeasurement &&
         report.measurement[0] === 4
       ) {
         return {
@@ -1570,13 +1608,15 @@ describe("Tangle workspace branching", () => {
     });
     const makeRequest = (
       idempotencyKey: string,
-      nonce: string
+      nonce: string,
+      tee = "tdx"
     ): WorkspaceForkRequest => {
       const material = {
         checkpoint: checkpoint.checkpoint,
         placement: { kind: "sandbox", sandboxId: sourceEnvironmentId } as const,
         confidential: {
           requested: true as const,
+          tee,
           nonce,
           policy: "policy-1",
           profileDigest: canonicalCandidateDigest({ profile: "worker" }),
@@ -1588,6 +1628,10 @@ describe("Tangle workspace branching", () => {
         requestDigest: workspaceForkRequestDigest(material),
       };
     };
+    const recover = async (request: WorkspaceForkRequest) => {
+      await seedLegacyFork(client, request);
+      return operations!.fork(request);
+    };
 
     const withoutVerifier = createTangleWorkspaceBranching({
       box: attestationBox,
@@ -1596,14 +1640,20 @@ describe("Tangle workspace branching", () => {
     });
     await expect(
       withoutVerifier!.fork(
-        makeRequest("fork-without-verifier", "nonce-without-verifier")
+        makeRequest(
+          "fork-without-verifier",
+          testAttestationNonce("without-verifier")
+        )
       )
     ).resolves.toMatchObject({ status: "unknown", retryable: false });
 
-    const acceptedRequest = makeRequest("fork-accepted", "nonce-accepted");
-    const accepted = await operations!.fork(acceptedRequest);
-    expect(accepted.status).toBe("created");
-    if (accepted.status !== "created")
+    const acceptedRequest = makeRequest(
+      "fork-accepted",
+      testAttestationNonce("accepted")
+    );
+    const accepted = await recover(acceptedRequest);
+    expect(accepted.status).toBe("replayed");
+    if (accepted.status !== "replayed")
       throw new Error("accepted fork setup failed");
     expect(accepted.environment.confidentialAttestation).toBeDefined();
     expect(
@@ -1624,28 +1674,40 @@ describe("Tangle workspace branching", () => {
       )
     ).toBe(true);
 
-    const nonceRejected = await operations!.fork(
-      makeRequest("fork-rejected-nonce", "nonce-mismatch")
+    const teeRejected = await recover(
+      makeRequest(
+        "fork-rejected-tee",
+        testAttestationNonce("tee-mismatch"),
+        "nitro"
+      )
     );
-    expect(nonceRejected.status).toBe("created");
-    if (nonceRejected.status !== "created")
+    expect(teeRejected.status).toBe("replayed");
+    if (teeRejected.status !== "replayed")
+      throw new Error("TEE mismatch fork setup failed");
+    expect(teeRejected.environment.confidentialAttestation).toBeUndefined();
+
+    const nonceRejected = await recover(
+      makeRequest("fork-rejected-nonce", nonceMismatch)
+    );
+    expect(nonceRejected.status).toBe("replayed");
+    if (nonceRejected.status !== "replayed")
       throw new Error("nonce fork setup failed");
     expect(nonceRejected.environment.confidentialRequested).toBe(true);
     expect(nonceRejected.environment.confidentialAttestation).toBeUndefined();
 
-    const missingNonce = await operations!.fork(
-      makeRequest("fork-rejected-missing-nonce", "nonce-missing")
+    const missingNonce = await recover(
+      makeRequest("fork-rejected-missing-nonce", nonceMissing)
     );
-    expect(missingNonce.status).toBe("created");
-    if (missingNonce.status !== "created")
+    expect(missingNonce.status).toBe("replayed");
+    if (missingNonce.status !== "replayed")
       throw new Error("missing nonce fork setup failed");
     expect(missingNonce.environment.confidentialAttestation).toBeUndefined();
 
-    const measurementRejected = await operations!.fork(
-      makeRequest("fork-rejected-measurement", "nonce-measurement")
+    const measurementRejected = await recover(
+      makeRequest("fork-rejected-measurement", nonceMeasurement)
     );
-    expect(measurementRejected.status).toBe("created");
-    if (measurementRejected.status !== "created")
+    expect(measurementRejected.status).toBe("replayed");
+    if (measurementRejected.status !== "replayed")
       throw new Error("measurement fork setup failed");
     expect(
       measurementRejected.environment.confidentialAttestation

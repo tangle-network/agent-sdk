@@ -120,6 +120,7 @@ describe("packed Tangle exact-session control", () => {
     expect(capabilities.branching).toEqual({
       checkpoint: false,
       fork: false,
+      confidential: false,
       retrySafe: false,
       lookup: false,
       cleanup: false,
