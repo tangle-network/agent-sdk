@@ -707,6 +707,21 @@ describe("interface split leaf modules", () => {
       attestation: { ...attestation, tee: "Tdx" },
       verifyProviderAttestation: () => true,
     })).toBe(false);
+    const anyTeeRequest = { ...confidentialityRequest, tee: "any" } as const;
+    const anyTeeRequestDigest = confidentialExecutionRequestDigest(anyTeeRequest);
+    expect(confidentialExecutionVerified({
+      request: anyTeeRequest,
+      environment: {
+        ...confidentialEnvironment,
+        requestDigest: anyTeeRequestDigest,
+      },
+      attestation: {
+        ...attestation,
+        tee: "none",
+        requestDigest: anyTeeRequestDigest,
+      },
+      verifyProviderAttestation: () => true,
+    })).toBe(false);
     expect(confidentialExecutionVerified({
       request: confidentialityRequest,
       environment: confidentialEnvironment,

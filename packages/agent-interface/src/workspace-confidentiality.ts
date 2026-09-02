@@ -128,12 +128,13 @@ export function confidentialTeeMatchesRequest(
   requested: string | undefined,
   attested: string | undefined,
 ): boolean {
-  if (requested === undefined) return true;
-  if (normalizedTeeId(requested) === "any")
-    return attested !== undefined && attested.trim().length > 0;
+  if (attested === undefined) return requested === undefined;
+  const normalizedAttested = normalizedTeeId(attested);
+  if (normalizedAttested === "none") return false;
+  if (requested === undefined || normalizedTeeId(requested) === "any")
+    return true;
   return (
-    attested !== undefined &&
-    normalizedTeeId(attested) === normalizedTeeId(requested)
+    normalizedAttested === normalizedTeeId(requested)
   );
 }
 

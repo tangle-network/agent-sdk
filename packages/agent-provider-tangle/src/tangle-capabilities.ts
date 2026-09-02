@@ -470,11 +470,12 @@ export function narrowedTangleCapabilities(
     // An incomplete Sandbox surface clears every branching flag together. A
     // partial claim would let a caller start an operation it cannot recover.
     branching: support.workspaceBranching
-      ? { ...declaredBranching }
+      ? { ...declaredBranching, confidential: false }
       : {
           ...declaredBranching,
           checkpoint: false,
           fork: false,
+          confidential: false,
           ...(declaredBranching.retrySafe !== undefined ? { retrySafe: false } : {}),
           ...(declaredBranching.lookup !== undefined ? { lookup: false } : {}),
           ...(declaredBranching.cleanup !== undefined ? { cleanup: false } : {}),
