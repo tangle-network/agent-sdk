@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.2
+
+### Patch Changes
+
+- 10efdb9: Bind confidential workspace evidence to its requested TEE and persistence requirements.
+  Refuse new Tangle confidential workspace forks until the deployed job can carry snapshot restore and sealed-persistence inputs.
+- Updated dependencies [10efdb9]
+  - @tangle-network/agent-interface@2.3.0
+
 ## 1.1.1
 
 ### Patch Changes
