@@ -128,6 +128,19 @@ type Resolved<TRecord> =
   | { state: "known"; record: TRecord }
   | { state: "conflict"; existingRequestDigest: `sha256:${string}` }
   | { state: "undecided"; message: string }
+  | { state: "absent" };
+
+/** Checkpoint recovery adds a terminal state when its durable snapshot is gone. */
+type ResolvedCheckpoint = Resolved<CheckpointRecord> | { state: "retired" };
+
+/** Normalize remote checkpoint recovery before each caller chooses its output. */
+type CheckpointReconciliation =
+  | { state: "found"; record: CheckpointRecord }
+  | { state: "conflict"; existingRequestDigest: `sha256:${string}` }
+  | {
+      state: "undecided";
+      reason: "inventory_unavailable" | "metadata_invalid";
+    }
   | { state: "retired" }
   | { state: "absent" };
 
@@ -197,7 +210,7 @@ export function createTangleWorkspaceBranching(
       "idempotencyKey" | "requestDigest"
     >,
     signal?: AbortSignal
-  ): Promise<Resolved<CheckpointRecord>> => {
+  ): Promise<ResolvedCheckpoint> => {
     const local = checkpoints.get(request.idempotencyKey);
     if (local) {
       return local.request.requestDigest === request.requestDigest
@@ -207,38 +220,26 @@ export function createTangleWorkspaceBranching(
             existingRequestDigest: local.request.requestDigest,
           };
     }
-    const recovered = await findCheckpointByKey(
+    const recovered = await reconcileCheckpoint(
       box,
       provider,
-      request.idempotencyKey,
+      request,
       signal
     );
-    if (recovered === undefined) {
+    if (recovered.state === "undecided") {
       return {
         state: "undecided",
-        message: "Sandbox checkpoint inventory is unavailable",
+        message:
+          recovered.reason === "inventory_unavailable"
+            ? "Sandbox checkpoint inventory is unavailable"
+            : "Sandbox checkpoint metadata is invalid",
       };
     }
-    if (recovered?.state === "retired") return { state: "retired" };
-    if (!recovered) return { state: "absent" };
-    if (recovered.marker.requestDigest !== request.requestDigest) {
-      return {
-        state: "conflict",
-        existingRequestDigest: recovered.marker.requestDigest,
-      };
+    if (recovered.state === "found") {
+      checkpoints.set(request.idempotencyKey, recovered.record);
+      return { state: "known", record: recovered.record };
     }
-    const record = checkpointRecordFromSnapshot(
-      recovered.marker.request,
-      recovered.snapshot
-    );
-    if (!record) {
-      return {
-        state: "undecided",
-        message: "Sandbox checkpoint metadata is invalid",
-      };
-    }
-    checkpoints.set(request.idempotencyKey, record);
-    return { state: "known", record };
+    return recovered;
   };
 
   /** The fork equivalent of {@link resolveCheckpoint}. */
@@ -395,44 +396,35 @@ export function createTangleWorkspaceBranching(
       );
     }
     if (result.idempotency.outcome === "replayed") {
-      const recovered = await findCheckpointByKey(
+      const recovered = await reconcileCheckpoint(
         box,
         provider,
-        request.idempotencyKey,
+        request,
         operation?.signal
       );
-      if (recovered?.state === "retired" || recovered === null) {
+      if (recovered.state === "retired" || recovered.state === "absent") {
         return checkpointUnknown(
           request,
           "Sandbox replay acknowledged a checkpoint that is no longer present",
           false
         );
       }
-      if (recovered === undefined) {
+      if (recovered.state === "undecided") {
         return checkpointUnknown(
           request,
-          "Sandbox replay could not be reconciled with live checkpoint inventory",
+          recovered.reason === "metadata_invalid"
+            ? "Sandbox replay returned invalid checkpoint metadata"
+            : "Sandbox replay could not be reconciled with live checkpoint inventory",
           true
         );
       }
-      if (recovered.marker.requestDigest !== request.requestDigest) {
-        return checkpointConflict(request, recovered.marker.requestDigest);
+      if (recovered.state === "conflict") {
+        return checkpointConflict(request, recovered.existingRequestDigest);
       }
-      const recoveredRecord = checkpointRecordFromSnapshot(
-        recovered.marker.request,
-        recovered.snapshot
-      );
-      if (!recoveredRecord) {
-        return checkpointUnknown(
-          request,
-          "Sandbox replay returned invalid checkpoint metadata",
-          true
-        );
-      }
-      checkpoints.set(request.idempotencyKey, recoveredRecord);
+      checkpoints.set(request.idempotencyKey, recovered.record);
       return checkpointSuccess(
         request,
-        recoveredRecord.checkpoint,
+        recovered.record.checkpoint,
         "replayed"
       );
     }
@@ -1606,6 +1598,42 @@ async function findCheckpointByKey(
     : { state: "found", snapshot: authoritative, marker };
 }
 
+/** Normalize one remote checkpoint recovery attempt for every caller. */
+async function reconcileCheckpoint(
+  box: SandboxInstanceLike,
+  provider: string,
+  request: Pick<
+    WorkspaceCheckpointRequest,
+    "idempotencyKey" | "requestDigest"
+  >,
+  signal?: AbortSignal
+): Promise<CheckpointReconciliation> {
+  const recovered = await findCheckpointByKey(
+    box,
+    provider,
+    request.idempotencyKey,
+    signal
+  );
+  if (recovered === undefined) {
+    return { state: "undecided", reason: "inventory_unavailable" };
+  }
+  if (recovered === null) return { state: "absent" };
+  if (recovered.state === "retired") return recovered;
+  if (recovered.marker.requestDigest !== request.requestDigest) {
+    return {
+      state: "conflict",
+      existingRequestDigest: recovered.marker.requestDigest,
+    };
+  }
+  const record = checkpointRecordFromSnapshot(
+    recovered.marker.request,
+    recovered.snapshot
+  );
+  return record === undefined
+    ? { state: "undecided", reason: "metadata_invalid" }
+    : { state: "found", record };
+}
+
 /**
  * Prefer the durable operation result over inventory metadata.
  *
@@ -2217,31 +2245,26 @@ async function checkpointConflictFromRemote(
   signal?: AbortSignal
 ): Promise<WorkspaceCheckpointResult | undefined> {
   signal?.throwIfAborted();
-  const recovered = await findCheckpointByKey(
+  const recovered = await reconcileCheckpoint(
     box,
     provider,
-    request.idempotencyKey,
+    request,
     signal
   );
   signal?.throwIfAborted();
-  if (recovered?.state === "retired") {
+  if (recovered.state === "retired") {
     return checkpointUnknown(
       request,
       "Sandbox checkpoint operation is settled but its snapshot is no longer present; the idempotency key cannot be reused",
       false
     );
   }
-  if (!recovered) return undefined;
-  if (recovered.marker.requestDigest !== request.requestDigest) {
-    return checkpointConflict(request, recovered.marker.requestDigest);
+  if (recovered.state === "conflict") {
+    return checkpointConflict(request, recovered.existingRequestDigest);
   }
-  const record = checkpointRecordFromSnapshot(
-    recovered.marker.request,
-    recovered.snapshot
-  );
-  return record === undefined
+  return recovered.state !== "found"
     ? undefined
-    : checkpointSuccess(request, record.checkpoint, "replayed");
+    : checkpointSuccess(request, recovered.record.checkpoint, "replayed");
 }
 
 /** The fork equivalent of {@link checkpointConflictFromRemote}. */
