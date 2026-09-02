@@ -115,11 +115,20 @@ interface CleanupRecord {
   acknowledgement: WorkspaceCleanupAcknowledgement;
 }
 
+type CheckpointRecovery =
+  | {
+      state: "found";
+      snapshot: SandboxSnapshotInfoLike;
+      marker: CheckpointMarker;
+    }
+  | { state: "retired" };
+
 /** What the provider knows about one operation key before it acts on it. */
 type Resolved<TRecord> =
   | { state: "known"; record: TRecord }
   | { state: "conflict"; existingRequestDigest: `sha256:${string}` }
   | { state: "undecided"; message: string }
+  | { state: "retired" }
   | { state: "absent" };
 
 const TANGLE_ATTESTATION_NONCE_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}(?:[0-9a-fA-F]{64})?$/;
@@ -179,8 +188,8 @@ export function createTangleWorkspaceBranching(
    *
    * The in-process record answers first; otherwise the Sandbox inventory and
    * operation ledger rebuild it after a restart. `absent` means the key has no
-   * resource this provider created, which is the only state where a caller may
-   * go on to create one.
+   * record, which is the only state where a caller may go on to create one.
+   * `retired` means the durable operation settled but its snapshot is gone.
    */
   const resolveCheckpoint = async (
     request: Pick<
@@ -200,6 +209,7 @@ export function createTangleWorkspaceBranching(
     }
     const recovered = await findCheckpointByKey(
       box,
+      provider,
       request.idempotencyKey,
       signal
     );
@@ -209,6 +219,7 @@ export function createTangleWorkspaceBranching(
         message: "Sandbox checkpoint inventory is unavailable",
       };
     }
+    if (recovered?.state === "retired") return { state: "retired" };
     if (!recovered) return { state: "absent" };
     if (recovered.marker.requestDigest !== request.requestDigest) {
       return {
@@ -311,6 +322,13 @@ export function createTangleWorkspaceBranching(
         true
       );
     }
+    if (known.state === "retired") {
+      return checkpointUnknown(
+        request,
+        "Sandbox checkpoint operation is settled but its snapshot is no longer present; the idempotency key cannot be reused",
+        false
+      );
+    }
     if (known.state === "known") {
       return checkpointSuccess(request, known.record.checkpoint, "replayed");
     }
@@ -318,6 +336,7 @@ export function createTangleWorkspaceBranching(
     const tags = checkpointMarkerTags(request);
     let result: SandboxSnapshotResultLike;
     try {
+      operation?.signal?.throwIfAborted();
       result = await awaitWithSignal(
         box.snapshot?.({ tags, idempotencyKey: request.idempotencyKey }),
         operation?.signal
@@ -326,6 +345,7 @@ export function createTangleWorkspaceBranching(
       operation?.signal?.throwIfAborted();
       const conflict = await checkpointConflictFromRemote(
         box,
+        provider,
         request,
         operation?.signal
       );
@@ -364,6 +384,58 @@ export function createTangleWorkspaceBranching(
     if (resultMarker && resultMarker.requestDigest !== request.requestDigest) {
       return checkpointConflict(request, resultMarker.requestDigest);
     }
+    if (
+      resultMarker &&
+      !checkpointMarkerBelongsToSource(resultMarker, provider, box.id)
+    ) {
+      return checkpointUnknown(
+        request,
+        "Sandbox checkpoint acknowledgement belongs to another source",
+        false
+      );
+    }
+    if (result.idempotency.outcome === "replayed") {
+      const recovered = await findCheckpointByKey(
+        box,
+        provider,
+        request.idempotencyKey,
+        operation?.signal
+      );
+      if (recovered?.state === "retired" || recovered === null) {
+        return checkpointUnknown(
+          request,
+          "Sandbox replay acknowledged a checkpoint that is no longer present",
+          false
+        );
+      }
+      if (recovered === undefined) {
+        return checkpointUnknown(
+          request,
+          "Sandbox replay could not be reconciled with live checkpoint inventory",
+          true
+        );
+      }
+      if (recovered.marker.requestDigest !== request.requestDigest) {
+        return checkpointConflict(request, recovered.marker.requestDigest);
+      }
+      const recoveredRecord = checkpointRecordFromSnapshot(
+        recovered.marker.request,
+        recovered.snapshot
+      );
+      if (!recoveredRecord) {
+        return checkpointUnknown(
+          request,
+          "Sandbox replay returned invalid checkpoint metadata",
+          true
+        );
+      }
+      checkpoints.set(request.idempotencyKey, recoveredRecord);
+      return checkpointSuccess(
+        request,
+        recoveredRecord.checkpoint,
+        "replayed"
+      );
+    }
     if (!resultMarker) {
       return checkpointUnknown(
         request,
@@ -399,27 +471,13 @@ export function createTangleWorkspaceBranching(
     if (known.state === "undecided") {
       return checkpointLookupUnknown(request, known.message, true);
     }
+    if (known.state === "retired") {
+      return checkpointNotFound(request);
+    }
     if (known.state === "known") {
       return checkpointFound(request, known.record.checkpoint);
     }
-
-    try {
-      const lookup = await awaitWithSignal(
-        box.getSnapshotOperation?.(request.idempotencyKey, { tags: [] }),
-        operation?.signal
-      );
-      const settled = lookupOutcomeFromSandbox(lookup, "checkpoint");
-      return settled.absent
-        ? checkpointNotFound(request)
-        : checkpointLookupUnknown(request, settled.message, settled.retryable);
-    } catch (error) {
-      operation?.signal?.throwIfAborted();
-      return checkpointLookupUnknown(
-        request,
-        `Sandbox checkpoint lookup failed: ${safeError(error)}`,
-        true
-      );
-    }
+    return checkpointNotFound(request);
   };
 
   const deleteCheckpoint = async (
@@ -1213,6 +1271,11 @@ function validSnapshotInfo(
 type SnapshotOperationResult = {
   snapshotId: string;
   createdAt: Date | string;
+  tags?: unknown;
+};
+
+type TaggedSnapshotOperationResult = SnapshotOperationResult & {
+  tags: string[];
 };
 
 type ForkOperationChildResult = {
@@ -1240,6 +1303,16 @@ function validSnapshotOperationResult(
     validOperationRecord(value) &&
     safeIdentifier(value.snapshotId) !== undefined &&
     validOperationDate(value.createdAt)
+  );
+}
+
+function validTaggedSnapshotOperationResult(
+  value: unknown
+): value is TaggedSnapshotOperationResult {
+  return (
+    validSnapshotOperationResult(value) &&
+    Array.isArray(value.tags) &&
+    value.tags.every((tag) => safeString(tag) !== undefined)
   );
 }
 
@@ -1332,6 +1405,7 @@ async function checkpointOperationLookup(
   marker: CheckpointMarker,
   signal?: AbortSignal
 ): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
+  signal?.throwIfAborted();
   const lookup = await awaitWithSignal(
     box.getSnapshotOperation?.(marker.idempotencyKey, {
       tags: marker.legacy
@@ -1341,6 +1415,19 @@ async function checkpointOperationLookup(
     signal
   );
   return lookup;
+}
+
+/** Read the durable record by its owner-scoped key when no request body remains. */
+async function checkpointOperationLookupByKey(
+  box: SandboxInstanceLike,
+  idempotencyKey: string,
+  signal?: AbortSignal
+): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
+  signal?.throwIfAborted();
+  return await awaitWithSignal(
+    box.getSnapshotOperation?.(idempotencyKey),
+    signal
+  );
 }
 
 async function checkpointOperationSucceeded(
@@ -1422,15 +1509,17 @@ function markerTags(
 
 async function findCheckpointByKey(
   box: SandboxInstanceLike,
+  provider: string,
   key: string,
   signal?: AbortSignal
 ): Promise<
-  | { snapshot: SandboxSnapshotInfoLike; marker: CheckpointMarker }
+  | CheckpointRecovery
   | null
   | undefined
 > {
   let snapshots: SandboxSnapshotInfoLike[];
   try {
+    signal?.throwIfAborted();
     const listed = await awaitWithSignal(box.listSnapshots?.(), signal);
     if (!Array.isArray(listed)) return undefined;
     snapshots = listed;
@@ -1441,11 +1530,18 @@ async function findCheckpointByKey(
   if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
     return undefined;
   }
+  const snapshotIds = new Set<string>();
+  let found: Extract<CheckpointRecovery, { state: "found" }> | undefined;
   let unresolved = false;
   for (const snapshot of snapshots) {
     if (!validSnapshotInfo(snapshot, box.id)) return undefined;
+    if (snapshotIds.has(snapshot.snapshotId)) return undefined;
+    snapshotIds.add(snapshot.snapshotId);
     const marker = checkpointMarkerFromTags(snapshot.tags, key);
     if (!marker) continue;
+    if (!checkpointMarkerBelongsToSource(marker, provider, box.id)) {
+      return undefined;
+    }
     try {
       const lookup = await checkpointOperationLookup(box, marker, signal);
       if (
@@ -1455,7 +1551,9 @@ async function findCheckpointByKey(
       ) {
         const authoritative = snapshotFromOperationResult(snapshot, lookup);
         if (authoritative === undefined) return undefined;
-        return { snapshot: authoritative, marker };
+        if (found !== undefined) return undefined;
+        found = { state: "found", snapshot: authoritative, marker };
+        continue;
       }
       unresolved = true;
     } catch {
@@ -1463,7 +1561,49 @@ async function findCheckpointByKey(
       return undefined;
     }
   }
-  return unresolved ? undefined : null;
+  if (found !== undefined) return found;
+  if (unresolved) return undefined;
+
+  // Some storage backends retain the snapshot but omit caller tags from a
+  // later inventory read. The owner-scoped operation record retains the exact
+  // acknowledgement, including those tags. Bind that record to a currently
+  // live snapshot id before recovering it; neither record is sufficient alone.
+  let lookup: SandboxWorkspaceOperationLookupLike | undefined;
+  try {
+    lookup = await checkpointOperationLookupByKey(box, key, signal);
+  } catch {
+    signal?.throwIfAborted();
+    return undefined;
+  }
+  if (lookup?.outcome === "not_found" && lookup.kind === "checkpoint") {
+    return null;
+  }
+  if (
+    lookup?.outcome !== "found" ||
+    lookup.kind !== "checkpoint" ||
+    lookup.state !== "succeeded"
+  ) {
+    return undefined;
+  }
+  if (snapshots.length === 0) return { state: "retired" };
+  if (!validTaggedSnapshotOperationResult(lookup.result)) return undefined;
+
+  const live = snapshots.filter(
+    (snapshot) => snapshot.snapshotId === lookup.result?.snapshotId
+  );
+  if (live.length === 0) return { state: "retired" };
+  if (live.length !== 1) return undefined;
+  const marker = checkpointMarkerFromTags(lookup.result.tags, key);
+  if (
+    !marker ||
+    !checkpointMarkerBelongsToSource(marker, provider, box.id)
+  ) {
+    return undefined;
+  }
+  const authoritative = snapshotFromOperationResult(live[0], lookup);
+  return authoritative === undefined
+    ? undefined
+    : { state: "found", snapshot: authoritative, marker };
 }
 
 /**
@@ -1849,6 +1989,17 @@ function markerBelongsToSource(
   );
 }
 
+function checkpointMarkerBelongsToSource(
+  marker: CheckpointMarker,
+  provider: string,
+  sourceEnvironmentId: string
+): boolean {
+  return (
+    marker.request.source.provider === provider &&
+    marker.request.source.environmentId === sourceEnvironmentId
+  );
+}
+
 function checkpointMarkerFromTags(
   tags: string[] | undefined,
   key?: string
@@ -2061,16 +2212,25 @@ function forkMarkerFromMetadata(
  */
 async function checkpointConflictFromRemote(
   box: SandboxInstanceLike,
+  provider: string,
   request: WorkspaceCheckpointRequest,
   signal?: AbortSignal
 ): Promise<WorkspaceCheckpointResult | undefined> {
   signal?.throwIfAborted();
   const recovered = await findCheckpointByKey(
     box,
+    provider,
     request.idempotencyKey,
     signal
   );
   signal?.throwIfAborted();
+  if (recovered?.state === "retired") {
+    return checkpointUnknown(
+      request,
+      "Sandbox checkpoint operation is settled but its snapshot is no longer present; the idempotency key cannot be reused",
+      false
+    );
+  }
   if (!recovered) return undefined;
   if (recovered.marker.requestDigest !== request.requestDigest) {
     return checkpointConflict(request, recovered.marker.requestDigest);
