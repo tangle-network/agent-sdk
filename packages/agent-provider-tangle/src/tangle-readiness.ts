@@ -18,18 +18,18 @@ export const DEFAULT_TANGLE_READY_TIMEOUT_MS = 120_000;
  * A response that already reports `running` skips that wait, and `running`
  * alone is not usable: the SDK's own `waitFor` treats the target as reached
  * only when `filesystemIncarnationReadiness` is `ready`, because the box's
- * filesystem is still being built until then. So `create()` can return a box
- * that reports `running` while the platform still holds a lifecycle operation
- * on it, and the first turn lands on that lock.
+ * filesystem is still being built until then. An environment composed before
+ * that is an environment that cannot accept a turn.
  *
- * Measured against that mechanism, 2026-09-01, discovery-lab#467: one box
- * (`sandbox-97943ce9526d`) came back from `create()`, and the first
- * `environment.stream()` failed 78 seconds later with "A sandbox lifecycle
- * operation is already in progress". That string is the platform's, not the
- * SDK's, and n is 1, so the incarnation window is the mechanism this wait
- * addresses rather than a proven cause. A lifecycle lock held by a genuinely
- * concurrent operation is a different failure, and no client-side wait
- * prevents it.
+ * WHAT THIS WAIT IS NOT FOR. An earlier version of this comment claimed the
+ * wait also closed the platform's "A sandbox lifecycle operation is already in
+ * progress", and that claim is withdrawn: measured 2026-09-01 (issue #280),
+ * that refusal comes from `DELETE /v1/sandboxes/:id`, not from a turn. The
+ * platform guards exactly three routes with the per-sandbox lifecycle lease —
+ * resume, stop and delete — and the runtime path a prompt takes is not one of
+ * them, so no readiness wait here can prevent it and none is trying to. The
+ * collision is answered where it happens, in `destroy()`
+ * (`tangle-environment.ts`).
  *
  * Readiness also decides what the environment can claim. Composing an
  * environment reads the sandbox's deployment capability document once, and a
