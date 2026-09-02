@@ -582,6 +582,8 @@ describe("interface split leaf modules", () => {
     const placement = { kind: "sandbox" as const, sandboxId: "environment-destination" };
     const confidential = {
       requested: true as const,
+      tee: "nitro",
+      sealed: true,
       nonce: "nonce-1",
       policy: "policy-1",
       profileDigest: digest("e"),
@@ -635,9 +637,31 @@ describe("interface split leaf modules", () => {
     expect(workspaceCleanupAcknowledgementMatches(cleanup, { ...cleanupAck, targetId: "other" })).toBe(false);
     const confidentialityRequest = ConfidentialExecutionRequestSchema.parse(confidential);
     const environmentDigest = confidentialExecutionRequestDigest(confidentialityRequest);
+    expect(
+      confidentialExecutionRequestDigest({
+        ...confidentialityRequest,
+        tee: "tdx",
+      }),
+    ).not.toBe(environmentDigest);
+    for (const field of [
+      { tee: "nitro" },
+      { sealed: true },
+      { nonce: "nonce" },
+      { policy: "policy" },
+      { profileDigest: digest("0") },
+    ]) {
+      expect(
+        ConfidentialExecutionRequestSchema.safeParse({
+          requested: false,
+          ...field,
+        }).success,
+      ).toBe(false);
+    }
     const attestation = ConfidentialAttestationSchema.parse({
       provider: exactRun.provider,
       requested: true,
+      tee: "Nitro",
+      sealed: true,
       nonce: confidential.nonce,
       measurement: digest("f"),
       environmentId: environment.environmentId,
@@ -664,27 +688,52 @@ describe("interface split leaf modules", () => {
         ),
       }).success,
     ).toBe(false);
+    const confidentialEnvironment = {
+      provider: exactRun.provider,
+      environmentId: environment.environmentId,
+      source: exactRun,
+      requestDigest: environmentDigest,
+      confidentialRequested: true,
+    } as const;
     expect(confidentialExecutionVerified({
       request: confidentialityRequest,
-      environment: {
-        provider: exactRun.provider,
-        environmentId: environment.environmentId,
-        source: exactRun,
-        requestDigest: environmentDigest,
-        confidentialRequested: true,
-      },
+      environment: confidentialEnvironment,
       attestation,
       verifyProviderAttestation: () => true,
     })).toBe(true);
     expect(confidentialExecutionVerified({
       request: confidentialityRequest,
+      environment: confidentialEnvironment,
+      attestation: { ...attestation, tee: "Tdx" },
+      verifyProviderAttestation: () => true,
+    })).toBe(false);
+    const anyTeeRequest = { ...confidentialityRequest, tee: "any" } as const;
+    const anyTeeRequestDigest = confidentialExecutionRequestDigest(anyTeeRequest);
+    expect(confidentialExecutionVerified({
+      request: anyTeeRequest,
       environment: {
-        provider: exactRun.provider,
-        environmentId: environment.environmentId,
-        source: exactRun,
-        requestDigest: environmentDigest,
-        confidentialRequested: true,
+        ...confidentialEnvironment,
+        requestDigest: anyTeeRequestDigest,
       },
+      attestation: {
+        ...attestation,
+        tee: "none",
+        requestDigest: anyTeeRequestDigest,
+      },
+      verifyProviderAttestation: () => true,
+    })).toBe(false);
+    expect(confidentialExecutionVerified({
+      request: confidentialityRequest,
+      environment: confidentialEnvironment,
+      attestation: ConfidentialAttestationSchema.parse({
+        ...attestation,
+        sealed: undefined,
+      }),
+      verifyProviderAttestation: () => true,
+    })).toBe(false);
+    expect(confidentialExecutionVerified({
+      request: confidentialityRequest,
+      environment: confidentialEnvironment,
       attestation,
     })).toBe(false);
     expect(forkedEnvironmentConfidentialityVerified(forkRequest, environment)).toBe(false);

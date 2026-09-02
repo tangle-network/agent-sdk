@@ -241,6 +241,9 @@ if (checkpoint?.status === "created" || checkpoint?.status === "replayed") {
 ### Confidential forks
 
 Sandbox returns raw TEE evidence, not a verified claim.
+The deployed Tangle job does not carry snapshot restore or sealed-persistence inputs.
+The provider therefore refuses new confidential workspace forks before creation.
+Existing confidential fork records still require a matching TEE report and an external verifier before they become trusted.
 Pass `confidentialAttestationVerifier` to `createTangleProvider` to connect a
 trusted provider-key and measurement verifier.
 The callback receives the raw report, the expected environment binding, and

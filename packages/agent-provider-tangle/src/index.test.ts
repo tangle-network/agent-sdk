@@ -116,6 +116,25 @@ describe("createTangleProvider", () => {
     });
   });
 
+  it("does not accept a custom confidential branching over-declaration", async () => {
+    const declared = defaultTangleSandboxCapabilities();
+    const provider = createTangleProvider({
+      client: {
+        async create() {
+          throw new Error("not called");
+        },
+      },
+      capabilities: {
+        ...declared,
+        branching: { ...declared.branching, confidential: true },
+      },
+    });
+
+    await expect(provider.capabilities()).resolves.toMatchObject({
+      branching: { confidential: false },
+    });
+  });
+
   it("reuses a keyed generic create and rejects changed input", async () => {
     const box: SandboxInstanceLike = {
       id: "sbx-generic-idempotency",
@@ -1021,6 +1040,7 @@ describe("createTangleProvider", () => {
     expect(capabilities.branching).toEqual({
       checkpoint: false,
       fork: false,
+      confidential: false,
       retrySafe: false,
       lookup: false,
       cleanup: false,

@@ -450,6 +450,8 @@ export interface AgentEnvironmentCapabilities {
   branching: {
     checkpoint: boolean;
     fork: boolean;
+    /** True only when a fork can preserve and prove confidential requirements. */
+    confidential?: boolean;
     /** True only when key + canonical request digest semantics are implemented. */
     retrySafe?: boolean;
     /** True only when operations can be recovered by idempotency key. */
@@ -575,6 +577,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
     branching: z.strictObject({
       checkpoint: z.boolean(),
       fork: z.boolean(),
+      confidential: z.boolean().optional(),
       retrySafe: z.boolean().optional(),
       lookup: z.boolean().optional(),
       cleanup: z.boolean().optional(),
