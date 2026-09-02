@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.3
+
+### Patch Changes
+
+- ae8ede9: Recover a live checkpoint from its owner-scoped operation record when snapshot inventory omits provider marker tags.
+  Never revive a deleted snapshot from a stale durable operation record.
+
 ## 1.1.2
 
 ### Patch Changes
