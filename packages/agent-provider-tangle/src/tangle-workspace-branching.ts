@@ -2303,15 +2303,15 @@ async function forkConflictFromRemote(
 }
 
 /**
- * Read a ledger answer for a key that left no marked resource behind.
+ * Read a fork ledger answer for a key that left no marked resource behind.
  *
  * `absent` is the settled answer: a decided operation with no inventory marker
- * means the resource was cleaned after creation, and the provider must not
+ * means the child was cleaned after creation, and the provider must not
  * resurrect it from the ledger. Every other state is undecided for the caller.
  */
 function lookupOutcomeFromSandbox(
   lookup: SandboxWorkspaceOperationLookupLike | undefined,
-  kind: "checkpoint" | "fork"
+  kind: "fork"
 ): { absent: true } | { absent: false; message: string; retryable: boolean } {
   if (!lookup || lookup.kind !== kind) {
     return {
