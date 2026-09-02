@@ -381,7 +381,17 @@ export interface AgentCandidateFixedSpend {
 
 /** Evidence and ancestry that produced the immutable candidate. */
 export interface AgentCandidateLineage {
-  source: "optimizer" | "human" | "import" | "compound";
+  /**
+   * Who produced this candidate.
+   *
+   * `agent-author` is an agent that wrote another agent's profile from inside a
+   * run — the capability `spawn_worker` already exposes, where a supervising
+   * agent authors a child's full `AgentProfile` and may promote it to a
+   * sub-supervisor. It carries `optimizer`'s parent and run requirements and not
+   * its `developmentSplitDigest`: there is no held-out split and no offline
+   * search behind a profile an agent wrote while working.
+   */
+  source: "optimizer" | "human" | "import" | "compound" | "agent-author";
   parentDigests?: Sha256Digest[];
   runIds?: string[];
   profileDiffIds?: string[];
