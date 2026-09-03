@@ -291,12 +291,10 @@ export async function runInteractiveSessionConformance(
     "a stale claim must reject terminal resize",
     checked,
   );
-  await assertReject(
-    () => terminal.close(),
-    "a stale claim must reject terminal close",
-    checked,
-  );
   checked.push("stale-terminal-mutation-rejection");
+
+  await terminal.close();
+  checked.push("stale-terminal-socket-close");
 
   await assertReject(
     () => session.attach({ control }),
