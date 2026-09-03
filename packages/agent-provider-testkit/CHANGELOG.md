@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.9.2
+
+### Patch Changes
+
+- 92526ff: Send attached terminal input, resize, and close operations directly through the authenticated terminal connection.
+  Keep separate control validation for attach, prompt, and stop operations.
+  Permit stale terminal handles to close their own socket without changing the running process.
+
 ## 0.9.1
 
 ### Patch Changes

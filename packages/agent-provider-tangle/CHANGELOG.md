@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.4
+
+### Patch Changes
+
+- 92526ff: Send attached terminal input, resize, and close operations directly through the authenticated terminal connection.
+  Keep separate control validation for attach, prompt, and stop operations.
+  Permit stale terminal handles to close their own socket without changing the running process.
+
 ## 1.1.3
 
 ### Patch Changes
