@@ -3,6 +3,7 @@ import {
   AgentInteractiveSessionControlClaimSchema,
   AgentInteractiveSessionControlClaimRequestSchema,
   AgentInteractiveSessionPromptAcknowledgementSchema,
+  AgentInteractiveSessionPromptCommandSchema,
   AgentInteractiveSessionRefSchema,
   AgentInteractiveSessionStopAcknowledgementSchema,
   AgentInteractiveSessionStopCommandSchema,
@@ -13,6 +14,7 @@ import {
   buildAgentWorkspaceLeaseRecord,
   canonicalAgentProfileDigest,
   canonicalCandidateDigest,
+  agentInteractiveSessionPromptRequestDigest,
   profileMaterializationRequests,
   type AgentExecutionPreparationReceipt,
   type AgentInteractiveSessionControlClaim,
@@ -187,6 +189,20 @@ function fakeInteractive() {
     }
   );
 
+  const authorizeTerminalControl = (
+    control: AgentInteractiveSessionControlClaim,
+    options?: { signal?: AbortSignal }
+  ): void => {
+    options?.signal?.throwIfAborted();
+    if (
+      canonicalCandidateDigest(currentControl) !==
+        canonicalCandidateDigest(control) ||
+      Date.parse(control.expiresAt) <= Date.now()
+    ) {
+      throw new Error("stale or expired interactive control");
+    }
+  };
+
   const attachAgentTerminal = vi.fn(
     async (
       attachRequest: Parameters<
@@ -194,7 +210,7 @@ function fakeInteractive() {
       >[0],
       options?: { signal?: AbortSignal }
     ): Promise<AgentInteractiveTerminalSession> => {
-      await validateControl(attachRequest.control, options);
+      authorizeTerminalControl(attachRequest.control, options);
       let detached = false;
       return {
         ref: {
@@ -217,11 +233,13 @@ function fakeInteractive() {
         control: attachRequest.control,
         async input(input, operation) {
           operation?.signal?.throwIfAborted();
+          authorizeTerminalControl(attachRequest.control, operation);
           if (detached) throw new Error("terminal is detached");
           writes.push(input.data);
         },
         async resize(resize, operation) {
           operation?.signal?.throwIfAborted();
+          authorizeTerminalControl(attachRequest.control, operation);
           if (detached) throw new Error("terminal is detached");
           resizes.push(resize);
         },
@@ -350,7 +368,7 @@ function fakeInteractive() {
     async (
       command: AgentInteractiveSessionPromptCommand
     ): Promise<AgentInteractiveSessionPromptAcknowledgement> => {
-      await validateControl(command.control);
+      authorizeTerminalControl(command.control);
       const previous = promptLedger.get(command.operationId);
       if (previous !== undefined) {
         if (previous.requestDigest !== command.requestDigest) {
@@ -388,7 +406,7 @@ function fakeInteractive() {
     async (
       command: AgentInteractiveSessionStopCommand
     ): Promise<AgentInteractiveSessionStopAcknowledgement> => {
-      await validateControl(command.control);
+      authorizeTerminalControl(command.control);
       const previous = stopLedger.get(command.operationId);
       if (previous !== undefined) {
         if (previous.requestDigest !== command.requestDigest) {
@@ -481,6 +499,9 @@ function fakeInteractive() {
     replaceProcessIdentity,
     start,
     starts: () => starts,
+    validateControl,
+    sendPrompt,
+    stop,
     writes,
     resizes,
   };
@@ -500,6 +521,31 @@ function claimRequest(
   return AgentInteractiveSessionControlClaimRequestSchema.parse({
     ...material,
     requestDigest: agentInteractiveSessionControlClaimRequestDigest(material),
+  });
+}
+
+function promptCommand(
+  ref: AgentInteractiveSessionRef,
+  control: AgentInteractiveSessionControlClaim,
+  operationId: string,
+  prompt: string
+): AgentInteractiveSessionPromptCommand {
+  const material = { operationId, ref, control, prompt };
+  return AgentInteractiveSessionPromptCommandSchema.parse({
+    ...material,
+    requestDigest: agentInteractiveSessionPromptRequestDigest(material),
+  });
+}
+
+function stopCommand(
+  ref: AgentInteractiveSessionRef,
+  control: AgentInteractiveSessionControlClaim,
+  operationId: string
+): AgentInteractiveSessionStopCommand {
+  const material = { operationId, ref, control };
+  return AgentInteractiveSessionStopCommandSchema.parse({
+    ...material,
+    requestDigest: agentInteractiveSessionStopRequestDigest(material),
   });
 }
 
@@ -568,6 +614,86 @@ describe("Tangle exact interactive agent sessions", () => {
         "stale-stop-rejection",
         "start-replay-exited",
       ])
+    );
+  });
+
+  it("validates attach, prompt, and stop but not attached terminal operations", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId
+    );
+    const ref = await registry.start(request());
+    const session = registry.get(ref);
+    const claim = await session.claimControl(
+      claimRequest(ref, "control-for-validation-count", "coordinator", 1)
+    );
+    if (claim.status !== "accepted" || claim.control === undefined) {
+      throw new Error("control claim setup failed");
+    }
+
+    const terminal = await session.attach({ control: claim.control });
+    expect(test.validateControl).toHaveBeenCalledTimes(1);
+
+    await terminal.input({ data: "input" });
+    await terminal.resize({ cols: 100, rows: 32 });
+    await terminal.close();
+    expect(test.validateControl).toHaveBeenCalledTimes(1);
+
+    await session.sendPrompt!(
+      promptCommand(
+        ref,
+        claim.control,
+        "prompt-after-terminal",
+        "Continue the task."
+      )
+    );
+    expect(test.validateControl).toHaveBeenCalledTimes(2);
+
+    await session.stop(stopCommand(ref, claim.control, "stop-after-prompt"));
+    expect(test.validateControl).toHaveBeenCalledTimes(3);
+  });
+
+  it("propagates stale server errors without blocking socket close", async () => {
+    const test = fakeInteractive();
+    const registry = createTangleInteractiveAgentRegistry(
+      test.box,
+      coordinates.provider,
+      coordinates.environmentId
+    );
+    const ref = await registry.start(request());
+    const session = registry.get(ref);
+    const claim = await session.claimControl(
+      claimRequest(ref, "control-for-stale-terminal", "coordinator", 1)
+    );
+    if (claim.status !== "accepted" || claim.control === undefined) {
+      throw new Error("control claim setup failed");
+    }
+    const terminal = await session.attach({ control: claim.control });
+    const validationCallsAfterAttach = test.validateControl.mock.calls.length;
+
+    const recovery = await session.claimControl(
+      claimRequest(
+        ref,
+        "replacement-control-for-stale-terminal",
+        "replacement-coordinator",
+        claim.control.generation
+      )
+    );
+    if (recovery.status !== "accepted" || recovery.control === undefined) {
+      throw new Error("replacement control claim setup failed");
+    }
+
+    await expect(terminal.input({ data: "stale" })).rejects.toThrow(
+      "stale or expired interactive control"
+    );
+    await expect(terminal.resize({ cols: 90, rows: 30 })).rejects.toThrow(
+      "stale or expired interactive control"
+    );
+    await expect(terminal.close()).resolves.toMatchObject({ status: "unknown" });
+    expect(test.validateControl).toHaveBeenCalledTimes(
+      validationCallsAfterAttach
     );
   });
 

@@ -325,7 +325,6 @@ export function createTangleInteractiveAgentRegistry(
           return validatedTerminal(
             terminal,
             exactRequest.control,
-            validateControl,
             ref
           );
         },
@@ -431,10 +430,6 @@ function isSandboxInteractiveSession(
 function validatedTerminal(
   terminal: AgentInteractiveTerminalSession,
   control: AgentInteractiveSessionControlClaim,
-  validate: (
-    control: AgentInteractiveSessionControlClaim,
-    options?: { signal?: AbortSignal }
-  ) => Promise<void>,
   expectedRef: AgentInteractiveSessionRef
 ): AgentInteractiveTerminalSession {
   const boundControl = Object.freeze({ ...control });
@@ -455,19 +450,12 @@ function validatedTerminal(
       return TerminalReplayWindowSchema.parse(terminal.cursors);
     },
     control: boundControl,
-    async input(input, options) {
-      await validate(boundControl, options);
-      await terminal.input(input, options);
-    },
-    async resize(resize, options) {
-      await validate(boundControl, options);
-      await terminal.resize(resize, options);
-    },
+    // The authenticated terminal transport authorizes input and resize.
+    // A REST preflight adds latency and can race the authoritative operation.
+    input: (input, options) => terminal.input(input, options),
+    resize: (resize, options) => terminal.resize(resize, options),
     detach: (options) => terminal.detach(options),
-    async close(options) {
-      await validate(boundControl, options);
-      return terminal.close(options);
-    },
+    close: (options) => terminal.close(options),
     events: (options) => terminal.events(options),
   };
 }

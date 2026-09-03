@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.36.4.
+The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.37.0.
 The floor is 0.34.6 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshots, durable restores, inventory recovery, and cleanup.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
@@ -119,6 +119,7 @@ Each deployment flag this adapter reads gates the claims it backs, and no flag i
 | `runs.eventReplay`                | `streaming.replay`, `sessions.continue`, `retainedControl`, `session.cancelRun`                              |
 | `runs.executionScopedStatus`      | `sessions.continue`, `retainedControl`, `session.cancelRun`                                                  |
 | `interactions.responseDedupe`     | `interactions`, `environment.respondToInteraction`, `session.respondToInteraction`                           |
+| `interactiveAgent.*`              | `interactiveAgent`, exact control, and generation-fenced terminal input and resize                           |
 
 Detached dispatch carries the caller's exact reference and refuses a receipt that does not name the execution back, so it needs both `dispatch` flags and a session handle to reach the run through.
 `sessions.continue`, `retainedControl`, and `session.cancelRun` need every flag in the table, because the capability schema refuses a partial retained-control block and each identity rests on its own flag.
@@ -332,6 +333,11 @@ Every reference states an expiry one detach window past the newest activity the 
 `attachCount` counts the attaches this environment holds, not the runtime's own viewers.
 `close()` reports `closed` only when the socket delivered an exit; Sandbox exposes no terminal delete, so an unproven close reports `unknown` rather than claiming a termination that did not happen.
 An attach whose runtime metadata lacks a name, shell, working directory, geometry, timestamps, running state, or detach window fails closed with `unknown`, because a reference cannot state facts the runtime did not report.
+
+The exact interactive adapter validates control before attach, prompt, and stop operations.
+An attached terminal sends input and resize operations through its authenticated terminal connection.
+The sidecar authorizes those mutations, so the provider does not add a second REST request before each operation.
+Terminal close only detaches the caller's socket, so it stays available after control moves to a newer coordinator.
 
 Pass `exactProcess: {}` only when the Sandbox deployment supports `agent: false` creates and reports `metadata.runtimeMode: "control"`.
 The optional capability creates an ephemeral sandbox with an authenticated control service but no managed agent workload or agent credentials, explicit resources, exact blocked/domain egress, bounded binary file reads, shell-free launch, and recoverable process output plus terminal reason.
