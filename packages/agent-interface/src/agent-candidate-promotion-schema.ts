@@ -11,7 +11,10 @@ import type {
   CandidateExecutionEvidence,
 } from "./agent-candidate.js";
 import { agentCandidateBundleSchema } from "./agent-candidate-schema.js";
-import { agentCandidateLineageSchema } from "./agent-candidate-lineage-schema.js";
+import {
+  agentCandidateLineageSchema,
+  isGeneratedCandidateSource,
+} from "./agent-candidate-lineage-schema.js";
 import { agentCandidateBenchmarkSuiteInputsSchema } from "./agent-candidate-task-schema.js";
 import {
   canonicalCandidateDigest,
@@ -53,7 +56,7 @@ export const agentCandidateExperimentSchema = z
   .superRefine((experiment, ctx) => {
     const source = experiment.candidateLineage.source;
     if (
-      (source === "optimizer" || source === "compound") &&
+      isGeneratedCandidateSource(source) &&
       !experiment.candidateLineage.parentDigests?.includes(experiment.baseline.digest)
     ) {
       ctx.addIssue({

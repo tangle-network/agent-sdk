@@ -381,7 +381,20 @@ export interface AgentCandidateFixedSpend {
 
 /** Evidence and ancestry that produced the immutable candidate. */
 export interface AgentCandidateLineage {
-  source: "optimizer" | "human" | "import" | "compound";
+  /**
+   * Who produced this candidate.
+   *
+   * `frontier-author` is an agent that wrote another agent's profile — the same
+   * member {@link AgentProfileDiff}`.source.kind` already carries, so the two
+   * enums name one actor with one word. It covers a supervising agent authoring
+   * a child's full `AgentProfile` from inside a run, which `spawn_worker`
+   * exposes and a `driver` role promotes to a sub-supervisor.
+   *
+   * It carries `optimizer`'s parent and run requirements and not its
+   * `developmentSplitDigest`: there is no held-out split and no offline search
+   * behind a profile an agent wrote while working.
+   */
+  source: "optimizer" | "human" | "import" | "compound" | "frontier-author";
   parentDigests?: Sha256Digest[];
   runIds?: string[];
   profileDiffIds?: string[];
