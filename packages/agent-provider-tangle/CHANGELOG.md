@@ -1,5 +1,18 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.5
+
+### Patch Changes
+
+- 8a1b261: The default create mapping uses the inline profile's harness when the caller and provider declare no backend override.
+  Custom mappers retain control of the Sandbox options.
+  Created environment capabilities use the mapped backend.
+  Tangle snapshots create requests and mapped options before asynchronous work.
+- 8a1b261: Bind keyed environment creation and its idempotency digest to one immutable canonical JSON snapshot.
+  Unkeyed creates retain opaque provider-native values for custom mappers.
+- Updated dependencies [8a1b261]
+  - @tangle-network/agent-interface@2.3.1
+
 ## 1.1.4
 
 ### Patch Changes
