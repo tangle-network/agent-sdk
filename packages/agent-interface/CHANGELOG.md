@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 2.3.1
+
+### Patch Changes
+
+- 8a1b261: Bind keyed environment creation and its idempotency digest to one immutable canonical JSON snapshot.
+  Unkeyed creates retain opaque provider-native values for custom mappers.
+
 ## 2.3.0
 
 ### Minor Changes
