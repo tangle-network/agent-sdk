@@ -464,6 +464,8 @@ export interface SandboxInstanceLike {
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;
+  /** Current backend reported by this sandbox's runtime. */
+  backend?: { status(): Promise<{ type: string }> };
   /** Network location of the sandbox runtime, without its bearer. */
   connection?: SandboxConnectionLike;
   /** When the platform retires this sandbox, when it set a lifetime. */
@@ -661,6 +663,7 @@ export interface SandboxInteractionCommandResultLike {
 export interface TangleProviderOptions {
   client: SandboxClientLike;
   name?: string;
+  /** Overrides an inline profile's harness when create() names no backend. */
   defaultBackend?: BackendType;
   capabilities?:
     | AgentEnvironmentCapabilities
@@ -668,6 +671,7 @@ export interface TangleProviderOptions {
         | AgentEnvironmentCapabilities
         | Promise<AgentEnvironmentCapabilities>);
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
+  /** Replaces the default mapping, including its backend and profile selection. */
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
   /**

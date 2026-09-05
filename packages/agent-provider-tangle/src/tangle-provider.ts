@@ -2,6 +2,7 @@ import {
   AgentEnvironmentCapabilitiesSchema,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
+import { deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -65,12 +66,15 @@ export function createTangleProvider(
         readyTimeoutMs,
       })
     : undefined;
-  const resolveDeclaredCapabilities = async (): Promise<AgentEnvironmentCapabilities> => {
+  const resolveDeclaredCapabilities = async (
+    backendType: string | undefined,
+  ): Promise<AgentEnvironmentCapabilities> => {
+    const harness = harnessTypeSchema.safeParse(backendType);
     const configured = options.capabilities
       ? typeof options.capabilities === "function"
         ? await options.capabilities()
         : options.capabilities
-      : defaultTangleSandboxCapabilities();
+      : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
     if (!exactProcess && configured.exactProcess) {
       throw new Error(
         "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
@@ -79,7 +83,7 @@ export function createTangleProvider(
     const backend =
       configured.interactions === undefined
         ? undefined
-        : await resolveDefaultBackend(options.client, options.defaultBackend);
+        : await resolveBackend(options.client, backendType);
     const narrowed = narrowTangleCapabilitiesToBackend(configured, backend);
     return exactProcess
       ? {
@@ -101,7 +105,7 @@ export function createTangleProvider(
       ),
     );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
-    narrowedProviderCapabilities(await resolveDeclaredCapabilities());
+    narrowedProviderCapabilities(await resolveDeclaredCapabilities(options.defaultBackend));
   const createRecords = new Map<
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
@@ -115,19 +119,15 @@ export function createTangleProvider(
     if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
-    // The sandbox stage narrows from the declared document, not the
-    // provider-boundary one: the client stage cannot observe box-scoped
-    // facts, so measured instance facts must decide them per sandbox.
-    const declaredCapabilities = await resolveDeclaredCapabilities();
-    narrowedProviderCapabilities(declaredCapabilities);
-    const createOptions =
+    const mappedOptions =
       options.mapCreateInput?.(input) ??
       sandboxOptionsFromCreateInput(
         input,
-        options.defaultBackend ?? "opencode",
+        options.defaultBackend,
         parsedWorkspace,
       );
-    assertMappedCreateOptions(createOptions);
+    assertMappedCreateOptions(mappedOptions);
+    const createOptions = deepFreeze(structuredClone(mappedOptions));
     if (
       input.idempotencyKey !== undefined &&
       createOptions.idempotencyKey !== input.idempotencyKey
@@ -137,6 +137,10 @@ export function createTangleProvider(
       );
     }
     assertMappedSecretNames(createOptions);
+    // Backend selection belongs to the create projection. The provider-wide
+    // default cannot describe a sandbox that this projection routes elsewhere.
+    const declaredCapabilities = await resolveDeclaredCapabilities(createOptions.backend?.type);
+    narrowedProviderCapabilities(declaredCapabilities);
     input.signal?.throwIfAborted();
     const createPromise = options.client.create(
       createOptions,
@@ -245,11 +249,22 @@ export function createTangleProvider(
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
     ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
-    create(input) {
+    async create(input) {
+      const { signal, ...material } = input;
+      signal?.throwIfAborted();
+      assertCreateInputShape(input);
+      assertNoInlineSecretValues(input);
+      for (const value of Object.values(material)) {
+        if (value !== undefined) assertBoundedJson(value);
+      }
+      const acceptedInput = Object.freeze({
+        ...deepFreeze(structuredClone(material)),
+        ...(signal === undefined ? {} : { signal }),
+      });
       return createAgentEnvironmentWithIdempotency(
         createRecords,
-        input,
-        () => createEnvironment(input),
+        acceptedInput,
+        createEnvironment,
       );
     },
     ...(options.client.get
@@ -257,12 +272,21 @@ export function createTangleProvider(
           async get(id: string, operation?: { signal?: AbortSignal }): Promise<AgentEnvironment | null> {
             assertProviderOperationOptions(operation, "Tangle get");
             boundedIdentifier(id, "Tangle environment id");
-            const declaredCapabilities = await resolveDeclaredCapabilities();
-            narrowedProviderCapabilities(declaredCapabilities);
+            await resolveCapabilities();
             operation?.signal?.throwIfAborted();
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
+            let backendType: string | undefined;
+            if (box.status === "running" && box.backend) {
+              try {
+                const status = await awaitWithSignal(box.backend.status(), operation?.signal);
+                backendType = boundedIdentifier(status.type, "Tangle current backend");
+              } catch {
+                operation?.signal?.throwIfAborted();
+              }
+            }
+            const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
             return await sandboxInstanceAsEnvironment(
               box,
               providerName,
@@ -349,16 +373,16 @@ export function createTangleProvider(
   };
 }
 
-async function resolveDefaultBackend(
+async function resolveBackend(
   client: TangleProviderOptions["client"],
-  defaultBackend: TangleProviderOptions["defaultBackend"],
+  backendType: string | undefined,
 ) {
-  if (defaultBackend === undefined) return undefined;
+  if (backendType === undefined) return undefined;
   try {
-    if (client.getBackend) return await client.getBackend(defaultBackend);
+    if (client.getBackend) return await client.getBackend(backendType);
     if (!client.listBackends) return undefined;
     const catalog = await client.listBackends();
-    return catalog.backends.find((backend) => backend.type === defaultBackend);
+    return catalog.backends.find((backend) => backend.type === backendType);
   } catch {
     return undefined;
   }

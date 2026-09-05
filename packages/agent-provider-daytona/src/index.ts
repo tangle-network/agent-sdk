@@ -74,7 +74,7 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        createEnvironment,
       );
     },
     async get(id) {

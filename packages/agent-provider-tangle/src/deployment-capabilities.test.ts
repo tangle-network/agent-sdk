@@ -594,6 +594,7 @@ describe("Tangle deployment capability discovery", () => {
       const report = await runAgentEnvironmentProviderConformance({
         name: `tangle-${testCase.deployment}-deployment`,
         createProvider: () => provider,
+        createInput: { backend: "opencode" },
       });
       const clientStage = report.capabilities;
       const sandboxStage = report.environmentCapabilities;

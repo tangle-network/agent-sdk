@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentExactProcessLaunch,
+  CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   capabilitiesForClient,
@@ -148,6 +149,66 @@ function promptResult(executionId = "execution-1") {
 }
 
 describe("Tangle split leaf modules", () => {
+  it("resolves backend placement before falling back to the exact profile harness", () => {
+    expect(
+      sandboxOptionsFromCreateInput(
+        { profile: { name: "worker", harness: "codex" } },
+      ),
+    ).toMatchObject({ backend: { type: "codex" } });
+    expect(
+      sandboxOptionsFromCreateInput(
+        {
+          profile: { name: "worker", harness: "codex" },
+          backend: "claude-code",
+        },
+        "pi",
+      ),
+    ).toMatchObject({ backend: { type: "claude-code" } });
+    expect(
+      sandboxOptionsFromCreateInput(
+        { profile: { name: "worker", harness: "codex" } },
+        "pi",
+      ),
+    ).toMatchObject({ backend: { type: "pi" } });
+    expect(
+      sandboxOptionsFromCreateInput({ profile: { name: "worker" } }),
+    ).toMatchObject({ backend: { type: "opencode" } });
+    expect(() =>
+      sandboxOptionsFromCreateInput({
+        profile: { name: "worker", harness: "gemini" },
+      }),
+    ).toThrow(/backend type/i);
+  });
+
+  it("creates a Codex sandbox from a Codex profile without repeated routing", async () => {
+    const create = vi.fn(async () => ({
+      id: "codex-environment",
+      status: "running" as const,
+      async *streamPrompt() {},
+    }));
+    const provider = createTangleProvider({ client: { create } });
+    const input: CreateAgentEnvironmentInput & { profile: { name: string; harness: "codex" | "claude-code" } } = {
+      profile: { name: "worker", harness: "codex" },
+      idempotencyKey: "codex-environment-create",
+    };
+
+    const pending = provider.create(input);
+    input.profile.harness = "claude-code";
+    await pending;
+    await provider.create({
+      profile: { name: "worker", harness: "codex" },
+      idempotencyKey: "codex-environment-create",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: expect.objectContaining({ type: "codex" }),
+      }),
+      undefined,
+    );
+    expect(create).toHaveBeenCalledOnce();
+  });
+
   it("bounds JSON, maps create fields, and projects only supported capabilities", () => {
     expect(isBoundedJson({ shared: { value: true } })).toBe(true);
     expect(() => assertBoundedJson("x".repeat(16_385))).toThrow();

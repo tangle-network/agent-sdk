@@ -78,7 +78,7 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        createEnvironment,
       );
     },
     ...(options.compute.sandbox.getById

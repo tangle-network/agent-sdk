@@ -69,7 +69,7 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        createEnvironment,
       );
     },
     async get(id) {
