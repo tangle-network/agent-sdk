@@ -40,10 +40,10 @@ function sandboxClient() {
   });
 }
 
-function provider() {
+function provider(defaultBackend = "opencode") {
   return createTangleProvider({
     client: sandboxClient(),
-    defaultBackend: "opencode",
+    defaultBackend,
     name: PROVIDER,
   });
 }
@@ -137,7 +137,8 @@ function pause(milliseconds) {
 }
 
 async function freshEnvironment(environmentId) {
-  const next = provider();
+  // Recovery must use the sandbox's identity, not this process's create default.
+  const next = provider("codex");
   assert.equal(typeof next.get, "function", "Tangle provider has no get() method");
   return await next.get(environmentId);
 }
@@ -338,6 +339,20 @@ async function resolveSubsequentPermissions(session, since, proofId) {
 
 async function runRetainedEvidence() {
   const proofId = randomUUID();
+  const nestedCwd = await withOwnedEnvironment(
+    sourceInput(proofId, "up09-cwd", { cwd: NESTED_WORKSPACE_CWD }),
+    async ({ environment }) => {
+      const recovered = await freshEnvironment(environment.id);
+      assert(recovered, "The environment was not recoverable before inference");
+      assert.deepEqual(
+        recovered.capabilities.profile.systemPrompt,
+        environment.capabilities.profile.systemPrompt,
+      );
+      assert.deepEqual(recovered.capabilities.interactions, environment.capabilities.interactions);
+      assert.equal(typeof recovered.respondToInteraction, "function");
+      return proveWorkspaceCwd(recovered, NESTED_WORKSPACE_CWD);
+    },
+  );
   const replayInput = sourceInput(proofId, "up09-replay", {
     cwd: NESTED_WORKSPACE_CWD,
   });
@@ -367,10 +382,6 @@ async function runRetainedEvidence() {
     cwd: NESTED_WORKSPACE_CWD,
     permissions: { bash: "allow" },
   });
-  const nestedCwd = await withOwnedEnvironment(
-    sourceInput(proofId, "up09-cwd", { cwd: NESTED_WORKSPACE_CWD }),
-    async ({ environment }) => proveWorkspaceCwd(environment, NESTED_WORKSPACE_CWD),
-  );
   const interaction = await withOwnedEnvironment(
     interactionInput,
     async ({ environment, environmentProvider }) => {
@@ -415,6 +426,16 @@ async function runRetainedEvidence() {
 
       const recoveredEnvironment = await freshEnvironment(environment.id);
       assert(recoveredEnvironment, "The interaction environment was not recoverable");
+      assert.deepEqual(
+        recoveredEnvironment.capabilities.profile.systemPrompt,
+        environment.capabilities.profile.systemPrompt,
+        "recovery changed prompt capabilities to the provider's create default",
+      );
+      assert.deepEqual(
+        recoveredEnvironment.capabilities.interactions,
+        environment.capabilities.interactions,
+        "recovery lost or changed the sandbox's interaction capabilities",
+      );
       assert.equal(typeof recoveredEnvironment.session, "function");
       const recoveredSession = recoveredEnvironment.session(reference.id, {
         controlRef,
