@@ -36,7 +36,9 @@ const provider = createTangleProvider({
   readyTimeoutMs: 180_000,
 });
 
-const environment = await provider.create({ profile: { name: "worker" } });
+const environment = await provider.create({
+  profile: { name: "worker", harness: "codex" },
+});
 for await (const event of environment.stream({ prompt: "run the task" })) {
   // The sandbox is running. No caller-side wait, poll, or retry stands here.
 }
@@ -49,6 +51,14 @@ A client that offers neither cannot prove readiness, so the sandbox it returned 
 
 The adapter reads the platform's answer back rather than trusting the wait to have resolved for the right reason.
 A create call returns only a sandbox that reports `running`: `failed`, `stopped`, and `expired` are refused with the status named, and so is a wait that resolves while the sandbox still reports `provisioning`.
+
+The default create mapping selects `create()`'s `backend`, then the provider's `defaultBackend`, then the inline profile's `harness`.
+An inline profile therefore carries its own backend unless the caller records an execution override.
+Profiles without a harness retain the provider's legacy OpenCode fallback.
+A configured `mapCreateInput` owns the Sandbox options and may select another backend or profile.
+The created environment's capabilities use that mapping's backend; provider capabilities describe the configured default.
+`get(id)` reads the running sandbox's backend status.
+If that status is unavailable, the reconstructed environment advertises no backend-specific capabilities.
 
 ## Per-turn backend options
 

@@ -1,4 +1,8 @@
-import type { BackendType, CreateSandboxOptions } from "@tangle-network/sandbox";
+import {
+  parseBackendType,
+  type BackendType,
+  type CreateSandboxOptions,
+} from "@tangle-network/sandbox";
 import {
   AgentEnvironmentEgressPolicySchema,
   WorkspaceRequestSchema,
@@ -21,10 +25,15 @@ import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
-  defaultBackend: BackendType,
+  defaultBackend?: BackendType,
   parsedWorkspace?: WorkspaceRequest,
 ): CreateSandboxOptions {
   const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
+  const profile = inlineAgentProfile(input.profile);
+  const backend =
+    input.backend === undefined
+      ? parseBackendType(defaultBackend ?? profile.harness ?? "opencode")
+      : (input.backend as BackendType);
   assertNoInlineSecretValues(input, workspace);
   if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
     throw new Error("Tangle create providerOptions are not supported");
@@ -83,8 +92,8 @@ export function sandboxOptionsFromCreateInput(
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {
       ...(base.backend ?? {}),
-      type: (input.backend ?? defaultBackend) as BackendType,
-      profile: inlineAgentProfile(input.profile),
+      type: backend,
+      profile,
     },
   };
   return mapped;

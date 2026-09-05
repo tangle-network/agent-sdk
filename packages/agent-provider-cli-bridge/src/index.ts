@@ -181,7 +181,7 @@ export function createCliBridgeProvider(
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        createEnvironment,
       );
     },
     async get(id, getOptions) {

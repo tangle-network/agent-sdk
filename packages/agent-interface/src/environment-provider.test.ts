@@ -14,6 +14,7 @@ import {
 import type {
   AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentCreation,
+  CreateAgentEnvironmentInput,
 } from "./environment-provider.js";
 import {
   nativeContextContinuationRequestDigest,
@@ -163,7 +164,11 @@ describe("generic environment create idempotency", () => {
     await expect(
       createAgentEnvironmentWithIdempotency(
         records,
-        { ...input, signal: aborted.signal },
+        {
+          ...input,
+          signal: aborted.signal,
+          providerOptions: { uncloneable: () => undefined },
+        },
         create,
       ),
     ).rejects.toThrow("retry cancelled");
@@ -193,6 +198,120 @@ describe("generic environment create idempotency", () => {
     expect(second.creation).toBe("replayed");
     expect(second.id).toBe(first.id);
     expect(second.status).toBe(first.status);
+  });
+
+  it("binds the create effect and idempotency digest to one immutable input snapshot", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
+    >();
+    const mutableInput: CreateAgentEnvironmentInput & {
+      profile: { name: string; harness: "codex" | "claude-code" };
+      metadata: { route: string };
+    } = {
+      profile: { name: "worker", harness: "codex" },
+      metadata: { route: "codex" },
+      idempotencyKey: "stable-create",
+    };
+    const expectedDigest = agentEnvironmentCreateInputDigest(mutableInput);
+    let acceptedInput: CreateAgentEnvironmentInput | undefined;
+    const create = vi.fn(
+      async (snapshot: CreateAgentEnvironmentInput): Promise<FakeEnvironment> => {
+        acceptedInput = snapshot;
+        await Promise.resolve();
+        const profile = snapshot.profile;
+        return {
+          id:
+            typeof profile === "string"
+              ? profile
+              : (profile.harness ?? "missing-harness"),
+          status: async () => "running",
+        };
+      },
+    );
+
+    const pending = createAgentEnvironmentWithIdempotency(
+      records,
+      mutableInput,
+      create,
+    );
+    mutableInput.profile.harness = "claude-code";
+    mutableInput.metadata.route = "claude-code";
+
+    await expect(pending).resolves.toMatchObject({ id: "codex" });
+    expect(acceptedInput).toMatchObject({
+      profile: { harness: "codex" },
+      metadata: { route: "codex" },
+    });
+    expect(agentEnvironmentCreateInputDigest(acceptedInput!)).toBe(expectedDigest);
+    expect(Object.isFrozen(acceptedInput)).toBe(true);
+    expect(Object.isFrozen(acceptedInput?.profile)).toBe(true);
+
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        {
+          profile: { name: "worker", harness: "codex" },
+          metadata: { route: "codex" },
+          idempotencyKey: "stable-create",
+        },
+        create,
+      ),
+    ).resolves.toMatchObject({ id: "codex", creation: "replayed" });
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("keeps opaque unkeyed create values intact for provider mappers", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
+    >();
+    const nativeSignal = new AbortController().signal;
+    const nativeMapperHook = () => "provider-owned";
+    const unkeyedInput: CreateAgentEnvironmentInput = {
+      profile: { name: "worker" },
+      providerOptions: { nativeSignal, nativeMapperHook },
+    };
+    let acceptedInput: CreateAgentEnvironmentInput | undefined;
+
+    await createAgentEnvironmentWithIdempotency(
+      records,
+      unkeyedInput,
+      async (received) => {
+        acceptedInput = received;
+        return { id: "environment-opaque", status: async () => "running" };
+      },
+    );
+
+    expect(acceptedInput).toBe(unkeyedInput);
+    expect(acceptedInput?.providerOptions?.nativeSignal).toBe(nativeSignal);
+    expect(acceptedInput?.providerOptions?.nativeMapperHook).toBe(nativeMapperHook);
+    expect(records.size).toBe(0);
+  });
+
+  it("refuses noncanonical keyed create material before the provider callback", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<FakeEnvironment>
+    >();
+    const create = vi.fn(async (): Promise<FakeEnvironment> => ({
+      id: "environment-never-created",
+      status: async () => "running",
+    }));
+
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        {
+          profile: { name: "worker" },
+          idempotencyKey: "canonical-only",
+          providerOptions: { nativeSignal: new AbortController().signal },
+        },
+        create,
+      ),
+    ).rejects.toThrow("candidate document must be finite, acyclic RFC 8785 JSON");
+    expect(create).not.toHaveBeenCalled();
+    expect(records.size).toBe(0);
   });
 
   it("keeps an unkeyed create verdict as the provider stated it", async () => {

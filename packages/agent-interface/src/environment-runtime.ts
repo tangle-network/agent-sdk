@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
+import {
+  canonicalCandidateDigest,
+  canonicalCandidateJson,
+} from "./agent-candidate-schema-common.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import type { InputPart } from "./parts.js";
@@ -15,6 +18,7 @@ import type {
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
 import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
+import { deepFreeze } from "./deep-freeze.js";
 import type { AgentEnvironmentEgressMode, AgentEnvironmentEgressPolicy, AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
 import type { AgentEnvironmentObservation } from "./environment-observation.js";
@@ -857,6 +861,8 @@ export interface CreateAgentEnvironmentInput {
  * The operation key names the request and the abort signal controls one
  * attempt, so neither belongs in the input identity. Every other field is
  * canonicalized with the shared RFC 8785 JSON representation.
+ * A keyed create therefore accepts only canonical JSON material.
+ * Unkeyed creates can retain opaque provider-native mapper values.
  * @internal
  */
 export function agentEnvironmentCreateInputDigest(
@@ -909,18 +915,33 @@ export function replayedAgentEnvironmentView<T extends object>(
  * with the creation verdict the provider could prove. Every same-key call
  * after it, including one that awaited the same pending create, receives
  * {@link replayedAgentEnvironmentView} of that environment.
+ *
+ * A keyed create callback receives one immutable canonical JSON snapshot.
+ * Its digest and provider therefore read identical request bytes even when
+ * the caller mutates its original object after this function returns.
+ * An unkeyed create retains its original input so opaque provider-native
+ * mapper values retain their public identity.
  * @internal
  */
 export async function createAgentEnvironmentWithIdempotency<T extends object>(
   records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
   input: CreateAgentEnvironmentInput,
-  create: () => Promise<T>,
+  create: (input: CreateAgentEnvironmentInput) => Promise<T>,
 ): Promise<T> {
-  input.signal?.throwIfAborted();
-  const key = input.idempotencyKey;
-  if (key === undefined) return create();
+  const { idempotencyKey: key, signal, ...material } = input;
+  signal?.throwIfAborted();
+  if (key === undefined) return create(input);
 
-  const digest = agentEnvironmentCreateInputDigest(input);
+  const snapshot = deepFreeze(
+    JSON.parse(canonicalCandidateJson(material)),
+  ) as Omit<CreateAgentEnvironmentInput, "idempotencyKey" | "signal">;
+  const acceptedInput = Object.freeze({
+    ...snapshot,
+    idempotencyKey: key,
+    ...(signal === undefined ? {} : { signal }),
+  });
+
+  const digest = agentEnvironmentCreateInputDigest(acceptedInput);
   const existing = records.get(key);
   if (existing !== undefined) {
     if (existing.digest !== digest) {
@@ -933,7 +954,7 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
     );
   }
 
-  const pending = Promise.resolve().then(create);
+  const pending = Promise.resolve().then(() => create(acceptedInput));
   const record: AgentEnvironmentCreateIdempotencyRecord<T> = {
     digest,
     pending,

@@ -1,0 +1,72 @@
+{
+  "skill": "critical-audit",
+  "timestamp": "2026-09-05T16:39:03Z",
+  "scope": {
+    "comparison": "uncommitted worktree changes against HEAD",
+    "base": "446273812a4fb2c31552dbc16c48e0e4c7983495",
+    "head": "446273812a4fb2c31552dbc16c48e0e4c7983495",
+    "files": 15,
+    "paths": [
+      "packages/agent-interface/src/environment-provider.test.ts",
+      "packages/agent-interface/src/environment-runtime.ts",
+      "packages/agent-provider-cli-bridge/src/index.ts",
+      "packages/agent-provider-computesdk/src/index.ts",
+      "packages/agent-provider-daytona/src/index.ts",
+      "packages/agent-provider-e2b/src/index.ts",
+      "packages/agent-provider-tangle/README.md",
+      "packages/agent-provider-tangle/src/backend-catalog-capabilities.test.ts",
+      "packages/agent-provider-tangle/src/deployment-capabilities.test.ts",
+      "packages/agent-provider-tangle/src/leaf-modules.test.ts",
+      "packages/agent-provider-tangle/src/tangle-create-options.ts",
+      "packages/agent-provider-tangle/src/tangle-provider.ts",
+      "packages/agent-provider-tangle/src/tangle-types.ts",
+      ".changeset/calm-harnesses-route.md",
+      ".changeset/quiet-creates-hold.md"
+    ]
+  },
+  "reviewers": [
+    "correctness-security",
+    "architecture-quality",
+    "standards-real-system-coverage"
+  ],
+  "execution": "serial",
+  "requirements": [
+    "keyed create uses one immutable canonical JSON input for digest and effect",
+    "unkeyed create retains opaque provider-owned values",
+    "Tangle default routing honors explicit backend, provider default, then inline harness",
+    "Tangle created and reconstructed capabilities match the actual backend"
+  ],
+  "checks": [
+    {
+      "command": "pnpm --filter @tangle-network/agent-provider-tangle test",
+      "result": "16 files, 257 tests passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/agent-provider-tangle check-types && pnpm --filter @tangle-network/agent-provider-tangle build",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/agent-interface test",
+      "result": "39 files, 515 tests passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/agent-interface check-types && pnpm --filter @tangle-network/agent-interface build",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm -r --filter @tangle-network/agent-provider-cli-bridge --filter @tangle-network/agent-provider-computesdk --filter @tangle-network/agent-provider-daytona --filter @tangle-network/agent-provider-e2b test check-types build",
+      "result": "4 packages passed"
+    },
+    {
+      "command": "git diff --check HEAD",
+      "result": "passed"
+    }
+  ],
+  "openFindings": 0,
+  "resolvedFindings": 4,
+  "droppedFindings": 0,
+  "limitations": [
+    "Live Tangle deployment was not exercised by this review.",
+    "The reconstructed-backend path is tested through the provider boundary with an SDK-shaped box."
+  ]
+}
