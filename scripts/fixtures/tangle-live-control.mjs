@@ -394,7 +394,7 @@ async function runRetainedEvidence() {
 
       const reference = await environment.dispatch({
         prompt:
-          "Find the available MCP tool whose name ends in _request_permission; call that namespaced tool with tool_name exactly bash and input exactly {command: \"printf UP09_PERMISSION\"}. Wait for the permission result. If it is allowed, run that exact bash command and then return only its output.",
+          "As your first action, invoke the available MCP tool whose name ends in _request_permission, using its exact listed name. Do not invent an alias or ask for separate confirmation. Do not emit text before invoking it. Call that namespaced tool with tool_name exactly bash and input exactly {command: \"printf UP09_PERMISSION\"}. Wait for the permission result. If it is allowed, run that exact bash command and then return only its output.",
         sessionId: `up09-interaction-session-${proofId}`,
         turnId: `up09-interaction-turn-${proofId}`,
         detach: true,
@@ -469,7 +469,7 @@ async function runRetainedEvidence() {
 
       const cancelReference = await recoveredEnvironment.dispatch({
         prompt:
-          "Find the available MCP tool whose name ends in _request_permission; call that namespaced tool with tool_name exactly bash and input exactly {command: \"printf UP09_CANCEL_PERMISSION\"}. Do not run bash until permission is granted.",
+          "As your first action, invoke the available MCP tool whose name ends in _request_permission, using its exact listed name. Do not invent an alias or ask for separate confirmation. Do not emit text before invoking it. Call that namespaced tool with tool_name exactly bash and input exactly {command: \"printf UP09_CANCEL_PERMISSION\"}. Do not run bash until permission is granted.",
         sessionId: `up09-cancel-session-${proofId}`,
         turnId: `up09-cancel-turn-${proofId}`,
         detach: true,
