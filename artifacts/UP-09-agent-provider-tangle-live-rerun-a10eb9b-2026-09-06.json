@@ -1,0 +1,91 @@
+{
+  "upId": "UP-09",
+  "package": "@tangle-network/agent-provider-tangle",
+  "version": "1.1.5",
+  "packages": [
+    {
+      "name": "@tangle-network/agent-interface",
+      "version": "2.3.1"
+    },
+    {
+      "name": "@tangle-network/agent-provider-testkit",
+      "version": "0.9.2"
+    },
+    {
+      "name": "@tangle-network/agent-provider-tangle",
+      "version": "1.1.5"
+    }
+  ],
+  "tagCommit": "a10eb9b77a8520270a8ae67842b856b9ea2db117",
+  "command": "node tangle-live-control.mjs retained",
+  "result": "success",
+  "evidence": {
+    "summary": "Packed Tangle provider proves hosted create replay, retained dispatch, event replay, permission response, cancellation replay, restart lookup, and cleanup.",
+    "packedTarballs": [
+      "tangle-network-agent-interface-2.3.1.tgz",
+      "tangle-network-agent-provider-testkit-0.9.2.tgz",
+      "tangle-network-agent-provider-tangle-1.1.5.tgz"
+    ],
+    "modelProvider": "tangle-router",
+    "model": "tangle-router/glm-5.3",
+    "report": {
+      "proofId": "41b2ef25-2209-4abe-a782-ddc1b64d77e5",
+      "requestedModel": "tangle-router/glm-5.3",
+      "nestedCwd": {
+        "expected": "packages/agent-interface",
+        "observed": {
+          "cwd": "/home/agent/agent-sdk/packages/agent-interface",
+          "repositoryRoot": "/home/agent/agent-sdk",
+          "repositoryPrefix": "packages/agent-interface/"
+        }
+      },
+      "replay": {
+        "name": "tangle-live-replay-41b2ef25-2209-4abe-a782-ddc1b64d77e5",
+        "sessionId": "up09-replay-session-41b2ef25-2209-4abe-a782-ddc1b64d77e5",
+        "eventIds": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16",
+          "17",
+          "18",
+          "19",
+          "20"
+        ],
+        "checked": [
+          "detach-control-reference",
+          "competing-run-isolation",
+          "stable-event-ids",
+          "same-client-replay",
+          "reconnected-replay"
+        ]
+      },
+      "interaction": {
+        "environmentId": "sandbox-8da5ffa01e55",
+        "createReplay": true,
+        "interactionKind": "permission",
+        "interactionResponse": "accepted",
+        "interactionReplay": true,
+        "followUpPermissionCount": 0,
+        "cancellation": "accepted",
+        "cancellationEffect": "cancelled",
+        "cancellationStatus": "cancelled",
+        "cancellationReplay": "replayed"
+      },
+      "cleanupConfirmed": true
+    }
+  },
+  "generatedAt": "2026-09-06T05:40:55.189Z"
+}

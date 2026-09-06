@@ -1,0 +1,92 @@
+{
+  "kind": "up09-per-sandbox-compute-billing",
+  "proofId": "310eca77-da8e-484b-bfda-4e4d26e7b73d",
+  "retainedProof": "UP-09-agent-provider-tangle-live-retained.json",
+  "retainedProofSha256": "f91c717c4eab17642d61cc9266bb650343189eb851eb3858532dfbf471fa0e71",
+  "capture": {
+    "responseRecordedAt": "2026-09-06T05:49:40.045Z",
+    "source": {
+      "kind": "Codex session transcript",
+      "path": "/Users/drew/.codex/sessions/2026/09/05/rollout-2026-09-05T21-49-31-01a0750c-d9b7-7d60-bdaf-42ca95350a8d.jsonl",
+      "eventOrdinal": 1590
+    },
+    "request": {
+      "method": "GET",
+      "url": "https://staging-sandbox.tangle.tools/v1/billing/transactions?limit=100&offset=200",
+      "authentication": "owned Sandbox API key; value omitted"
+    },
+    "responsePage": {
+      "status": 200,
+      "count": 100,
+      "firstCreatedAt": "2026-09-06T05:34:27.627Z",
+      "lastCreatedAt": "2026-09-06T05:27:27.808Z"
+    }
+  },
+  "retainedSandboxIds": [
+    "sandbox-b88f54ab8e79"
+  ],
+  "computeLedgerRows": [
+    {
+      "type": "compute",
+      "product": "sandbox",
+      "referenceId": "sandbox:compute:sandbox-b88f54ab8e79:e3699eb2-386d-47f5-a5d0-c73b097d5d8c:1788672706633",
+      "amountUsd": -0.000294289,
+      "costBasis": 48572,
+      "description": "Sandbox compute: 2vCPU/2GB × 0.01h",
+      "createdAt": "2026-09-06T05:32:13.997Z"
+    },
+    {
+      "type": "compute",
+      "product": "sandbox",
+      "referenceId": "sandbox:stop:sandbox-b88f54ab8e79:e3699eb2-386d-47f5-a5d0-c73b097d5d8c:1788672733119",
+      "amountUsd": -0.000027122,
+      "costBasis": 4476,
+      "description": "Sandbox compute: 2vCPU/2GB × 0.00h",
+      "createdAt": "2026-09-06T05:32:17.388Z"
+    }
+  ],
+  "absoluteBilledComputeUsd": 0.000321411,
+  "calculation": "abs(-0.000294289) + abs(-0.000027122)",
+  "scope": {
+    "claim": "The retained interaction sandbox incurred $0.000321411 of CPU billing.",
+    "notClaimed": "The full UP-09 fixture CPU cost is unknown.",
+    "reason": "The final proof report retains only the interaction sandbox ID. Other sandboxes created by the fixture are not identified there."
+  },
+  "currentReadAvailability": {
+    "checkedAt": "2026-09-06T06:00:05.460Z",
+    "request": "GET https://staging-sandbox.tangle.tools/v1/billing/transactions?limit=1&offset=0",
+    "status": 502,
+    "error": "platform_unavailable",
+    "message": "Platform key verification unavailable"
+  },
+  "sourceEnforcement": [
+    {
+      "repository": "tangle-network/agent-dev-container",
+      "revision": "e20c8053c56fdcf4019b33eb6da9b6a3c1ab3d68",
+      "file": "products/platform/api/src/routes/billing.ts",
+      "lines": "2895-3004",
+      "role": "canonical transaction ledger route and supported filters"
+    },
+    {
+      "repository": "tangle-network/agent-dev-container",
+      "revision": "e20c8053c56fdcf4019b33eb6da9b6a3c1ab3d68",
+      "file": "products/sandbox/api/src/worker.ts",
+      "lines": "1653-1659, 2040-2060",
+      "role": "Sandbox proxies the ledger route and deducts compute through Platform"
+    },
+    {
+      "repository": "tangle-network/agent-dev-container",
+      "revision": "e20c8053c56fdcf4019b33eb6da9b6a3c1ab3d68",
+      "file": "products/sandbox/api/src/cf/d1-usage-service.ts",
+      "lines": "3732-3758",
+      "role": "Sandbox emits stable compute and stop reference IDs"
+    },
+    {
+      "repository": "tangle-network/agent-dev-container",
+      "revision": "e20c8053c56fdcf4019b33eb6da9b6a3c1ab3d68",
+      "file": "products/sandbox/sdk/src/client.ts",
+      "lines": "1073-1080",
+      "role": "SDK usage() is account aggregate and not the per-sandbox ledger"
+    }
+  ]
+}
