@@ -589,6 +589,12 @@ describe("Tangle split leaf modules", () => {
         streamBound: true,
       },
     )).toThrow(/executionId/);
+    expect(environmentEventFromSandboxEvent({
+      type: "result", data: { usage: { inputTokens: 2 } },
+    } as never)).toMatchObject({ usageMode: "cumulative" });
+    expect(environmentEventFromSandboxEvent({
+      type: "usage", data: { usageMode: "delta", usage: { outputTokens: 3 } },
+    } as never)).toMatchObject({ usageMode: "delta" });
     for (const type of ["result", "done"]) {
       expect(environmentEventFromSandboxEvent({
         type, data: { usage: { inputTokens: 2, outputTokens: 3 } },

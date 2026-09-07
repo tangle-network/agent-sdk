@@ -287,7 +287,8 @@ export function environmentEventFromSandboxEvent(
     ...(normalized ? { normalized } : {}),
     // Absent rather than zeroed: an event that reported no usage must not
     // contribute a total to whatever sums these events.
-    ...(usage ? { usage, ...(usageMode === undefined ? {} : { usageMode }) } : {}),
+    ...(usage ? { usage } : {}),
+    ...(usageMode === undefined ? {} : { usageMode }),
     providerEvent: event,
   };
 }

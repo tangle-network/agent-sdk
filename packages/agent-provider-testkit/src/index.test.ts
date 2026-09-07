@@ -14,9 +14,10 @@ import {
 
 describe("runAgentEnvironmentProviderConformance", () => {
   it("accepts a provider that implements the required lifecycle", async () => {
+    const remoteRecords = new Map<string, AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>>();
     const report = await runAgentEnvironmentProviderConformance({
       name: "fake",
-      createProvider: () => fakeProvider(),
+      createProvider: () => fakeProvider(remoteRecords),
     });
 
     expect(report.provider).toBe("fake");
@@ -24,6 +25,13 @@ describe("runAgentEnvironmentProviderConformance", () => {
     expect(report.checked).toContain("create-idempotency-collision");
     expect(report.checked).toContain("stream");
     expect(report.checked).toContain("workspace-exec");
+  });
+
+  it("rejects process-local replay state lost on adapter reconstruction", async () => {
+    await expect(runAgentEnvironmentProviderConformance({
+      name: "fake",
+      createProvider: () => fakeProvider(),
+    })).rejects.toThrow(/must not claim it created the environment/);
   });
 
   it("reports the creation verdict per call through the shared idempotency helper", async () => {
@@ -94,12 +102,10 @@ describe("runAgentExactProcessProviderLifecycleChecks", () => {
   });
 });
 
-function fakeProvider(): AgentEnvironmentProvider {
+function fakeProvider(
+  createRecords = new Map<string, AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>>(),
+): AgentEnvironmentProvider {
   const files = new Map<string, string>();
-  const createRecords = new Map<
-    string,
-    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
-  >();
   return {
     name: "fake",
     capabilities: () => ({

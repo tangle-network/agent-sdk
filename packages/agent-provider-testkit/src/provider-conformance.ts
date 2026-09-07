@@ -151,52 +151,58 @@ export async function runAgentEnvironmentProviderConformance(
     checked.push("stream");
 
     if (options.keyedCreate !== "unsupported") {
-      const replayInput = Object.fromEntries(
-        Object.entries(createInput).reverse(),
-      ) as CreateAgentEnvironmentInput;
-      const replay = await provider.create(replayInput);
-      assert(
-        replay.id === environment.id && replay.provider === environment.provider,
-        "same create key and canonical input must return the same environment",
-        checked,
-      );
-      // The first call already holds this environment, so the replay call
-      // provisioned nothing and may state only "replayed" or nothing at all.
-      assert(
-        replay.creation === undefined || replay.creation === "replayed",
-        "a same-key create replay must not claim it created the environment",
-        checked,
-      );
-      assert(
-        environment.creation === undefined || replay.creation === "replayed",
-        "a provider that states a creation verdict must state 'replayed' on a same-key replay",
-        checked,
-      );
-      checked.push("create-idempotency");
+      for (const replayProvider of [provider, await options.createProvider()]) {
+        const replayInput = Object.fromEntries(
+          Object.entries(createInput).reverse(),
+        ) as CreateAgentEnvironmentInput;
+        const replay = await replayProvider.create(replayInput);
+        if (replay.id !== environment.id || replay.provider !== environment.provider) {
+          await replay.destroy?.();
+        }
+        assert(
+          replay.id === environment.id && replay.provider === environment.provider,
+          "same create key and canonical input must return the same environment",
+          checked,
+        );
+        // The first call already holds this environment, so the replay call
+        // provisioned nothing and may state only "replayed" or nothing at all.
+        assert(
+          replay.creation === undefined || replay.creation === "replayed",
+          "a same-key create replay must not claim it created the environment",
+          checked,
+        );
+        assert(
+          environment.creation === undefined || replay.creation === "replayed",
+          "a provider that states a creation verdict must state 'replayed' on a same-key replay",
+          checked,
+        );
+        checked.push("create-idempotency");
 
-      let collisionRejected = false;
-      let changedEnvironment: typeof environment | undefined;
-      try {
-        changedEnvironment = await provider.create({
-          ...createInput,
-          name: `${createInput.name ?? options.name}-changed`,
-        });
-      } catch {
-        collisionRejected = true;
+        let collisionRejected = false;
+        let changedEnvironment: typeof environment | undefined;
+        try {
+          changedEnvironment = await replayProvider.create({
+            ...createInput,
+            name: `${createInput.name ?? options.name}-changed`,
+          });
+        } catch {
+          collisionRejected = true;
+        }
+        if (
+          changedEnvironment !== undefined &&
+          (changedEnvironment.id !== environment.id ||
+            changedEnvironment.provider !== environment.provider)
+        ) {
+          await changedEnvironment.destroy?.();
+        }
+        assert(
+          collisionRejected,
+          "reusing a create key with changed input must reject",
+          checked,
+        );
+        checked.push("create-idempotency-collision");
       }
-      if (
-        changedEnvironment !== undefined &&
-        (changedEnvironment.id !== environment.id ||
-          changedEnvironment.provider !== environment.provider)
-      ) {
-        await changedEnvironment.destroy?.();
-      }
-      assert(
-        collisionRejected,
-        "reusing a create key with changed input must reject",
-        checked,
-      );
-      checked.push("create-idempotency-collision");
+
     }
 
     if (environmentCapabilities.nativeContinuation !== undefined) {
