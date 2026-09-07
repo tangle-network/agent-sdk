@@ -31,7 +31,25 @@ export async function runAgentEnvironmentProviderConformance(
     name: `${options.name}-environment`,
     ...(options.createInput ?? {}),
   };
-  if (createInput.idempotencyKey === undefined) {
+  if (options.keyedCreate === "unsupported") {
+    for (const candidate of [provider, await options.createProvider()]) {
+      let rejected = false;
+      let unexpected: Awaited<ReturnType<typeof provider.create>> | undefined;
+      try {
+        unexpected = await candidate.create({
+          ...createInput,
+          idempotencyKey: `${options.name}-unsupported-create`,
+        });
+      } catch {
+        rejected = true;
+      } finally {
+        await unexpected?.destroy?.();
+      }
+      assert(rejected, "unsupported keyed creation must reject after reconstruction", checked);
+    }
+    checked.push("create-idempotency-unsupported");
+    delete createInput.idempotencyKey;
+  } else if (createInput.idempotencyKey === undefined) {
     createInput.idempotencyKey = `${options.name}-environment-create`;
   }
   const environment = await provider.create(createInput);
@@ -132,52 +150,54 @@ export async function runAgentEnvironmentProviderConformance(
     }
     checked.push("stream");
 
-    const replayInput = Object.fromEntries(
-      Object.entries(createInput).reverse(),
-    ) as CreateAgentEnvironmentInput;
-    const replay = await provider.create(replayInput);
-    assert(
-      replay.id === environment.id && replay.provider === environment.provider,
-      "same create key and canonical input must return the same environment",
-      checked,
-    );
-    // The first call already holds this environment, so the replay call
-    // provisioned nothing and may state only "replayed" or nothing at all.
-    assert(
-      replay.creation === undefined || replay.creation === "replayed",
-      "a same-key create replay must not claim it created the environment",
-      checked,
-    );
-    assert(
-      environment.creation === undefined || replay.creation === "replayed",
-      "a provider that states a creation verdict must state 'replayed' on a same-key replay",
-      checked,
-    );
-    checked.push("create-idempotency");
+    if (options.keyedCreate !== "unsupported") {
+      const replayInput = Object.fromEntries(
+        Object.entries(createInput).reverse(),
+      ) as CreateAgentEnvironmentInput;
+      const replay = await provider.create(replayInput);
+      assert(
+        replay.id === environment.id && replay.provider === environment.provider,
+        "same create key and canonical input must return the same environment",
+        checked,
+      );
+      // The first call already holds this environment, so the replay call
+      // provisioned nothing and may state only "replayed" or nothing at all.
+      assert(
+        replay.creation === undefined || replay.creation === "replayed",
+        "a same-key create replay must not claim it created the environment",
+        checked,
+      );
+      assert(
+        environment.creation === undefined || replay.creation === "replayed",
+        "a provider that states a creation verdict must state 'replayed' on a same-key replay",
+        checked,
+      );
+      checked.push("create-idempotency");
 
-    let collisionRejected = false;
-    let changedEnvironment: typeof environment | undefined;
-    try {
-      changedEnvironment = await provider.create({
-        ...createInput,
-        name: `${createInput.name ?? options.name}-changed`,
-      });
-    } catch {
-      collisionRejected = true;
+      let collisionRejected = false;
+      let changedEnvironment: typeof environment | undefined;
+      try {
+        changedEnvironment = await provider.create({
+          ...createInput,
+          name: `${createInput.name ?? options.name}-changed`,
+        });
+      } catch {
+        collisionRejected = true;
+      }
+      if (
+        changedEnvironment !== undefined &&
+        (changedEnvironment.id !== environment.id ||
+          changedEnvironment.provider !== environment.provider)
+      ) {
+        await changedEnvironment.destroy?.();
+      }
+      assert(
+        collisionRejected,
+        "reusing a create key with changed input must reject",
+        checked,
+      );
+      checked.push("create-idempotency-collision");
     }
-    if (
-      changedEnvironment !== undefined &&
-      (changedEnvironment.id !== environment.id ||
-        changedEnvironment.provider !== environment.provider)
-    ) {
-      await changedEnvironment.destroy?.();
-    }
-    assert(
-      collisionRejected,
-      "reusing a create key with changed input must reject",
-      checked,
-    );
-    checked.push("create-idempotency-collision");
 
     if (environmentCapabilities.nativeContinuation !== undefined) {
       assert(

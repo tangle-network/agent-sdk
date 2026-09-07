@@ -3,6 +3,31 @@ import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-pr
 import { createDaytonaProvider, type DaytonaLike } from "./index.js";
 
 describe("createDaytonaProvider", () => {
+  it("refuses keyed creates before remote effects across restart and lost acknowledgements", async () => {
+    let creates = 0;
+    let loseAcknowledgement = false;
+    const remoteCreate = async () => {
+      creates += 1;
+      if (loseAcknowledgement) throw new Error("create acknowledgement lost");
+      return { id: `remote-${creates}`, sandboxId: `remote-${creates}` };
+    };
+    const options = { daytona: { create: remoteCreate } };
+    const first = createDaytonaProvider(options);
+    const input = { profile: "worker", idempotencyKey: "operation-1" };
+    await expect(first.create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    const restarted = createDaytonaProvider(options);
+    await expect(restarted.create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    await expect(restarted.create({ ...input, profile: "changed" })).rejects.toThrow(/does not support durable keyed creation/);
+    expect(creates).toBe(0);
+
+    expect((await first.create({ profile: "worker" })).id).toBe("remote-1");
+    loseAcknowledgement = true;
+    await expect(first.create({ profile: "worker" })).rejects.toThrow("create acknowledgement lost");
+    expect(creates).toBe(2);
+    await expect(createDaytonaProvider(options).create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    expect(creates).toBe(2);
+  });
+
   it("wraps Daytona workspaces as provider environments", async () => {
     const files = new Map<string, string>();
     const daytona: DaytonaLike = {
@@ -31,6 +56,7 @@ describe("createDaytonaProvider", () => {
       runAgentEnvironmentProviderConformance({
         name: "daytona",
         createProvider: () => provider,
+        keyedCreate: "unsupported",
       }),
     ).resolves.toMatchObject({ provider: "daytona" });
 

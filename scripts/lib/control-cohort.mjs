@@ -22,6 +22,7 @@ export { pnpm, root, run, tsc, vitest } from "./packed-test-cohort.mjs";
 // The interface contract test files copied into the packed consumer. Each one
 // imports sibling modules through the re-export shims written below.
 export const interfaceTests = [
+  "agent-execution-preparation.test.ts",
   "environment-provider.test.ts",
   "interaction.test.ts",
   "portable-context.test.ts",

@@ -1,6 +1,5 @@
 import {
   commandTurnEvents,
-  createAgentEnvironmentWithIdempotency,
   execOnlyEnvironmentCapabilities,
   execResultFromUnknown,
   WorkspaceRequestSchema,
@@ -10,7 +9,6 @@ import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
-  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
   AgentEnvironmentSummary,
@@ -58,10 +56,6 @@ export interface ComputeSdkProviderOptions {
 
 export function createComputeSdkProvider(options: ComputeSdkProviderOptions): AgentEnvironmentProvider {
   const name = options.name ?? "computesdk";
-  const createRecords = new Map<
-    string,
-    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
-  >();
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -74,12 +68,12 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
   return {
     name,
     capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
-    create(input) {
-      return createAgentEnvironmentWithIdempotency(
-        createRecords,
-        input,
-        createEnvironment,
-      );
+    async create(input) {
+      input.signal?.throwIfAborted();
+      if (input.idempotencyKey !== undefined) {
+        throw new Error("ComputeSDK provider does not support durable keyed creation");
+      }
+      return createEnvironment(input);
     },
     ...(options.compute.sandbox.getById
       ? {

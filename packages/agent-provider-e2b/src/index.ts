@@ -1,6 +1,5 @@
 import {
   commandTurnEvents,
-  createAgentEnvironmentWithIdempotency,
   execOnlyEnvironmentCapabilities,
   execResultFromUnknown,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -8,7 +7,6 @@ import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
-  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
@@ -48,10 +46,6 @@ export interface E2BProviderOptions {
 
 export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "e2b";
-  const createRecords = new Map<
-    string,
-    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
-  >();
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -65,12 +59,12 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
   return {
     name,
     capabilities: () => options.capabilities ?? defaultE2BCapabilities(),
-    create(input) {
-      return createAgentEnvironmentWithIdempotency(
-        createRecords,
-        input,
-        createEnvironment,
-      );
+    async create(input) {
+      input.signal?.throwIfAborted();
+      if (input.idempotencyKey !== undefined) {
+        throw new Error("E2B provider does not support durable keyed creation");
+      }
+      return createEnvironment(input);
     },
     async get(id) {
       const Sandbox = options.Sandbox ?? (await loadE2BSandbox());

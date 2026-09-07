@@ -39,6 +39,8 @@ export interface ProviderConformanceOptions {
   createProvider(): AgentEnvironmentProvider | Promise<AgentEnvironmentProvider>;
   createInput?: Partial<CreateAgentEnvironmentInput>;
   prompt?: string;
+  /** Unsupported providers must reject keyed creation, including after reconstruction. */
+  keyedCreate?: "required" | "unsupported";
   requireUsage?: boolean;
   requireDispatch?: boolean;
 }

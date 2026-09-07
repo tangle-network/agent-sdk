@@ -589,6 +589,23 @@ describe("Tangle split leaf modules", () => {
         streamBound: true,
       },
     )).toThrow(/executionId/);
+    for (const type of ["result", "done"]) {
+      expect(environmentEventFromSandboxEvent({
+        type, data: { usage: { inputTokens: 2, outputTokens: 3 } },
+      } as never)).toMatchObject({ usageMode: "cumulative" });
+    }
+    for (const type of ["usage", "cost.usage", "llm_call"]) {
+      expect(environmentEventFromSandboxEvent({
+        type, data: { usage: { inputTokens: 2, outputTokens: 3 } },
+      } as never)).not.toHaveProperty("usageMode");
+    }
+    expect(environmentEventFromSandboxEvent({
+      type: "usage", data: { usageMode: "delta", usage: { inputTokens: 2, outputTokens: 3 } },
+    } as never)).toMatchObject({ usageMode: "delta" });
+    expect(() => environmentEventFromSandboxEvent({
+      type: "usage", usageMode: "cumulative",
+      data: { usageMode: "delta", usage: { inputTokens: 2, outputTokens: 3 } },
+    } as never)).toThrow(/conflicting usage modes/);
     expect(tokenUsageFromData({ usage: { inputTokens: 2, outputTokens: 3 } })).toEqual({ inputTokens: 2, outputTokens: 3 });
     expect(execResultFromSandboxExecResult({ exitCode: 0, stdout: "ok", stderr: "" } as never)).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
     expect(validatedSandboxPromptResult(promptResult())).toMatchObject({ success: true, status: "success" });

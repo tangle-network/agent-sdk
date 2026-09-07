@@ -44,3 +44,8 @@ If both the check and environment destruction fail, it reports both errors.
 
 `runAgentExactProcessProviderLifecycleChecks()` checks idempotent create and collision rejection, bounded exact-byte file round trips, terminal reasons, output replay, recovery, lookup, and deletion.
 It intentionally does not certify a provider's network isolation, secret handling, public exposure, or process-tree behavior; provider packages must prove those properties against their real infrastructure.
+
+Set `keyedCreate: "unsupported"` for providers that cannot retain keyed admission.
+The conformance check then requires keyed rejection before testing an unkeyed environment.
+The default still requires same-key replay and changed-input refusal.
+Provider tests must also prove rejection occurs before remote effects.

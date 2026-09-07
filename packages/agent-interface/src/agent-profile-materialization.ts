@@ -1,7 +1,7 @@
-import type { AgentProfile } from "./agent-profile.js";
+import type { AgentProfile, AgentProfileModelHints } from "./agent-profile.js";
 
 /**
- * The 30 canonical AgentProfile leaves that can affect one execution.
+ * The canonical AgentProfile leaves that can affect one execution.
  *
  * Compound parents such as `model`, `prompt`, and `resources` are deliberately
  * absent. A producer must report the exact requested leaf instead of claiming
@@ -22,6 +22,9 @@ export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "modelSmall",
   "modelProvider",
   "modelReasoningEffort",
+  "modelMaxVisibleOutputTokens",
+  "modelMaxReasoningTokens",
+  "modelMaxTotalOutputTokens",
   "modelMetadata",
   "harness",
   "permissions",
@@ -92,6 +95,17 @@ interface AxisDescriptor {
   value(profile: AgentProfile): unknown;
 }
 
+const MODEL_AXES = {
+  default: "modelDefault",
+  small: "modelSmall",
+  provider: "modelProvider",
+  reasoningEffort: "modelReasoningEffort",
+  maxVisibleOutputTokens: "modelMaxVisibleOutputTokens",
+  maxReasoningTokens: "modelMaxReasoningTokens",
+  maxTotalOutputTokens: "modelMaxTotalOutputTokens",
+  metadata: "modelMetadata",
+} as const satisfies Record<keyof AgentProfileModelHints, AgentProfileMaterializationAxis>;
+
 const AXIS_DESCRIPTORS = [
   { axis: "name", rootPath: "/name", value: (profile) => profile.name },
   {
@@ -116,31 +130,11 @@ const AXIS_DESCRIPTORS = [
     rootPath: "/prompt/instructions",
     value: (profile) => profile.prompt?.instructions,
   },
-  {
-    axis: "modelDefault",
-    rootPath: "/model/default",
-    value: (profile) => profile.model?.default,
-  },
-  {
-    axis: "modelSmall",
-    rootPath: "/model/small",
-    value: (profile) => profile.model?.small,
-  },
-  {
-    axis: "modelProvider",
-    rootPath: "/model/provider",
-    value: (profile) => profile.model?.provider,
-  },
-  {
-    axis: "modelReasoningEffort",
-    rootPath: "/model/reasoningEffort",
-    value: (profile) => profile.model?.reasoningEffort,
-  },
-  {
-    axis: "modelMetadata",
-    rootPath: "/model/metadata",
-    value: (profile) => profile.model?.metadata,
-  },
+  ...Object.entries(MODEL_AXES).map(([property, axis]): AxisDescriptor => ({
+    axis,
+    rootPath: `/model/${property}`,
+    value: (profile) => profile.model?.[property as keyof AgentProfileModelHints],
+  })),
   { axis: "harness", rootPath: "/harness", value: (profile) => profile.harness },
   {
     axis: "permissions",

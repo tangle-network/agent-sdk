@@ -98,6 +98,7 @@ const AgentEnvironmentEventSchema = z.strictObject({
   id: boundedIdentifierSchema.optional(),
   normalized: CanonicalStreamEventSchema.optional(),
   usage: TokenUsageSchema.optional(),
+  usageMode: z.enum(["delta", "cumulative"]).optional(),
   providerEvent: boundedJsonSchema.optional(),
 }) satisfies z.ZodType<AgentEnvironmentEvent>;
 
@@ -272,6 +273,12 @@ export interface AgentEnvironmentEvent {
   id?: string;
   normalized?: StreamEvent;
   usage?: TokenUsage;
+  /**
+   * Delta is one new contribution; cumulative is the total so far for this turn.
+   * Cumulative totals include earlier deltas and may repeat during replay.
+   * Omission means the provider has not established the aggregation semantics.
+   */
+  usageMode?: "delta" | "cumulative";
   providerEvent?: unknown;
 }
 
@@ -1003,6 +1010,7 @@ export interface AgentEnvironmentProvider {
    *
    * With `input.idempotencyKey`, the provider must return the same environment
    * for the same canonical input and reject any changed input before creating.
+   * A provider without durable keyed admission must reject a keyed request before provisioning.
    * Without a key, each call may create a fresh environment.
    */
   create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;

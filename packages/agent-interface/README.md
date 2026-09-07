@@ -228,3 +228,10 @@ An exhaustiveness check that assigns the remaining case to `never` fails when a 
 ## License
 
 MIT
+
+`AgentEnvironmentEvent.usageMode` describes token usage within one turn.
+`delta` contributes new usage; `cumulative` includes earlier contributions and replaces the prior turn total.
+Repeated cumulative totals do not add spend.
+An absent mode means the aggregation semantics are unknown.
+Materialization receipts cover all three model token ceilings at their exact requested paths.
+A strict profile rejects unsupported ceilings instead of silently accepting them.
