@@ -117,6 +117,9 @@ export function createCliBridgeProvider(
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    if (input.runtimeAttachments !== undefined) {
+      throw new Error("CLI Bridge provider does not support runtime MCP attachments");
+    }
     if (typeof input.profile === "string") {
       throw new Error(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,

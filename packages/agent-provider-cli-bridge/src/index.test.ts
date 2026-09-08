@@ -19,6 +19,23 @@ import { cliBridgeEnvironmentId } from "./environment-identity.js";
 import { toChatCompletionsBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
+  it("refuses runtime attachments before capability discovery or environment creation", async () => {
+    let calls = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "codex/fixture",
+      fetch: async () => {
+        calls += 1;
+        throw new Error("Remote calls must not occur");
+      },
+    });
+    await expect(provider.create({
+      profile: { harness: "codex" },
+      runtimeAttachments: { mcp: {} },
+    })).rejects.toThrow(/does not support runtime MCP attachments/);
+    expect(calls).toBe(0);
+  });
+
   it("rejects a named profile before network use", async () => {
     let called = false;
     const provider = createCliBridgeProvider({

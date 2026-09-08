@@ -17,6 +17,7 @@ describe("createComputeSdkProvider", () => {
     const options = { compute: { sandbox: { create: remoteCreate } } };
     const first = createComputeSdkProvider(options);
     const input = { profile: "worker", idempotencyKey: "operation-1" };
+    await expect(first.create({ profile: "worker", runtimeAttachments: { mcp: {} } })).rejects.toThrow(/does not support runtime MCP attachments/);
     await expect(first.create(input)).rejects.toThrow(/does not support durable keyed creation/);
     const restarted = createComputeSdkProvider(options);
     await expect(restarted.create(input)).rejects.toThrow(/does not support durable keyed creation/);
