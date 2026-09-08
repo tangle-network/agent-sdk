@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 2.5.0
+
+### Minor Changes
+
+- c40bba2: Preserve canonical knowledge state scope in portable agent candidates.
+  Include the pages directory and research-state selection in the existing candidate identity.
+
 ## 2.4.0
 
 ### Minor Changes
