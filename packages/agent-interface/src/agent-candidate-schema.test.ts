@@ -40,6 +40,80 @@ describe("agentCandidateBundleSchema", () => {
     ).toEqual(knowledge);
   });
 
+  it("preserves a knowledge state scope through a frozen candidate round trip", () => {
+    const candidate = candidateFixture();
+    if (!candidate.knowledge) throw new Error("fixture must include knowledge");
+    const material = {
+      ...omitTopLevelDigest(candidate),
+      knowledge: {
+        ...candidate.knowledge,
+        stateScope: { pagesDirectory: "kb/pages", researchState: true },
+      },
+    };
+    const frozen = { ...material, digest: canonicalCandidateDigest(material) };
+    const parsed = agentCandidateBundleSchema.parse(
+      JSON.parse(JSON.stringify(frozen)),
+    );
+    expect(parsed).toEqual(frozen);
+    expect(canonicalCandidateDigest(omitTopLevelDigest(parsed))).toBe(
+      frozen.digest,
+    );
+
+    for (const stateScope of [
+      { pagesDirectory: "other/pages", researchState: true },
+      { pagesDirectory: "kb/pages", researchState: false },
+    ]) {
+      const changed = agentCandidateBundleSchema.parse({
+        ...frozen,
+        knowledge: { ...material.knowledge, stateScope },
+      });
+      expect(canonicalCandidateDigest(omitTopLevelDigest(changed))).not.toBe(
+        frozen.digest,
+      );
+    }
+    const { stateScope: _stateScope, ...unscopedKnowledge } =
+      material.knowledge;
+    const removed = { ...material, knowledge: unscopedKnowledge };
+    expect(canonicalCandidateDigest(removed)).not.toBe(frozen.digest);
+  });
+
+  it("does not introduce a scope or change identity for an unscoped candidate", () => {
+    const candidate = candidateFixture();
+    const parsed = agentCandidateBundleSchema.parse(
+      JSON.parse(JSON.stringify(candidate)),
+    );
+    expect(parsed.knowledge).not.toHaveProperty("stateScope");
+    expect(canonicalCandidateDigest(omitTopLevelDigest(parsed))).toBe(
+      canonicalCandidateDigest(omitTopLevelDigest(candidate)),
+    );
+  });
+
+  it.each([
+    { pagesDirectory: "", researchState: true },
+    { pagesDirectory: ".", researchState: true },
+    { pagesDirectory: "../pages", researchState: true },
+    { pagesDirectory: "/pages", researchState: true },
+    { pagesDirectory: "./pages", researchState: true },
+    { pagesDirectory: "pages/", researchState: true },
+    { pagesDirectory: "kb//pages", researchState: true },
+    { pagesDirectory: "kb\\pages", researchState: true },
+    { pagesDirectory: "C:/pages", researchState: true },
+    { pagesDirectory: "pages\u0000", researchState: true },
+    { pagesDirectory: ".git/pages", researchState: true },
+    { pagesDirectory: "pages" },
+    { researchState: true },
+    { pagesDirectory: "pages", researchState: "true" },
+    { pagesDirectory: "pages", researchState: true, extra: true },
+  ])("rejects a noncanonical knowledge state scope: %j", (stateScope) => {
+    const candidate = candidateFixture();
+    expect(
+      agentCandidateBundleSchema.safeParse({
+        ...candidate,
+        knowledge: { ...candidate.knowledge, stateScope },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects a harness mismatch", () => {
     expect(() =>
       agentCandidateBundleSchema.parse({

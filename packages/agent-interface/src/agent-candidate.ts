@@ -321,8 +321,16 @@ export interface AgentCandidateKnowledgeRef {
   promotionPlanHash: Sha256Digest;
 }
 
+/** Canonical selection of knowledge state included in the candidate hash. */
+export interface AgentCandidateKnowledgeStateScope {
+  pagesDirectory: string;
+  researchState: boolean;
+}
+
 export interface AgentCandidateKnowledge {
   candidate: AgentCandidateKnowledgeRef;
+  /** Absent scopes retain the knowledge provider's default selection. */
+  stateScope?: AgentCandidateKnowledgeStateScope;
   snapshot: AgentCandidateWorkspaceSnapshotEvidence;
   retrievalConfig?: AgentCandidateCapturedArtifact;
   evaluation: AgentCandidateCapturedArtifact;
