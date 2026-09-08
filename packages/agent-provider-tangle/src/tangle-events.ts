@@ -268,6 +268,15 @@ export function environmentEventFromSandboxEvent(
     }
   }
   const usage = tokenUsageFromData(data);
+  const declaredModes = [record.usageMode, data.usageMode].filter((mode) => mode !== undefined);
+  if (declaredModes.some((mode) => mode !== "delta" && mode !== "cumulative") ||
+      (declaredModes.length === 2 && declaredModes[0] !== declaredModes[1])) {
+    throw new Error("Tangle Sandbox event contained invalid or conflicting usage modes");
+  }
+  // Only terminal turn receipts have established aggregate semantics.
+  // Other event names do not prove whether their usage is incremental.
+  const usageMode = declaredModes[0] as AgentEnvironmentEvent["usageMode"] ??
+    (record.type === "result" || record.type === "done" ? "cumulative" : undefined);
   // The session id reaches the normalized event whichever position carried it,
   // including the native id an execution-bound stream just accepted as content.
   const normalized = normalizeSandboxEvent(record.type, data, identity);
@@ -279,6 +288,7 @@ export function environmentEventFromSandboxEvent(
     // Absent rather than zeroed: an event that reported no usage must not
     // contribute a total to whatever sums these events.
     ...(usage ? { usage } : {}),
+    ...(usageMode === undefined ? {} : { usageMode }),
     providerEvent: event,
   };
 }

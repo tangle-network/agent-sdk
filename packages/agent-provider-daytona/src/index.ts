@@ -1,6 +1,5 @@
 import {
   commandTurnEvents,
-  createAgentEnvironmentWithIdempotency,
   execOnlyEnvironmentCapabilities,
   execResultFromUnknown,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -8,7 +7,6 @@ import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
-  AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
   AgentEnvironmentSummary,
@@ -54,10 +52,6 @@ export interface DaytonaProviderOptions {
 
 export function createDaytonaProvider(options: DaytonaProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "daytona";
-  const createRecords = new Map<
-    string,
-    AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
-  >();
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -70,12 +64,12 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
   return {
     name,
     capabilities: () => options.capabilities ?? defaultDaytonaCapabilities(),
-    create(input) {
-      return createAgentEnvironmentWithIdempotency(
-        createRecords,
-        input,
-        createEnvironment,
-      );
+    async create(input) {
+      input.signal?.throwIfAborted();
+      if (input.idempotencyKey !== undefined) {
+        throw new Error("Daytona provider does not support durable keyed creation");
+      }
+      return createEnvironment(input);
     },
     async get(id) {
       const daytona = await resolveDaytona(options);

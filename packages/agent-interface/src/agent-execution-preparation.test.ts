@@ -109,6 +109,9 @@ const fullProfile: AgentProfile = {
     small: "openai/gpt-5.4-mini",
     provider: "openai",
     reasoningEffort: "high",
+    maxVisibleOutputTokens: 8192,
+    maxReasoningTokens: 4096,
+    maxTotalOutputTokens: 16384,
     metadata: { route: "research" },
   },
   harness: "codex",
@@ -240,11 +243,41 @@ function validationOptions(receipt: AgentExecutionPreparationReceipt) {
 }
 
 describe("profile materialization leaves", () => {
-  it("enumerates every one of the 30 canonical AgentProfile leaves", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(30);
+  it("enumerates every one of the canonical AgentProfile leaves", () => {
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(33);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
       AGENT_PROFILE_MATERIALIZATION_AXES,
     );
+  });
+
+  it.each([
+    "maxVisibleOutputTokens",
+    "maxReasoningTokens",
+    "maxTotalOutputTokens",
+  ] as const)("requires exact application coverage for %s", (field) => {
+    const authoredProfile: AgentProfile = {
+      name: "worker",
+      model: { default: "openai/gpt-5.4", [field]: 1024 },
+    };
+    const path = `/model/${field}`;
+    const axisResults = coverage(authoredProfile);
+    expect(axisResults.some((result) => result.path === path)).toBe(true);
+    expect(() => buildReceipt({ authoredProfile, axisResults })).not.toThrow();
+    expect(() => buildReceipt({
+      authoredProfile,
+      axisResults: axisResults.filter((result) => result.path !== path),
+    })).toThrow(/missing.*coverage/);
+    expect(() => buildReceipt({
+      authoredProfile,
+      axisResults: axisResults.map((result) => result.path === path
+        ? { ...result, disposition: "unsupported", reason: "backend cannot enforce this ceiling" }
+        : result),
+    })).toThrow(/unsupported/);
+    expect(() => buildReceipt({
+      authoredProfile,
+      effectiveProfile: { ...authoredProfile, model: { default: "openai/gpt-5.4" } },
+      axisResults,
+    })).toThrow(/changed between authored and effective/);
   });
 
   it("expands compound axes into every exact requested JSON Pointer", () => {

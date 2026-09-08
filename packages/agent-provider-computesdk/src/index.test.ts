@@ -6,6 +6,31 @@ import {
 } from "./index.js";
 
 describe("createComputeSdkProvider", () => {
+  it("refuses keyed creates before remote effects across restart and lost acknowledgements", async () => {
+    let creates = 0;
+    let loseAcknowledgement = false;
+    const remoteCreate = async () => {
+      creates += 1;
+      if (loseAcknowledgement) throw new Error("create acknowledgement lost");
+      return { id: `remote-${creates}`, sandboxId: `remote-${creates}`, runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    const options = { compute: { sandbox: { create: remoteCreate } } };
+    const first = createComputeSdkProvider(options);
+    const input = { profile: "worker", idempotencyKey: "operation-1" };
+    await expect(first.create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    const restarted = createComputeSdkProvider(options);
+    await expect(restarted.create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    await expect(restarted.create({ ...input, profile: "changed" })).rejects.toThrow(/does not support durable keyed creation/);
+    expect(creates).toBe(0);
+
+    expect((await first.create({ profile: "worker" })).id).toBe("remote-1");
+    loseAcknowledgement = true;
+    await expect(first.create({ profile: "worker" })).rejects.toThrow("create acknowledgement lost");
+    expect(creates).toBe(2);
+    await expect(createComputeSdkProvider(options).create(input)).rejects.toThrow(/does not support durable keyed creation/);
+    expect(creates).toBe(2);
+  });
+
   it("wraps ComputeSDK sandboxes as provider environments", async () => {
     const files = new Map<string, string>();
     const compute: ComputeSdkLike = {
@@ -34,6 +59,7 @@ describe("createComputeSdkProvider", () => {
       runAgentEnvironmentProviderConformance({
         name: "compute",
         createProvider: () => provider,
+        keyedCreate: "unsupported",
       }),
     ).resolves.toMatchObject({ provider: "computesdk" });
 

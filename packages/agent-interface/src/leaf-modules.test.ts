@@ -486,6 +486,16 @@ describe("interface split leaf modules", () => {
     expect(() =>
       AgentTurnInputSchema.parse({ prompt: "x", context: { huge: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) } }),
     ).toThrow();
+    for (const usageMode of ["delta", "cumulative"]) {
+      expect(AgentTurnResultSchema.parse({
+        text: "x", success: true,
+        events: [{ type: "usage", data: {}, usageMode, usage: { inputTokens: 2, outputTokens: 3 } }],
+      }).events?.[0]?.usageMode).toBe(usageMode);
+    }
+    expect(() => AgentTurnResultSchema.parse({
+      text: "x", success: true,
+      events: [{ type: "usage", data: {}, usageMode: "guess" }],
+    })).toThrow();
     expect(() =>
       AgentTurnResultSchema.parse({ text: "x", success: true, events: new Array(1_025).fill({}) }),
     ).toThrow();
