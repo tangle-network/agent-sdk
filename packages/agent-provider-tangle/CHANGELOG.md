@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.6
+
+### Patch Changes
+
+- 2f6c186: Require materialization coverage for all model token ceilings and add explicit per-turn event usage aggregation semantics.
+  Tangle marks terminal usage totals as cumulative and preserves explicit usage modes.
+  Direct sandbox adapters reject unsupported keyed creation before provisioning instead of relying on process-local retry state.
+- Updated dependencies [2f6c186]
+- Updated dependencies [f890c89]
+  - @tangle-network/agent-interface@2.4.0
+
 ## 1.1.5
 
 ### Patch Changes
