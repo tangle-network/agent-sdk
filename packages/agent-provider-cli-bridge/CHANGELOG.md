@@ -1,5 +1,15 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 1.0.2
+
+### Patch Changes
+
+- f890c89: Add runtime-owned MCP create attachments without changing authored profiles.
+  Providers without runtime attachment support refuse the request before creating an environment.
+- Updated dependencies [2f6c186]
+- Updated dependencies [f890c89]
+  - @tangle-network/agent-interface@2.4.0
+
 ## 1.0.1
 
 ### Patch Changes

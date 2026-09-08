@@ -1,5 +1,15 @@
 # @tangle-network/agent-interface
 
+## 2.4.0
+
+### Minor Changes
+
+- 2f6c186: Require materialization coverage for all model token ceilings and add explicit per-turn event usage aggregation semantics.
+  Tangle marks terminal usage totals as cumulative and preserves explicit usage modes.
+  Direct sandbox adapters reject unsupported keyed creation before provisioning instead of relying on process-local retry state.
+- f890c89: Add runtime-owned MCP create attachments without changing authored profiles.
+  Providers without runtime attachment support refuse the request before creating an environment.
+
 ## 2.3.1
 
 ### Patch Changes
