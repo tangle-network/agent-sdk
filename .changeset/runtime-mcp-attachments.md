@@ -1,5 +1,6 @@
 ---
 "@tangle-network/agent-interface": minor
+"@tangle-network/agent-provider-cli-bridge": patch
 "@tangle-network/agent-provider-e2b": patch
 "@tangle-network/agent-provider-daytona": patch
 "@tangle-network/agent-provider-computesdk": patch
