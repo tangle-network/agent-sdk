@@ -11,6 +11,7 @@ import {
 } from "./agent-candidate-artifact-schema.js";
 import {
   addDuplicateIssues,
+  isSafeRelativePath,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 
@@ -28,6 +29,18 @@ export const agentCandidateKnowledgeSchema = z
         promotionPlanHash: sha256DigestSchema,
       })
       .strict(),
+    stateScope: z
+      .object({
+        pagesDirectory: z
+          .string()
+          .refine(
+            (value) => isSafeRelativePath(value, false),
+            "pagesDirectory must be a canonical workspace-relative directory",
+          ),
+        researchState: z.boolean(),
+      })
+      .strict()
+      .optional(),
     snapshot: agentCandidateWorkspaceSnapshotEvidenceSchema,
     retrievalConfig: agentCandidateCapturedArtifactSchema.optional(),
     evaluation: agentCandidateCapturedArtifactSchema,
