@@ -70,6 +70,9 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
     capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.runtimeAttachments !== undefined) {
+        throw new Error("ComputeSDK provider does not support runtime MCP attachments");
+      }
       if (input.idempotencyKey !== undefined) {
         throw new Error("ComputeSDK provider does not support durable keyed creation");
       }

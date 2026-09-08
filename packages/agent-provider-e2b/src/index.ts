@@ -61,6 +61,9 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
     capabilities: () => options.capabilities ?? defaultE2BCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.runtimeAttachments !== undefined) {
+        throw new Error("E2B provider does not support runtime MCP attachments");
+      }
       if (input.idempotencyKey !== undefined) {
         throw new Error("E2B provider does not support durable keyed creation");
       }

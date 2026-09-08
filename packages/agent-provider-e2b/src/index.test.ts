@@ -14,6 +14,7 @@ describe("createE2BProvider", () => {
     const options = { Sandbox: { create: remoteCreate } };
     const first = createE2BProvider(options);
     const input = { profile: "worker", idempotencyKey: "operation-1" };
+    await expect(first.create({ profile: "worker", runtimeAttachments: { mcp: {} } })).rejects.toThrow(/does not support runtime MCP attachments/);
     await expect(first.create(input)).rejects.toThrow(/does not support durable keyed creation/);
     const restarted = createE2BProvider(options);
     await expect(restarted.create(input)).rejects.toThrow(/does not support durable keyed creation/);

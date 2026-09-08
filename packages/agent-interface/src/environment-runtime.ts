@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
+export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
   canonicalCandidateDigest,
   canonicalCandidateJson,
@@ -478,9 +480,8 @@ export interface AgentEnvironmentCapabilities {
     egress: readonly AgentExactProcessEgressMode[];
   };
   /**
-   * Present only when create honors {@link CreateAgentEnvironmentInput.egress} or
-   * {@link CreateAgentEnvironmentInput.billingOwner}. Absent means neither field is read, so a
-   * caller that needs either must not send it and call the result a policy.
+   * Present only when create honors at least one optional field below.
+   * Callers must check each requested field; an absent capability cannot satisfy it.
    *
    * Each member is present only when that field is honored, and the block carries at least one of
    * them. A provider that takes a billing owner but no caller-controlled egress therefore states
@@ -498,6 +499,8 @@ export interface AgentEnvironmentCapabilities {
      * authorizes the caller for that account; this flag states only that the field is not dropped.
      */
     billingOwner?: boolean;
+    /** Runtime-owned MCP bindings applied without changing the authored profile. */
+    runtimeAttachments?: { mcp: true };
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -612,6 +615,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
           .max(CONTRACT_MAX_ARRAY_LENGTH)
           .optional(),
         billingOwner: z.boolean().optional(),
+        runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
       })
       .optional(),
     observation: z
@@ -732,7 +736,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
     }
     const create = capabilities.create;
     if (create !== undefined) {
-      if (create.egress === undefined && create.billingOwner === undefined) {
+      if (create.egress === undefined && create.billingOwner === undefined && create.runtimeAttachments === undefined) {
         refinement.addIssue({
           code: "custom",
           path: ["create"],
@@ -819,6 +823,13 @@ export const AgentEnvironmentCapabilitiesSchema = z
 
 export interface CreateAgentEnvironmentInput {
   profile: AgentProfileRef;
+  /**
+   * Runtime-owned execution inputs, separate from authored profile identity.
+   * Providers must refuse unsupported attachments and authored MCP alias collisions.
+   * Credentials are sensitive transport input; never include them in receipts or logs.
+   * Attachments participate in keyed create identity and cannot be refreshed by replay.
+   */
+  runtimeAttachments?: AgentRuntimeAttachments;
   /** Exact caller-owned id required by an accepted destination contract. */
   requestedId?: string;
   /** Agent backend inside the provider, for example "opencode" or "codex". */

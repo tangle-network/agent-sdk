@@ -66,6 +66,9 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
     capabilities: () => options.capabilities ?? defaultDaytonaCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.runtimeAttachments !== undefined) {
+        throw new Error("Daytona provider does not support runtime MCP attachments");
+      }
       if (input.idempotencyKey !== undefined) {
         throw new Error("Daytona provider does not support durable keyed creation");
       }

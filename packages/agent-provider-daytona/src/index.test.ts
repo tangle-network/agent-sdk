@@ -14,6 +14,7 @@ describe("createDaytonaProvider", () => {
     const options = { daytona: { create: remoteCreate } };
     const first = createDaytonaProvider(options);
     const input = { profile: "worker", idempotencyKey: "operation-1" };
+    await expect(first.create({ profile: "worker", runtimeAttachments: { mcp: {} } })).rejects.toThrow(/does not support runtime MCP attachments/);
     await expect(first.create(input)).rejects.toThrow(/does not support durable keyed creation/);
     const restarted = createDaytonaProvider(options);
     await expect(restarted.create(input)).rejects.toThrow(/does not support durable keyed creation/);
