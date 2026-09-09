@@ -61,7 +61,7 @@ import {
   InputPartSchema,
   wireDigest as portableWireDigest,
 } from "./portable-context-shared.js";
-import { isBoundedJsonValue } from "./contract-limits.js";
+import { isBoundedEventContentJson, isBoundedJsonValue } from "./contract-limits.js";
 import {
   ContextTransferReceiptSchema,
   ContextTransferRequestSchema,
@@ -73,10 +73,12 @@ import {
   CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
   CONTRACT_MAX_JSON_BYTES,
   CONTRACT_MAX_STRING_LENGTH,
+  boundedEventContentStringSchema,
   boundedJsonSchema,
   boundedStringSchema,
   nullPrototypeRecord,
 } from "./contract-limits.js";
+import { CanonicalStreamEventSchema } from "./runtime-control.js";
 import {
   WorkspaceCheckpointRefSchema,
   WorkspaceCheckpointRequestSchema,
@@ -226,6 +228,73 @@ describe("interface split leaf modules", () => {
       CONTRACT_MAX_JSON_BYTES,
     );
     expect(() => portableWireDigest(unicodeMaterial)).toThrow(/byte bound/);
+  });
+
+  it("accepts large event content up to its exact serialized UTF-8 bound", () => {
+    const maximum = "x".repeat(CONTRACT_MAX_JSON_BYTES - 2);
+    expect(isBoundedEventContentJson(maximum)).toBe(true);
+    expect(boundedEventContentStringSchema.parse(maximum)).toBe(maximum);
+    expect(isBoundedEventContentJson(`${maximum}x`)).toBe(false);
+    expect(boundedEventContentStringSchema.safeParse(`${maximum}x`).success).toBe(false);
+    expect(isBoundedEventContentJson({ unicode: "é".repeat(600_000) })).toBe(false);
+    expect(isBoundedEventContentJson({ ordinary: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) })).toBe(true);
+    const altered = ["small"] as unknown as { toJSON: () => string };
+    altered.toJSON = () => "x".repeat(CONTRACT_MAX_JSON_BYTES + 1);
+    expect(isBoundedEventContentJson(altered)).toBe(false);
+    const inheritedToJson = ["small"];
+    Object.setPrototypeOf(inheritedToJson, { toJSON: () => "x".repeat(CONTRACT_MAX_JSON_BYTES + 1) });
+    expect(isBoundedEventContentJson(inheritedToJson)).toBe(false);
+    const sparseWithNonIndex = new Array(1) as unknown as Record<string, unknown>;
+    sparseWithNonIndex["4294967295"] = "ignored by JSON.stringify";
+    expect(isBoundedEventContentJson(sparseWithNonIndex)).toBe(false);
+    for (const pattern of ["\ud800", "\"", "\\", "\u0000", "\b", "\n"]) {
+      const scalarBytes = Buffer.byteLength(JSON.stringify(pattern), "utf8") - 2;
+      const atLimit = pattern.repeat(Math.floor((CONTRACT_MAX_JSON_BYTES - 2) / scalarBytes));
+      for (const value of [atLimit, `${atLimit}${pattern}`]) {
+        expect(isBoundedEventContentJson(value)).toBe(
+          Buffer.byteLength(JSON.stringify(value), "utf8") <= CONTRACT_MAX_JSON_BYTES,
+        );
+      }
+    }
+  });
+
+  it("keeps long canonical stream and terminal response content without widening metadata", () => {
+    const content = "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1);
+    const normalized = {
+      type: "message.part.updated" as const,
+      part: {
+        id: "part-1",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "tool" as const,
+        tool: "shell",
+        state: { status: "completed" as const, input: {}, output: { content } },
+      },
+      delta: content,
+    };
+    expect(CanonicalStreamEventSchema.parse(normalized)).toEqual(normalized);
+    expect(AgentTurnResultSchema.parse({
+      text: content,
+      success: true,
+      events: [{ type: "provider-event", data: { content }, normalized, providerEvent: { content } }],
+    }).text).toBe(content);
+    expect(AgentTurnResultSchema.safeParse({
+      text: "done",
+      success: true,
+      metadata: { content },
+    }).success).toBe(false);
+    const withExplicitUndefined = {
+      type: "message.part.updated" as const,
+      part: {
+        id: "part-2",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "text" as const,
+        text: "present",
+      },
+      delta: undefined,
+    };
+    expect(CanonicalStreamEventSchema.parse(withExplicitUndefined)).toEqual(withExplicitUndefined);
   });
 
   it("exports the portable workspace cwd leaf contract", () => {

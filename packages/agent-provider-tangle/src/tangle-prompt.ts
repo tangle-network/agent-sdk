@@ -13,6 +13,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import {
   agentProfileSchema,
+  boundedEventContentRecordSchema,
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
   ContextTransferReceiptSchema,
@@ -577,7 +578,15 @@ export function validatedSandboxPromptResult(
         value !== undefined || !SANDBOX_OPTIONAL_RESULT_FIELDS.has(field),
     ),
   );
-  assertBoundedJson(record);
+  const content = boundedEventContentRecordSchema.safeParse(record);
+  if (!content.success) {
+    throw new Error("Tangle prompt result exceeded its JSON bound", { cause: content.error });
+  }
+  // Response text is content; all other fields retain their metadata limits.
+  assertBoundedJson(Object.fromEntries(
+    Object.entries(record).filter(([field]) =>
+      field !== "response" && field !== "text" && field !== "finalText"),
+  ));
   if (typeof record.success !== "boolean") {
     throw new Error("Tangle prompt result omitted its success status");
   }

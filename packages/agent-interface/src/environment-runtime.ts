@@ -18,7 +18,7 @@ import type {
   AgentWorkspaceBranchingProvider,
 } from "./workspace-branching.js";
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
-import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
+import { boundedEventContentJsonSchema, boundedEventContentRecordSchema, boundedEventContentStringSchema, boundedIdentifierSchema, boundedJsonRecordSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
 import { deepFreeze } from "./deep-freeze.js";
 import type { AgentEnvironmentEgressMode, AgentEnvironmentEgressPolicy, AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
@@ -96,17 +96,17 @@ const TokenUsageSchema = z.strictObject({
 
 const AgentEnvironmentEventSchema = z.strictObject({
   type: boundedIdentifierSchema,
-  data: boundedJsonRecordSchema,
+  data: boundedEventContentRecordSchema,
   id: boundedIdentifierSchema.optional(),
   normalized: CanonicalStreamEventSchema.optional(),
   usage: TokenUsageSchema.optional(),
   usageMode: z.enum(["delta", "cumulative"]).optional(),
-  providerEvent: boundedJsonSchema.optional(),
+  providerEvent: boundedEventContentJsonSchema.optional(),
 }) satisfies z.ZodType<AgentEnvironmentEvent>;
 
 /** Runtime validator for a provider turn returned from durable continuation. */
 export const AgentTurnResultSchema = z.strictObject({
-  text: boundedStringSchema,
+  text: boundedEventContentStringSchema,
   success: z.boolean(),
   error: boundedStringSchema.optional(),
   sessionId: boundedIdentifierSchema.optional(),

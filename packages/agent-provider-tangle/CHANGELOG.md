@@ -1,5 +1,15 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.7
+
+### Patch Changes
+
+- Accept complete Sandbox tool output and assistant text within the shared bounded event-content contract.
+  Validate the complete frame's serialized UTF-8 size while retaining identifier, usage metadata, and structural limits.
+  This fixes stream failures caused by applying a 16 KiB metadata string limit to backend content.
+- Updated dependencies
+  - @tangle-network/agent-interface@2.6.1
+
 ## 1.1.6
 
 ### Patch Changes

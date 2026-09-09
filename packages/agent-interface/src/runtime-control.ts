@@ -6,10 +6,13 @@ import {
 } from "./agent-candidate-schema-common.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import {
+  boundedEventContentJsonSchema,
+  boundedEventContentRecordSchema,
+  boundedEventContentStringSchema,
   boundedIdentifierSchema,
   boundedJsonRecordSchema,
-  boundedJsonSchema,
   boundedStringSchema,
+  isBoundedEventContentJson,
 } from "./contract-limits.js";
 import { ModelUsageSchema } from "./environment-observation.js";
 import { InteractionRequestSchema } from "./interaction.js";
@@ -341,20 +344,20 @@ const toolTimeSchema = z.strictObject({
 const toolStateSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("pending"),
-    input: unknownRecordSchema,
-    raw: boundedStringSchema.optional(),
+    input: boundedEventContentRecordSchema,
+    raw: boundedEventContentStringSchema.optional(),
   }),
   z.strictObject({
     status: z.literal("running"),
-    input: unknownRecordSchema,
+    input: boundedEventContentRecordSchema,
     title: boundedStringSchema.optional(),
     metadata: unknownRecordSchema.optional(),
     time: z.strictObject({ start: z.number().finite() }).optional(),
   }),
   z.strictObject({
     status: z.literal("completed"),
-    input: unknownRecordSchema,
-    output: boundedJsonSchema,
+    input: boundedEventContentRecordSchema,
+    output: boundedEventContentJsonSchema,
     title: boundedStringSchema.optional(),
     metadata: unknownRecordSchema.optional(),
     time: z.strictObject({
@@ -364,15 +367,15 @@ const toolStateSchema = z.discriminatedUnion("status", [
   }),
   z.strictObject({
     status: z.enum(["error", "failed"]),
-    input: unknownRecordSchema,
+    input: boundedEventContentRecordSchema,
     error: boundedStringSchema.optional(),
-    output: boundedJsonSchema.optional(),
+    output: boundedEventContentJsonSchema.optional(),
     metadata: unknownRecordSchema.optional(),
     time: toolTimeSchema.optional(),
   }),
 ]);
 const partSchema = z.discriminatedUnion("type", [
-  z.strictObject({ ...partBase, type: z.literal("text"), text: boundedStringSchema }),
+  z.strictObject({ ...partBase, type: z.literal("text"), text: boundedEventContentStringSchema }),
   z.strictObject({
     ...partBase,
     type: z.literal("tool"),
@@ -384,7 +387,7 @@ const partSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...partBase,
     type: z.literal("reasoning"),
-    text: boundedStringSchema,
+    text: boundedEventContentStringSchema,
   }),
   z.strictObject({
     ...partBase,
@@ -469,12 +472,11 @@ const ChildTaskEventSchema = z
   });
 
 /** Runtime validator for every member of the existing canonical event union. */
-export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
-  z.discriminatedUnion("type", [
+const CanonicalStreamEventUnionSchema = z.discriminatedUnion("type", [
     z.strictObject({
       type: z.literal("message.part.updated"),
       part: partSchema,
-      delta: boundedStringSchema.optional(),
+      delta: boundedEventContentStringSchema.optional(),
     }),
     z.strictObject({
       type: z.literal("tool-heartbeat"),
@@ -514,7 +516,7 @@ export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
     z.strictObject({
       type: z.literal("raw"),
       backend: stableIdSchema,
-      event: boundedJsonSchema,
+      event: boundedEventContentJsonSchema,
     }),
     z.strictObject({
       type: z.literal("session.updated"),
@@ -538,8 +540,21 @@ export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
       type: z.literal("plan.submitted"),
       plan: DurablePlanSchema,
     }),
-    ChildTaskEventSchema,
-  ]);
+  ChildTaskEventSchema,
+]);
+
+export const CanonicalStreamEventSchema: z.ZodType<StreamEvent> =
+  CanonicalStreamEventUnionSchema.superRefine((event, refinement) => {
+    // Zod retains explicitly supplied optional `undefined` fields, whereas a
+    // JSON event omits them. Canonical events use that wire-equivalent omission
+    // without making raw provider records accept undefined.
+    if (!isBoundedEventContentJson(event, { omitUndefinedObjectFields: true })) {
+      refinement.addIssue({
+        code: "custom",
+        message: "canonical stream event exceeds its serialized byte bound",
+      });
+    }
+  });
 
 /** Ordered, replayable envelope around the existing canonical event union. */
 export interface RuntimeEventEnvelope {
