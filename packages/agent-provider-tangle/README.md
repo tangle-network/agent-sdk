@@ -102,6 +102,11 @@ Reconstruct an exact session with `environment.session(reference.id, { controlRe
 Result, replay, and cancel operations select that exact execution instead of whichever execution most recently changed the shared session.
 Session status with an exact control reference reports a state only when the payload names that execution; a payload bound to a different or unnamed execution reports `unknown`.
 
+Stream frames can contain complete tool output and cumulative assistant text.
+The adapter bounds each complete serialized frame to 1 MiB of UTF-8, including keys and JSON escaping.
+It retains accepted content without truncation in the event data and original provider event.
+Identifiers, usage metadata, and structural JSON limits retain their existing bounds.
+
 ## Two capability documents
 
 Capabilities are derived in two stages, and the two stages answer different questions.

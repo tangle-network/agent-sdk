@@ -120,6 +120,11 @@ export * from "./profile-security.js";
 export * from "./sandbox-size.js";
 export {
   CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
+  CONTRACT_MAX_JSON_BYTES,
+  boundedEventContentJsonSchema,
+  boundedEventContentRecordSchema,
+  boundedEventContentStringSchema,
+  isBoundedEventContentJson,
 } from "./contract-limits.js";
 
 export { AgentEnvironmentEgressPolicySchema } from "./environment-requests.js";

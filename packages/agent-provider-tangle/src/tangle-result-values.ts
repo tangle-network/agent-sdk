@@ -25,7 +25,13 @@ export function execResultFromSandboxExecResult(result: SandboxExecResult | unde
   };
 }
 export function tokenUsageFromData(data: Record<string, unknown>): TokenUsage | undefined {
-  assertBoundedJson(data);
+  // The enclosing event or result has its own content bound.
+  // Apply metadata limits only to fields used to compute usage.
+  assertBoundedJson(Object.fromEntries(
+    ["usage", "tokenUsage", "costUsd", "totalCostUsd"]
+      .filter((field) => Object.hasOwn(data, field))
+      .map((field) => [field, data[field]]),
+  ));
   if (
     data.usage !== undefined &&
     (!data.usage || typeof data.usage !== "object" || Array.isArray(data.usage))

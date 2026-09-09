@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 2.6.1
+
+### Patch Changes
+
+- Allow streamed event content and terminal response text up to the existing 1 MiB serialized UTF-8 contract limit.
+  Keep metadata, identifiers, and structural bounds unchanged, and export the shared content validator for providers.
+
 ## 2.6.0
 
 ### Minor Changes
