@@ -17,15 +17,9 @@ const IMMUTABLE_TANGLE_IMAGE =
   /^(?:sha256:[a-f0-9]{64}|\S+@sha256:[a-f0-9]{64})$/i;
 
 export function boundedIdentifier(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_IDENTIFIER_LENGTH ||
-    value.trim() !== value
-  ) {
-    throw new Error(`${label} is invalid`);
-  }
-  return value;
+  const identifier = safeIdentifier(value);
+  if (identifier === undefined) throw new Error(`${label} is invalid`);
+  return identifier;
 }
 
 export function boundedString(value: unknown, label: string): string {
@@ -287,4 +281,30 @@ export async function awaitWithSignalAndCleanup<T>(
   } finally {
     if (listener) signal.removeEventListener("abort", listener);
   }
+}
+
+export function cloneJson<T>(value: T): T {
+  assertBoundedJson(value);
+  return structuredClone(value);
+}
+
+export function safeIdentifier(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_IDENTIFIER_LENGTH ||
+    value.trim() !== value
+  )
+    return undefined;
+  return value;
+}
+
+export function safeString(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_STRING_LENGTH
+  )
+    return undefined;
+  return value;
 }

@@ -1,23 +1,5 @@
-import type { AgentWorkspaceBranching } from "@tangle-network/agent-interface";
-import {
-  ConfidentialAttestationSchema,
-  ConfidentialExecutionRequestSchema,
-  ForkedEnvironmentRefSchema,
-  WorkspaceCheckpointRefSchema,
-  WorkspaceCheckpointRequestSchema,
-  WorkspaceCleanupAcknowledgementSchema,
-  WorkspaceCleanupRequestSchema,
-  WorkspaceForkRequestSchema,
-  WorkspaceOperationLookupRequestSchema,
-  WorkspaceCheckpointResultSchema,
-  WorkspaceCheckpointLookupResultSchema,
-  WorkspaceForkResultSchema,
-  WorkspaceForkLookupResultSchema,
-  canonicalCandidateDigest,
-  confidentialExecutionVerified,
-  sha256Bytes,
-} from "@tangle-network/agent-interface";
 import type {
+  AgentWorkspaceBranching,
   ConfidentialAttestation,
   ConfidentialExecutionEnvironment,
   ForkedEnvironmentRef,
@@ -33,71 +15,62 @@ import type {
   WorkspaceOperationLookupRequest,
 } from "@tangle-network/agent-interface";
 import {
+  ConfidentialAttestationSchema,
+  ConfidentialExecutionRequestSchema,
+  ForkedEnvironmentRefSchema,
+  WorkspaceCheckpointRequestSchema,
+  WorkspaceCleanupAcknowledgementSchema,
+  WorkspaceCleanupRequestSchema,
+  WorkspaceForkRequestSchema,
+  WorkspaceOperationLookupRequestSchema,
+  WorkspaceCheckpointResultSchema,
+  WorkspaceCheckpointLookupResultSchema,
+  WorkspaceForkResultSchema,
+  WorkspaceForkLookupResultSchema,
+  canonicalCandidateDigest,
+  confidentialExecutionVerified,
+  sha256Bytes,
+} from "@tangle-network/agent-interface";
+import {
   awaitWithSignal,
   boundedIdentifier,
   boundedString,
-  assertBoundedJson,
-  MAX_LIST_RESULTS,
   MAX_STRING_LENGTH,
-  SANDBOX_LIST_PAGE_SIZE,
+  cloneJson,
+  safeIdentifier,
+  safeString,
 } from "./tangle-contract-safety.js";
-import {
-  encodeTangleConfidentialAttestationQuote,
-  MAX_TEE_EVIDENCE_BYTES,
-  MAX_TEE_MEASUREMENT_BYTES,
-} from "./tangle-confidential-attestation.js";
+import { encodeTangleConfidentialAttestationQuote } from "./tangle-confidential-attestation.js";
 import type {
   SandboxClientLike,
   SandboxDeleteAcknowledgementLike,
   SandboxInstanceLike,
-  SandboxSnapshotInfoLike,
   SandboxSnapshotDeleteAcknowledgementLike,
   SandboxSnapshotResultLike,
   SandboxTeeAttestationResponseLike,
-  SandboxWorkspaceOperationLookupLike,
   TangleConfidentialAttestationVerifier,
 } from "./tangle-types.js";
-
-/**
- * Namespace used for provider recovery metadata.
- *
- * The values are identity markers, not security evidence. A marker can tell
- * the provider which request produced a resource, but only the Sandbox
- * operation ledger and the external verifier can prove an outcome.
- */
-const MARKER_PREFIX = "tangle-agent-ws-v1";
-/** Marker namespace used by releases before the 128-byte tag limit. */
-const LEGACY_MARKER_PREFIX = "tangle-agent-sdk:workspace:v1";
-const FORK_METADATA_KEY = "__tangle_agent_workspace_v1";
-const MAX_MARKER_TAG_LENGTH = 128;
-const MARKER_CHUNK_SIZE = 80;
-const LEGACY_MARKER_CHUNK_SIZE = 240;
-const MAX_MARKER_CHUNKS = 512;
-interface CheckpointMarker {
-  version: 1;
-  kind: "checkpoint";
-  idempotencyKey: string;
-  requestDigest: `sha256:${string}`;
-  request: WorkspaceCheckpointRequest;
-  /** True only for markers written by the pre-128-byte-tag release. */
-  legacy?: boolean;
-}
-
-interface ForkMarker {
-  version: 1;
-  kind: "fork";
-  idempotencyKey: string;
-  requestDigest: `sha256:${string}`;
-  request: WorkspaceForkRequest;
-  /** New markers identify children created from the durable checkpoint. */
-  materialization?: "snapshot";
-}
-
-interface CheckpointRecord {
-  request: WorkspaceCheckpointRequest;
-  checkpoint: WorkspaceCheckpointRef;
-  snapshotId: string;
-}
+import {
+  checkpointMarkerTags,
+  forkMarkerMetadata,
+  markerBelongsToSource,
+  checkpointMarkerBelongsToSource,
+  checkpointMarkerFromTags,
+  forkMarkerFromMetadata,
+} from "./tangle-workspace-markers.js";
+import {
+  checkpointRecordFromSnapshot,
+  validSnapshotResult,
+  reconcileCheckpoint,
+  findManagedCheckpoint,
+  findForkByKey,
+  findForkChildById,
+  completeForkChild,
+  findBlockingForks,
+  lookupOutcomeFromSandbox,
+  isoDate,
+} from "./tangle-workspace-recovery.js";
+import type { CheckpointRecord } from "./tangle-workspace-recovery.js";
 
 interface ForkRecord {
   request: WorkspaceForkRequest;
@@ -105,23 +78,10 @@ interface ForkRecord {
   child: SandboxInstanceLike;
 }
 
-interface RecoveredForkChild {
-  child: SandboxInstanceLike;
-  createdAt: Date | string | undefined;
-}
-
 interface CleanupRecord {
   requestDigest: `sha256:${string}`;
   acknowledgement: WorkspaceCleanupAcknowledgement;
 }
-
-type CheckpointRecovery =
-  | {
-      state: "found";
-      snapshot: SandboxSnapshotInfoLike;
-      marker: CheckpointMarker;
-    }
-  | { state: "retired" };
 
 /** What the provider knows about one operation key before it acts on it. */
 type Resolved<TRecord> =
@@ -132,17 +92,6 @@ type Resolved<TRecord> =
 
 /** Checkpoint recovery adds a terminal state when its durable snapshot is gone. */
 type ResolvedCheckpoint = Resolved<CheckpointRecord> | { state: "retired" };
-
-/** Normalize remote checkpoint recovery before each caller chooses its output. */
-type CheckpointReconciliation =
-  | { state: "found"; record: CheckpointRecord }
-  | { state: "conflict"; existingRequestDigest: `sha256:${string}` }
-  | {
-      state: "undecided";
-      reason: "inventory_unavailable" | "metadata_invalid";
-    }
-  | { state: "retired" }
-  | { state: "absent" };
 
 const TANGLE_ATTESTATION_NONCE_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}(?:[0-9a-fA-F]{64})?$/;
 
@@ -1009,36 +958,6 @@ function assertCleanupProvider(
   }
 }
 
-function checkpointRecordFromSnapshot(
-  request: WorkspaceCheckpointRequest,
-  snapshot: SandboxSnapshotResultLike | SandboxSnapshotInfoLike
-): CheckpointRecord | undefined {
-  try {
-    const createdAt = isoDate(snapshot.createdAt);
-    const checkpoint = WorkspaceCheckpointRefSchema.parse({
-      checkpointId: boundedIdentifier(
-        snapshot.snapshotId,
-        "Tangle checkpoint id"
-      ),
-      provider: request.source.provider,
-      source: request.source,
-      idempotencyKey: request.idempotencyKey,
-      requestDigest: request.requestDigest,
-      createdAt,
-      ...(request.metadata === undefined
-        ? {}
-        : { metadata: cloneJson(request.metadata) }),
-    });
-    return {
-      request,
-      checkpoint,
-      snapshotId: checkpoint.checkpointId,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 async function environmentFromChild(
   request: WorkspaceForkRequest,
   child: SandboxInstanceLike,
@@ -1132,17 +1051,18 @@ async function confidentialAttestationForChild(
   if (
     !response ||
     response.sandbox_id !== child.id ||
-    !validTeeReport(response.attestation) ||
+    !response.attestation ||
     safeIdentifier(response.attestationNonce) === undefined ||
     response.attestationNonce !== confidential.nonce
   ) {
     return undefined;
   }
+  // The canonical codec validates the complete report before its bytes are used.
+  const quote = encodeTangleConfidentialAttestationQuote(response.attestation);
+  if (quote === undefined) return undefined;
   const measurement = sha256Bytes(
     Uint8Array.from(response.attestation.measurement)
   );
-  const quote = encodeTangleConfidentialAttestationQuote(response.attestation);
-  if (quote === undefined) return undefined;
   let verifiedAt: string;
   try {
     verifiedAt = new Date(response.attestation.timestamp * 1_000).toISOString();
@@ -1216,637 +1136,6 @@ async function confidentialAttestationForChild(
     : undefined;
 }
 
-function validTeeReport(
-  report: SandboxTeeAttestationResponseLike["attestation"] | undefined
-): report is NonNullable<SandboxTeeAttestationResponseLike["attestation"]> {
-  return (
-    !!report &&
-    safeIdentifier(report.tee_type) !== undefined &&
-    Array.isArray(report.evidence) &&
-    report.evidence.length <= MAX_TEE_EVIDENCE_BYTES &&
-    report.evidence.every(
-      (value) => Number.isInteger(value) && value >= 0 && value <= 255
-    ) &&
-    Array.isArray(report.measurement) &&
-    report.measurement.length <= MAX_TEE_MEASUREMENT_BYTES &&
-    report.measurement.every(
-      (value) => Number.isInteger(value) && value >= 0 && value <= 255
-    ) &&
-    Number.isFinite(report.timestamp) &&
-    report.timestamp > 0
-  );
-}
-
-function validSnapshotResult(
-  result: SandboxSnapshotResultLike | undefined
-): result is SandboxSnapshotResultLike {
-  return (
-    !!result &&
-    safeIdentifier(result.snapshotId) !== undefined &&
-    validDate(result.createdAt) &&
-    Array.isArray(result.tags) &&
-    result.tags.every((tag) => safeString(tag) !== undefined)
-  );
-}
-
-function validSnapshotInfo(
-  snapshot: SandboxSnapshotInfoLike,
-  sandboxId?: string
-): boolean {
-  return (
-    validSnapshotResult(snapshot) &&
-    safeIdentifier(snapshot.sandboxId) !== undefined &&
-    (sandboxId === undefined || snapshot.sandboxId === sandboxId)
-  );
-}
-
-type SnapshotOperationResult = {
-  snapshotId: string;
-  createdAt: Date | string;
-  tags?: unknown;
-};
-
-type TaggedSnapshotOperationResult = SnapshotOperationResult & {
-  tags: string[];
-};
-
-type ForkOperationChildResult = {
-  sandboxId?: string;
-  id?: string;
-  createdAt?: Date | string | null;
-};
-
-function validOperationRecord(
-  value: unknown
-): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function validOperationDate(value: unknown): value is Date | string {
-  return (
-    (typeof value === "string" || value instanceof Date) && validDate(value)
-  );
-}
-
-function validSnapshotOperationResult(
-  value: unknown
-): value is SnapshotOperationResult {
-  return (
-    validOperationRecord(value) &&
-    safeIdentifier(value.snapshotId) !== undefined &&
-    validOperationDate(value.createdAt)
-  );
-}
-
-function validTaggedSnapshotOperationResult(
-  value: unknown
-): value is TaggedSnapshotOperationResult {
-  return (
-    validSnapshotOperationResult(value) &&
-    Array.isArray(value.tags) &&
-    value.tags.every((tag) => safeString(tag) !== undefined)
-  );
-}
-
-function validForkOperationChildResult(
-  value: unknown
-): value is ForkOperationChildResult {
-  return (
-    validOperationRecord(value) &&
-    safeIdentifier(value.sandboxId ?? value.id) !== undefined &&
-    (value.createdAt === undefined ||
-      value.createdAt === null ||
-      validOperationDate(value.createdAt))
-  );
-}
-
-function checkpointMarkerTags(request: WorkspaceCheckpointRequest): string[] {
-  const marker: CheckpointMarker = {
-    version: 1,
-    kind: "checkpoint",
-    idempotencyKey: request.idempotencyKey,
-    requestDigest: request.requestDigest,
-    request,
-  };
-  return markerTags(
-    "checkpoint",
-    request.idempotencyKey,
-    request.requestDigest,
-    marker
-  );
-}
-
-/** Rebuild the exact tags used by the release before the current safe format. */
-function legacyCheckpointMarkerTags(
-  request: WorkspaceCheckpointRequest
-): string[] {
-  const marker: CheckpointMarker = {
-    version: 1,
-    kind: "checkpoint",
-    idempotencyKey: request.idempotencyKey,
-    requestDigest: request.requestDigest,
-    request,
-  };
-  const encoded = encodeJson(marker);
-  if (encoded === undefined)
-    throw new Error("workspace marker is not JSON serializable");
-  const base = `${LEGACY_MARKER_PREFIX}:checkpoint`;
-  const chunks = splitIntoChunks(encoded, LEGACY_MARKER_CHUNK_SIZE);
-  if (chunks.length > MAX_MARKER_CHUNKS) {
-    throw new Error("workspace marker exceeds the recovery bound");
-  }
-  return [
-    `${base}:key:${encodeText(request.idempotencyKey)}`,
-    `${base}:digest:${request.requestDigest}`,
-    ...chunks.map(
-      (chunk, index) => `${base}:material:${index}:${chunks.length}:${chunk}`
-    ),
-  ];
-}
-
-function forkMarkerMetadata(
-  request: WorkspaceForkRequest,
-  materialization: "snapshot" | undefined = "snapshot"
-): Record<string, unknown> {
-  if (request.metadata && Object.hasOwn(request.metadata, FORK_METADATA_KEY)) {
-    throw new Error(`fork metadata reserves ${FORK_METADATA_KEY}`);
-  }
-  const marker: ForkMarker = {
-    version: 1,
-    kind: "fork",
-    idempotencyKey: request.idempotencyKey,
-    requestDigest: request.requestDigest,
-    request,
-    ...(materialization === "snapshot" ? { materialization } : {}),
-  };
-  assertBoundedJson(marker);
-  return {
-    ...(request.metadata === undefined ? {} : cloneJson(request.metadata)),
-    [FORK_METADATA_KEY]: marker,
-  };
-}
-
-/**
- * Ask the Sandbox operation ledger whether a marked checkpoint settled.
- *
- * A marker only names a candidate resource. Nothing is returned to a caller
- * until the ledger reports the operation succeeded.
- */
-async function checkpointOperationLookup(
-  box: SandboxInstanceLike,
-  marker: CheckpointMarker,
-  signal?: AbortSignal
-): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
-  signal?.throwIfAborted();
-  const lookup = await awaitWithSignal(
-    box.getSnapshotOperation?.(marker.idempotencyKey, {
-      tags: marker.legacy
-        ? legacyCheckpointMarkerTags(marker.request)
-        : checkpointMarkerTags(marker.request),
-    }),
-    signal
-  );
-  return lookup;
-}
-
-/** Read the durable record by its owner-scoped key when no request body remains. */
-async function checkpointOperationLookupByKey(
-  box: SandboxInstanceLike,
-  idempotencyKey: string,
-  signal?: AbortSignal
-): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
-  signal?.throwIfAborted();
-  return await awaitWithSignal(
-    box.getSnapshotOperation?.(idempotencyKey),
-    signal
-  );
-}
-
-async function checkpointOperationSucceeded(
-  box: SandboxInstanceLike,
-  marker: CheckpointMarker,
-  signal?: AbortSignal
-): Promise<boolean> {
-  const lookup = await checkpointOperationLookup(box, marker, signal);
-  return (
-    lookup?.outcome === "found" &&
-    lookup.kind === "checkpoint" &&
-    lookup.state === "succeeded"
-  );
-}
-
-/** Confirm a fork child through its marker or the legacy fork ledger. */
-async function forkOperationLookup(
-  box: SandboxInstanceLike,
-  marker: ForkMarker,
-  signal?: AbortSignal
-): Promise<SandboxWorkspaceOperationLookupLike | undefined> {
-  if (marker.materialization === "snapshot") {
-    return {
-      outcome: "found",
-      kind: "fork",
-      state: "succeeded",
-    };
-  }
-  const lookup = await awaitWithSignal(
-    box.getForkOperation?.(marker.idempotencyKey, {
-      count: 1,
-      metadata: forkMarkerMetadata(marker.request, marker.materialization),
-    }),
-    signal
-  );
-  return lookup;
-}
-
-async function forkOperationSucceeded(
-  box: SandboxInstanceLike,
-  marker: ForkMarker,
-  signal?: AbortSignal
-): Promise<boolean> {
-  const lookup = await forkOperationLookup(box, marker, signal);
-  return (
-    lookup?.outcome === "found" &&
-    lookup.kind === "fork" &&
-    lookup.state === "succeeded"
-  );
-}
-
-function markerTags(
-  kind: "checkpoint" | "fork",
-  idempotencyKey: string,
-  requestDigest: string,
-  marker: CheckpointMarker
-): string[] {
-  const encoded = encodeJson(marker);
-  if (encoded === undefined)
-    throw new Error("workspace marker is not JSON serializable");
-  const base = `${MARKER_PREFIX}-${kind}`;
-  const chunks = split(encoded);
-  if (chunks.length > MAX_MARKER_CHUNKS) {
-    throw new Error("workspace marker exceeds the recovery bound");
-  }
-  return [
-    `${base}-key-${markerKeyDigest(idempotencyKey).replace(":", "-")}`,
-    `${base}-digest-${requestDigest.replace(":", "-")}`,
-    ...chunks.map(
-      (chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`
-    ),
-  ].map((tag) => {
-    if (Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH) {
-      throw new Error("workspace marker tag exceeds the platform bound");
-    }
-    return tag;
-  });
-}
-
-async function findCheckpointByKey(
-  box: SandboxInstanceLike,
-  provider: string,
-  key: string,
-  signal?: AbortSignal
-): Promise<
-  | CheckpointRecovery
-  | null
-  | undefined
-> {
-  let snapshots: SandboxSnapshotInfoLike[];
-  try {
-    signal?.throwIfAborted();
-    const listed = await awaitWithSignal(box.listSnapshots?.(), signal);
-    if (!Array.isArray(listed)) return undefined;
-    snapshots = listed;
-  } catch {
-    signal?.throwIfAborted();
-    return undefined;
-  }
-  if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
-    return undefined;
-  }
-  const snapshotIds = new Set<string>();
-  let found: Extract<CheckpointRecovery, { state: "found" }> | undefined;
-  let unresolved = false;
-  for (const snapshot of snapshots) {
-    if (!validSnapshotInfo(snapshot, box.id)) return undefined;
-    if (snapshotIds.has(snapshot.snapshotId)) return undefined;
-    snapshotIds.add(snapshot.snapshotId);
-    const marker = checkpointMarkerFromTags(snapshot.tags, key);
-    if (!marker) continue;
-    if (!checkpointMarkerBelongsToSource(marker, provider, box.id)) {
-      return undefined;
-    }
-    try {
-      const lookup = await checkpointOperationLookup(box, marker, signal);
-      if (
-        lookup?.outcome === "found" &&
-        lookup.kind === "checkpoint" &&
-        lookup.state === "succeeded"
-      ) {
-        const authoritative = snapshotFromOperationResult(snapshot, lookup);
-        if (authoritative === undefined) return undefined;
-        if (found !== undefined) return undefined;
-        found = { state: "found", snapshot: authoritative, marker };
-        continue;
-      }
-      unresolved = true;
-    } catch {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-  }
-  if (found !== undefined) return found;
-  if (unresolved) return undefined;
-
-  // Some storage backends retain the snapshot but omit caller tags from a
-  // later inventory read. The owner-scoped operation record retains the exact
-  // acknowledgement, including those tags. Bind that record to a currently
-  // live snapshot id before recovering it; neither record is sufficient alone.
-  let lookup: SandboxWorkspaceOperationLookupLike | undefined;
-  try {
-    lookup = await checkpointOperationLookupByKey(box, key, signal);
-  } catch {
-    signal?.throwIfAborted();
-    return undefined;
-  }
-  if (lookup?.outcome === "not_found" && lookup.kind === "checkpoint") {
-    return null;
-  }
-  if (
-    lookup?.outcome !== "found" ||
-    lookup.kind !== "checkpoint" ||
-    lookup.state !== "succeeded"
-  ) {
-    return undefined;
-  }
-  if (snapshots.length === 0) return { state: "retired" };
-  if (!validTaggedSnapshotOperationResult(lookup.result)) return undefined;
-
-  const live = snapshots.filter(
-    (snapshot) => snapshot.snapshotId === lookup.result?.snapshotId
-  );
-  if (live.length === 0) return { state: "retired" };
-  if (live.length !== 1) return undefined;
-  const marker = checkpointMarkerFromTags(lookup.result.tags, key);
-  if (
-    !marker ||
-    !checkpointMarkerBelongsToSource(marker, provider, box.id)
-  ) {
-    return undefined;
-  }
-  const authoritative = snapshotFromOperationResult(live[0], lookup);
-  return authoritative === undefined
-    ? undefined
-    : { state: "found", snapshot: authoritative, marker };
-}
-
-/** Normalize one remote checkpoint recovery attempt for every caller. */
-async function reconcileCheckpoint(
-  box: SandboxInstanceLike,
-  provider: string,
-  request: Pick<
-    WorkspaceCheckpointRequest,
-    "idempotencyKey" | "requestDigest"
-  >,
-  signal?: AbortSignal
-): Promise<CheckpointReconciliation> {
-  const recovered = await findCheckpointByKey(
-    box,
-    provider,
-    request.idempotencyKey,
-    signal
-  );
-  if (recovered === undefined) {
-    return { state: "undecided", reason: "inventory_unavailable" };
-  }
-  if (recovered === null) return { state: "absent" };
-  if (recovered.state === "retired") return recovered;
-  if (recovered.marker.requestDigest !== request.requestDigest) {
-    return {
-      state: "conflict",
-      existingRequestDigest: recovered.marker.requestDigest,
-    };
-  }
-  const record = checkpointRecordFromSnapshot(
-    recovered.marker.request,
-    recovered.snapshot
-  );
-  return record === undefined
-    ? { state: "undecided", reason: "metadata_invalid" }
-    : { state: "found", record };
-}
-
-/**
- * Prefer the durable operation result over inventory metadata.
- *
- * Snapshot inventory and the operation ledger can expose different creation
- * timestamps. The ledger result is the acknowledgement returned by the
- * idempotent operation, so recovery must rebuild the exact checkpoint ref
- * from it when the service provides that result.
- */
-function snapshotFromOperationResult(
-  snapshot: SandboxSnapshotInfoLike,
-  lookup: SandboxWorkspaceOperationLookupLike
-): SandboxSnapshotInfoLike | undefined {
-  if (lookup.result === undefined) return snapshot;
-  if (
-    !validSnapshotOperationResult(lookup.result) ||
-    lookup.result.snapshotId !== snapshot.snapshotId
-  ) {
-    return undefined;
-  }
-  return { ...snapshot, createdAt: lookup.result.createdAt };
-}
-
-/**
- * Confirm that one snapshot id is a settled checkpoint this provider created.
- *
- * `expected` binds the answer to a specific checkpoint reference. A reference
- * that does not match its marker is absent, not unknown: the caller supplied a
- * checkpoint this source never produced.
- */
-async function findManagedCheckpoint(
-  box: SandboxInstanceLike,
-  provider: string,
-  id: string,
-  expected?: WorkspaceCheckpointRef,
-  signal?: AbortSignal
-): Promise<true | false | "unknown"> {
-  try {
-    const snapshots = await awaitWithSignal(box.listSnapshots?.(), signal);
-    if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
-      return "unknown";
-    }
-    const snapshot = snapshots.find((candidate) => candidate.snapshotId === id);
-    if (!snapshot) return false;
-    if (!validSnapshotInfo(snapshot, box.id)) return "unknown";
-    const marker = checkpointMarkerFromTags(
-      snapshot.tags,
-      expected?.idempotencyKey
-    );
-    if (!marker) return expected ? false : "unknown";
-    if (
-      marker.request.source.provider !== provider ||
-      marker.request.source.environmentId !== box.id
-    ) {
-      return expected ? false : "unknown";
-    }
-    if (
-      expected &&
-      (marker.requestDigest !== expected.requestDigest ||
-        canonicalCandidateDigest(marker.request.source) !==
-          canonicalCandidateDigest(expected.source))
-    ) {
-      return false;
-    }
-    return (await checkpointOperationSucceeded(box, marker, signal))
-      ? true
-      : "unknown";
-  } catch {
-    signal?.throwIfAborted();
-    return "unknown";
-  }
-}
-
-async function findForkByKey(
-  client: SandboxClientLike,
-  box: SandboxInstanceLike,
-  provider: string,
-  key: string,
-  signal?: AbortSignal
-): Promise<
-  | (RecoveredForkChild & { marker: ForkMarker })
-  | null
-  | undefined
-> {
-  const candidates = await listMarkedForkChildren(
-    client,
-    box,
-    provider,
-    key,
-    signal
-  );
-  if (candidates === undefined) return undefined;
-  let unresolved = false;
-  for (const candidate of candidates) {
-    try {
-      const lookup = await forkOperationLookup(box, candidate.marker, signal);
-      if (
-        lookup?.outcome === "found" &&
-        lookup.kind === "fork" &&
-        lookup.state === "succeeded"
-      ) {
-        const authoritative = childFromOperationResult(candidate.child, lookup);
-        if (authoritative === undefined) return undefined;
-        return { ...authoritative, marker: candidate.marker };
-      }
-      unresolved = true;
-    } catch {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-  }
-  return unresolved ? undefined : null;
-}
-
-/**
- * Prefer the durable fork result over account-inventory metadata.
- *
- * Fork inventory can report a child timestamp from a later registry read. The
- * operation ledger stores the original child acknowledgement, which is the
- * stable value required to replay one exact fork reference after a restart.
- * Some Sandbox responses omit that timestamp, so the validated inventory
- * record supplies it only when the operation result does not.
- */
-function childFromOperationResult(
-  child: SandboxInstanceLike,
-  lookup: SandboxWorkspaceOperationLookupLike
-): RecoveredForkChild | undefined {
-  if (lookup.result === undefined) {
-    return { child, createdAt: child.createdAt };
-  }
-  const result = lookup.result;
-  if (!validOperationRecord(result)) return undefined;
-  const children = result.children;
-  if (!Array.isArray(children)) return undefined;
-  const operationChild = children.find(
-    (candidate): candidate is ForkOperationChildResult =>
-      validForkOperationChildResult(candidate) &&
-      (candidate.sandboxId ?? candidate.id) === child.id
-  );
-  if (!operationChild) return undefined;
-  const createdAt = operationChild.createdAt ?? child.createdAt;
-  if (!validOperationDate(createdAt)) return undefined;
-  return { child, createdAt };
-}
-
-async function findForkChildById(
-  client: SandboxClientLike,
-  box: SandboxInstanceLike,
-  provider: string,
-  id: string,
-  signal?: AbortSignal
-): Promise<SandboxInstanceLike | null | undefined> {
-  try {
-    if (typeof client.get !== "function") return undefined;
-    const child = await awaitWithSignal(
-      client.get(id, signal ? { signal } : undefined),
-      signal
-    );
-    if (child === null) return null;
-    if (child.id !== id) return undefined;
-    const marker = forkMarkerFromMetadata(child.metadata);
-    if (!marker || !markerBelongsToSource(marker, provider, box.id))
-      return undefined;
-    return (await forkOperationSucceeded(box, marker, signal))
-      ? child
-      : undefined;
-  } catch {
-    signal?.throwIfAborted();
-    return undefined;
-  }
-}
-
-/**
- * Resolve a complete child identity when an acknowledgement omits durable data.
- *
- * A branch response can precede a richer registry read during a rolling
- * deployment. Recover the exact child when its creation time or provider
- * marker is absent. Never invent either field from the request.
- */
-async function completeForkChild(
-  client: SandboxClientLike,
-  child: SandboxInstanceLike,
-  signal?: AbortSignal
-): Promise<SandboxInstanceLike | undefined> {
-  if (
-    child.createdAt !== undefined &&
-    forkMarkerFromMetadata(child.metadata) !== undefined
-  ) {
-    return child;
-  }
-  if (
-    typeof client.get !== "function" ||
-    safeIdentifier(child.id) === undefined
-  ) {
-    return undefined;
-  }
-  try {
-    const resolved = await awaitWithSignal(
-      client.get(child.id, signal ? { signal } : undefined),
-      signal
-    );
-    if (
-      !resolved ||
-      resolved.id !== child.id ||
-      resolved.createdAt === undefined
-    ) {
-      return undefined;
-    }
-    return resolved;
-  } catch {
-    signal?.throwIfAborted();
-    return undefined;
-  }
-}
 
 type ForkCompensation =
   | "destroyed"
@@ -1879,356 +1168,6 @@ async function compensateCreatedForkChild(
     signal?.throwIfAborted();
     return "unconfirmed";
   }
-}
-
-async function findBlockingForks(
-  box: SandboxInstanceLike,
-  client: SandboxClientLike,
-  provider: string,
-  checkpointId: string,
-  signal?: AbortSignal
-): Promise<string[] | undefined> {
-  const candidates = await listMarkedForkChildren(
-    client,
-    box,
-    provider,
-    undefined,
-    signal
-  );
-  if (candidates === undefined) return undefined;
-  const blocking = new Set<string>();
-  for (const { child, marker } of candidates) {
-    if (marker.request.checkpoint.checkpointId !== checkpointId) continue;
-    try {
-      // A candidate that cannot be confirmed leaves the dependency set
-      // unknown, so cleanup must not proceed on a partial answer.
-      if (!(await forkOperationSucceeded(box, marker, signal)))
-        return undefined;
-      blocking.add(child.id);
-    } catch {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-  }
-  return [...blocking].sort();
-}
-
-/**
- * Read the complete account inventory through Sandbox offset pages.
- *
- * Sandbox returns only an array, so a short page is the terminal marker. A
- * full page requires another request; stopping there would make recovery
- * report a false absence. Duplicate ids or an inventory above the safety
- * bound make completeness unknowable and therefore fail closed.
- */
-async function listAllSandboxChildren(
-  client: SandboxClientLike,
-  signal?: AbortSignal
-): Promise<SandboxInstanceLike[] | undefined> {
-  if (typeof client.list !== "function") return undefined;
-  const children: SandboxInstanceLike[] = [];
-  const seen = new Set<string>();
-  let offset = 0;
-
-  while (true) {
-    signal?.throwIfAborted();
-    let page: SandboxInstanceLike[];
-    try {
-      const listed = await awaitWithSignal(
-        client.list({
-          scope: "all",
-          limit: SANDBOX_LIST_PAGE_SIZE,
-          offset,
-        }),
-        signal
-      );
-      if (!Array.isArray(listed) || listed.length > SANDBOX_LIST_PAGE_SIZE) {
-        return undefined;
-      }
-      page = listed;
-    } catch {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-
-    for (const child of page) {
-      if (
-        !child ||
-        typeof child !== "object" ||
-        safeIdentifier(child.id) === undefined ||
-        seen.has(child.id)
-      ) {
-        return undefined;
-      }
-      seen.add(child.id);
-    }
-
-    if (children.length + page.length > MAX_LIST_RESULTS) return undefined;
-    children.push(...page);
-    if (page.length < SANDBOX_LIST_PAGE_SIZE) return children;
-    if (offset > Number.MAX_SAFE_INTEGER - SANDBOX_LIST_PAGE_SIZE) {
-      return undefined;
-    }
-    offset += SANDBOX_LIST_PAGE_SIZE;
-  }
-}
-
-/**
- * Read every account child that carries a fork marker this source produced.
- *
- * The scan is the shared front half of fork recovery and cleanup. It returns
- * undefined when the inventory itself cannot be trusted, so both callers fail
- * closed on the same condition.
- */
-async function listMarkedForkChildren(
-  client: SandboxClientLike,
-  box: SandboxInstanceLike,
-  provider: string,
-  key?: string,
-  signal?: AbortSignal
-): Promise<{ child: SandboxInstanceLike; marker: ForkMarker }[] | undefined> {
-  const children = await listAllSandboxChildren(client, signal);
-  if (children === undefined) return undefined;
-  const marked: { child: SandboxInstanceLike; marker: ForkMarker }[] = [];
-  for (const child of children) {
-    if (
-      !child ||
-      typeof child !== "object" ||
-      safeIdentifier(child.id) === undefined
-    ) {
-      return undefined;
-    }
-    if (child.id === box.id) continue;
-    const marker = forkMarkerFromMetadata(child.metadata, key);
-    if (!marker || !markerBelongsToSource(marker, provider, box.id)) continue;
-    marked.push({ child, marker });
-  }
-  return marked;
-}
-
-function markerBelongsToSource(
-  marker: ForkMarker,
-  provider: string,
-  sourceEnvironmentId: string
-): boolean {
-  return (
-    marker.request.checkpoint.provider === provider &&
-    marker.request.checkpoint.source.environmentId === sourceEnvironmentId
-  );
-}
-
-function checkpointMarkerBelongsToSource(
-  marker: CheckpointMarker,
-  provider: string,
-  sourceEnvironmentId: string
-): boolean {
-  return (
-    marker.request.source.provider === provider &&
-    marker.request.source.environmentId === sourceEnvironmentId
-  );
-}
-
-function checkpointMarkerFromTags(
-  tags: string[] | undefined,
-  key?: string
-): CheckpointMarker | undefined {
-  if (
-    !Array.isArray(tags) ||
-    tags.length > MAX_MARKER_CHUNKS + 3 ||
-    !tags.every((tag) => safeString(tag) !== undefined)
-  ) {
-    return undefined;
-  }
-
-  const currentBase = `${MARKER_PREFIX}-checkpoint`;
-  const legacyBase = `${LEGACY_MARKER_PREFIX}:checkpoint`;
-  const hasCurrentTags = tags.some((tag) => tag.startsWith(`${currentBase}-`));
-  const hasLegacyTags = tags.some((tag) => tag.startsWith(`${legacyBase}:`));
-  if (hasCurrentTags === hasLegacyTags) return undefined;
-  if (hasLegacyTags)
-    return legacyCheckpointMarkerFromTags(tags, key, legacyBase);
-  if (
-    tags.some((tag) => Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH)
-  ) {
-    return undefined;
-  }
-  return currentCheckpointMarkerFromTags(tags, key, currentBase);
-}
-
-function currentCheckpointMarkerFromTags(
-  tags: string[],
-  key: string | undefined,
-  base: string
-): CheckpointMarker | undefined {
-  const keyTag = tags.find((tag) => tag.startsWith(`${base}-key-`));
-  if (
-    keyTag &&
-    key !== undefined &&
-    keyTag.slice(`${base}-key-`.length) !==
-      markerKeyDigest(key).replace(":", "-")
-  ) {
-    return undefined;
-  }
-  const chunks = tags
-    .map((tag) => {
-      const match = tag.match(
-        new RegExp(
-          `^${escapeRegExp(base)}-material-(\\d+)-(\\d+)-([A-Za-z0-9_-]+)$`
-        )
-      );
-      return match
-        ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] }
-        : undefined;
-    })
-    .filter(
-      (value): value is { index: number; total: number; chunk: string } =>
-        value !== undefined
-    )
-    .sort((left, right) => left.index - right.index);
-  if (
-    chunks.length === 0 ||
-    chunks[0].total < 1 ||
-    chunks[0].total > MAX_MARKER_CHUNKS ||
-    chunks[0].total !== chunks.length ||
-    chunks.some(
-      (chunk, index) =>
-        !Number.isSafeInteger(chunk.index) ||
-        !Number.isSafeInteger(chunk.total) ||
-        chunk.index !== index ||
-        chunk.total !== chunks[0].total
-    )
-  ) {
-    return undefined;
-  }
-  const decoded = decodeJson(chunks.map((chunk) => chunk.chunk).join(""));
-  return checkpointMarkerFromUnknown(decoded, key);
-}
-
-function legacyCheckpointMarkerFromTags(
-  tags: string[],
-  key: string | undefined,
-  base: string
-): CheckpointMarker | undefined {
-  const keyTag = tags.find((tag) => tag.startsWith(`${base}:key:`));
-  if (
-    keyTag &&
-    key !== undefined &&
-    decodeText(keyTag.slice(`${base}:key:`.length)) !== key
-  ) {
-    return undefined;
-  }
-  const chunks = tags
-    .map((tag) => {
-      const match = tag.match(
-        new RegExp(
-          `^${escapeRegExp(base)}:material:(\\d+):(\\d+):([A-Za-z0-9_-]+)$`
-        )
-      );
-      return match
-        ? { index: Number(match[1]), total: Number(match[2]), chunk: match[3] }
-        : undefined;
-    })
-    .filter(
-      (value): value is { index: number; total: number; chunk: string } =>
-        value !== undefined
-    )
-    .sort((left, right) => left.index - right.index);
-  if (
-    chunks.length === 0 ||
-    chunks[0].total < 1 ||
-    chunks[0].total > MAX_MARKER_CHUNKS ||
-    chunks[0].total !== chunks.length ||
-    chunks.some(
-      (chunk, index) =>
-        !Number.isSafeInteger(chunk.index) ||
-        !Number.isSafeInteger(chunk.total) ||
-        chunk.index !== index ||
-        chunk.total !== chunks[0].total
-    )
-  ) {
-    return undefined;
-  }
-  const decoded = decodeJson(chunks.map((chunk) => chunk.chunk).join(""));
-  return checkpointMarkerFromUnknown(decoded, key, true);
-}
-
-function checkpointMarkerFromUnknown(
-  value: unknown,
-  key?: string,
-  legacy = false
-): CheckpointMarker | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const parsed = value as Partial<CheckpointMarker>;
-  if (
-    parsed.version !== 1 ||
-    parsed.kind !== "checkpoint" ||
-    typeof parsed.idempotencyKey !== "string" ||
-    typeof parsed.requestDigest !== "string"
-  )
-    return undefined;
-  if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
-  const request = WorkspaceCheckpointRequestSchema.safeParse(parsed.request);
-  if (
-    !request.success ||
-    request.data.idempotencyKey !== parsed.idempotencyKey ||
-    request.data.requestDigest !== parsed.requestDigest
-  )
-    return undefined;
-  return {
-    version: 1,
-    kind: "checkpoint",
-    idempotencyKey: parsed.idempotencyKey,
-    requestDigest: parsed.requestDigest,
-    request: request.data,
-    ...(legacy ? { legacy: true } : {}),
-  };
-}
-
-function forkMarkerFromMetadata(
-  metadata: Record<string, unknown> | undefined,
-  key?: string
-): ForkMarker | undefined {
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    !Object.hasOwn(metadata, FORK_METADATA_KEY)
-  ) {
-    return undefined;
-  }
-  const value = metadata[FORK_METADATA_KEY];
-  if (!value || typeof value !== "object") return undefined;
-  const parsed = value as Partial<ForkMarker>;
-  if (
-    parsed.version !== 1 ||
-    parsed.kind !== "fork" ||
-    typeof parsed.idempotencyKey !== "string" ||
-    typeof parsed.requestDigest !== "string"
-  )
-    return undefined;
-  if (
-    parsed.materialization !== undefined &&
-    parsed.materialization !== "snapshot"
-  ) {
-    return undefined;
-  }
-  if (key !== undefined && parsed.idempotencyKey !== key) return undefined;
-  const request = WorkspaceForkRequestSchema.safeParse(parsed.request);
-  if (
-    !request.success ||
-    request.data.idempotencyKey !== parsed.idempotencyKey ||
-    request.data.requestDigest !== parsed.requestDigest
-  )
-    return undefined;
-  return {
-    version: 1,
-    kind: "fork",
-    idempotencyKey: parsed.idempotencyKey,
-    requestDigest: parsed.requestDigest,
-    request: request.data,
-    ...(parsed.materialization === "snapshot"
-      ? { materialization: "snapshot" as const }
-      : {}),
-  };
 }
 
 /**
@@ -2300,45 +1239,6 @@ async function forkConflictFromRemote(
   return environment === undefined
     ? undefined
     : forkSuccess(request, environment, "replayed");
-}
-
-/**
- * Read a fork ledger answer for a key that left no marked resource behind.
- *
- * `absent` is the settled answer: a decided operation with no inventory marker
- * means the child was cleaned after creation, and the provider must not
- * resurrect it from the ledger. Every other state is undecided for the caller.
- */
-function lookupOutcomeFromSandbox(
-  lookup: SandboxWorkspaceOperationLookupLike | undefined,
-  kind: "fork"
-): { absent: true } | { absent: false; message: string; retryable: boolean } {
-  if (!lookup || lookup.kind !== kind) {
-    return {
-      absent: false,
-      message: `Sandbox returned no ${kind} lookup`,
-      retryable: true,
-    };
-  }
-  if (lookup.outcome === "conflict") {
-    return {
-      absent: false,
-      message:
-        "Sandbox found a conflicting operation without provider identity",
-      retryable: false,
-    };
-  }
-  if (
-    lookup.outcome !== "not_found" &&
-    (lookup.outcome === "unknown" || lookup.state !== "succeeded")
-  ) {
-    return {
-      absent: false,
-      message: `Sandbox ${kind} operation is not decided`,
-      retryable: true,
-    };
-  }
-  return { absent: true };
 }
 
 function checkpointSuccess(
@@ -2583,99 +1483,7 @@ function cleanupTransportFailure(
   });
 }
 
-function isoDate(value: Date | string): string {
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime()))
-    throw new Error("Sandbox returned an invalid workspace timestamp");
-  return date.toISOString();
-}
-
-function validDate(value: Date | string | undefined): boolean {
-  if (value === undefined) return false;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(date.getTime());
-}
-
-function cloneJson<T>(value: T): T {
-  assertBoundedJson(value);
-  return structuredClone(value);
-}
-
-function safeIdentifier(value: unknown): string | undefined {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 512 ||
-    value.trim() !== value
-  )
-    return undefined;
-  return value;
-}
-
-function safeString(value: unknown): string | undefined {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_STRING_LENGTH
-  )
-    return undefined;
-  return value;
-}
-
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : "transport error";
   return message.slice(0, MAX_STRING_LENGTH);
-}
-
-function encodeText(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64url");
-}
-
-function decodeText(value: string): string | undefined {
-  try {
-    const decoded = Buffer.from(value, "base64url").toString("utf8");
-    return encodeText(decoded) === value ? decoded : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function markerKeyDigest(value: string): string {
-  return sha256Bytes(Buffer.from(value, "utf8"));
-}
-
-function encodeJson(value: unknown): string | undefined {
-  try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) return undefined;
-    return encodeText(serialized);
-  } catch {
-    return undefined;
-  }
-}
-
-function decodeJson(value: string): unknown {
-  try {
-    return JSON.parse(
-      Buffer.from(value, "base64url").toString("utf8")
-    ) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-function split(value: string): string[] {
-  return splitIntoChunks(value, MARKER_CHUNK_SIZE);
-}
-
-function splitIntoChunks(value: string, chunkSize: number): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < value.length; index += chunkSize) {
-    chunks.push(value.slice(index, index + chunkSize));
-  }
-  return chunks;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
