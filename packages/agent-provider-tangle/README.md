@@ -11,9 +11,15 @@ import { Sandbox } from "@tangle-network/sandbox";
 import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
 
 const provider = createTangleProvider({
-  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  client: new Sandbox({
+    apiKey: process.env.TANGLE_API_KEY,
+    baseUrl: process.env.TANGLE_SANDBOX_URL || "https://sandbox.tangle.tools",
+  }),
 });
 ```
+
+`Sandbox` requires an explicit `baseUrl`.
+Set `TANGLE_SANDBOX_URL` to use another deployment.
 
 ## `create()` returns a ready environment
 
@@ -32,7 +38,10 @@ Composing an environment also reads the sandbox's deployment capability document
 
 ```ts
 const provider = createTangleProvider({
-  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  client: new Sandbox({
+    apiKey: process.env.TANGLE_API_KEY,
+    baseUrl: process.env.TANGLE_SANDBOX_URL || "https://sandbox.tangle.tools",
+  }),
   readyTimeoutMs: 180_000,
 });
 
@@ -280,7 +289,10 @@ The adapter does not trust the requested nonce, child metadata, or any legacy
 
 ```ts
 const provider = createTangleProvider({
-  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  client: new Sandbox({
+    apiKey: process.env.TANGLE_API_KEY,
+    baseUrl: process.env.TANGLE_SANDBOX_URL || "https://sandbox.tangle.tools",
+  }),
   confidentialAttestationVerifier: async ({ report, attestation }) =>
     (await verifyTangleQuote({ report, attestation })) ?? null,
 });
@@ -360,7 +372,10 @@ Set `teamId` inside `exactProcess` to scope create, lookup, and recovery to one 
 
 ```ts
 const provider = createTangleProvider({
-  client: new Sandbox({ apiKey: process.env.TANGLE_API_KEY }),
+  client: new Sandbox({
+    apiKey: process.env.TANGLE_API_KEY,
+    baseUrl: process.env.TANGLE_SANDBOX_URL || "https://sandbox.tangle.tools",
+  }),
   exactProcess: {},
 });
 
