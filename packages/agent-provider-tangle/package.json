@@ -95,6 +95,10 @@
     "dist/tangle-workspace-branching.js",
     "dist/tangle-confidential-attestation.d.ts",
     "dist/tangle-confidential-attestation.js",
+    "dist/tangle-workspace-markers.d.ts",
+    "dist/tangle-workspace-markers.js",
+    "dist/tangle-workspace-recovery.d.ts",
+    "dist/tangle-workspace-recovery.js",
     "README.md",
     "LICENSE"
   ],
