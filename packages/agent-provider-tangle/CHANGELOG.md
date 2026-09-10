@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.1.8
+
+### Patch Changes
+
+- f8f4548: Separate workspace metadata encoding and durable recovery from operation handling.
+  Reuse the canonical attestation codec and shared identifier validation without changing the public provider contract.
+
 ## 1.1.7
 
 ### Patch Changes
