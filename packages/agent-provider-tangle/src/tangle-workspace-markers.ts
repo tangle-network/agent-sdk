@@ -63,12 +63,26 @@ export function checkpointMarkerTags(request: WorkspaceCheckpointRequest): strin
     requestDigest: request.requestDigest,
     request,
   };
-  return markerTags(
-    "checkpoint",
-    request.idempotencyKey,
-    request.requestDigest,
-    marker
-  );
+  const encoded = encodeJson(marker);
+  if (encoded === undefined)
+    throw new Error("workspace marker is not JSON serializable");
+  const base = `${MARKER_PREFIX}-checkpoint`;
+  const chunks = splitIntoChunks(encoded, MARKER_CHUNK_SIZE);
+  if (chunks.length > MAX_MARKER_CHUNKS) {
+    throw new Error("workspace marker exceeds the recovery bound");
+  }
+  return [
+    `${base}-key-${markerKeyDigest(request.idempotencyKey).replace(":", "-")}`,
+    `${base}-digest-${request.requestDigest.replace(":", "-")}`,
+    ...chunks.map(
+      (chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`
+    ),
+  ].map((tag) => {
+    if (Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH) {
+      throw new Error("workspace marker tag exceeds the platform bound");
+    }
+    return tag;
+  });
 }
 
 /** Rebuild the exact tags used by the release before the current safe format. */
@@ -119,34 +133,6 @@ export function forkMarkerMetadata(
     ...(request.metadata === undefined ? {} : cloneJson(request.metadata)),
     [FORK_METADATA_KEY]: marker,
   };
-}
-
-function markerTags(
-  kind: "checkpoint" | "fork",
-  idempotencyKey: string,
-  requestDigest: string,
-  marker: CheckpointMarker
-): string[] {
-  const encoded = encodeJson(marker);
-  if (encoded === undefined)
-    throw new Error("workspace marker is not JSON serializable");
-  const base = `${MARKER_PREFIX}-${kind}`;
-  const chunks = split(encoded);
-  if (chunks.length > MAX_MARKER_CHUNKS) {
-    throw new Error("workspace marker exceeds the recovery bound");
-  }
-  return [
-    `${base}-key-${markerKeyDigest(idempotencyKey).replace(":", "-")}`,
-    `${base}-digest-${requestDigest.replace(":", "-")}`,
-    ...chunks.map(
-      (chunk, index) => `${base}-material-${index}-${chunks.length}-${chunk}`
-    ),
-  ].map((tag) => {
-    if (Buffer.byteLength(tag, "utf8") > MAX_MARKER_TAG_LENGTH) {
-      throw new Error("workspace marker tag exceeds the platform bound");
-    }
-    return tag;
-  });
 }
 
 export function markerBelongsToSource(
@@ -409,10 +395,6 @@ function decodeJson(value: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-function split(value: string): string[] {
-  return splitIntoChunks(value, MARKER_CHUNK_SIZE);
 }
 
 function splitIntoChunks(value: string, chunkSize: number): string[] {
