@@ -3,6 +3,7 @@
 export * from "./parts.js";
 export * from "./stream-events.js";
 export * from "./execution-types.js";
+export * from "./execution-failure.js";
 export * from "./backend-message.js";
 export * from "./provider-config.js";
 export * from "./host-services.js";

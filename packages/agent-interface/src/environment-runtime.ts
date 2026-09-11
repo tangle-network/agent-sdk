@@ -9,7 +9,7 @@ import type { Sha256Digest } from "./agent-candidate.js";
 import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
-import type { TokenUsage } from "./execution-types.js";
+import { TokenUsageSchema, type TokenUsage } from "./execution-types.js";
 import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
 import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type ContextTransferResult, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentExactRunControlRef, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
@@ -88,16 +88,6 @@ export interface AgentTurnResult {
   events?: AgentEnvironmentEvent[];
   contextTransferReceipt?: ContextTransferReceipt;
 }
-
-const TokenUsageSchema = z.strictObject({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  totalTokens: z.number().int().nonnegative().optional(),
-  cacheReadInputTokens: z.number().int().nonnegative().optional(),
-  cacheCreationInputTokens: z.number().int().nonnegative().optional(),
-  reasoningTokens: z.number().int().nonnegative().optional(),
-  cost: z.number().finite().nonnegative().optional(),
-}) satisfies z.ZodType<TokenUsage>;
 
 const AgentEnvironmentEventSchema = z.strictObject({
   type: boundedIdentifierSchema,
