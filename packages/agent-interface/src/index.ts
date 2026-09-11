@@ -119,8 +119,17 @@ export * from "./profile-schema.js";
 export * from "./profile-security.js";
 export * from "./sandbox-size.js";
 export {
+  // Every bound a consumer may be asked to honour is public, so a package that WRITES values
+  // this contract validates can assert its own limits fit — the seam test in agent-provider-tangle
+  // does exactly that, after three bound mismatches shipped through it (agent-sdk#311, #312, #314).
+  CONTRACT_MAX_ARRAY_LENGTH,
   CONTRACT_MAX_CONFIDENTIAL_ATTESTATION_QUOTE_LENGTH,
+  CONTRACT_MAX_IDENTIFIER_LENGTH,
   CONTRACT_MAX_JSON_BYTES,
+  CONTRACT_MAX_JSON_DEPTH,
+  CONTRACT_MAX_JSON_NODES,
+  CONTRACT_MAX_MAP_ENTRIES,
+  CONTRACT_MAX_STRING_LENGTH,
   boundedEventContentJsonSchema,
   boundedEventContentRecordSchema,
   boundedEventContentStringSchema,
