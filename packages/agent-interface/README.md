@@ -172,6 +172,13 @@ When caller environment values merge into a bridge or harness process, reject na
 Use `isCredentialBearingProfileConfigName(name)` before retaining public config.
 These checks do not apply to a replacement environment owned by caller code.
 
+## Failed execution accounting
+
+An adapter can reject with `AgentExecutionError` and retain observed usage and timing in its immutable `receipt`.
+Absent fields remain unknown.
+The receipt records a lower bound, not complete accounting or a successful outcome.
+Hosts must preserve it when publishing a failed or cancelled execution.
+
 ## Exact process environments
 
 Providers may expose the optional `exactProcess` capability for isolated, reproducible process execution.
