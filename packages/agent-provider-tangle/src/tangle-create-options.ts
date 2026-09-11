@@ -22,6 +22,7 @@ import {
   MAX_MAP_ENTRIES,
 } from "./tangle-contract-safety.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
+import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
@@ -94,6 +95,9 @@ export function sandboxOptionsFromCreateInput(
       ...(base.backend ?? {}),
       type: backend,
       profile,
+      ...(input.runtimeAttachments === undefined ? {} : {
+        runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),
+      }),
     },
   };
   return mapped;
@@ -199,8 +203,12 @@ export function assertCreateInputShape(
     "idempotencyKey",
     "signal",
     "providerOptions",
+    "runtimeAttachments",
   ]) keys.delete(key);
   if (keys.size > 0) throw new Error("Tangle create input contains unsupported fields");
+  if (input.runtimeAttachments !== undefined) {
+    tangleRuntimeAttachments(input.runtimeAttachments, typeof input.profile === "object" ? input.profile : undefined);
+  }
   if (typeof input.profile === "string") {
     boundedIdentifier(input.profile, "Tangle profile reference");
   } else {
@@ -228,6 +236,9 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
     throw new Error("Tangle mapped create options must be an object");
   }
   assertBoundedJson(options);
+  if (options.backend?.runtimeAttachments !== undefined) {
+    tangleRuntimeAttachments(options.backend.runtimeAttachments, options.backend.profile);
+  }
   if (Object.hasOwn(options, "providerOptions")) {
     throw new Error("Tangle mapped create providerOptions are not supported");
   }

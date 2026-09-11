@@ -2,7 +2,7 @@ import {
   AgentEnvironmentCapabilitiesSchema,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
-import { deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
+import { canonicalCandidateDigest, deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -81,10 +81,10 @@ export function createTangleProvider(
       );
     }
     const backend =
-      configured.interactions === undefined
+      configured.interactions === undefined && configured.create?.runtimeAttachments === undefined
         ? undefined
         : await resolveBackend(options.client, backendType);
-    const narrowed = narrowTangleCapabilitiesToBackend(configured, backend);
+    const narrowed = narrowTangleCapabilitiesToBackend(configured, backend, backendType !== undefined);
     return exactProcess
       ? {
           ...narrowed,
@@ -137,10 +137,20 @@ export function createTangleProvider(
       );
     }
     assertMappedSecretNames(createOptions);
+    if (input.runtimeAttachments !== undefined &&
+      (createOptions.backend?.runtimeAttachments === undefined ||
+        canonicalCandidateDigest(input.runtimeAttachments) !== canonicalCandidateDigest(createOptions.backend.runtimeAttachments))) {
+      throw new Error("Tangle mapped create options must preserve runtime attachments");
+    }
     // Backend selection belongs to the create projection. The provider-wide
     // default cannot describe a sandbox that this projection routes elsewhere.
     const declaredCapabilities = await resolveDeclaredCapabilities(createOptions.backend?.type);
     narrowedProviderCapabilities(declaredCapabilities);
+    if (createOptions.backend?.runtimeAttachments !== undefined) {
+      if (createOptions.backend.type === undefined || declaredCapabilities.create?.runtimeAttachments?.mcp !== true) {
+        throw new Error("Tangle runtime attachments are not supported by the selected backend deployment");
+      }
+    }
     input.signal?.throwIfAborted();
     const createPromise = options.client.create(
       createOptions,

@@ -124,6 +124,7 @@ export function defaultTangleSandboxCapabilities(
     create: {
       egress: ["open", "strict", "blocked"],
       billingOwner: true,
+      runtimeAttachments: { mcp: true },
     },
     // This is intent only. Narrowing requires both raw TEE evidence and the
     // caller's external provider-key verifier before the flag survives.
@@ -172,7 +173,12 @@ export function defaultTangleSandboxCapabilities(
 export function narrowTangleCapabilitiesToBackend(
   declared: AgentEnvironmentCapabilities,
   backend: BackendRegistryEntry | undefined,
+  backendSelected = true,
 ): AgentEnvironmentCapabilities {
+  if (backendSelected && backend?.capabilities.runtimeAttachments?.mcp !== true && declared.create?.runtimeAttachments !== undefined) {
+    const { runtimeAttachments: _runtimeAttachments, ...create } = declared.create;
+    declared = { ...declared, create };
+  }
   if (declared.interactions === undefined || backend === undefined) {
     if (declared.interactions === undefined) return declared;
     const narrowed = { ...declared };

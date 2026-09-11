@@ -1,8 +1,16 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.34.6 <1.0.0`, and this package is developed and tested against 0.37.0.
-The floor is 0.34.6 because exact interactive attachment needs the host receiver, and workspace branching needs keyed snapshots, durable restores, inventory recovery, and cleanup.
+The peer range is `>=0.39.0 <1.0.0`, and this package is developed and tested against 0.39.0.
+The floor includes runtime MCP attachment transport and preservation across per-turn model credential overrides.
+
+Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
+They remain separate from the authored profile and its digest.
+The adapter checks the selected backend catalog before provisioning and refuses missing attachment support.
+Disabled attachments and aliases present in the profile are refused, including disabled profile aliases.
+Per-turn backend overrides accept the same canonical attachment contract.
+Remote managers still require an authenticated coordination URL reachable from the Sandbox.
+Catalog support does not establish successful tool execution against a particular deployment.
 The provider fails closed when the configured backend or its catalog entry cannot be read.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
