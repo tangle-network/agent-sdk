@@ -55,7 +55,12 @@ export interface AgentTurnInput {
 }
 
 export const AgentTurnInputSchema = z.strictObject({
-  prompt: boundedStringSchema.optional(),
+  // A prompt is what the agent is asked to do, so it is CONTENT: its size is set by the work,
+  // not by the protocol. Held to the metadata bound it capped a manager's brief at 16,384
+  // characters, which refused a director handing a checker a 27 KB patch to re-verify a measured
+  // result (agent-sdk#313). Refusal is still right here — a silently shortened instruction is
+  // worse than none — so only the ceiling moves.
+  prompt: boundedEventContentStringSchema.optional(),
   parts: z.array(InputPartSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
   sessionId: boundedIdentifierSchema.optional(),
   model: boundedIdentifierSchema.optional(),

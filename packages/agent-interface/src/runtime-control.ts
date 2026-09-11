@@ -399,7 +399,8 @@ const partSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...partBase,
     type: z.literal("subtask"),
-    prompt: boundedStringSchema,
+    // Content, not metadata: see environment-runtime.ts.
+    prompt: boundedEventContentStringSchema,
     description: boundedStringSchema,
     agent: stableIdSchema,
   }),

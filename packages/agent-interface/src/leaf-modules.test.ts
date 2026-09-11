@@ -555,6 +555,18 @@ describe("interface split leaf modules", () => {
     expect(() =>
       AgentTurnInputSchema.parse({ prompt: "x", context: { huge: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) } }),
     ).toThrow();
+    // A prompt is CONTENT: its size is set by the work, not by the protocol. Held to the metadata
+    // bound it capped a manager's brief at 16,384 characters, which refused a director handing a
+    // checker a 27 KB patch to re-verify a measured result (agent-sdk#313). `context` above keeps
+    // the metadata bound, because that is material describing the turn rather than the ask itself.
+    expect(() =>
+      AgentTurnInputSchema.parse({ prompt: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) }),
+    ).not.toThrow();
+    expect(() => AgentTurnInputSchema.parse({ prompt: "x".repeat(200_000) })).not.toThrow();
+    // The content bound still governs it, so an unbounded prompt is still refused.
+    expect(() =>
+      AgentTurnInputSchema.parse({ prompt: "x".repeat(2 * 1024 * 1024) }),
+    ).toThrow();
     for (const usageMode of ["delta", "cumulative"]) {
       expect(AgentTurnResultSchema.parse({
         text: "x", success: true,
