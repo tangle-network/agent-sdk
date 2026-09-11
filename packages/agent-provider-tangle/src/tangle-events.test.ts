@@ -3,7 +3,7 @@ import type { SandboxEvent } from "@tangle-network/sandbox";
 import { AgentTurnResultSchema, type AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import { createTangleProvider } from "./index.js";
-import { assertBoundedJson } from "./tangle-contract-safety.js";
+import { assertBoundedJson, MAX_STRING_LENGTH as CONTRACT_MAX_STRING_LENGTH } from "./tangle-contract-safety.js";
 import { environmentEventFromSandboxEvent } from "./tangle-events.js";
 import { controlRefForTurn, retainedDeployment } from "./retained-control-test-helpers.js";
 import type { SandboxSessionLike } from "./index.js";
@@ -130,5 +130,26 @@ describe("Sandbox stream event content", () => {
     expect(() => validatedSandboxPromptResult({ ...result, response: "x".repeat(1024 * 1024) })).toThrow(/JSON bound/);
     expect(() => validatedSandboxPromptResult({ ...result, traceId: recordedOutput })).toThrow(/JSON bound/);
     expect(() => validatedSandboxPromptResult({ ...result, usage: { inputTokens: 2, outputTokens: -1 } })).toThrow(/output token count/);
+  });
+
+  it("bounds tool output as content, not as metadata", () => {
+    // A tool result is whatever a tool returned: one webfetch of a paper is routinely tens or
+    // hundreds of kilobytes. Holding it to CONTRACT_MAX_STRING_LENGTH rejected turns the Sandbox
+    // SDK had already accepted — it serializes each tool value up to 4 MiB, a 256x mismatch — and
+    // because this validator runs inside the terminal result read, after the stream drained and the
+    // usage was credited, the rejection discarded a finished, fully paid turn. Measured 2026-09-11:
+    // 143 of 199 children across 16 pursuits, every one at iterations 0.
+    const result = { success: true, status: "success" as const, durationMs: 1, response: "ok" };
+    const toolResult = (length: number) => ({
+      ...result,
+      toolInvocations: [{ toolName: "webfetch", args: { url: "https://arxiv.org/abs/2402.02364" }, result: "x".repeat(length) }],
+    });
+    // The exact wall the failures piled against: one character over the metadata bound.
+    expect(() => validatedSandboxPromptResult(toolResult(CONTRACT_MAX_STRING_LENGTH + 1))).not.toThrow();
+    expect(() => validatedSandboxPromptResult(toolResult(200_000))).not.toThrow();
+    // The content bound still governs it, so an unbounded tool result is still refused.
+    expect(() => validatedSandboxPromptResult(toolResult(2 * 1024 * 1024))).toThrow(/JSON bound/);
+    // Every other field keeps the metadata bound; only what the agent produced is content.
+    expect(() => validatedSandboxPromptResult({ ...result, traceId: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) })).toThrow(/JSON bound/);
   });
 });
