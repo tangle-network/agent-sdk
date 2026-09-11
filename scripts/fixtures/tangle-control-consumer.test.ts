@@ -90,6 +90,11 @@ describe("packed Tangle exact-session control", () => {
       filesystemIncarnationId: "incarnation-1",
       filesystemIncarnationProvenance: "fresh" as const,
       filesystemIncarnationReadiness: "ready" as const,
+      connection: {
+        runtimeUrl: "https://sandbox.example/runtime",
+        authToken: "fixture-runtime-token",
+        edgeStatus: "ready" as const,
+      },
       createdAt: "2026-08-01T20:00:00.000Z",
     };
     const publicInstance = new SandboxInstance(

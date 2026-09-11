@@ -192,6 +192,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(defaultTangleSandboxCapabilities().create).toEqual({
       egress: ["open", "strict", "blocked"],
       billingOwner: true,
+      runtimeAttachments: { mcp: true },
     });
   });
 });

@@ -23,6 +23,7 @@ import {
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
 import { assertBoundedJson, boundedString } from "./tangle-contract-safety.js";
+import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
   AgentTurnInputSchema.parse(input);
@@ -114,6 +115,7 @@ export function promptOptionsFromTurnInput(
  * exists to prevent.
  */
 const SANDBOX_BACKEND_FIELD_LIST = [
+  "runtimeAttachments",
   "type",
   "profile",
   "model",
@@ -252,6 +254,11 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
+  if (present.runtimeAttachments !== undefined) {
+    Object.assign(backend, {
+      runtimeAttachments: tangleRuntimeAttachments(present.runtimeAttachments, backend.profile),
+    });
+  }
   assertBoundedJson(backend);
   return backend as SandboxPromptBackend;
 }
