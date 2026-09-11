@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 2.9.0
+
+### Minor Changes
+
+- b5862e9: Expose an immutable failure receipt for observed execution usage and timing.
+  Adapters can reject failed execution without discarding resource accounting.
+  Failure receipts do not assert that all usage was reported.
+
 ## 2.6.1
 
 ### Patch Changes
