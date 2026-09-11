@@ -13,7 +13,9 @@ import type {
 } from "@tangle-network/agent-interface";
 import {
   agentProfileSchema,
+  CONTRACT_MAX_JSON_BYTES,
   boundedEventContentRecordSchema,
+  isBoundedEventContentJson,
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
   ContextTransferReceiptSchema,
@@ -554,6 +556,77 @@ const SANDBOX_OPTIONAL_RESULT_FIELDS = new Set([
   "costUsd",
 ]);
 
+/**
+ * The marker left in place of a tool result's discarded tail.
+ *
+ * It names the byte counts so a reader can tell a truncated result from a tool that genuinely
+ * returned little, and so a caller can decide to re-fetch rather than reason from a partial page.
+ */
+export function toolOutputTruncationMarker(keptBytes: number, originalBytes: number): string {
+  return `\n\n[truncated by the Tangle provider: kept ${keptBytes} of ${originalBytes} bytes to stay inside the ${CONTRACT_MAX_JSON_BYTES}-byte record content bound]`;
+}
+
+/**
+ * Shrink oversized tool output until the whole record fits the content bound.
+ *
+ * Only `toolInvocations[].result` is touched, because it is the one field that carries arbitrary
+ * fetched material rather than identity, accounting, or control state. The largest result is cut
+ * first and the loop repeats, so a record with several big results converges instead of destroying
+ * the first one it meets.
+ *
+ * Returns the record unchanged when it already fits, so the common path allocates nothing.
+ */
+function withTruncatedToolOutput(record: Record<string, unknown>): {
+  record: Record<string, unknown>;
+  truncated: number;
+} {
+  if (isBoundedEventContentJson(record)) return { record, truncated: 0 };
+  const invocations = record.toolInvocations;
+  if (!Array.isArray(invocations)) return { record, truncated: 0 };
+  const next = invocations.map((entry) =>
+    entry && typeof entry === "object" && !Array.isArray(entry)
+      ? { ...(entry as Record<string, unknown>) }
+      : entry,
+  );
+  const originalLengths = new Map<number, number>();
+  let truncated = 0;
+  // Each pass cuts the current widest result by the record's measured overflow, so a single huge
+  // value converges immediately and several large ones shrink in turn rather than the first being
+  // destroyed. The cap is a backstop: `isBoundedEventContentJson` also enforces node, depth, and
+  // array limits that trimming a string cannot satisfy, and those must fall through to the refusal
+  // rather than spin here.
+  for (let pass = 0; pass < next.length * 4 + 8; pass += 1) {
+    const candidate = { ...record, toolInvocations: next };
+    if (isBoundedEventContentJson(candidate)) return { record: candidate, truncated };
+    let widest = -1;
+    let widestLength = 0;
+    for (const [index, entry] of next.entries()) {
+      const value = (entry as Record<string, unknown> | undefined)?.result;
+      if (typeof value === "string" && value.length > widestLength) {
+        widest = index;
+        widestLength = value.length;
+      }
+    }
+    // Nothing left to shrink: the overflow is elsewhere, and the caller refuses rather than
+    // silently altering a field that is not tool output.
+    if (widest < 0 || widestLength === 0) return { record, truncated };
+    const entry = next[widest] as Record<string, unknown>;
+    const current = entry.result as string;
+    const original = originalLengths.get(widest) ?? current.length;
+    originalLengths.set(widest, original);
+    // Cut by what the record is actually over, plus room for the marker and for JSON escaping,
+    // which can widen a byte count well past the character count.
+    const serialized = Buffer.byteLength(JSON.stringify(candidate) ?? "", "utf8");
+    const overflow = Math.max(0, serialized - CONTRACT_MAX_JSON_BYTES);
+    const marker = toolOutputTruncationMarker(0, original).length;
+    const cut = Math.max(1, overflow + marker + 1024);
+    const kept = Math.max(0, current.length - cut);
+    entry.result = current.slice(0, kept) + toolOutputTruncationMarker(kept, original);
+    truncated += 1;
+  }
+  return { record, truncated };
+}
+
 export function validatedSandboxPromptResult(
   result: PromptResult,
 ): ValidatedSandboxPromptResult {
@@ -572,16 +645,37 @@ export function validatedSandboxPromptResult(
   // The Sandbox SDK materializes absent optional response fields as
   // `undefined`. They were absent on the JSON wire and must stay absent in the
   // provider-neutral result before the strict JSON check runs.
-  const record = Object.fromEntries(
+  let record = Object.fromEntries(
     Object.entries(source).filter(
       ([field, value]) =>
         value !== undefined || !SANDBOX_OPTIONAL_RESULT_FIELDS.has(field),
     ),
   );
-  const content = boundedEventContentRecordSchema.safeParse(record);
+  // Oversized tool output is TRUNCATED, never thrown.
+  //
+  // This validator runs inside the terminal result read — after the live stream has drained and
+  // after the usage receipt has been credited — so a throw here cannot prevent the work or the
+  // charge. It can only discard a finished, fully paid turn, which a supervisor then reports as a
+  // child that did nothing at all. That failure mode cost one Discovery Lab 143 of 199 children
+  // across 16 pursuits, and its six-stage sourcing graph blocked in 24 of 24 invocations.
+  //
+  // Widening the bound alone does not remove it. The Sandbox SDK serializes each tool value up to
+  // MAX_SERIALIZED_TOOL_VALUE_BYTES (4 MiB) while this bound is CONTRACT_MAX_JSON_BYTES (1 MiB)
+  // across the WHOLE record, so a single 2 MiB fetch still dies, and so do two 0.6 MiB fetches
+  // together. Any bound that throws on this path is one large page away from discarding a paid
+  // turn again.
+  //
+  // So the bound is enforced by replacing what does not fit, and saying so in the record. The
+  // caller still receives the turn, its response text, its usage, and every tool call it made;
+  // what it loses is the tail of an oversized tool result, marked where it was cut. Only tool
+  // output is truncatable: every other field is identity, accounting, or control material where a
+  // silently shortened value would be worse than a refusal, so those still refuse below.
+  const bounded = withTruncatedToolOutput(record);
+  const content = boundedEventContentRecordSchema.safeParse(bounded.record);
   if (!content.success) {
     throw new Error("Tangle prompt result exceeded its JSON bound", { cause: content.error });
   }
+  record = bounded.record;
   // What the agent produced is content and is bounded as content by the check above; the fields
   // that describe the turn keep their metadata limits.
   //
