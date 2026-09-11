@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.2.0
+
+### Minor Changes
+
+- dc6a503: Transport runtime MCP attachments through Sandbox create and turn requests without changing the authored profile.
+  Validate backend support before provisioning and reject attachment conflicts or mapper loss.
+  Require Sandbox SDK 0.39.0 for the maintained attachment transport.
+
 ## 1.1.8
 
 ### Patch Changes
