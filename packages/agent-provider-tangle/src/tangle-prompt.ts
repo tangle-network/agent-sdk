@@ -582,10 +582,30 @@ export function validatedSandboxPromptResult(
   if (!content.success) {
     throw new Error("Tangle prompt result exceeded its JSON bound", { cause: content.error });
   }
-  // Response text is content; all other fields retain their metadata limits.
+  // What the agent produced is content and is bounded as content by the check above; the fields
+  // that describe the turn keep their metadata limits.
+  //
+  // `toolInvocations` belongs with the response text, not with the metadata. It carries whatever a
+  // tool returned, and one `webfetch` of a paper or an API page is routinely tens or hundreds of
+  // kilobytes, while the metadata bound is CONTRACT_MAX_STRING_LENGTH — 16,384 characters per
+  // string. `isBoundedEventContentJson` was written for exactly this material ("content may contain
+  // a single large transcript or tool result") and the whole record has already passed it at
+  // CONTRACT_MAX_JSON_BYTES.
+  //
+  // Holding tool output to the metadata bound rejected a turn the Sandbox SDK had already accepted:
+  // it serializes each tool value up to MAX_SERIALIZED_TOOL_VALUE_BYTES (4 MiB), a 256x mismatch.
+  // Because this validator runs inside the terminal result read, AFTER the live stream has drained
+  // and the usage receipt has been credited, the rejection did not fail the tool call — it
+  // converted a finished, fully paid turn into an unreconcilable retained execution that a
+  // supervisor reports as a child that did no work at all. Measured 2026-09-11 in one Discovery Lab
+  // worktree: 143 of 199 children across 16 pursuits, every one at `iterations: 0`, and the
+  // enumerate and extract stages that fetch papers were the ones that died.
   assertBoundedJson(Object.fromEntries(
     Object.entries(record).filter(([field]) =>
-      field !== "response" && field !== "text" && field !== "finalText"),
+      field !== "response" &&
+      field !== "text" &&
+      field !== "finalText" &&
+      field !== "toolInvocations"),
   ));
   if (typeof record.success !== "boolean") {
     throw new Error("Tangle prompt result omitted its success status");
