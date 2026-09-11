@@ -112,7 +112,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^2.6.1"
+    "@tangle-network/agent-interface": "^2.8.0"
   },
   "peerDependencies": {
     "@tangle-network/sandbox": ">=0.39.0 <1.0.0"
