@@ -8,6 +8,7 @@ import {
 } from "./agent-execution-preparation-receipt.js";
 import {
   boundedIdentifierSchema,
+  boundedEventContentStringSchema,
   boundedStringSchema,
 } from "./contract-limits.js";
 import {
@@ -546,7 +547,13 @@ const AgentInteractiveSessionPromptCommandMaterialSchema = z
     operationId: boundedIdentifierSchema,
     ref: AgentInteractiveSessionRefSchema,
     control: AgentInteractiveSessionControlClaimSchema,
-    prompt: boundedStringSchema.min(1),
+    // Content, not metadata: see environment-runtime.ts.
+    // Content, not metadata: see environment-runtime.ts. `boundedEventContentStringSchema` is a
+    // custom schema and carries no `.min`, so the non-empty requirement is kept as a refinement —
+    // an interactive prompt with nothing in it is still refused.
+    prompt: boundedEventContentStringSchema.refine((value) => value.length >= 1, {
+      message: "interactive prompt must not be empty",
+    }),
   })
   .superRefine((command, refinement) => {
     if (!agentInteractiveSessionControlClaimMatchesRef(command.ref, command.control)) {

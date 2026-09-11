@@ -5,7 +5,8 @@ import {
   type AgentExactRunControlRef,
 } from "./runtime-control.js";
 import { idSchema, InputPartSchema, jsonRecordSchema, sha256DigestSchema, wireDigest } from "./portable-context-shared.js";
-import { boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
+import { boundedEventContentStringSchema,
+  boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 
 export const NativeContextBoundarySchema = z
   .discriminatedUnion("kind", [
@@ -78,7 +79,8 @@ export interface NativeContextContinuationTurn {
 }
 
 export const NativeContextContinuationTurnSchema = z.strictObject({
-  prompt: boundedStringSchema.optional(),
+  // Content, not metadata: see environment-runtime.ts.
+  prompt: boundedEventContentStringSchema.optional(),
   parts: z.array(InputPartSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
   model: idSchema.optional(),
   context: jsonRecordSchema.optional(),
