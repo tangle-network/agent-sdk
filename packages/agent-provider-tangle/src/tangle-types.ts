@@ -665,6 +665,15 @@ export interface TangleProviderOptions {
   name?: string;
   /** Overrides an inline profile's harness when create() names no backend. */
   defaultBackend?: BackendType;
+  /**
+   * Stored model credential and endpoint used by the default create mapping.
+   * Each create must explicitly list apiKeyEnv in its secrets.
+   * Cannot be combined with mapCreateInput; never accepts credential values.
+   */
+  modelCredentials?: {
+    apiKeyEnv: string;
+    baseUrl: string;
+  };
   capabilities?:
     | AgentEnvironmentCapabilities
     | (() =>

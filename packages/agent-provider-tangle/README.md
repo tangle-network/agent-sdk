@@ -29,6 +29,37 @@ const provider = createTangleProvider({
 `Sandbox` requires an explicit `baseUrl`.
 Set `TANGLE_SANDBOX_URL` to use another deployment.
 
+## Named model credentials at creation
+
+`modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
+This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
+The provider does not create, grant, copy, or renew secrets.
+Each create must list the named secret explicitly.
+
+```ts
+const provider = createTangleProvider({
+  client,
+  modelCredentials: {
+    apiKeyEnv: "RESEARCH_ROUTER_KEY",
+    baseUrl: "https://router.tangle.tools/v1",
+  },
+});
+const environment = await provider.create({
+  profile: researchProfile,
+  secrets: ["RESEARCH_ROUTER_KEY"],
+});
+```
+
+The configuration accepts only the reference and endpoint, not credential values or model selection.
+The authored profile, selected backend, runtime attachments, and create identity remain unchanged.
+The provider snapshots this configuration when constructed and refuses combining it with `mapCreateInput`.
+Omitting it preserves managed creation.
+The endpoint must use HTTP or HTTPS without credentials, query parameters, or fragments.
+
+Credential-only turns retain the created SDK handle's endpoint and attachments.
+Reconstructed handles leave omitted model settings to Sandbox's durable backend configuration.
+Keep the stored secret available and valid throughout execution and recovery.
+
 ## `create()` returns a ready environment
 
 `provider.create()` does not return until the sandbox reports `running`.

@@ -126,17 +126,38 @@ describe("Tangle runtime attachments", () => {
       throw new Error(`Unexpected SDK request: ${url}`);
     });
     try {
-      const provider = createTangleProvider({ client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }) });
-      const environment = await provider.create({ profile, runtimeAttachments: attachments, env: { COORDINATION_TOKEN: "private-token" } });
+      const modelCredentials = { apiKeyEnv: "MODEL_TOKEN", baseUrl: "https://router.example/v1" };
+      const provider = createTangleProvider({
+        client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
+        modelCredentials,
+      });
+      const environment = await provider.create({
+        profile, runtimeAttachments: attachments, secrets: [modelCredentials.apiKeyEnv],
+        env: { COORDINATION_TOKEN: "private-token" },
+      });
       for await (const _event of environment.stream({
         prompt: "Continue research",
         providerOptions: { backend: { type: "opencode", model: { apiKeyEnv: "MODEL_TOKEN" } } },
       })) {}
       const create = requests.find((request) => request.url.endsWith("/v1/sandboxes"));
       const turn = requests.find((request) => request.url.endsWith("/agents/run/stream"));
-      expect(create?.body.backend).toMatchObject({ profile, runtimeAttachments: attachments });
-      expect(turn?.body.backend).toMatchObject({ profile, runtimeAttachments: attachments, model: { apiKeyEnv: "MODEL_TOKEN" } });
+      expect(create?.body.backend).toMatchObject({ profile, runtimeAttachments: attachments, model: modelCredentials });
+      expect(create?.body.secrets).toEqual([modelCredentials.apiKeyEnv]);
+      expect(turn?.body.backend).toMatchObject({ profile, runtimeAttachments: attachments, model: modelCredentials });
       expect(JSON.stringify(turn?.body)).not.toContain("private-token");
+
+      if (!provider.get) throw new Error("Expected provider reconstruction support");
+      const recovered = await provider.get(environment.id);
+      expect(recovered).not.toBeNull();
+      if (!recovered) throw new Error("Expected reconstructed environment");
+      for await (const _event of recovered.stream({
+        prompt: "Continue research after reconnect",
+        providerOptions: { backend: { type: "opencode", model: { apiKeyEnv: "MODEL_TOKEN" } } },
+      })) {}
+      const recoveredTurn = requests.filter((request) => request.url.endsWith("/agents/run/stream")).at(-1);
+      // The reconstructed SDK has no create defaults. Omission leaves the durable
+      // Sandbox backend endpoint in force; the provider must not invent a new one.
+      expect(recoveredTurn?.body.backend).toEqual({ type: "opencode", model: { apiKeyEnv: "MODEL_TOKEN" } });
     } finally {
       fetch.mockRestore();
     }
