@@ -23,11 +23,41 @@ import {
 } from "./tangle-contract-safety.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
+import type { TangleProviderOptions } from "./tangle-types.js";
+
+export function captureModelCredentials(
+  value: TangleProviderOptions["modelCredentials"],
+): TangleProviderOptions["modelCredentials"] {
+  if (value === undefined) return undefined;
+  assertBoundedJson(value);
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl")) {
+    throw new Error("Tangle modelCredentials accepts only apiKeyEnv and baseUrl");
+  }
+  const { apiKeyEnv, baseUrl } = value;
+  if (typeof apiKeyEnv !== "string" || apiKeyEnv.length > 128 ||
+    !/^[A-Z_][A-Z0-9_]*$/.test(apiKeyEnv)) {
+    throw new Error("Tangle modelCredentials apiKeyEnv must be a stored secret name");
+  }
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("Tangle modelCredentials baseUrl must be an HTTP(S) endpoint");
+  }
+  if (typeof baseUrl !== "string" || baseUrl.length > 2048 || /\s/.test(baseUrl) ||
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username || url.password || url.search || url.hash) {
+    throw new Error("Tangle modelCredentials baseUrl must be an HTTP(S) endpoint without credentials, query, or fragment");
+  }
+  return Object.freeze({ apiKeyEnv, baseUrl });
+}
 
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
   defaultBackend?: BackendType,
   parsedWorkspace?: WorkspaceRequest,
+  modelCredentials?: TangleProviderOptions["modelCredentials"],
 ): CreateSandboxOptions {
   const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
   const profile = inlineAgentProfile(input.profile);
@@ -36,6 +66,10 @@ export function sandboxOptionsFromCreateInput(
       ? parseBackendType(defaultBackend ?? profile.harness ?? "opencode")
       : (input.backend as BackendType);
   assertNoInlineSecretValues(input, workspace);
+  if (modelCredentials !== undefined &&
+    (!Array.isArray(input.secrets) || !input.secrets.includes(modelCredentials.apiKeyEnv))) {
+    throw new Error("Tangle modelCredentials apiKeyEnv must be explicitly listed in create secrets");
+  }
   if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
     throw new Error("Tangle create providerOptions are not supported");
   }
@@ -95,6 +129,7 @@ export function sandboxOptionsFromCreateInput(
       ...(base.backend ?? {}),
       type: backend,
       profile,
+      ...(modelCredentials === undefined ? {} : { model: modelCredentials }),
       ...(input.runtimeAttachments === undefined ? {} : {
         runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),
       }),

@@ -25,7 +25,7 @@ import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
-import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
+import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import {
   awaitSandboxRunning,
@@ -49,6 +49,11 @@ import {
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
+  const modelCredentials = captureModelCredentials(options.modelCredentials);
+  const mapCreateInput = options.mapCreateInput;
+  if (modelCredentials !== undefined && mapCreateInput !== undefined) {
+    throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
+  }
   const providerName = options.name ?? "tangle-sandbox";
   boundedIdentifier(providerName, "Tangle provider name");
   const readyTimeoutMs =
@@ -120,11 +125,12 @@ export function createTangleProvider(
       throw new Error("Tangle create providerOptions are not supported");
     }
     const mappedOptions =
-      options.mapCreateInput?.(input) ??
+      mapCreateInput?.(input) ??
       sandboxOptionsFromCreateInput(
         input,
         options.defaultBackend,
         parsedWorkspace,
+        modelCredentials,
       );
     assertMappedCreateOptions(mappedOptions);
     const createOptions = deepFreeze(structuredClone(mappedOptions));
