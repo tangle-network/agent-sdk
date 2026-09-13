@@ -61,6 +61,66 @@ describe("Tangle runtime attachments", () => {
     expect(creates).toHaveLength(0);
   });
 
+  it.each(["getBackend", "listBackends"] as const)("preserves a failed %s read before provisioning", async (method) => {
+    const error = new Error("GET /v1/backends returned HTTP 403", { cause: new Error("egress denied") });
+    const create = vi.fn();
+    const provider = createTangleProvider({
+      client: { create, [method]: async () => { throw error; } },
+    });
+    await expect(provider.create({ profile, runtimeAttachments: attachments })).rejects.toBe(error);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each(["getBackend", "listBackends"] as const)("keeps a missing backend distinct from a failed %s read", async (method) => {
+    const create = vi.fn();
+    const provider = createTangleProvider({
+      client: {
+        create,
+        ...(method === "getBackend"
+          ? { getBackend: async () => undefined }
+          : { listBackends: async () => ({ backends: [], timestamp: new Date(0).toISOString() }) }),
+      },
+    });
+    await expect(provider.create({ profile, runtimeAttachments: attachments })).rejects.toThrow(/runtime attachments.*not supported/i);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("preserves an empty HTTP 403 from the maintained SDK catalog without a create request", async () => {
+    const requests: string[] = [];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requests.push(String(input));
+      return new Response("", { status: 403, headers: { "content-type": "text/plain" } });
+    });
+    try {
+      const provider = createTangleProvider({
+        client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
+      });
+      await expect(provider.create({ profile, runtimeAttachments: attachments })).rejects.toMatchObject({ status: 403 });
+      expect(requests).toEqual(["https://sandbox.example/v1/backends"]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it.each(["invalid-json", "{}"])("preserves invalid SDK catalog body %s without provisioning", async (body) => {
+    const requests: string[] = [];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requests.push(String(input));
+      return new Response(body, { headers: { "content-type": "application/json" } });
+    });
+    try {
+      const provider = createTangleProvider({
+        client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
+      });
+      await expect(provider.create({ profile, runtimeAttachments: attachments })).rejects.toMatchObject({
+        code: "INVALID_BACKEND_REGISTRY", status: 502, endpoint: "/v1/backends",
+      });
+      expect(requests).toEqual(["https://sandbox.example/v1/backends"]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it.each([false, true])("refuses a profile alias collision, including a disabled entry (%s)", async (enabled) => {
     const { provider, creates } = setup();
     await expect(provider.create({

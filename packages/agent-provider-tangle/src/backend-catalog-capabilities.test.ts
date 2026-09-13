@@ -180,14 +180,13 @@ describe("Tangle backend interaction capabilities", () => {
   });
 
   it("fails closed when the canonical catalog cannot be read", async () => {
+    const error = new Error("catalog unavailable");
     const provider = createTangleProvider({
-      client: clientWithCatalog(new Error("catalog unavailable")),
+      client: clientWithCatalog(error),
       defaultBackend: "pi",
     });
 
-    const capabilities = await provider.capabilities();
-
-    expect(capabilities.interactions).toBeUndefined();
+    await expect(provider.capabilities()).rejects.toBe(error);
   });
 
   it("fails closed when no configured backend is present in the catalog", async () => {
