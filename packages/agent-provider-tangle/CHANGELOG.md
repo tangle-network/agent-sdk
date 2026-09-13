@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.2.3
+
+### Patch Changes
+
+- 8a7b037: Preserve backend catalog errors before provisioning instead of reporting missing capability support.
+  An absent backend still refuses required attachments without creating a sandbox.
+
 ## 1.2.2
 
 ### Patch Changes
