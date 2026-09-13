@@ -11,7 +11,8 @@ Disabled attachments and aliases present in the profile are refused, including d
 Per-turn backend overrides accept the same canonical attachment contract.
 Remote managers still require an authenticated coordination URL reachable from the Sandbox.
 Catalog support does not establish successful tool execution against a particular deployment.
-The provider fails closed when the configured backend or its catalog entry cannot be read.
+The provider propagates catalog transport and validation errors unchanged, before provisioning.
+A successfully read catalog without the selected backend reports its capabilities as unsupported.
 Newer SDKs may also provide `getBackend()` as a lookup over the same catalog.
 
 ```ts

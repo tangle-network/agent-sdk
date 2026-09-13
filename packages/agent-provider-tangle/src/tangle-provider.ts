@@ -394,14 +394,12 @@ async function resolveBackend(
   backendType: string | undefined,
 ) {
   if (backendType === undefined) return undefined;
-  try {
-    if (client.getBackend) return await client.getBackend(backendType);
-    if (!client.listBackends) return undefined;
-    const catalog = await client.listBackends();
-    return catalog.backends.find((backend) => backend.type === backendType);
-  } catch {
-    return undefined;
-  }
+  // A failed read is not evidence that the selected backend lacks support.
+  // Preserve the transport or validation error before any create effect.
+  if (client.getBackend) return await client.getBackend(backendType);
+  if (!client.listBackends) return undefined;
+  const catalog = await client.listBackends();
+  return catalog.backends.find((backend) => backend.type === backendType);
 }
 
 function assertProviderOperationOptions(
