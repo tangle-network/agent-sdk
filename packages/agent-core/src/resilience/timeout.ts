@@ -33,21 +33,21 @@ export function withTimeout<T>(
     return promise;
   }
 
-  let timeoutId: ReturnType<typeof setTimeout>;
+  let clearTimer: (() => void) | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
+    clearTimer = armTimeout(timeoutMs, () => {
       reject(
         new TimeoutError(
           message || `Operation timed out after ${timeoutMs}ms`,
           timeoutMs,
         ),
       );
-    }, timeoutMs);
+    });
   });
 
   return Promise.race([promise, timeoutPromise]).finally(() => {
-    clearTimeout(timeoutId);
+    clearTimer?.();
   });
 }
 
@@ -60,20 +60,18 @@ export function createTimeoutController(timeoutMs: number): {
   cleanup: () => void;
 } {
   const controller = new AbortController();
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let clearTimer: (() => void) | undefined;
 
   if (timeoutMs > 0) {
-    timeoutId = setTimeout(() => {
+    clearTimer = armTimeout(timeoutMs, () => {
       controller.abort(new TimeoutError("Request timeout", timeoutMs));
-    }, timeoutMs);
+    });
   }
 
   return {
     controller,
     cleanup: () => {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
+      clearTimer?.();
     },
   };
 }
@@ -88,16 +86,38 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(signal.reason);
       return;
     }
-
-    const timeoutId = setTimeout(resolve, ms);
-
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeoutId);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimer();
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason);
+    };
+    const clearTimer = armTimeout(ms, () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** Keep one absolute deadline; native timers overflow to 1ms beyond this chunk size. */
+function armTimeout(ms: number, callback: () => void): () => void {
+  const deadline = Date.now() + Math.max(0, ms);
+  if (!Number.isFinite(ms) || !Number.isSafeInteger(Math.ceil(deadline))) {
+    throw new SDKError("Timeout must produce a finite safe deadline", { code: "VALIDATION" });
+  }
+  let cleared = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    if (cleared) return;
+    timer = setTimeout(() => {
+      if (cleared) return;
+      if (Date.now() >= deadline) callback();
+      else arm();
+    }, Math.min(2_147_483_647, Math.max(0, deadline - Date.now())));
+  };
+  arm();
+  return () => {
+    cleared = true;
+    if (timer !== undefined) clearTimeout(timer);
+  };
 }
