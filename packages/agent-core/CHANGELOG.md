@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.9.7
+
+### Patch Changes
+
+- 077fe09: Preserve long timeout and Retry-After durations without native timer overflow. Remove abort listeners after completed sleeps and share the same cancellation-aware sleeper across retries and resilience utilities.
+
 ## 0.9.6
 
 ### Patch Changes
