@@ -22,6 +22,7 @@ import type {
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import type { SandboxSessionLike } from "./tangle-types.js";
 import type { ExecutionUsageLog } from "./tangle-usage-log.js";
+import { createStepUsageFold } from "./tangle-step-usage.js";
 import {
   carriedSessionIds,
   environmentEventFromSandboxEvent,
@@ -185,6 +186,13 @@ export function sandboxSessionAsAgentSession(
       const seenEventIds = new Set<string>();
       const useExactExecutionStream =
         exactExecutionEvents !== undefined && executionId !== undefined;
+      // Only the exact replay without a cursor starts at the execution's first
+      // frame. A cursor replay and the session's live tail both miss earlier
+      // steps, so neither can report the execution's running total.
+      const stepUsage =
+        useExactExecutionStream && options?.since === undefined
+          ? createStepUsageFold()
+          : undefined;
       const iterator = (useExactExecutionStream
         ? exactExecutionEvents({
             sessionId: session.id,
@@ -239,7 +247,7 @@ export function sandboxSessionAsAgentSession(
           if (seenEventIds.has(converted.id)) continue;
           seenEventIds.add(converted.id);
           options?.signal?.throwIfAborted();
-          yield converted;
+          yield stepUsage?.observe(converted) ?? converted;
         }
       } finally {
         if (!completed) {

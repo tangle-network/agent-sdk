@@ -91,6 +91,8 @@
     "dist/tangle-result-values.js",
     "dist/tangle-session-control.d.ts",
     "dist/tangle-session-control.js",
+    "dist/tangle-step-usage.d.ts",
+    "dist/tangle-step-usage.js",
     "dist/tangle-types.d.ts",
     "dist/tangle-types.js",
     "dist/tangle-workspace-branching.d.ts",

@@ -156,6 +156,28 @@ The adapter bounds each complete serialized frame to 1 MiB of UTF-8, including k
 It retains accepted content without truncation in the event data and original provider event.
 Identifiers, usage metadata, and structural JSON limits retain their existing bounds.
 
+### Usage before the terminal receipt
+
+Sandbox reports an execution's usage on its terminal `result` and `done` frames, and the adapter marks that receipt `usageMode: "cumulative"`.
+Before the receipt, only the OpenCode harness forwards usage: its `step_finish` event arrives as a `raw` frame with that step's token counts.
+The adapter attaches the execution's running total to each such frame as `usage` with `usageMode: "cumulative"`.
+The running total uses the receipt's convention: input includes cache reads and writes, and output includes reasoning.
+A consumer can therefore enforce a token limit while the execution runs.
+
+The adapter reports a running total only on a stream that starts at the execution's first frame.
+That is `environment.stream()` without `lastEventId`, and an exact `session.events()` replay without `since`.
+A cursor replay and the session's live tail miss earlier steps, so their step frames carry no usage.
+A step that repeats under a reconnect is counted once, by its OpenCode part id.
+After a step reports counts without both totals, later step frames carry no usage, because no later total is known.
+A step with an invalid count fails the stream.
+
+The terminal receipt remains authoritative, and the adapter never rewrites it or the step totals to agree.
+In 21 recorded production OpenCode executions, the last step total equaled the receipt in every counter.
+If a receipt is lower than the streamed total, the cumulative sequence falls, and a consumer that folds cumulative usage can report the conflict.
+Sum `usage` across events only when `usageMode` is `"delta"`.
+Claude Code, Pi, and the other CLI backends forward no per-step usage, so their frames carry none.
+Codex can forward its `turn.completed` record as a `raw` frame, but one Codex execution is one turn, so the adapter leaves that frame unchanged.
+
 ## Two capability documents
 
 Capabilities are derived in two stages, and the two stages answer different questions.
