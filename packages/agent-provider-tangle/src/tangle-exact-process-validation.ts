@@ -90,7 +90,7 @@ export function assertUnreservedMetadata(metadata: Record<string, unknown>): voi
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     throw new Error("exact process metadata must be a JSON object");
   }
-  assertBoundedJson(metadata);
+  assertBoundedJson(metadata, "exact process metadata");
   const reserved = [
     "capabilities",
     "customer_id",

@@ -270,8 +270,8 @@ export function createTangleProvider(
       signal?.throwIfAborted();
       assertCreateInputShape(input);
       assertNoInlineSecretValues(input);
-      for (const value of Object.values(material)) {
-        if (value !== undefined) assertBoundedJson(value);
+      for (const [field, value] of Object.entries(material)) {
+        if (value !== undefined) assertBoundedJson(value, `Tangle create ${field}`);
       }
       const acceptedInput = Object.freeze({
         ...deepFreeze(structuredClone(material)),
@@ -330,13 +330,13 @@ export function createTangleProvider(
               if (!query.providerOptions || typeof query.providerOptions !== "object" || Array.isArray(query.providerOptions)) {
                 throw new Error("Tangle environment list providerOptions must be a JSON object");
               }
-              assertBoundedJson(query.providerOptions);
+              assertBoundedJson(query.providerOptions, "Tangle environment list providerOptions");
             }
             if (query?.metadata !== undefined) {
               if (!query.metadata || typeof query.metadata !== "object" || Array.isArray(query.metadata)) {
                 throw new Error("Tangle environment query metadata must be a JSON object");
               }
-              assertBoundedJson(query.metadata);
+              assertBoundedJson(query.metadata, "Tangle environment query metadata");
             }
             const boxes: SandboxInstanceLike[] = [];
             for (let offset = 0; ; offset += SANDBOX_LIST_PAGE_SIZE) {
@@ -368,7 +368,7 @@ export function createTangleProvider(
                 if (!box.metadata || typeof box.metadata !== "object" || Array.isArray(box.metadata)) {
                   throw new Error("Tangle environment metadata must be a JSON object");
                 }
-                assertBoundedJson(box.metadata);
+                assertBoundedJson(box.metadata, "Tangle environment metadata");
               }
               const nameMatches = query?.name === undefined || box.name === query.name;
               const metadataMatches = query?.metadata === undefined ||

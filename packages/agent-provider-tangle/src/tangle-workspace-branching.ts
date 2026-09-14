@@ -984,7 +984,7 @@ async function environmentFromChild(
   let metadata: Record<string, unknown> | undefined;
   try {
     metadata =
-      request.metadata === undefined ? undefined : cloneJson(request.metadata);
+      request.metadata === undefined ? undefined : cloneJson(request.metadata, "Tangle branch request metadata");
   } catch {
     return undefined;
   }

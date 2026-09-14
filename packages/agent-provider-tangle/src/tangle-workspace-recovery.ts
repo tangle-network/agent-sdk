@@ -84,7 +84,7 @@ export function checkpointRecordFromSnapshot(
       createdAt,
       ...(request.metadata === undefined
         ? {}
-        : { metadata: cloneJson(request.metadata) }),
+        : { metadata: cloneJson(request.metadata, "Tangle recovery request metadata") }),
     });
     return {
       request,

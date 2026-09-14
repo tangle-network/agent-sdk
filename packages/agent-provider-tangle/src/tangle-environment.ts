@@ -115,7 +115,7 @@ export async function sandboxInstanceAsEnvironment(
     if (!box.metadata || typeof box.metadata !== "object" || Array.isArray(box.metadata)) {
       throw new Error("Tangle environment metadata must be a JSON object");
     }
-    assertBoundedJson(box.metadata);
+    assertBoundedJson(box.metadata, "Tangle environment metadata");
   }
   const support = sandboxCapabilitySupport(box, client, request?.resources);
   const deployment = await readDeploymentCapabilitySupport(box, operation);

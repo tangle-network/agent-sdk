@@ -128,9 +128,9 @@ export function forkMarkerMetadata(
     request,
     ...(materialization === "snapshot" ? { materialization } : {}),
   };
-  assertBoundedJson(marker);
+  assertBoundedJson(marker, "Tangle fork marker");
   return {
-    ...(request.metadata === undefined ? {} : cloneJson(request.metadata)),
+    ...(request.metadata === undefined ? {} : cloneJson(request.metadata, "Tangle fork request metadata")),
     [FORK_METADATA_KEY]: marker,
   };
 }

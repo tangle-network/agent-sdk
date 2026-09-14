@@ -27,7 +27,7 @@ export function sessionRefFromSandboxDispatch(
     dispatched && typeof dispatched === "object" && !Array.isArray(dispatched)
       ? (dispatched as Record<string, unknown>)
       : undefined;
-  if (record) assertBoundedJson(record);
+  if (record) assertBoundedJson(record, "Tangle dispatch record");
   const id = record?.sessionId ?? record?.id;
   if (!record || typeof id !== "string") {
     throw new Error("sandbox dispatch returned no session id");
