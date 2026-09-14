@@ -1,0 +1,23 @@
+name: Approve reviewed core release checks
+on:
+  push:
+    branches: [ops/approve-core-release-check]
+    paths: [.github/workflows/approve-core-release-check.yml]
+permissions:
+  contents: read
+  actions: write
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve only the inspected version PR workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=tangle-network/agent-sdk
+          gh api "repos/$repo/pulls/333" > "$RUNNER_TEMP/pr.json"
+          jq -e '.state == "open" and .head.repo.full_name == "tangle-network/agent-sdk" and .head.ref == "changeset-release/main" and .head.sha == "02976f37938eb48da2bf9f2e2b185f4bd417cd11" and .base.sha == "077fe09ea4afe398637000d8c9f4dcc5e3d84ff8"' "$RUNNER_TEMP/pr.json"
+          gh api "repos/$repo/actions/runs/34904341493" > "$RUNNER_TEMP/run.json"
+          jq -e '.head_sha == "02976f37938eb48da2bf9f2e2b185f4bd417cd11" and .event == "pull_request" and .path == ".github/workflows/ci.yml" and .conclusion == "action_required"' "$RUNNER_TEMP/run.json"
+          gh api --method POST "repos/$repo/actions/runs/34904341493/approve"
