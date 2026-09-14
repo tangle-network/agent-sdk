@@ -65,6 +65,7 @@ import { dispatchEnvironmentRun } from "./tangle-environment-dispatch.js";
 import { sandboxSessionAsAgentSession } from "./tangle-environment-session.js";
 import { tangleInteractionResponder } from "./tangle-interaction-response.js";
 import { createExecutionUsageLog } from "./tangle-usage-log.js";
+import { createStepUsageFold } from "./tangle-step-usage.js";
 import { observeTangleEnvironment } from "./tangle-observation.js";
 import { createTangleTerminalRegistry } from "./tangle-terminal.js";
 import { createTangleInteractiveAgentRegistry } from "./tangle-interactive.js";
@@ -199,6 +200,10 @@ export async function sandboxInstanceAsEnvironment(
       input.signal?.throwIfAborted();
       const expectedExecutionId = executionIdFromTurnInput(input);
       const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
+      // A turn resumed after a cursor starts past its first steps, so it cannot
+      // report the execution's running total.
+      const stepUsage =
+        input.lastEventId === undefined ? createStepUsageFold() : undefined;
       const iterator = box.streamPrompt(
         promptFromTurnInput(input),
         promptOptionsFromTurnInput(input, {
@@ -222,9 +227,10 @@ export async function sandboxInstanceAsEnvironment(
               ? { streamBound: true }
               : {}),
           });
+          // The log holds execution receipts, so it records before step usage is attached.
           usageLog.record(expectedExecutionId, converted.usage);
           input.signal?.throwIfAborted();
-          yield converted;
+          yield stepUsage?.observe(converted) ?? converted;
         }
       } catch (error) {
         if (
