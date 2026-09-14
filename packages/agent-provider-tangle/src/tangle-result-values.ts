@@ -8,7 +8,7 @@ export function execResultFromSandboxExecResult(result: SandboxExecResult | unde
     throw new Error("Tangle Sandbox exec returned no result");
   }
   const record = result as unknown as Record<string, unknown>;
-  assertBoundedJson(record);
+  assertBoundedJson(record, "Tangle exec result");
   if (
     typeof record.exitCode !== "number" ||
     !Number.isSafeInteger(record.exitCode)
@@ -31,7 +31,7 @@ export function tokenUsageFromData(data: Record<string, unknown>): TokenUsage | 
     ["usage", "tokenUsage", "costUsd", "totalCostUsd"]
       .filter((field) => Object.hasOwn(data, field))
       .map((field) => [field, data[field]]),
-  ));
+  ), "Tangle usage fields");
   if (
     data.usage !== undefined &&
     (!data.usage || typeof data.usage !== "object" || Array.isArray(data.usage))
@@ -56,7 +56,7 @@ export function tokenUsageFromData(data: Record<string, unknown>): TokenUsage | 
         ? (data.tokenUsage as Record<string, unknown>)
         : undefined;
   if (usageRecord === undefined) return undefined;
-  assertBoundedJson(usageRecord);
+  assertBoundedJson(usageRecord, "Tangle token usage");
   const inputTokens = firstValidatedNumber(
     usageRecord,
     ["inputTokens", "tokensIn", "prompt_tokens"],

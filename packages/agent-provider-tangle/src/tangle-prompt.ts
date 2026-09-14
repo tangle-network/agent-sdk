@@ -259,7 +259,7 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       runtimeAttachments: tangleRuntimeAttachments(present.runtimeAttachments, backend.profile),
     });
   }
-  assertBoundedJson(backend);
+  assertBoundedJson(backend, "Tangle prompt backend");
   return backend as SandboxPromptBackend;
 }
 
@@ -707,7 +707,7 @@ export function validatedSandboxPromptResult(
       field !== "text" &&
       field !== "finalText" &&
       field !== "toolInvocations"),
-  ));
+  ), "Tangle prompt result");
   if (typeof record.success !== "boolean") {
     throw new Error("Tangle prompt result omitted its success status");
   }

@@ -229,7 +229,7 @@ function exactSandboxOptions(
 ): TangleExactSandboxOptions {
   boundedString(input.image, "exact process image");
   boundedIdentifier(input.idempotencyKey, "exact process idempotencyKey");
-  assertBoundedJson(input.metadata);
+  assertBoundedJson(input.metadata, "exact process metadata");
   if (!input.image.trim()) throw new Error("exact process image is required");
   if (!IMMUTABLE_TANGLE_IMAGE.test(input.image)) {
     throw new Error(

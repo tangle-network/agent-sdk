@@ -27,7 +27,7 @@ export function assertRecord(value: unknown, label: string): asserts value is Re
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
-  assertBoundedJson(value);
+  assertBoundedJson(value, label);
   if (Object.keys(value).length > MAX_MAP_ENTRIES) {
     throw new Error(`${label} has too many entries`);
   }

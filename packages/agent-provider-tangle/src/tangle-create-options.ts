@@ -29,7 +29,7 @@ export function captureModelCredentials(
   value: TangleProviderOptions["modelCredentials"],
 ): TangleProviderOptions["modelCredentials"] {
   if (value === undefined) return undefined;
-  assertBoundedJson(value);
+  assertBoundedJson(value, "Tangle modelCredentials");
   if (!value || typeof value !== "object" || Array.isArray(value) ||
     Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl")) {
     throw new Error("Tangle modelCredentials accepts only apiKeyEnv and baseUrl");
@@ -170,7 +170,7 @@ export function assertNoInlineSecretValues(
     if (!input.providerOptions || typeof input.providerOptions !== "object" || Array.isArray(input.providerOptions)) {
       throw new Error("Tangle create providerOptions must be a JSON object");
     }
-    assertBoundedJson(input.providerOptions);
+    assertBoundedJson(input.providerOptions, "Tangle create providerOptions");
     if (Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
@@ -185,7 +185,7 @@ export function assertNoInlineSecretValues(
     if (!input.resources.providerOptions || typeof input.resources.providerOptions !== "object" || Array.isArray(input.resources.providerOptions)) {
       throw new Error("Tangle resource providerOptions must be a JSON object");
     }
-    assertBoundedJson(input.resources.providerOptions);
+    assertBoundedJson(input.resources.providerOptions, "Tangle create resources.providerOptions");
     if (Object.keys(input.resources.providerOptions).length > 0) {
       throw new Error("Tangle resource providerOptions are not supported");
     }
@@ -250,7 +250,7 @@ export function assertCreateInputShape(
     if (!input.profile || typeof input.profile !== "object" || Array.isArray(input.profile)) {
       throw new Error("Tangle profile must be an object or bounded reference");
     }
-    assertBoundedJson(input.profile);
+    assertBoundedJson(input.profile, "Tangle create profile");
   }
   if (input.resources !== undefined) {
     if (!input.resources || typeof input.resources !== "object" || Array.isArray(input.resources)) {
@@ -270,7 +270,7 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
   }
-  assertBoundedJson(options);
+  assertBoundedJson(options, "Tangle mapped create options");
   if (options.backend?.runtimeAttachments !== undefined) {
     tangleRuntimeAttachments(options.backend.runtimeAttachments, options.backend.profile);
   }
@@ -319,7 +319,7 @@ function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, 
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
     throw new Error("Tangle inline AgentProfile must be an object");
   }
-  assertBoundedJson(profile);
+  assertBoundedJson(profile, "Tangle inline AgentProfile");
   return profile;
 }
 
@@ -327,7 +327,7 @@ function assertBoundedRecord(value: unknown, label: string): asserts value is Re
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
-  assertBoundedJson(value);
+  assertBoundedJson(value, label);
 }
 
 function assertStringRecord(value: Record<string, string>, label: string): void {
