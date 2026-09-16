@@ -1,4 +1,6 @@
 export type { TangleExactProcessOptions } from "./tangle-types.js";
+export { JsonBoundError } from "./tangle-contract-safety.js";
+export type { JsonBoundRule, JsonBoundViolation } from "./tangle-contract-safety.js";
 export * from "./tangle-types.js";
 export { createTangleProvider } from "./tangle-provider.js";
 export { DEFAULT_TANGLE_READY_TIMEOUT_MS } from "./tangle-readiness.js";
