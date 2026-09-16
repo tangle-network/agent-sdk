@@ -1,5 +1,21 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.4.0
+
+### Minor Changes
+
+- 7a5fe31: Offer verified same-session continuation on a retained Tangle session.
+  
+  The session now implements `contextBoundary` and `continueNative`, and the adapter declares `nativeContinuation: { atomicBoundary: true, requestIdempotency: true }` wherever it declares retained control. The boundary is the executing run's identity; a continuation is verified against exactly that run and refused with `boundary_mismatch` if another turn has moved it. The continued turn is dispatched through the adapter's own prompt path under the operation id as `turnId`, so the sandbox's turn cache and the adapter's operation record together make a retry replay the original result and control reference without a second dispatch, and a changed turn under the same operation id a `conflict`. `admissionControl` is not claimed, because the adapter learns the continued run's identity from the prompt result.
+  
+  This is the provider half of letting a re-prompted supervisor continue its own conversation instead of starting a fresh one in a new environment (agent-runtime#1246). It is proven without a sandbox in `native-continuation.test.ts`.
+
+### Patch Changes
+
+- 7a5fe31: Deliver a session event that arrives without a stable id instead of ending the stream.
+  
+  The sidecar stamps an SSE `id:` only on frames that have a replay-buffer position; a frame with no position carries no id by the SSE contract, so a reconnect resumes from the last frame that had one. The adapter refused any id-less frame as a contract violation and ended the whole event stream, which also lost the terminal `done` receipt that carries the execution's token usage. Three long pi turns on 2026-09-15 settled at zero tokens over 846 to 1693 seconds each for this reason. An id-less frame cannot be replayed, so it cannot arrive twice; it is now yielded without dedup and the cursor is left where it was.
+
 ## 1.3.2
 
 ### Patch Changes

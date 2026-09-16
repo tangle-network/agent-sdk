@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-tangle",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "AgentEnvironmentProvider adapter for Tangle sandboxes",
   "type": "module",
   "license": "MIT",
