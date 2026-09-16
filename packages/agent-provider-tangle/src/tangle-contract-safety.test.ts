@@ -5,6 +5,7 @@ import {
 } from "./tangle-create-options.js";
 import {
   assertBoundedJson,
+  JsonBoundError,
   isBoundedJson,
   MAX_ARRAY_LENGTH,
   MAX_IDENTIFIER_LENGTH,
@@ -200,3 +201,27 @@ describe("a rejection says which field was rejected", () => {
     expect(reason).toContain("16384");
   });
 });
+
+describe("a rejection is classifiable without reading its message", () => {
+  // The supervising runtime names a failed retained execution from the error's structure, never
+  // its text (agent-runtime#1204). A plain Error here was filed under "requires reconciliation".
+  it("throws a JsonBoundError with a stable name, a code, the label and the whole violation", () => {
+    const oversized = { profile: { prompt: "x".repeat(MAX_STRING_LENGTH + 1) } };
+    let caught: unknown;
+    try {
+      assertBoundedJson(oversized, "Tangle create profile");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(JsonBoundError);
+    expect(caught).toBeInstanceOf(Error);
+    const error = caught as JsonBoundError;
+    expect(error.name).toBe("JsonBoundError");
+    expect(error.code).toBe("JSON_BOUND_VIOLATION");
+    expect(error.label).toBe("Tangle create profile");
+    expect(error.violation).toMatchObject({ rule: "string", path: "profile.prompt", limit: MAX_STRING_LENGTH });
+    // The message is unchanged for every reader that already matches on it.
+    expect(error.message).toMatch(/Tangle create profile exceeds its JSON bound/u);
+  });
+});
+

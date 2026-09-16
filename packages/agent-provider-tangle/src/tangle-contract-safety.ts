@@ -226,6 +226,32 @@ export function describeJsonBoundViolation(violation: JsonBoundViolation): strin
  * profile, the metadata, or a providerOptions map — which is how three children settled on five
  * words that identified nothing.
  */
+/**
+ * A value refused by a JSON bound, as an error a consumer can classify without reading text.
+ *
+ * Every refusal in this package was a plain `Error` with a message, and the runtime that
+ * supervises these environments classifies a failed retained execution from the error's
+ * STRUCTURE — class name, `code`, status — never its message, because this package's messages
+ * are not a contract. So a bound refusal reached its journal under the one name reserved for an
+ * execution nobody can observe, telling the operator to reconcile before retrying when nothing
+ * had run and nothing needed reconciling (agent-runtime#1204, exhibit 6).
+ *
+ * `name` and `code` are stable; `message` stays the operator-facing line and may change. The
+ * violation is carried whole so a reader can act on the rule and the path without parsing.
+ */
+export class JsonBoundError extends Error {
+  readonly code = "JSON_BOUND_VIOLATION" as const;
+  readonly label: string;
+  readonly violation: JsonBoundViolation;
+
+  constructor(label: string, violation: JsonBoundViolation, message: string) {
+    super(message);
+    this.name = "JsonBoundError";
+    this.label = label;
+    this.violation = violation;
+  }
+}
+
 export function assertBoundedJson(value: unknown, label = "value"): void {
   const violation = firstJsonBoundViolation(value);
   if (violation === undefined) return;
@@ -233,7 +259,9 @@ export function assertBoundedJson(value: unknown, label = "value"): void {
   // oversized, and "exceeds" sends the reader after a size problem that does not exist.
   const verdict = violation.limit === undefined ? "violates" : "exceeds";
   const message = `${label} ${verdict} its JSON bound: ${describeJsonBoundViolation(violation)}`;
-  throw new Error(
+  throw new JsonBoundError(
+    label,
+    violation,
     message.length > MAX_BOUND_MESSAGE_LENGTH
       ? `${message.slice(0, MAX_BOUND_MESSAGE_LENGTH - 3)}...`
       : message,
