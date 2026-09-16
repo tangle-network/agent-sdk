@@ -19,6 +19,16 @@ import type {
   AgentRunCancellationRequest,
   AgentRunControlRef,
 } from "@tangle-network/agent-interface";
+import {
+  NativeContextContinuationRequestSchema,
+  nativeContextContinuationTurnDigest,
+} from "@tangle-network/agent-interface";
+import type {
+  AgentNativeContextContinuationOptions,
+  AgentNativeContextContinuationResult,
+  NativeContextBoundaryProof,
+  NativeContextContinuationRequest,
+} from "@tangle-network/agent-interface";
 import type { SandboxEvent } from "@tangle-network/sandbox";
 import type { SandboxSessionLike } from "./tangle-types.js";
 import type { ExecutionUsageLog } from "./tangle-usage-log.js";
@@ -88,6 +98,7 @@ export function sandboxSessionAsAgentSession(
   retainedControl: boolean,
   interactionResponses: boolean,
   usageLog?: ExecutionUsageLog,
+  nativeContinuation = false,
 ): AgentSession {
   const measured = (
     executionId: string | undefined,
@@ -153,7 +164,155 @@ export function sandboxSessionAsAgentSession(
         return exactAcknowledgement;
       }
     : undefined;
-  return {
+  // One record per continuation operation. The sandbox already caches a
+  // prompt by its turnId, and continueNative sets turnId to the operationId,
+  // so a retry after a lost response replays the same dispatch on the wire.
+  // This map lets the retry return the same acknowledgement and result with
+  // no dispatch at all, and turns a changed turn under a reused operationId
+  // into a conflict instead of a second run.
+  const nativeOperations = new Map<
+    string,
+    {
+      requestDigest: NativeContextContinuationRequest["requestDigest"];
+      outcome: AgentNativeContextContinuationResult;
+    }
+  >();
+  const currentBoundary = (): NativeContextBoundaryProof | null => {
+    if (activeControlRef === undefined) return null;
+    return {
+      runId: activeControlRef.runId,
+      provider: activeControlRef.provider,
+      environmentId: activeControlRef.environmentId,
+      sessionId: activeControlRef.sessionId,
+      executionId: activeControlRef.executionId,
+      requestDigest: activeControlRef.requestDigest,
+      // The conversation's boundary is the run that last extended it. A
+      // continuation is verified against exactly that run, so a turn that
+      // landed in between moves the boundary and the continuation is refused
+      // rather than appended to a conversation the caller has not seen.
+      boundary: { kind: "revision", revision: activeControlRef.executionId },
+      observedAt: new Date().toISOString(),
+    };
+  };
+  const contextBoundary = async (
+    options?: { signal?: AbortSignal },
+  ): Promise<NativeContextBoundaryProof | null> => {
+    assertOptionKeys(options, ["signal"], "Tangle native context boundary");
+    options?.signal?.throwIfAborted();
+    return currentBoundary();
+  };
+  const continueNative = async (
+    request: NativeContextContinuationRequest,
+    continuationOptions: AgentNativeContextContinuationOptions,
+  ): Promise<AgentNativeContextContinuationResult> => {
+    const exactRequest = NativeContextContinuationRequestSchema.parse(request);
+    if (
+      nativeContextContinuationTurnDigest(continuationOptions.turn) !==
+      exactRequest.turnDigest
+    ) {
+      throw new Error(
+        "Tangle native continuation turn does not match its request digest",
+      );
+    }
+    if (continuationOptions.onAdmission !== undefined) {
+      throw new Error(
+        "Tangle native continuation does not advertise early admission control",
+      );
+    }
+    continuationOptions.signal?.throwIfAborted();
+    // A retry names the run the conversation had BEFORE the continuation it
+    // is retrying, so the operation record is consulted before the request is
+    // bound to the current run; a replay must answer even though the run has
+    // since advanced past it.
+    const prior = nativeOperations.get(exactRequest.operationId);
+    if (prior !== undefined) {
+      if (prior.requestDigest === exactRequest.requestDigest) {
+        return {
+          ...prior.outcome,
+          acknowledgement: { ...prior.outcome.acknowledgement, status: "replayed" },
+        } as AgentNativeContextContinuationResult;
+      }
+      return {
+        acknowledgement: {
+          operationId: exactRequest.operationId,
+          requestDigest: exactRequest.requestDigest,
+          status: "conflict",
+          historyMessagesSent: 0,
+          existingRequestDigest: prior.requestDigest,
+        },
+      };
+    }
+    const expectedRun = activeControlRef;
+    if (expectedRun === undefined) {
+      throw new Error(
+        "Tangle native continuation requires an exact run control reference",
+      );
+    }
+    if (!sameRunControlRef(exactRequest.run, expectedRun)) {
+      throw new Error("Tangle native continuation targets another retained run");
+    }
+    const actual = currentBoundary();
+    const expected = exactRequest.expectedBoundary.boundary;
+    const boundaryMatches =
+      actual !== null &&
+      actual.boundary.kind === "revision" &&
+      expected.kind === "revision" &&
+      actual.boundary.revision === expected.revision;
+    if (!boundaryMatches) {
+      return {
+        acknowledgement: {
+          operationId: exactRequest.operationId,
+          requestDigest: exactRequest.requestDigest,
+          status: "boundary_mismatch",
+          historyMessagesSent: 0,
+          ...(actual === null ? {} : { actualBoundary: actual }),
+        },
+      };
+    }
+    const turn = continuationOptions.turn;
+    // The adapter's own prompt path mints the continued run's identity from
+    // the turn and its turnId, binds the control reference, and records usage.
+    const result = await agentSession.prompt({
+      ...(turn.prompt === undefined ? {} : { prompt: turn.prompt }),
+      ...(turn.parts === undefined ? {} : { parts: turn.parts }),
+      ...(turn.model === undefined ? {} : { model: turn.model }),
+      ...(turn.context === undefined ? {} : { context: turn.context }),
+      ...(turn.providerOptions === undefined
+        ? {}
+        : { providerOptions: turn.providerOptions }),
+      sessionId: session.id,
+      turnId: exactRequest.operationId,
+      ...(continuationOptions.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: continuationOptions.timeoutMs }),
+      ...(continuationOptions.signal === undefined
+        ? {}
+        : { signal: continuationOptions.signal }),
+    });
+    const controlRef = activeControlRef;
+    if (controlRef === undefined || sameRunControlRef(controlRef, expectedRun)) {
+      throw new Error(
+        "Tangle native continuation did not advance the run control reference",
+      );
+    }
+    const outcome: AgentNativeContextContinuationResult = {
+      acknowledgement: {
+        operationId: exactRequest.operationId,
+        requestDigest: exactRequest.requestDigest,
+        status: "accepted",
+        historyMessagesSent: 0,
+        actualBoundary: actual,
+      },
+      result,
+      controlRef: { ...controlRef },
+    };
+    nativeOperations.set(exactRequest.operationId, {
+      requestDigest: exactRequest.requestDigest,
+      outcome,
+    });
+    return outcome;
+  };
+  const agentSession: AgentSession = {
     id: session.id,
     get controlRef(): AgentRunControlRef | undefined {
       return activeControlRef === undefined ? undefined : { ...activeControlRef };
@@ -513,5 +672,7 @@ export function sandboxSessionAsAgentSession(
     },
     ...(cancelRun ? { cancelRun } : {}),
     ...(respondToInteraction ? { respondToInteraction } : {}),
+    ...(nativeContinuation ? { contextBoundary, continueNative } : {}),
   };
+  return agentSession;
 }
