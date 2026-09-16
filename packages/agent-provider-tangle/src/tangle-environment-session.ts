@@ -243,9 +243,18 @@ export function sandboxSessionAsAgentSession(
             sessionId: session.id,
             ...(useExactExecutionStream ? { streamBound: true } : {}),
           });
-          if (converted.id === undefined) throw new Error("Tangle session event arrived without a stable id");
-          if (seenEventIds.has(converted.id)) continue;
-          seenEventIds.add(converted.id);
+          // The sidecar stamps `id:` only on frames that have a replay-buffer position
+          // (agent-dev-container apps/sidecar/src/routes/agents-events.ts). A frame with no
+          // position carries no id by the SSE contract, so a reconnect resumes from the last
+          // frame that had one. Refusing such a frame ended the whole stream, and with it the
+          // terminal receipt that carries the execution's token usage: three long pi turns on
+          // 2026-09-15 settled at 0 tokens over 846-1693 s each for exactly this reason. An
+          // id-less frame cannot be replayed, so it cannot arrive twice; deliver it without
+          // dedup and leave the cursor where it was.
+          if (converted.id !== undefined) {
+            if (seenEventIds.has(converted.id)) continue;
+            seenEventIds.add(converted.id);
+          }
           options?.signal?.throwIfAborted();
           yield stepUsage?.observe(converted) ?? converted;
         }
