@@ -70,6 +70,16 @@ export function defaultTangleSandboxCapabilities(
     // together over one Sandbox surface, and the capability schema refuses
     // a partial block, so they stand or fall on the same fact set.
     sessions: { continue: true, list: false, messages: false },
+    // Same-session continuation is declared as intent and stripped by
+    // narrowing with retained control, because it is built on the same
+    // facts: an exact run identity to bind the boundary to, and a session
+    // whose prompts the sandbox serializes. The boundary is the executing
+    // run's identity, and a competing prompt on the session is refused by
+    // the sandbox rather than interleaved, so a check-then-dispatch on one
+    // handle cannot be split by another turn. `admissionControl` is not
+    // claimed: the adapter learns the continued run's identity from the
+    // prompt result, not before it.
+    nativeContinuation: { atomicBoundary: true, requestIdempotency: true },
     // Answering an ask is declared as intent and stripped by narrowing unless
     // the session exposes the command route and the deployment discloses its
     // durable response record. Three claims are bounded by what the adapter
@@ -514,8 +524,10 @@ export function narrowedTangleCapabilities(
   if (!tangleInteractionResponsesSupported(declared, support, deployment)) {
     delete narrowed.interactions;
   }
-  delete narrowed.nativeContinuation;
-  if (!supportsRetainedControl) delete narrowed.retainedControl;
+  if (!supportsRetainedControl) {
+    delete narrowed.retainedControl;
+    delete narrowed.nativeContinuation;
+  }
   if (
     narrowed.confidential &&
     (!support.confidentialAttestation ||

@@ -243,6 +243,7 @@ const DEPLOYMENT_DECIDED_CLAIMS = [
   "streaming.turnIdempotency",
   "sessions.continue",
   "retainedControl",
+  "nativeContinuation",
   "interactions",
   "interactiveAgent",
 ] as const;
@@ -260,6 +261,9 @@ function deploymentDecidedClaims(document: AgentEnvironmentCapabilities) {
     turnIdempotency: document.streaming.turnIdempotency,
     continued: document.sessions.continue,
     retainedControl: document.retainedControl !== undefined,
+    // Same-session continuation stands on the retained-control facts, so the
+    // deployment decides it the same way.
+    nativeContinuation: document.nativeContinuation !== undefined,
     interactions: document.interactions !== undefined,
     interactiveAgent:
       document.interactiveAgent !== undefined &&
@@ -606,6 +610,7 @@ describe("Tangle deployment capability discovery", () => {
         turnIdempotency: true,
         continued: true,
         retainedControl: true,
+        nativeContinuation: true,
         interactions: true,
         interactiveAgent: linkedInteractiveAgentSurface(),
       });
@@ -619,6 +624,7 @@ describe("Tangle deployment capability discovery", () => {
         turnIdempotency: testCase.backed,
         continued: testCase.backed,
         retainedControl: testCase.backed,
+        nativeContinuation: testCase.backed,
         interactions: testCase.interactions,
         interactiveAgent: false,
       });

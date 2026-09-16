@@ -281,6 +281,7 @@ export async function sandboxInstanceAsEnvironment(
               retainedControl,
               interactionResponses,
               usageLog,
+              capabilities.nativeContinuation !== undefined,
             );
             // sessions.continue was granted from the probe session and the
             // deployment document together; this backstop holds every
