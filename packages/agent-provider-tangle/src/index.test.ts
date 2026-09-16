@@ -1257,13 +1257,16 @@ describe("createTangleProvider", () => {
       sessionId: sandboxSession.id,
     });
 
-    await expect(
-      collect(
-        environment
-          .session!(sandboxSession.id, { controlRef: dispatched.controlRef })
-          .events(),
-      ),
-    ).rejects.toThrow(/without a stable id/);
+    // A frame with no replay position is permitted by the SSE contract and arrives with no id.
+    // It is delivered rather than refused: refusing it ended the stream before the terminal
+    // receipt and settled long executions at zero tokens.
+    const delivered = await collect(
+      environment
+        .session!(sandboxSession.id, { controlRef: dispatched.controlRef })
+        .events(),
+    );
+    expect(delivered.map((event) => event.type)).toEqual(["status"]);
+    expect(delivered[0]?.id).toBeUndefined();
   });
 
   it("rejects events from a competing execution on an exact session", async () => {
