@@ -1,13 +1,21 @@
 import { z } from "zod";
 import {
   REASONING_EFFORTS,
+  TRAINED_MODEL_PREFIX,
+  trainedModelIdForArtifact,
   type AgentProfile,
+  type AgentProfileMetadata,
+  type AgentProfileTraining,
+  type AgentTrainingReceipt,
+  type AgentTrainingTask,
   type AgentProfileConfigValue,
   type AgentProfileMcpServer,
   type AgentProfilePrompt,
 } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 import {
+  canonicalCandidateDigest,
+  sha256DigestSchema,
   environmentNameSchema,
   headerNameSchema,
   isSafeExecutable,
@@ -430,6 +438,101 @@ export const agentProfileDiffRemovalSchema = z.strictObject({
   extensions: removeListSchema.optional(),
 });
 
+const trainingIdentitySchema = z.string().min(1).max(500).refine(
+  (value) => value.trim() === value && isWellFormedUnicode(value) &&
+    !controlCharacterPattern.test(value) && !looksLikeCredential(value),
+  "training identity must be canonical public text",
+);
+
+export const agentTrainingTaskSchema = z.strictObject({
+  benchmark: trainingIdentitySchema,
+  task: trainingIdentitySchema,
+  contentDigest: sha256DigestSchema,
+}) satisfies z.ZodType<AgentTrainingTask>;
+
+/** The same order is used by dataset ingestion, receipt admission and holdout checks. */
+export function agentTrainingTaskKey(task: AgentTrainingTask): string {
+  return JSON.stringify([task.benchmark, task.task, task.contentDigest]);
+}
+
+export const agentTrainingDatasetIdentitySchema = z.strictObject({
+  digest: sha256DigestSchema,
+  taskSetDigest: sha256DigestSchema,
+  tasks: z.array(agentTrainingTaskSchema).min(1).max(10_000),
+}).superRefine((dataset, context) => {
+  const keys = dataset.tasks.map(agentTrainingTaskKey);
+  if (keys.some((key, index) => index > 0 && key <= keys[index - 1]!)) {
+    context.addIssue({ code: "custom", path: ["tasks"], message: "training tasks must be sorted and unique" });
+  }
+  if (canonicalCandidateDigest(dataset.tasks) !== dataset.taskSetDigest) {
+    context.addIssue({ code: "custom", path: ["taskSetDigest"], message: "training task inventory digest mismatch" });
+  }
+});
+
+export const agentTrainingParametersSchema = ownPropertyRecordSchema(
+  z.union([z.string().max(2_048).pipe(publicProfileConfigStringSchema), z.number().finite(), z.boolean(), z.null()]),
+).superRefine((parameters, context) => {
+  if (Object.keys(parameters).length > 100) {
+    context.addIssue({ code: "custom", message: "at most 100 public training parameters are allowed" });
+  }
+  for (const name of Object.keys(parameters)) {
+    if (!trainingIdentitySchema.safeParse(name).success || isCredentialBearingProfileConfigName(name)) {
+      context.addIssue({ code: "custom", path: [name], message: "training parameter name must be public and non-credential" });
+    }
+  }
+});
+
+export const agentTrainingReceiptSchema = z.strictObject({
+  version: z.literal(1),
+  dataset: agentTrainingDatasetIdentitySchema,
+  parentProfileDigest: sha256DigestSchema,
+  parentReceiptDigest: sha256DigestSchema.nullable(),
+  executionRef: sha256DigestSchema,
+  trainer: z.strictObject({
+    mode: z.enum(["command", "managed"]),
+    id: trainingIdentitySchema,
+    revision: sha256DigestSchema,
+    parameters: agentTrainingParametersSchema,
+  }),
+  checkpoint: z.strictObject({
+    artifactDigest: sha256DigestSchema,
+    artifactBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    routerModelId: trainingIdentitySchema,
+    servingDigest: sha256DigestSchema,
+  }),
+}).superRefine((receipt, context) => {
+  if (receipt.checkpoint.routerModelId !== trainedModelIdForArtifact(receipt.checkpoint.artifactDigest)) {
+    context.addIssue({ code: "custom", path: ["checkpoint", "routerModelId"], message: "trained Router model must be artifact-addressed" });
+  }
+}) satisfies z.ZodType<AgentTrainingReceipt>;
+
+export const agentProfileTrainingSchema = z.strictObject({
+  receipt: agentTrainingReceiptSchema,
+  ancestors: z.array(agentTrainingReceiptSchema).max(8),
+}).superRefine((training, context) => {
+  const chain = [training.receipt, ...training.ancestors];
+  const digests = chain.map(canonicalCandidateDigest);
+  if (new Set(digests).size !== digests.length) {
+    context.addIssue({ code: "custom", message: "training receipt ancestry must not repeat" });
+  }
+  for (let index = 0; index < chain.length; index++) {
+    if (chain[index]!.parentReceiptDigest !== (digests[index + 1] ?? null)) {
+      context.addIssue({ code: "custom", message: "training receipt ancestry is incomplete or has been altered" });
+    }
+  }
+}) satisfies z.ZodType<AgentProfileTraining>;
+
+export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
+  ownPropertyRecordSchema(z.unknown()).superRefine((metadata, context) => {
+    if (!Object.hasOwn(metadata, "training")) return;
+    const result = agentProfileTrainingSchema.safeParse(metadata.training);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message });
+      }
+    }
+  });
+
 /**
  * The complete provider-neutral agent profile schema — the runtime validator for
  * the canonical {@link AgentProfile} TS contract. Kept structurally in lock-step
@@ -455,13 +558,29 @@ export const agentProfileSchema = z
     ).optional(),
     modes: ownPropertyRecordSchema(agentProfileModeSchema).optional(),
     confidential: agentProfileConfidentialSchema.optional(),
-    metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+    metadata: agentProfileMetadataSchema.optional(),
     extensions: ownPropertyRecordSchema(
       z.union([ownPropertyRecordSchema(z.unknown()), z.undefined()]),
     ).optional(),
   })
   .superRefine((profile, context) => {
     validateNestedRecordKeys(profile, context, [], new Set<object>());
+    const training = agentProfileTrainingSchema.safeParse(profile.metadata?.training);
+    if (profile.model?.default?.startsWith(TRAINED_MODEL_PREFIX) && !training.success) {
+      context.addIssue({ code: "custom", path: ["metadata", "training"], message: "trained model requires a checkpoint receipt" });
+    }
+    const auxiliaryModels = [
+      profile.model?.small,
+      ...Object.values(profile.subagents ?? {}).map((agent) => agent.model),
+      ...Object.values(profile.modes ?? {}).map((mode) => mode.model),
+    ];
+    if (auxiliaryModels.some((model) => model?.startsWith(TRAINED_MODEL_PREFIX) &&
+      (!training.success || model !== training.data.receipt.checkpoint.routerModelId))) {
+      context.addIssue({ code: "custom", message: "trained auxiliary models require the same receipted checkpoint" });
+    }
+    if (training.success && profile.model?.default !== training.data.receipt.checkpoint.routerModelId) {
+      context.addIssue({ code: "custom", path: ["model", "default"], message: "trained profile model must equal the receipt's Router model" });
+    }
   });
 
 const encodedRecordKeyPattern = "^u(?:[0-9a-f]{4})*$";

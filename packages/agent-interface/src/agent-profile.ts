@@ -13,6 +13,7 @@
  */
 
 import type { HarnessType } from "./harness.js";
+import type { Sha256Digest } from "./agent-candidate.js";
 
 /**
  * Permission policy value for a capability.
@@ -416,6 +417,62 @@ export interface AgentProfileConnection {
   alias?: string;
 }
 
+/** Router namespace reserved for checkpoint-backed models. Receipt-free profiles cannot use it. */
+export const TRAINED_MODEL_PREFIX = "tangle-trained/";
+
+/** An immutable Router alias; serving must independently attest this artifact-to-route binding. */
+export function trainedModelIdForArtifact(digest: Sha256Digest): string {
+  return `${TRAINED_MODEL_PREFIX}${digest.slice("sha256:".length)}`;
+}
+
+/** Identity of a task whose data was exposed to training or model selection. */
+export interface AgentTrainingTask {
+  benchmark: string;
+  task: string;
+  contentDigest: Sha256Digest;
+}
+
+/** Complete exposure inventory, derived from the exact dataset delivered to a trainer. */
+export interface AgentTrainingDatasetIdentity {
+  digest: Sha256Digest;
+  taskSetDigest: Sha256Digest;
+  tasks: AgentTrainingTask[];
+}
+
+export interface AgentTrainingReceipt {
+  version: 1;
+  dataset: AgentTrainingDatasetIdentity;
+  parentProfileDigest: Sha256Digest;
+  /** Null only when the parent has no training receipt. */
+  parentReceiptDigest: Sha256Digest | null;
+  executionRef: Sha256Digest;
+  trainer: {
+    mode: "command" | "managed";
+    id: string;
+    revision: Sha256Digest;
+    /** Public hyperparameters only; credentials belong to the private executor. */
+    parameters: Record<string, string | number | boolean | null>;
+  };
+  checkpoint: {
+    artifactDigest: Sha256Digest;
+    artifactBytes: number;
+    routerModelId: string;
+    /** Digest of independently verified serving evidence, not trainer stdout. */
+    servingDigest: Sha256Digest;
+  };
+}
+
+export interface AgentProfileTraining {
+  receipt: AgentTrainingReceipt;
+  /** Immediate parent first, terminating at a receipt with parentReceiptDigest=null. */
+  ancestors: AgentTrainingReceipt[];
+}
+
+export interface AgentProfileMetadata extends Record<string, unknown> {
+  /** Reserved: a trained model is admitted only with a complete checkpoint receipt. */
+  training?: AgentProfileTraining;
+}
+
 /**
  * Public provider-neutral agent profile contract.
  */
@@ -447,7 +504,7 @@ export interface AgentProfile {
   hooks?: Record<string, AgentProfileHookCommand[]>;
   modes?: Record<string, AgentProfileMode>;
   confidential?: AgentProfileConfidential;
-  metadata?: Record<string, unknown>;
+  metadata?: AgentProfileMetadata;
   /**
    * Non-portable backend-specific extensions.
    *
