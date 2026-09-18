@@ -20,6 +20,8 @@ import {
   boundedString,
   MAX_ARRAY_LENGTH,
   MAX_MAP_ENTRIES,
+  PROFILE_AT_BACKEND_PROFILE,
+  PROFILE_AT_ROOT,
 } from "./tangle-contract-safety.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
@@ -250,7 +252,7 @@ export function assertCreateInputShape(
     if (!input.profile || typeof input.profile !== "object" || Array.isArray(input.profile)) {
       throw new Error("Tangle profile must be an object or bounded reference");
     }
-    assertBoundedJson(input.profile, "Tangle create profile");
+    assertBoundedJson(input.profile, "Tangle create profile", PROFILE_AT_ROOT);
   }
   if (input.resources !== undefined) {
     if (!input.resources || typeof input.resources !== "object" || Array.isArray(input.resources)) {
@@ -270,7 +272,7 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
   }
-  assertBoundedJson(options, "Tangle mapped create options");
+  assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
   if (options.backend?.runtimeAttachments !== undefined) {
     tangleRuntimeAttachments(options.backend.runtimeAttachments, options.backend.profile);
   }
@@ -319,7 +321,7 @@ function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, 
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
     throw new Error("Tangle inline AgentProfile must be an object");
   }
-  assertBoundedJson(profile, "Tangle inline AgentProfile");
+  assertBoundedJson(profile, "Tangle inline AgentProfile", PROFILE_AT_ROOT);
   return profile;
 }
 
