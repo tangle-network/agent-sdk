@@ -43,6 +43,7 @@ import {
   boundedIdentifier,
   boundedString,
   MAX_LIST_RESULTS,
+  PROFILE_AT_ROOT,
   SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 
@@ -271,7 +272,10 @@ export function createTangleProvider(
       assertCreateInputShape(input);
       assertNoInlineSecretValues(input);
       for (const [field, value] of Object.entries(material)) {
-        if (value !== undefined) assertBoundedJson(value, `Tangle create ${field}`);
+        if (value === undefined) continue;
+        // Only `profile` carries payload. Every other create field is control-plane text, and a
+        // profile-shaped value smuggled through one of them stays on MAX_STRING_LENGTH.
+        assertBoundedJson(value, `Tangle create ${field}`, field === "profile" ? PROFILE_AT_ROOT : undefined);
       }
       const acceptedInput = Object.freeze({
         ...deepFreeze(structuredClone(material)),

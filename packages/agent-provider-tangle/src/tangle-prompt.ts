@@ -22,7 +22,11 @@ import {
   contextTransferResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
-import { assertBoundedJson, boundedString } from "./tangle-contract-safety.js";
+import {
+  assertBoundedJson,
+  boundedString,
+  PROFILE_AT_PROFILE,
+} from "./tangle-contract-safety.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
@@ -259,7 +263,7 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       runtimeAttachments: tangleRuntimeAttachments(present.runtimeAttachments, backend.profile),
     });
   }
-  assertBoundedJson(backend, "Tangle prompt backend");
+  assertBoundedJson(backend, "Tangle prompt backend", PROFILE_AT_PROFILE);
   return backend as SandboxPromptBackend;
 }
 

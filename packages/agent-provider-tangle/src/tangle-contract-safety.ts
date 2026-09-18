@@ -8,6 +8,54 @@ export const MAX_LIST_RESULTS = 100_000;
 export const SANDBOX_LIST_PAGE_SIZE = 1_000;
 export const MAX_IDENTIFIER_LENGTH = 512;
 export const MAX_STRING_LENGTH = 16_384;
+
+/**
+ * MAX_STRING_LENGTH governs CONTROL-PLANE text — names, identifiers, env values, metadata — where
+ * 16 KiB is already generous. It must not govern DATA. The contents of file mounts and of inline
+ * profile resources are the product's cargo, and one bound for both refused a 17,894-character
+ * script AFTER spawn_worker had returned a worker id, so the caller paid for the spawn and got a
+ * child it could not equip (agent-sdk#340).
+ *
+ * Payload is measured in BYTES. `String.length` counts UTF-16 code units, so a CJK file reads a
+ * third of its UTF-8 weight and an emoji half of it; every byte budget between here and the
+ * sandbox counts UTF-8, so this one does too.
+ *
+ * 4 MiB is agent-runtime's SPAWN_RESOURCE_PATH_MAX_BYTES (0.239.0) — the largest file the runtime
+ * will read off a manager's own disk for a by-path spawn resource. Those resolved bytes arrive
+ * here as an inline string, so a smaller number would refuse by-path mounts the runtime had
+ * already accepted, and a larger one would advertise what the runtime will not resolve.
+ *
+ * The transport carries it: @tangle-network/sandbox splits inline `resources.files` out of the
+ * create POST and materializes them afterwards, routing any mount that no longer fits a
+ * gateway-safe single-shot write — SANDBOX_PROXY_REQUEST_MAX_BYTES (1 MiB) less 8 KiB of request
+ * envelope — onto chunked upload, whose session ceiling is 64 MiB. A 4 MiB mount is delivered in
+ * parts, so the 1 MiB request budget on `files/write-batch` never bites.
+ */
+export const MAX_PAYLOAD_STRING_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Inline `tools`, `agents`, `commands` and `instructions` are NOT split out: they ride the create
+ * POST whole, and inline `skills` ride the one-shot profile-priming POST. Both are single request
+ * bodies under the gateway's 1 MiB cap, so their TOTAL is the bound that binds, and it is the same
+ * budget the sandbox client keeps for a single-shot write: 1 MiB less 8 KiB of envelope. Necessary
+ * rather than sufficient — the rest of the create body shares that request and the gateway stays
+ * the authority — so a resource too large for it belongs in `resources.files`.
+ *
+ * `commands` is bounded here as payload although agent-runtime's by-path resolver covers only
+ * `tools`, `skills`, `agents` and `files`. The request that carries a command resource is the one
+ * that carries the others, and leaving `commands` on the control-plane bound would refuse an 18 KiB
+ * command for no transport reason. Anything the resolver gains later needs no change here.
+ */
+export const MAX_INLINE_PAYLOAD_BYTES = 1024 * 1024 - 8 * 1024;
+
+/**
+ * A per-string bound multiplies: MAX_ARRAY_LENGTH mounts at MAX_PAYLOAD_STRING_BYTES is 4 GiB, and
+ * `create` structuredClones and deep-freezes the whole input before the client sees it. The
+ * aggregate stops at the 64 MiB this module already accepts for one exact-process file, which is
+ * also the sandbox's chunked-upload session ceiling.
+ */
+export const MAX_TOTAL_PAYLOAD_BYTES = 64 * 1024 * 1024;
+
 export const MAX_ARRAY_LENGTH = 1_024;
 export const MAX_MAP_ENTRIES = 256;
 export const MAX_JSON_DEPTH = 16;
@@ -35,6 +83,9 @@ export function boundedString(value: unknown, label: string): string {
  */
 export type JsonBoundRule =
   | "string"
+  | "payload"
+  | "inlinePayload"
+  | "totalPayload"
   | "array"
   | "entries"
   | "depth"
@@ -57,6 +108,83 @@ export interface JsonBoundViolation {
   readonly entry?: number;
   /** A JavaScript type or constructor name — program text, not payload. */
   readonly observedType?: string;
+}
+
+/**
+ * Where an AgentProfile sits inside the value being walked, as a key path from its root.
+ *
+ * Payload is classified by POSITION, never by a flag on the call: the same shape reached through
+ * `metadata` is control-plane text and keeps MAX_STRING_LENGTH. Omit it and a value has no payload
+ * at all, which is what every non-profile call site wants.
+ */
+export type ProfileLocation = readonly string[];
+
+/** The value IS the profile — `assertBoundedJson(input.profile, ...)`. */
+export const PROFILE_AT_ROOT: ProfileLocation = [];
+/** A wrapper whose `profile` key holds it — the per-turn backend override. */
+export const PROFILE_AT_PROFILE: ProfileLocation = ["profile"];
+/** The mapped Sandbox create options, where it rides `backend.profile`. */
+export const PROFILE_AT_BACKEND_PROFILE: ProfileLocation = ["backend", "profile"];
+
+/** Which request carries a payload string, and therefore which bound it answers to. */
+type PayloadClass = "file" | "inline";
+
+/**
+ * The walk's position relative to the profile's resource tree. A state machine rather than a path
+ * match: it is index-agnostic, and it cannot be satisfied by a key that merely spells `content`
+ * somewhere else in the value.
+ */
+type WalkScope =
+  | { readonly kind: "descend"; readonly remaining: ProfileLocation }
+  | { readonly kind: "profile" }
+  | { readonly kind: "resources" }
+  | { readonly kind: "fileList" }
+  | { readonly kind: "fileMount" }
+  | { readonly kind: "inlineList" }
+  /** A resource ref. `bare` marks `resources.instructions`, which may be the string itself. */
+  | { readonly kind: "ref"; readonly payload: PayloadClass; readonly bare: boolean }
+  | { readonly kind: "payload"; readonly payload: PayloadClass };
+
+const INLINE_RESOURCE_FIELDS = new Set(["tools", "skills", "agents", "commands"]);
+
+function childScope(scope: WalkScope | undefined, key: string | number): WalkScope | undefined {
+  if (scope === undefined) return undefined;
+  switch (scope.kind) {
+    case "descend": {
+      if (key !== scope.remaining[0]) return undefined;
+      const remaining = scope.remaining.slice(1);
+      return remaining.length === 0 ? { kind: "profile" } : { kind: "descend", remaining };
+    }
+    case "profile":
+      return key === "resources" ? { kind: "resources" } : undefined;
+    case "resources":
+      if (key === "files") return { kind: "fileList" };
+      if (key === "instructions") return { kind: "ref", payload: "inline", bare: true };
+      return typeof key === "string" && INLINE_RESOURCE_FIELDS.has(key)
+        ? { kind: "inlineList" }
+        : undefined;
+    case "fileList":
+      return typeof key === "number" ? { kind: "fileMount" } : undefined;
+    case "fileMount":
+      return key === "resource" ? { kind: "ref", payload: "file", bare: false } : undefined;
+    case "inlineList":
+      return typeof key === "number" ? { kind: "ref", payload: "inline", bare: false } : undefined;
+    case "ref":
+      return key === "content" ? { kind: "payload", payload: scope.payload } : undefined;
+    case "payload":
+      return undefined;
+  }
+}
+
+function payloadClassOf(scope: WalkScope | undefined): PayloadClass | undefined {
+  if (scope === undefined) return undefined;
+  if (scope.kind === "payload") return scope.payload;
+  return scope.kind === "ref" && scope.bare ? scope.payload : undefined;
+}
+
+function rootScope(profileAt: ProfileLocation | undefined): WalkScope | undefined {
+  if (profileAt === undefined) return undefined;
+  return profileAt.length === 0 ? { kind: "profile" } : { kind: "descend", remaining: profileAt };
 }
 
 /** A key or constructor name is author-chosen program text, so echoing it discloses nothing. It
@@ -92,12 +220,21 @@ function safeTypeName(value: unknown): string | undefined {
  * stack happened to hold last would be a new way to mislead. Only the first violation is
  * reported — later ones may exist.
  */
-export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | undefined {
-  const pending: Array<{ value: unknown; depth: number; path: string; leave?: boolean }> = [
-    { value, depth: 0, path: "" },
-  ];
+export function firstJsonBoundViolation(
+  value: unknown,
+  profileAt?: ProfileLocation,
+): JsonBoundViolation | undefined {
+  const pending: Array<{
+    value: unknown;
+    depth: number;
+    path: string;
+    scope?: WalkScope;
+    leave?: boolean;
+  }> = [{ value, depth: 0, path: "", scope: rootScope(profileAt) }];
   const ancestors = new Set<object>();
   let nodes = 0;
+  let payloadBytes = 0;
+  let inlineBytes = 0;
   while (pending.length > 0) {
     const item = pending.pop();
     if (!item) continue;
@@ -113,8 +250,28 @@ export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | un
     if (current === undefined) return { rule: "undefined", path: item.path };
     if (current === null || typeof current === "boolean") continue;
     if (typeof current === "string") {
-      if (current.length > MAX_STRING_LENGTH) {
-        return { rule: "string", path: item.path, observed: current.length, limit: MAX_STRING_LENGTH, limitName: "MAX_STRING_LENGTH" };
+      const payload = payloadClassOf(item.scope);
+      if (payload === undefined) {
+        if (current.length > MAX_STRING_LENGTH) {
+          return { rule: "string", path: item.path, observed: current.length, limit: MAX_STRING_LENGTH, limitName: "MAX_STRING_LENGTH" };
+        }
+        continue;
+      }
+      const bytes = Buffer.byteLength(current, "utf8");
+      if (bytes > MAX_PAYLOAD_STRING_BYTES) {
+        return { rule: "payload", path: item.path, observed: bytes, limit: MAX_PAYLOAD_STRING_BYTES, limitName: "MAX_PAYLOAD_STRING_BYTES" };
+      }
+      // Totals accumulate in document order and are checked as they cross, so an oversized value
+      // is refused at the string that crossed the line rather than after the whole walk.
+      if (payload === "inline") {
+        inlineBytes += bytes;
+        if (inlineBytes > MAX_INLINE_PAYLOAD_BYTES) {
+          return { rule: "inlinePayload", path: item.path, observed: inlineBytes, limit: MAX_INLINE_PAYLOAD_BYTES, limitName: "MAX_INLINE_PAYLOAD_BYTES" };
+        }
+      }
+      payloadBytes += bytes;
+      if (payloadBytes > MAX_TOTAL_PAYLOAD_BYTES) {
+        return { rule: "totalPayload", path: item.path, observed: payloadBytes, limit: MAX_TOTAL_PAYLOAD_BYTES, limitName: "MAX_TOTAL_PAYLOAD_BYTES" };
       }
       continue;
     }
@@ -130,13 +287,18 @@ export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | un
     }
     if (ancestors.has(current)) return { rule: "cycle", path: item.path };
     ancestors.add(current);
-    pending.push({ value: current, depth: item.depth, path: item.path, leave: true });
+    pending.push({ value: current, depth: item.depth, path: item.path, scope: item.scope, leave: true });
     if (Array.isArray(current)) {
       if (current.length > MAX_ARRAY_LENGTH) {
         return { rule: "array", path: item.path, observed: current.length, limit: MAX_ARRAY_LENGTH, limitName: "MAX_ARRAY_LENGTH" };
       }
       for (let index = current.length - 1; index >= 0; index -= 1) {
-        pending.push({ value: current[index], depth: item.depth + 1, path: `${item.path}[${index}]` });
+        pending.push({
+          value: current[index],
+          depth: item.depth + 1,
+          path: `${item.path}[${index}]`,
+          scope: childScope(item.scope, index),
+        });
       }
       continue;
     }
@@ -165,14 +327,15 @@ export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | un
         value: (current as Record<string, unknown>)[keys[index]],
         depth: item.depth + 1,
         path: appendKeyToPath(item.path, keys[index]),
+        scope: childScope(item.scope, keys[index]),
       });
     }
   }
   return undefined;
 }
 
-export function isBoundedJson(value: unknown): boolean {
-  return firstJsonBoundViolation(value) === undefined;
+export function isBoundedJson(value: unknown, profileAt?: ProfileLocation): boolean {
+  return firstJsonBoundViolation(value, profileAt) === undefined;
 }
 
 /**
@@ -193,6 +356,12 @@ export function describeJsonBoundViolation(violation: JsonBoundViolation): strin
   switch (violation.rule) {
     case "string":
       return `string at ${at} is ${violation.observed} characters, ${limit}`;
+    case "payload":
+      return `payload at ${at} is ${violation.observed} bytes, ${limit}; split it or fetch it from inside the environment`;
+    case "inlinePayload":
+      return `inline profile resources total ${violation.observed} bytes at ${at}, ${limit}; they ride one create request, so move the large ones to resources.files`;
+    case "totalPayload":
+      return `profile payload totals ${violation.observed} bytes at ${at}, ${limit}; split it across turns`;
     case "array":
       return `array at ${at} has ${violation.observed} entries, ${limit}`;
     case "entries":
@@ -252,8 +421,8 @@ export class JsonBoundError extends Error {
   }
 }
 
-export function assertBoundedJson(value: unknown, label = "value"): void {
-  const violation = firstJsonBoundViolation(value);
+export function assertBoundedJson(value: unknown, label = "value", profileAt?: ProfileLocation): void {
+  const violation = firstJsonBoundViolation(value, profileAt);
   if (violation === undefined) return;
   // A rule with no limit counted nothing: a Date, a cycle, a NaN and an absent value are not
   // oversized, and "exceeds" sends the reader after a size problem that does not exist.

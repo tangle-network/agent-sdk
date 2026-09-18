@@ -1,5 +1,10 @@
 export type { TangleExactProcessOptions } from "./tangle-types.js";
-export { JsonBoundError } from "./tangle-contract-safety.js";
+export {
+  JsonBoundError,
+  MAX_INLINE_PAYLOAD_BYTES,
+  MAX_PAYLOAD_STRING_BYTES,
+  MAX_TOTAL_PAYLOAD_BYTES,
+} from "./tangle-contract-safety.js";
 export type { JsonBoundRule, JsonBoundViolation } from "./tangle-contract-safety.js";
 export * from "./tangle-types.js";
 export { createTangleProvider } from "./tangle-provider.js";
