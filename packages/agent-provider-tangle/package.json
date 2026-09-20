@@ -125,9 +125,9 @@
     }
   },
   "devDependencies": {
-    "@tangle-network/agent-eval": "0.173.1",
+    "@tangle-network/agent-eval": "0.182.0",
     "@tangle-network/agent-provider-testkit": "workspace:*",
-    "@tangle-network/agent-runtime": "0.192.2",
+    "@tangle-network/agent-runtime": "0.231.1",
     "@tangle-network/sandbox": "0.39.0",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
