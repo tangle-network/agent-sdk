@@ -1,4 +1,11 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCreateRetryBlockedError,
+  attachAgentEnvironmentCreateRetention,
+  assertNoGenericEnvironmentCreateCapability,
+  assertNoGenericEnvironmentCreateMappingFields,
+  createAgentEnvironmentResource,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -19,7 +26,10 @@ import type {
 
 export interface ComputeSdkLike {
   sandbox: {
-    create(options?: Record<string, unknown>): Promise<ComputeSandboxLike>;
+    create(
+      options?: Record<string, unknown>,
+      requestOptions?: { signal?: AbortSignal },
+    ): Promise<ComputeSandboxLike>;
     getById?(id: string): Promise<ComputeSandboxLike | null>;
     list?(): Promise<ComputeSandboxLike[]>;
     destroy?(id: string): Promise<void>;
@@ -39,6 +49,7 @@ export interface ComputeSandboxLike {
     readFile(path: string): Promise<string>;
     writeFile(path: string, content: string): Promise<void>;
   };
+  destroy?(): Promise<void>;
 }
 
 export interface ComputeSdkProviderOptions {
@@ -58,19 +69,37 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
-    const sandbox = await options.compute.sandbox.create(
-      options.mapCreateInput?.(input) ?? computeCreateOptions(input),
+    rejectUnsupportedCreateInput(input);
+    input.signal?.throwIfAborted();
+    const createOptions = options.mapCreateInput?.(input) ?? computeCreateOptions(input);
+    assertNoGenericEnvironmentCreateMappingFields(createOptions, name);
+    const operation = options.compute.sandbox.create(
+      createOptions,
+      input.signal ? { signal: input.signal } : undefined,
     );
-    return computeSandboxAsEnvironment(options, name, sandbox);
+    return createAgentEnvironmentResource(
+      operation,
+      input.signal,
+      (sandbox) => attachAgentEnvironmentCreateRetention(
+        computeSandboxAsEnvironment(options, name, sandbox),
+        createRecords,
+        input.idempotencyKey,
+      ),
+      (sandbox) => destroyComputeSandbox(options, sandbox),
+    );
   };
   return {
     name,
-    capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
+    capabilities: () => {
+      const capabilities = options.capabilities ?? defaultComputeSdkCapabilities();
+      assertNoGenericEnvironmentCreateCapability(capabilities, name);
+      return capabilities;
+    },
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        (snapshot) => createEnvironment(snapshot),
       );
     },
     ...(options.compute.sandbox.getById
@@ -168,7 +197,7 @@ function computeSandboxAsEnvironment(
       };
     },
     async destroy(): Promise<void> {
-      await options.compute.sandbox.destroy?.(id);
+      await destroyComputeSandbox(options, sandbox);
     },
   };
   return {
@@ -189,6 +218,7 @@ function computeSandboxAsEnvironment(
 
 function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string, unknown> {
   return {
+    ...(input.providerOptions ?? {}),
     ...(input.workspace?.environment ? { environment: input.workspace.environment } : {}),
     ...(input.workspace?.image ? { image: input.workspace.image } : {}),
     ...(input.workspace?.repoUrl ? { repoUrl: input.workspace.repoUrl } : {}),
@@ -198,9 +228,38 @@ function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string
     ...(input.env ? { env: input.env } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
     ...(input.name ? { name: input.name } : {}),
-    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-    ...(input.providerOptions ?? {}),
   };
+}
+
+function rejectUnsupportedCreateInput(input: CreateAgentEnvironmentInput): void {
+  if (input.idempotencyKey !== undefined) {
+    throw new Error(
+      "ComputeSDK provider cannot guarantee durable environment idempotency; omit idempotencyKey",
+    );
+  }
+  if (input.secrets !== undefined) {
+    throw new Error(
+      "ComputeSDK provider does not support generic environment secret references",
+    );
+  }
+}
+
+async function destroyComputeSandbox(
+  options: ComputeSdkProviderOptions,
+  sandbox: ComputeSandboxLike,
+): Promise<void> {
+  const id = sandbox.sandboxId ?? sandbox.id;
+  if (id && options.compute.sandbox.destroy) {
+    await options.compute.sandbox.destroy(id);
+    return;
+  }
+  if (sandbox.destroy) {
+    await sandbox.destroy();
+    return;
+  }
+  throw new AgentEnvironmentCreateRetryBlockedError(
+    "ComputeSDK sandbox allocation has no cleanup operation",
+  );
 }
 
 function commandFromProviderOptions(input: AgentTurnInput): string | undefined {

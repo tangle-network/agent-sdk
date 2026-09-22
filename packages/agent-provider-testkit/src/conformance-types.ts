@@ -38,6 +38,8 @@ export interface ProviderConformanceOptions {
   name: string;
   createProvider(): AgentEnvironmentProvider | Promise<AgentEnvironmentProvider>;
   createInput?: Partial<CreateAgentEnvironmentInput>;
+  /** Stored secret names to include when the provider advertises secret references. */
+  createSecrets?: readonly string[];
   prompt?: string;
   requireUsage?: boolean;
   requireDispatch?: boolean;

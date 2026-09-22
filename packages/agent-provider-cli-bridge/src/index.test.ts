@@ -27,7 +27,7 @@ describe("createCliBridgeProvider", () => {
     expect(called).toBe(false);
   });
 
-  it("reuses a keyed generic create and rejects changed input", async () => {
+  it("rejects keyed create because the bridge has no durable create identity", async () => {
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       fetch: async () => new Response(),
@@ -38,20 +38,26 @@ describe("createCliBridgeProvider", () => {
       idempotencyKey: "environment-create-1",
     };
 
-    const first = await provider.create(input);
-    const replay = await provider.create({
-      idempotencyKey: input.idempotencyKey,
-      metadata: { a: "first", z: "last" },
-      profile: { harness: "pi", name: "worker" },
-    });
+    await expect(provider.create(input)).rejects.toThrow(/cannot guarantee durable/);
+  });
 
-    expect(replay).toBe(first);
-    await expect(
-      provider.create({
-        ...input,
-        profile: { name: "different-worker", harness: "pi" },
-      }),
-    ).rejects.toThrow(/conflicts with a different create input/);
+  it("does not persist the create-only abort signal", async () => {
+    const controller = new AbortController();
+    let requests = 0;
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        requests += 1;
+        return terminalResponse(init, "ok");
+      },
+    });
+    const environment = await provider.create({
+      profile: { name: "worker", harness: "pi" },
+      signal: controller.signal,
+    });
+    controller.abort(new Error("create completed"));
+    await consumeTurn(environment, { prompt: "still works" });
+    expect(requests).toBeGreaterThan(0);
   });
 
   it("keeps profile authority separate from the task and forwards it unchanged", async () => {
@@ -348,7 +354,6 @@ describe("createCliBridgeProvider", () => {
   it("reconstructs one retained run from exact coordinates in a new provider", async () => {
     const runId = "restart-run";
     const sessionId = "restart-session";
-    const environmentId = "restart-environment";
     const requestDigest = testDigest(runId);
     let status: "running" | "done" = "running";
     let dispatches = 0;
@@ -415,8 +420,8 @@ describe("createCliBridgeProvider", () => {
     });
     const startedEnvironment = await starter.create({
       profile: { name: "worker" },
-      idempotencyKey: environmentId,
     });
+    const environmentId = startedEnvironment.id;
     const reference = await startedEnvironment.dispatch?.({
       prompt: "keep working after restart",
       sessionId,
@@ -1953,7 +1958,6 @@ describe("createCliBridgeProvider", () => {
     });
     const environment = await provider.create({
       profile: { name: "worker" },
-      idempotencyKey: "environment-1",
     });
     const unsafe = `${"not/wire safe ".repeat(20)}!`;
 

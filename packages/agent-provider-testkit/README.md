@@ -18,7 +18,9 @@ await runAgentEnvironmentProviderConformance({
 })
 ```
 
-The checks create an environment, repeat a keyed create with reordered fields, reject changed keyed input, stream one turn, verify terminal completion, exercise declared workspace methods, and destroy the environment.
+The checks create an environment, then exercise durable keyed replay, provider recreation, changed-input rejection, input mutation, and independent retry cancellation when `environmentCreate.idempotency` is advertised.
+Providers without that capability are tested without a key and must reject keyed creates in their own adapter tests.
+The checks stream one turn, verify terminal completion, exercise declared workspace methods, and destroy the environment.
 
 `runSessionReplayConformance()` dispatches a detached turn, rejects a competing run reference, requires stable event identifiers, replays after a cursor, and repeats the replay through a reconstructed session client.
 

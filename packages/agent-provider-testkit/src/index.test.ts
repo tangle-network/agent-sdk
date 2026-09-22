@@ -6,7 +6,11 @@ import type {
   AgentExactProcessEnvironment,
   AgentTurnInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  attachAgentEnvironmentCreateRetention,
+  agentEnvironmentCreateInputDigest,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import {
   runAgentEnvironmentProviderConformance,
   runAgentExactProcessProviderLifecycleChecks,
@@ -14,14 +18,18 @@ import {
 
 describe("runAgentEnvironmentProviderConformance", () => {
   it("accepts a provider that implements the required lifecycle", async () => {
+    const backend = createFakeEnvironmentBackend();
     const report = await runAgentEnvironmentProviderConformance({
       name: "fake",
-      createProvider: () => fakeProvider(),
+      createProvider: () => fakeProvider(backend),
+      createSecrets: ["TEST_SECRET"],
     });
 
     expect(report.provider).toBe("fake");
     expect(report.checked).toContain("create-idempotency");
     expect(report.checked).toContain("create-idempotency-collision");
+    expect(report.checked).toContain("create-idempotency-restart");
+    expect(report.checked).toContain("create-idempotency-abort");
     expect(report.checked).toContain("stream");
     expect(report.checked).toContain("workspace-exec");
   });
@@ -64,8 +72,19 @@ describe("runAgentExactProcessProviderLifecycleChecks", () => {
   });
 });
 
-function fakeProvider(): AgentEnvironmentProvider {
-  const files = new Map<string, string>();
+interface FakeEnvironmentBackend {
+  nextId: number;
+  files: Map<string, string>;
+  creates: Map<string, { digest: string; environment: AgentEnvironment }>;
+}
+
+function createFakeEnvironmentBackend(): FakeEnvironmentBackend {
+  return { nextId: 1, files: new Map(), creates: new Map() };
+}
+
+function fakeProvider(
+  backend: FakeEnvironmentBackend = createFakeEnvironmentBackend(),
+): AgentEnvironmentProvider {
   const createRecords = new Map<
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
@@ -96,6 +115,7 @@ function fakeProvider(): AgentEnvironmentProvider {
       },
       streaming: { live: true, replay: false, detach: false, turnIdempotency: true },
       sessions: { continue: false, list: false, messages: false },
+      environmentCreate: { idempotency: "durable", secretReferences: true },
       workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false },
       branching: { checkpoint: false, fork: false },
       placement: false,
@@ -106,24 +126,52 @@ function fakeProvider(): AgentEnvironmentProvider {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        async () => ({
-          id: "env-1",
-          provider: "fake",
-          status: async () => "running",
-          async *stream(input: AgentTurnInput) {
-            yield {
-              type: "result",
-              data: { finalText: input.prompt ?? "ok" },
-              usage: { inputTokens: 1, outputTokens: 1 },
-            };
-          },
-          read: async (path: string) => files.get(path) ?? "",
-          write: async (path: string, content: string) => {
-            files.set(path, content);
-          },
-          exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
-          destroy: async () => {},
-        }),
+        async (snapshot) => {
+          const key = snapshot.idempotencyKey;
+          if (key !== undefined) {
+            const digest = agentEnvironmentCreateInputDigest(snapshot);
+            const existing = backend.creates.get(key);
+            if (existing) {
+              if (existing.digest !== digest) throw new Error("remote idempotency collision");
+              return attachAgentEnvironmentCreateRetention(
+                existing.environment,
+                createRecords,
+                key,
+              );
+            }
+          }
+          const environment: AgentEnvironment = {
+            id: `env-${backend.nextId++}`,
+            provider: "fake",
+            status: async () => "running",
+            async *stream(input: AgentTurnInput) {
+              yield {
+                type: "result",
+                data: { finalText: input.prompt ?? "ok" },
+                usage: { inputTokens: 1, outputTokens: 1 },
+              };
+            },
+            read: async (path: string) => backend.files.get(path) ?? "",
+            write: async (path: string, content: string) => {
+              backend.files.set(path, content);
+            },
+            exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
+            destroy: async () => {
+              if (key !== undefined) backend.creates.delete(key);
+            },
+          };
+          if (key !== undefined) {
+            backend.creates.set(key, {
+              digest: agentEnvironmentCreateInputDigest(snapshot),
+              environment,
+            });
+          }
+          return attachAgentEnvironmentCreateRetention(
+            environment,
+            createRecords,
+            key,
+          );
+        },
       );
     },
   };

@@ -11,3 +11,6 @@ const provider = createComputeSdkProvider({
   turnCommand: ({ prompt }) => `codex exec ${JSON.stringify(prompt ?? '')}`,
 })
 ```
+
+This adapter does not advertise durable generic environment creation.
+It rejects `idempotencyKey` and generic `secrets` instead of providing process-local replay or silently dropping credentials.

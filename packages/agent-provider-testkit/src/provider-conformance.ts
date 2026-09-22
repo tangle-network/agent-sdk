@@ -1,4 +1,7 @@
-import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCapabilitiesSchema,
+  withoutAgentEnvironmentCreateSignal,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -31,8 +34,35 @@ export async function runAgentEnvironmentProviderConformance(
     name: `${options.name}-environment`,
     ...(options.createInput ?? {}),
   };
-  if (createInput.idempotencyKey === undefined) {
+  const durableCreate = capabilities.environmentCreate?.idempotency === "durable";
+  if (durableCreate && createInput.idempotencyKey === undefined) {
     createInput.idempotencyKey = `${options.name}-environment-create`;
+  }
+  if (!durableCreate) {
+    delete createInput.idempotencyKey;
+    checked.push("create-idempotency-not-advertised");
+  }
+  if (options.createSecrets !== undefined) {
+    if (capabilities.environmentCreate?.secretReferences !== true) {
+      let secretRejected = false;
+      try {
+        await provider.create({
+          ...createInput,
+          idempotencyKey: undefined,
+          secrets: [...options.createSecrets],
+        });
+      } catch {
+        secretRejected = true;
+      }
+      assert(
+        secretRejected,
+        "provider must reject generic secrets without secretReferences capability",
+        checked,
+      );
+      checked.push("create-secrets-not-advertised");
+    } else {
+      createInput.secrets = [...options.createSecrets];
+    }
   }
   const environment = await provider.create(createInput);
   return withEnvironmentCleanup(environment, checked, async () => {
@@ -94,40 +124,114 @@ export async function runAgentEnvironmentProviderConformance(
     }
     checked.push("create");
 
-    const replayInput = Object.fromEntries(
-      Object.entries(createInput).reverse(),
-    ) as CreateAgentEnvironmentInput;
-    const replay = await provider.create(replayInput);
-    assert(
-      replay.id === environment.id && replay.provider === environment.provider,
-      "same create key and canonical input must return the same environment",
-      checked,
-    );
-    checked.push("create-idempotency");
+    if (durableCreate) {
+      const replayInput = withoutAttemptSignal(
+        Object.fromEntries(Object.entries(createInput).reverse()) as CreateAgentEnvironmentInput,
+      );
+      const replay = await provider.create(replayInput);
+      assert(
+        replay.id === environment.id && replay.provider === environment.provider,
+        "same create key and canonical input must return the same environment",
+        checked,
+      );
+      checked.push("create-idempotency");
 
-    let collisionRejected = false;
-    let changedEnvironment: typeof environment | undefined;
-    try {
-      changedEnvironment = await provider.create({
+      const restartedProvider = await options.createProvider();
+      const restarted = await restartedProvider.create(replayInput);
+      assert(
+        restarted.id === environment.id && restarted.provider === environment.provider,
+        "same keyed create must reconstruct after provider recreation",
+        checked,
+      );
+      checked.push("create-idempotency-restart");
+
+      let collisionRejected = false;
+      try {
+        await provider.create({
+          ...createInput,
+          name: `${createInput.name ?? options.name}-changed`,
+        });
+      } catch {
+        collisionRejected = true;
+      }
+      assert(
+        collisionRejected,
+        "reusing a create key with changed input must reject",
+        checked,
+      );
+      checked.push("create-idempotency-collision");
+
+      const mutableInput: CreateAgentEnvironmentInput = {
         ...createInput,
-        name: `${createInput.name ?? options.name}-changed`,
+        idempotencyKey: `${createInput.idempotencyKey}-mutation`,
+        profile: { name: `${options.name}-mutable` },
+        metadata: { ...(createInput.metadata ?? {}), mutation: "before" },
+      };
+      const mutableCreate = provider.create(mutableInput);
+      (mutableInput.profile as { name: string }).name = `${options.name}-after`;
+      (mutableInput.metadata as Record<string, unknown>).mutation = "after";
+      const mutableEnvironment = await mutableCreate;
+      const mutableReplay = await provider.create({
+        ...mutableInput,
+        profile: { name: `${options.name}-mutable` },
+        metadata: { ...(createInput.metadata ?? {}), mutation: "before" },
       });
-    } catch {
-      collisionRejected = true;
+      assert(
+        mutableReplay.id === mutableEnvironment.id,
+        "create identity must use the pre-call canonical snapshot",
+        checked,
+      );
+      checked.push("create-idempotency-mutation");
+      await destroyIfDistinct(mutableEnvironment, environment);
+
+      const abortInput = withoutAttemptSignal({
+        ...createInput,
+        idempotencyKey: `${createInput.idempotencyKey}-abort`,
+      });
+      const abortController = new AbortController();
+      const abortedCreate = provider.create({
+        ...abortInput,
+        signal: abortController.signal,
+      });
+      abortController.abort(new Error("create waiter cancelled"));
+      let createAborted = false;
+      try {
+        await abortedCreate;
+      } catch {
+        createAborted = true;
+      }
+      assert(createAborted, "a create attempt must have an abortable wait", checked);
+      const afterAbort = await provider.create(abortInput);
+      assert(
+        afterAbort.id.length > 0,
+        "a late create must remain recoverable after its caller aborts",
+        checked,
+      );
+      checked.push("create-idempotency-abort");
+      await destroyIfDistinct(afterAbort, environment);
+
+      const concurrentInput = withoutAttemptSignal({
+        ...createInput,
+        idempotencyKey: `${createInput.idempotencyKey}-concurrent`,
+      });
+      const retryController = new AbortController();
+      const primary = provider.create(concurrentInput);
+      const retry = provider.create({
+        ...concurrentInput,
+        signal: retryController.signal,
+      });
+      retryController.abort(new Error("retry waiter cancelled"));
+      let retryAborted = false;
+      try {
+        await retry;
+      } catch {
+        retryAborted = true;
+      }
+      const concurrentEnvironment = await primary;
+      assert(retryAborted, "a coalesced retry must have its own abortable wait", checked);
+      checked.push("create-idempotency-concurrency");
+      await destroyIfDistinct(concurrentEnvironment, environment);
     }
-    if (
-      changedEnvironment !== undefined &&
-      (changedEnvironment.id !== environment.id ||
-        changedEnvironment.provider !== environment.provider)
-    ) {
-      await changedEnvironment.destroy?.();
-    }
-    assert(
-      collisionRejected,
-      "reusing a create key with changed input must reject",
-      checked,
-    );
-    checked.push("create-idempotency-collision");
 
     const events = await collect(
       environment.stream({
@@ -197,6 +301,19 @@ export async function runAgentEnvironmentProviderConformance(
       checked,
     };
   }, true);
+}
+
+function withoutAttemptSignal(
+  input: CreateAgentEnvironmentInput,
+): CreateAgentEnvironmentInput {
+  return withoutAgentEnvironmentCreateSignal(input);
+}
+
+async function destroyIfDistinct(
+  environment: { id: string; destroy?: () => Promise<void> },
+  original: { id: string },
+): Promise<void> {
+  if (environment.id !== original.id) await environment.destroy?.();
 }
 
 /** Prove detach plus stable event replay through a reconstructed session client. */

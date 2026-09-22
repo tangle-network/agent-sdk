@@ -1,5 +1,8 @@
 import {
   AgentEnvironmentCapabilitiesSchema,
+  AgentEnvironmentCreateRetryBlockedError,
+  attachAgentEnvironmentCreateRetention,
+  createAgentEnvironmentResource,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
@@ -25,7 +28,6 @@ import { requestedResourceProfile } from "./tangle-resources.js";
 import type { TangleProviderOptions } from "./tangle-types.js";
 import {
   assertBoundedJson,
-  attachCleanupHandle,
   awaitWithSignal,
   boundedIdentifier,
   boundedString,
@@ -90,72 +92,70 @@ export function createTangleProvider(
     // facts, so measured instance facts must decide them per sandbox.
     const declaredCapabilities = await resolveDeclaredCapabilities();
     narrowedProviderCapabilities(declaredCapabilities);
+    if (
+      input.idempotencyKey !== undefined &&
+      declaredCapabilities.environmentCreate?.idempotency !== "durable"
+    ) {
+      throw new Error(
+        "Tangle capabilities do not advertise durable environment idempotency",
+      );
+    }
+    if (
+      input.secrets !== undefined &&
+      declaredCapabilities.environmentCreate?.secretReferences !== true
+    ) {
+      throw new Error(
+        "Tangle capabilities do not advertise environment secret references",
+      );
+    }
     const createOptions =
       options.mapCreateInput?.(input) ??
       sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
     assertMappedCreateOptions(createOptions);
-    if (
-      input.idempotencyKey !== undefined &&
-      createOptions.idempotencyKey !== input.idempotencyKey
-    ) {
+    if (createOptions.idempotencyKey !== input.idempotencyKey) {
       throw new Error(
-        "Tangle mapped create options must preserve input idempotencyKey",
+        input.idempotencyKey === undefined
+          ? "Tangle mapped create options must not add input idempotencyKey"
+          : "Tangle mapped create options must preserve input idempotencyKey",
       );
     }
-    assertMappedSecretNames(createOptions);
+    assertMappedSecretNames(createOptions, input.secrets);
     input.signal?.throwIfAborted();
     const createPromise = options.client.create(
       createOptions,
       input.signal ? { signal: input.signal } : undefined,
     );
-    let box: Awaited<typeof createPromise>;
-    try {
-      box = await awaitWithSignal(createPromise, input.signal);
-    } catch (error) {
-      if (input.signal?.aborted) {
-        void createPromise
-          .then(async (lateBox) => {
-            if (!lateBox.delete) {
-              attachCleanupHandle(error, lateBox);
-              return;
-            }
-            try {
-              await lateBox.delete();
-            } catch (cleanupError) {
-              attachCleanupHandle(error, lateBox, cleanupError);
-            }
-          })
-          .catch((lateError) => attachCleanupHandle(error, undefined, lateError));
-      }
-      throw error;
-    }
-    try {
-      input.signal?.throwIfAborted();
-      const requestedResources = requestedResourceProfile(input.resources);
-      const environment = await sandboxInstanceAsEnvironment(
-        box,
-        providerName,
-        options.client,
-        declaredCapabilities,
-        input.signal ? { signal: input.signal } : undefined,
-        requestedResources === undefined ? undefined : { resources: requestedResources },
-      );
-      input.signal?.throwIfAborted();
-      return environment;
-    } catch (error) {
-      if (!box.delete) {
-        const baseError = error instanceof Error ? error : new Error(String(error));
-        throw Object.assign(baseError, { cleanupHandle: box });
-      }
-      try {
+    return createAgentEnvironmentResource(
+      createPromise,
+      input.signal,
+      async (box) => {
+        input.signal?.throwIfAborted();
+        const requestedResources = requestedResourceProfile(input.resources);
+        const environment = await sandboxInstanceAsEnvironment(
+          box,
+          providerName,
+          options.client,
+          declaredCapabilities,
+          input.signal ? { signal: input.signal } : undefined,
+          requestedResources === undefined ? undefined : { resources: requestedResources },
+        );
+        return attachAgentEnvironmentCreateRetention(
+          environment,
+          createRecords,
+          input.idempotencyKey,
+        );
+      },
+      async (box) => {
+        if (!box.delete) {
+          const error = new AgentEnvironmentCreateRetryBlockedError(
+            "Tangle sandbox allocation has no cleanup operation",
+          );
+          Object.assign(error, { cleanupHandle: box });
+          throw error;
+        }
         await box.delete();
-      } catch (cleanupError) {
-        const combined = new AggregateError([error, cleanupError], "Tangle environment validation and cleanup both failed");
-        attachCleanupHandle(combined, box, cleanupError);
-        throw combined;
-      }
-      throw error;
-    }
+      },
+    );
   };
   return {
     name: providerName,
@@ -166,7 +166,7 @@ export function createTangleProvider(
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        (snapshot) => createEnvironment(snapshot),
       );
     },
     ...(options.client.get

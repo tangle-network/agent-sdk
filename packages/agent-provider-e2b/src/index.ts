@@ -1,4 +1,11 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCreateRetryBlockedError,
+  attachAgentEnvironmentCreateRetention,
+  assertNoGenericEnvironmentCreateCapability,
+  assertNoGenericEnvironmentCreateMappingFields,
+  createAgentEnvironmentResource,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -50,21 +57,41 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    rejectUnsupportedCreateInput(input);
+    input.signal?.throwIfAborted();
     const Sandbox = options.Sandbox ?? (await loadE2BSandbox());
+    input.signal?.throwIfAborted();
     const createOptions =
       options.mapCreateInput?.(input) ??
       e2bCreateOptions(options, input);
-    const sandbox = await Sandbox.create(createOptions);
-    return e2bSandboxAsEnvironment(options, name, sandbox);
+    assertNoGenericEnvironmentCreateMappingFields(createOptions, name);
+    const operation = Sandbox.create(
+      createOptions,
+      input.signal ? { signal: input.signal } : undefined,
+    );
+    return createAgentEnvironmentResource(
+      operation,
+      input.signal,
+      (sandbox) => attachAgentEnvironmentCreateRetention(
+        e2bSandboxAsEnvironment(options, name, sandbox),
+        createRecords,
+        input.idempotencyKey,
+      ),
+      destroyE2BSandbox,
+    );
   };
   return {
     name,
-    capabilities: () => options.capabilities ?? defaultE2BCapabilities(),
+    capabilities: () => {
+      const capabilities = options.capabilities ?? defaultE2BCapabilities();
+      assertNoGenericEnvironmentCreateCapability(capabilities, name);
+      return capabilities;
+    },
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        (snapshot) => createEnvironment(snapshot),
       );
     },
     async get(id) {
@@ -138,8 +165,7 @@ function e2bSandboxAsEnvironment(
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "e2b" } }),
     async destroy(): Promise<void> {
-      if (sandbox.kill) await sandbox.kill();
-      else await sandbox.close?.();
+      await destroyE2BSandbox(sandbox);
     },
   };
   return environment;
@@ -148,12 +174,35 @@ function e2bSandboxAsEnvironment(
 function e2bCreateOptions(options: E2BProviderOptions, input: CreateAgentEnvironmentInput): Record<string, unknown> {
   const template = options.template ?? input.workspace?.environment;
   return {
+    ...(input.providerOptions ?? {}),
     ...(template ? { template } : {}),
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
     ...(input.env ? { envs: input.env } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
-    ...(input.providerOptions ?? {}),
   };
+}
+
+function rejectUnsupportedCreateInput(input: CreateAgentEnvironmentInput): void {
+  if (input.idempotencyKey !== undefined) {
+    throw new Error(
+      "E2B provider cannot guarantee durable environment idempotency; omit idempotencyKey",
+    );
+  }
+  if (input.secrets !== undefined) {
+    throw new Error(
+      "E2B provider does not support generic environment secret references",
+    );
+  }
+}
+
+async function destroyE2BSandbox(sandbox: E2BSandboxLike): Promise<void> {
+  if (sandbox.kill) await sandbox.kill();
+  else if (sandbox.close) await sandbox.close();
+  else {
+    throw new AgentEnvironmentCreateRetryBlockedError(
+      "E2B sandbox allocation has no cleanup operation",
+    );
+  }
 }
 
 function commandFromProviderOptions(input: AgentTurnInput): string | undefined {

@@ -144,7 +144,7 @@ function sdkBackedProvider(document: SandboxRuntimeCapabilityDocument | null) {
       throw new Error("the capability probe must not send a request");
     },
   };
-  return { provider: createTangleProvider({ client }), box, sessionId };
+  return { provider: createTangleProvider({ client }), client, box, sessionId };
 }
 
 /**
@@ -509,10 +509,10 @@ describe("Tangle deployment capability discovery", () => {
         interactions: true,
       },
     ] as const) {
-      const { provider } = sdkBackedProvider(testCase.document);
+      const { provider, client } = sdkBackedProvider(testCase.document);
       const report = await runAgentEnvironmentProviderConformance({
         name: `tangle-${testCase.deployment}-deployment`,
-        createProvider: () => provider,
+        createProvider: () => createTangleProvider({ client }),
       });
       const clientStage = report.capabilities;
       const sandboxStage = report.environmentCapabilities;

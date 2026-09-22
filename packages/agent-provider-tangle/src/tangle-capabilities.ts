@@ -67,6 +67,7 @@ export function defaultTangleSandboxCapabilities(
     // together over one Sandbox surface, and the capability schema refuses
     // a partial block, so they stand or fall on the same fact set.
     sessions: { continue: true, list: false, messages: false },
+    environmentCreate: { idempotency: "durable", secretReferences: true },
     // Answering an ask is declared as intent and stripped by narrowing unless
     // the session exposes the command route and the deployment discloses its
     // durable response record. Three claims are bounded by what the adapter

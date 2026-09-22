@@ -36,6 +36,9 @@ await session.prompt({
 })
 ```
 
+This adapter does not advertise durable generic environment creation.
+It rejects `idempotencyKey` and generic `secrets`; the bridge retains run identity, not environment provisioning identity.
+
 Persist the returned `controlRef` before treating dispatch as accepted.
 It contains the exact provider, environment, session, execution, run, and request digest needed after a process restart.
 Reconstruct the environment with `provider.get(controlRef.environmentId)`, then call `environment.session(controlRef.sessionId, { controlRef })`.

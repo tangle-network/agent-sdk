@@ -3,7 +3,6 @@ import type {
   AgentEnvironmentEvent,
   AgentSessionRef,
   AgentTurnResult,
-  CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   cancelCliBridgeRun,
@@ -33,7 +32,6 @@ import { modelRequestCount } from "./wire.js";
 
 export async function* streamTrackedCliBridgeTurn(
   options: CliBridgeProviderOptions,
-  environmentInput: CreateAgentEnvironmentInput,
   prepared: PreparedCliBridgeRun,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
@@ -47,7 +45,6 @@ export async function* streamTrackedCliBridgeTurn(
   const controller = new AbortController();
   const signals = [
     originalTurn.signal,
-    environmentInput.signal,
     controller.signal,
   ].filter((signal): signal is AbortSignal => signal !== undefined);
   const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
@@ -94,7 +91,7 @@ export async function* streamTrackedCliBridgeTurn(
     }
     if (snapshot?.terminal) {
       if (runs.get(run.id) === run) runs.delete(run.id);
-    } else if (originalTurn.signal?.aborted || environmentInput.signal?.aborted) {
+    } else if (originalTurn.signal?.aborted) {
       await cancelCliBridgeRun(options, transport, run);
       if (runs.get(run.id) === run) runs.delete(run.id);
     }
@@ -111,7 +108,6 @@ export async function* streamTrackedCliBridgeTurn(
 
 export async function dispatchCliBridgeTurn(
   options: CliBridgeProviderOptions,
-  environmentInput: CreateAgentEnvironmentInput,
   prepared: PreparedCliBridgeRun,
   transport: CliBridgeTransport,
   providerName: string,
@@ -123,7 +119,6 @@ export async function dispatchCliBridgeTurn(
   const previousSessionRun = bindCliBridgeSession(run, sessions);
   const signals = [
     prepared.turn.signal,
-    environmentInput.signal,
   ].filter((signal): signal is AbortSignal => signal !== undefined);
   const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
   let accepted = false;
@@ -205,7 +200,6 @@ export async function dispatchCliBridgeTurn(
 
 export async function* streamCliBridgeSessionEvents(
   options: CliBridgeProviderOptions,
-  environmentInput: CreateAgentEnvironmentInput,
   run: CliBridgeRun,
   transport: CliBridgeTransport,
   runs: Map<string, CliBridgeRun>,
@@ -221,7 +215,6 @@ export async function* streamCliBridgeSessionEvents(
   const controller = new AbortController();
   const signals = [
     eventOptions?.signal,
-    environmentInput.signal,
     controller.signal,
   ].filter((signal): signal is AbortSignal => signal !== undefined);
   const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;

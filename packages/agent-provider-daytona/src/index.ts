@@ -1,4 +1,11 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  AgentEnvironmentCreateRetryBlockedError,
+  attachAgentEnvironmentCreateRetention,
+  assertNoGenericEnvironmentCreateCapability,
+  assertNoGenericEnvironmentCreateMappingFields,
+  createAgentEnvironmentResource,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -56,20 +63,39 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    rejectUnsupportedCreateInput(input);
+    input.signal?.throwIfAborted();
     const daytona = await resolveDaytona(options);
-    const sandbox = await daytona.create(
-      options.mapCreateInput?.(input) ?? daytonaCreateParams(input),
+    input.signal?.throwIfAborted();
+    const createParams = options.mapCreateInput?.(input) ?? daytonaCreateParams(input);
+    assertNoGenericEnvironmentCreateMappingFields(createParams, name);
+    const operation = daytona.create(
+      createParams,
+      input.signal ? { signal: input.signal } : undefined,
     );
-    return daytonaSandboxAsEnvironment(options, name, sandbox);
+    return createAgentEnvironmentResource(
+      operation,
+      input.signal,
+      (sandbox) => attachAgentEnvironmentCreateRetention(
+        daytonaSandboxAsEnvironment(options, name, sandbox),
+        createRecords,
+        input.idempotencyKey,
+      ),
+      destroyDaytonaSandbox,
+    );
   };
   return {
     name,
-    capabilities: () => options.capabilities ?? defaultDaytonaCapabilities(),
+    capabilities: () => {
+      const capabilities = options.capabilities ?? defaultDaytonaCapabilities();
+      assertNoGenericEnvironmentCreateCapability(capabilities, name);
+      return capabilities;
+    },
     create(input) {
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        (snapshot) => createEnvironment(snapshot),
       );
     },
     async get(id) {
@@ -158,9 +184,7 @@ function daytonaSandboxAsEnvironment(
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "daytona" } }),
     async destroy(): Promise<void> {
-      if (sandbox.delete) await sandbox.delete();
-      else if (sandbox.remove) await sandbox.remove();
-      else await sandbox.stop?.();
+      await destroyDaytonaSandbox(sandbox);
     },
   };
   return environment;
@@ -168,6 +192,7 @@ function daytonaSandboxAsEnvironment(
 
 function daytonaCreateParams(input: CreateAgentEnvironmentInput): Record<string, unknown> {
   return {
+    ...(input.providerOptions ?? {}),
     ...(input.workspace?.environment ? { snapshot: input.workspace.environment } : {}),
     ...(input.workspace?.image ? { image: input.workspace.image } : {}),
     ...(input.workspace?.repoUrl ? { source: { repository: input.workspace.repoUrl, ref: input.workspace.gitRef } } : {}),
@@ -175,8 +200,31 @@ function daytonaCreateParams(input: CreateAgentEnvironmentInput): Record<string,
     ...(input.env ? { env: input.env } : {}),
     ...(input.metadata ? { labels: input.metadata } : {}),
     ...(input.name ? { name: input.name } : {}),
-    ...(input.providerOptions ?? {}),
   };
+}
+
+function rejectUnsupportedCreateInput(input: CreateAgentEnvironmentInput): void {
+  if (input.idempotencyKey !== undefined) {
+    throw new Error(
+      "Daytona provider cannot guarantee durable environment idempotency; omit idempotencyKey",
+    );
+  }
+  if (input.secrets !== undefined) {
+    throw new Error(
+      "Daytona provider does not support generic environment secret references",
+    );
+  }
+}
+
+async function destroyDaytonaSandbox(sandbox: DaytonaSandboxLike): Promise<void> {
+  if (sandbox.delete) await sandbox.delete();
+  else if (sandbox.remove) await sandbox.remove();
+  else if (sandbox.stop) await sandbox.stop();
+  else {
+    throw new AgentEnvironmentCreateRetryBlockedError(
+      "Daytona sandbox allocation has no cleanup operation",
+    );
+  }
 }
 
 function processApi(sandbox: DaytonaSandboxLike): Record<string, unknown> {

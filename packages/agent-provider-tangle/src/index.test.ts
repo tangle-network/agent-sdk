@@ -163,6 +163,21 @@ describe("createTangleProvider", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("does not let a custom mapper add a generic create key", async () => {
+    const create = vi.fn(async () => {
+      throw new Error("not called");
+    });
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput: () => ({ idempotencyKey: "mapper-added" }),
+    });
+
+    await expect(
+      provider.create({ profile: { name: "worker" } }),
+    ).rejects.toThrow("must not add input idempotencyKey");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed configured capabilities at the provider boundary", async () => {
     const provider = createTangleProvider({
       client: {
@@ -450,8 +465,8 @@ describe("createTangleProvider", () => {
     });
     const client: SandboxClientLike = {
       async create(options, requestOptions) {
-        createOptions = options;
-        createRequestOptions = requestOptions;
+        createOptions ??= options;
+        createRequestOptions ??= requestOptions;
         return box;
       },
       async get(id) {
@@ -464,7 +479,7 @@ describe("createTangleProvider", () => {
     await expect(
       runAgentEnvironmentProviderConformance({
         name: "sandbox",
-        createProvider: () => provider,
+        createProvider: () => createTangleProvider({ client }),
         createInput: {
           profile: { name: "worker" },
           backend: "codex",
@@ -1371,6 +1386,51 @@ describe("createTangleProvider", () => {
       mappedOnlyProvider.create({ profile: { name: "worker" } }),
     ).rejects.toThrow(/mapped secrets must be an array/);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("requires custom mappers to preserve named secrets exactly", async () => {
+    let mapped: CreateSandboxOptions | undefined;
+    const box: SandboxInstanceLike = {
+      id: "secret-mapped",
+      async *streamPrompt() {},
+      delete: async () => {},
+    };
+    const client: SandboxClientLike = {
+      create: async (options) => {
+        mapped = options;
+        return box;
+      },
+    };
+    const provider = createTangleProvider({
+      client,
+      mapCreateInput: (input) => ({
+        idempotencyKey: input.idempotencyKey,
+        secrets: input.secrets,
+      }) as CreateSandboxOptions,
+    });
+    await provider.create({
+      profile: { name: "worker" },
+      idempotencyKey: "secret-create",
+      secrets: ["TOKEN", "OTHER"],
+    });
+    expect(mapped).toMatchObject({
+      idempotencyKey: "secret-create",
+      secrets: ["TOKEN", "OTHER"],
+    });
+
+    const dropped = createTangleProvider({
+      client,
+      mapCreateInput: (input) => ({
+        idempotencyKey: input.idempotencyKey,
+      }) as CreateSandboxOptions,
+    });
+    await expect(
+      dropped.create({
+        profile: { name: "worker" },
+        idempotencyKey: "secret-dropped",
+        secrets: ["TOKEN"],
+      }),
+    ).rejects.toThrow(/must preserve input secrets/);
   });
 
   it("rejects unresolved profile references before creating a sandbox", async () => {

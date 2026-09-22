@@ -89,7 +89,6 @@ export function createCliBridgeEnvironment(
     let streamedUsage: TokenUsage | undefined;
     for await (const event of streamTrackedCliBridgeTurn(
       options,
-      environmentInput,
       prepared,
       transport,
       runs,
@@ -124,7 +123,6 @@ export function createCliBridgeEnvironment(
       );
       return dispatchCliBridgeTurn(
         options,
-        environmentInput,
         prepared,
         transport,
         providerName,
@@ -296,7 +294,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       const run = requireCurrentRun();
       yield* streamCliBridgeSessionEvents(
         args.options,
-        args.environmentInput,
         run,
         args.transport,
         args.runs,
@@ -309,7 +306,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       const result = await collectCliBridgeTurnResult(
         streamCliBridgeSessionEvents(
           args.options,
-          args.environmentInput,
           run,
           args.transport,
           args.runs,
@@ -346,7 +342,6 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       const result = await collectCliBridgeTurnResult(
         streamTrackedCliBridgeTurn(
           args.options,
-          args.environmentInput,
           prepared,
           args.transport,
           args.runs,

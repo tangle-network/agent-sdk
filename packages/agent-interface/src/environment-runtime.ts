@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
+import { canonicalCandidateDigest, canonicalCandidateJson } from "./agent-candidate-schema-common.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import type { InputPart } from "./parts.js";
@@ -10,7 +10,16 @@ import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeConte
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
 import type { AgentWorkspaceBranching } from "./workspace-branching.js";
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
-import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedJsonSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
+import {
+  assertBoundedJson,
+  assertBoundedSerializedJson,
+  boundedIdentifierSchema,
+  boundedJsonRecordSchema,
+  boundedJsonSchema,
+  boundedStringSchema,
+  CONTRACT_MAX_ARRAY_LENGTH,
+  CONTRACT_MAX_MAP_ENTRIES,
+} from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
 import type { AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
@@ -323,6 +332,11 @@ export interface AgentEnvironmentCapabilities {
     list: boolean;
     messages: boolean;
   };
+  /** Present only when durable keyed create and named secret references are backed. */
+  environmentCreate?: {
+    idempotency: "durable";
+    secretReferences: boolean;
+  };
   /** Present only when retained-run identity and cancellation are complete. */
   retainedControl?: {
     exactRunIdentity: boolean;
@@ -411,6 +425,12 @@ export const AgentEnvironmentCapabilitiesSchema = z
       list: z.boolean(),
       messages: z.boolean(),
     }),
+    environmentCreate: z
+      .strictObject({
+        idempotency: z.literal("durable"),
+        secretReferences: z.boolean(),
+      })
+      .optional(),
     retainedControl: z
       .strictObject({
         exactRunIdentity: z.boolean(),
@@ -627,14 +647,42 @@ export interface CreateAgentEnvironmentInput {
   /**
    * Stable identity for one logical environment create.
    *
-   * When present, the provider must use this key as one idempotent operation:
-   * the same key with canonically equal create input must return or reconstruct
+   * When present, a provider advertising `environmentCreate.idempotency` must
+   * use this key as one durable operation. Other providers must reject it.
+   * The same key with canonically equal create input must return or reconstruct
    * the same environment, while a different input must be rejected.
    * `signal` controls one attempt and is not part of create identity.
    */
   idempotencyKey?: string;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;
+}
+
+/** Reject a capability claim that this adapter cannot implement. */
+export function assertNoGenericEnvironmentCreateCapability(
+  capabilities: AgentEnvironmentCapabilities,
+  providerName: string,
+): void {
+  if (capabilities.environmentCreate !== undefined) {
+    throw new Error(
+      `${providerName} provider cannot advertise durable generic environment idempotency`,
+    );
+  }
+}
+
+/** Reject generic create fields that a non-durable adapter cannot carry safely. */
+export function assertNoGenericEnvironmentCreateMappingFields(
+  mapped: unknown,
+  providerName: string,
+): void {
+  if (!mapped || typeof mapped !== "object" || Array.isArray(mapped)) return;
+  for (const field of ["idempotencyKey", "secrets", "signal"] as const) {
+    if (Object.hasOwn(mapped, field)) {
+      throw new Error(
+        `${providerName} create mapper must not map generic ${field}`,
+      );
+    }
+  }
 }
 
 /**
@@ -648,18 +696,183 @@ export interface CreateAgentEnvironmentInput {
 export function agentEnvironmentCreateInputDigest(
   input: CreateAgentEnvironmentInput,
 ): Sha256Digest {
-  const { idempotencyKey: _idempotencyKey, signal: _signal, ...material } = input;
+  const material = canonicalCreateMaterial(input);
   return canonicalCandidateDigest({
     kind: "agent-environment-create.v1",
     input: material,
   });
 }
 
+/** A create attempt whose outcome is unsafe to retry without operator recovery. */
+export class AgentEnvironmentCreateRetryBlockedError extends Error {
+  readonly retryBlocked = true;
+
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "AgentEnvironmentCreateRetryBlockedError";
+  }
+}
+
 /** @internal State held by one provider adapter for keyed create retries. */
 export interface AgentEnvironmentCreateIdempotencyRecord<T> {
   readonly digest: Sha256Digest;
   readonly pending: Promise<T>;
+  readonly createdAt: number;
+  lastUsedAt: number;
+  state: "pending" | "fulfilled" | "blocked";
   environment?: T;
+  failure?: unknown;
+}
+
+/** The local retention bound before a durable provider must reconstruct remotely. */
+export const AGENT_ENVIRONMENT_CREATE_MAX_RECORDS = CONTRACT_MAX_MAP_ENTRIES;
+
+/**
+ * Return an immutable canonical copy of the create input.
+ *
+ * The attempt signal remains a top-level reference and never enters the frozen
+ * JSON material. Every provider receives this copy instead of caller-owned
+ * objects, so mutation cannot change a recorded identity after admission.
+ */
+export function snapshotAgentEnvironmentCreateInput(
+  input: CreateAgentEnvironmentInput,
+): CreateAgentEnvironmentInput {
+  const { material, idempotencyKey, signal } = readCanonicalCreateInput(input);
+  const snapshot = {
+    ...material,
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    ...(signal === undefined ? {} : { signal }),
+  } as CreateAgentEnvironmentInput;
+  return Object.freeze(snapshot);
+}
+
+/** Remove the caller-only signal before starting a shared keyed attempt. */
+export function withoutAgentEnvironmentCreateSignal(
+  input: CreateAgentEnvironmentInput,
+): CreateAgentEnvironmentInput {
+  if (input.signal === undefined) return input;
+  const { signal: _signal, ...withoutSignal } = input;
+  return withoutSignal;
+}
+
+/** Wait for one caller without cancelling the shared create operation. */
+export async function awaitAgentEnvironmentWithSignal<T>(
+  operation: Promise<T> | T,
+  signal?: AbortSignal,
+): Promise<T> {
+  signal?.throwIfAborted();
+  if (!signal) return await operation;
+  let listener: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(operation),
+      new Promise<T>((_, reject) => {
+        listener = () => reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+        signal.addEventListener("abort", listener, { once: true });
+      }),
+    ]);
+  } finally {
+    if (listener) signal.removeEventListener("abort", listener);
+  }
+}
+
+/**
+ * Create from an allocated provider resource and clean it on every failed map.
+ *
+ * The returned promise waits for late allocation and cleanup after an abort.
+ * The shared idempotency helper can therefore retain the record until no late
+ * callback can delete a resource adopted by a later retry.
+ */
+export async function createAgentEnvironmentResource<TResource, TEnvironment>(
+  operation: Promise<TResource>,
+  signal: AbortSignal | undefined,
+  map: (resource: TResource) => TEnvironment | Promise<TEnvironment>,
+  cleanup: (resource: TResource) => void | Promise<void>,
+): Promise<TEnvironment> {
+  let resource: TResource;
+  try {
+    resource = await awaitAgentEnvironmentWithSignal(operation, signal);
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    try {
+      const lateResource = await operation;
+      await cleanup(lateResource);
+    } catch (lateError) {
+      if (lateError === signal.reason || isAbortError(lateError)) throw error;
+      throw new AgentEnvironmentCreateRetryBlockedError(
+        `environment create aborted without a confirmed cleanup outcome: ${errorMessage(error)}`,
+        lateError,
+      );
+    }
+    throw error;
+  }
+
+  try {
+    signal?.throwIfAborted();
+    const environment = await map(resource);
+    signal?.throwIfAborted();
+    return environment;
+  } catch (error) {
+    try {
+      await cleanup(resource);
+    } catch (cleanupError) {
+      throw new AgentEnvironmentCreateRetryBlockedError(
+        `environment create mapping failed and cleanup did not complete: ${errorMessage(error)}`,
+        cleanupError,
+      );
+    }
+    throw error;
+  }
+}
+
+/** Remove a settled local record after its environment is destroyed. */
+export function releaseAgentEnvironmentCreateRecord<T>(
+  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
+  idempotencyKey: string | undefined,
+  environment: T,
+): void {
+  if (idempotencyKey === undefined) return;
+  const record = records.get(idempotencyKey);
+  if (record?.state === "fulfilled" && record.environment === environment) {
+    records.delete(idempotencyKey);
+  }
+}
+
+/** Add record release to an environment without changing its provider methods. */
+export function attachAgentEnvironmentCreateRetention<T extends AgentEnvironment>(
+  environment: T,
+  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
+  idempotencyKey: string | undefined,
+): T {
+  if (idempotencyKey === undefined || environment.destroy === undefined) {
+    return environment;
+  }
+  const destroy = environment.destroy;
+  let retained: T;
+  let destroyPromise: Promise<void> | undefined;
+  retained = {
+    ...environment,
+    async destroy(options) {
+      if (destroyPromise !== undefined) return await destroyPromise;
+      const record = records.get(idempotencyKey);
+      if (record?.state !== "fulfilled" || record.environment !== retained) {
+        throw new AgentEnvironmentCreateRetryBlockedError(
+          "keyed environment destroy is no longer owned by its retained create record",
+        );
+      }
+      destroyPromise = (async () => {
+        await destroy.call(environment, options);
+        releaseAgentEnvironmentCreateRecord(records, idempotencyKey, retained);
+      })();
+      try {
+        await destroyPromise;
+      } catch (error) {
+        destroyPromise = undefined;
+        throw error;
+      }
+    },
+  } as T;
+  return retained;
 }
 
 /**
@@ -673,13 +886,16 @@ export interface AgentEnvironmentCreateIdempotencyRecord<T> {
 export async function createAgentEnvironmentWithIdempotency<T>(
   records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
   input: CreateAgentEnvironmentInput,
-  create: () => Promise<T>,
+  create: (input: CreateAgentEnvironmentInput) => Promise<T>,
 ): Promise<T> {
-  input.signal?.throwIfAborted();
-  const key = input.idempotencyKey;
-  if (key === undefined) return create();
+  const snapshot = snapshotAgentEnvironmentCreateInput(input);
+  const key = snapshot.idempotencyKey;
+  const digest = agentEnvironmentCreateInputDigest(snapshot);
+  if (key === undefined) {
+    const operation = Promise.resolve().then(() => create(snapshot));
+    return await awaitAgentEnvironmentWithSignal(operation, snapshot.signal);
+  }
 
-  const digest = agentEnvironmentCreateInputDigest(input);
   const existing = records.get(key);
   if (existing !== undefined) {
     if (existing.digest !== digest) {
@@ -687,23 +903,155 @@ export async function createAgentEnvironmentWithIdempotency<T>(
         "agent environment create idempotency key conflicts with a different create input",
       );
     }
-    return existing.environment ?? existing.pending;
+    existing.lastUsedAt = Date.now();
+    if (existing.state === "blocked") throw existing.failure;
+    return await awaitAgentEnvironmentWithSignal(existing.pending, snapshot.signal);
   }
 
-  const pending = Promise.resolve().then(create);
-  const record: AgentEnvironmentCreateIdempotencyRecord<T> = {
+  evictCreateRecords(records);
+  let record!: AgentEnvironmentCreateIdempotencyRecord<T>;
+  const operationInput = withoutAgentEnvironmentCreateSignal(snapshot);
+  const pending = Promise.resolve()
+    .then(() => create(operationInput))
+    .then(
+      (environment) => {
+        const immutable = freezeReplayValue(environment);
+        if (records.get(key) === record) {
+          record.environment = immutable;
+          record.state = "fulfilled";
+          record.lastUsedAt = Date.now();
+        }
+        return immutable;
+      },
+      (error: unknown) => {
+        if (records.get(key) === record) {
+          if (isRetryBlocked(error)) {
+            record.state = "blocked";
+            record.failure = error;
+            record.lastUsedAt = Date.now();
+          } else {
+            records.delete(key);
+          }
+        }
+        throw error;
+      },
+    );
+  record = {
     digest,
     pending,
+    createdAt: Date.now(),
+    lastUsedAt: Date.now(),
+    state: "pending",
   };
   records.set(key, record);
-  try {
-    const environment = await pending;
-    if (records.get(key) === record) record.environment = environment;
-    return environment;
-  } catch (error) {
-    if (records.get(key) === record) records.delete(key);
-    throw error;
+  void pending.catch(() => undefined);
+  return await awaitAgentEnvironmentWithSignal(pending, snapshot.signal);
+}
+
+function canonicalCreateMaterial(
+  input: CreateAgentEnvironmentInput,
+): Record<string, unknown> {
+  return readCanonicalCreateInput(input).material;
+}
+
+function readCanonicalCreateInput(input: CreateAgentEnvironmentInput): {
+  material: Record<string, unknown>;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("agent environment create input must be an object");
   }
+  const allowed = new Set([
+    "profile",
+    "backend",
+    "workspace",
+    "resources",
+    "env",
+    "secrets",
+    "metadata",
+    "name",
+    "idempotencyKey",
+    "signal",
+    "providerOptions",
+  ]);
+  const entries = Object.entries(input);
+  if (entries.length > CONTRACT_MAX_MAP_ENTRIES) {
+    throw new Error("agent environment create input exceeds its field bound");
+  }
+  if (entries.some(([key]) => !allowed.has(key))) {
+    throw new Error("agent environment create input contains unsupported fields");
+  }
+  const values = Object.fromEntries(entries) as Record<string, unknown>;
+  const idempotencyKey = values.idempotencyKey;
+  if (idempotencyKey !== undefined) boundedIdentifierSchema.parse(idempotencyKey);
+  const material = Object.fromEntries(
+    entries.filter(([key, value]) =>
+      key !== "idempotencyKey" && key !== "signal" && value !== undefined,
+    ),
+  );
+  assertBoundedJson(material);
+  const canonical = canonicalCandidateJson(material);
+  assertBoundedSerializedJson(canonical);
+  return {
+    material: freezeReplayValue(JSON.parse(canonical) as Record<string, unknown>),
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey: idempotencyKey as string }),
+    ...(values.signal === undefined ? {} : { signal: values.signal as AbortSignal }),
+  };
+}
+
+function evictCreateRecords<T>(
+  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
+): void {
+  while (records.size >= AGENT_ENVIRONMENT_CREATE_MAX_RECORDS) {
+    let oldestKey: string | undefined;
+    let oldestTime = Number.POSITIVE_INFINITY;
+    for (const [key, record] of records) {
+      if (record.state !== "fulfilled" || record.lastUsedAt >= oldestTime) continue;
+      oldestKey = key;
+      oldestTime = record.lastUsedAt;
+    }
+    if (oldestKey === undefined) {
+      throw new Error("agent environment create idempotency retention is full");
+    }
+    records.delete(oldestKey);
+  }
+}
+
+function isRetryBlocked(error: unknown): boolean {
+  return (
+    ((typeof error === "object" && error !== null) || typeof error === "function") &&
+    (error as { retryBlocked?: unknown }).retryBlocked === true
+  );
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function freezeReplayValue<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  const pending: object[] = [value as object];
+  const visited = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    const prototype = Object.getPrototypeOf(current);
+    if (!Array.isArray(current) && prototype !== Object.prototype && prototype !== null) continue;
+    for (const entry of Object.values(current)) {
+      if (entry !== null && typeof entry === "object") pending.push(entry);
+    }
+    Object.freeze(current);
+  }
+  return value;
 }
 
 export interface AgentEnvironmentProvider {
@@ -718,8 +1066,8 @@ export interface AgentEnvironmentProvider {
   /**
    * Create or reconstruct one environment.
    *
-   * With `input.idempotencyKey`, the provider must return the same environment
-   * for the same canonical input and reject any changed input before creating.
+   * With `input.idempotencyKey`, the provider must advertise durable
+   * `environmentCreate.idempotency` or reject the request before creating.
    * Without a key, each call may create a fresh environment.
    */
   create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;

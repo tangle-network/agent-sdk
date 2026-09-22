@@ -1,4 +1,7 @@
-import { createAgentEnvironmentWithIdempotency } from "@tangle-network/agent-interface/environment-provider";
+import {
+  assertNoGenericEnvironmentCreateCapability,
+  createAgentEnvironmentWithIdempotency,
+} from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -35,6 +38,7 @@ export function createCliBridgeProvider(
   // operation exactly where the document claims it.
   const resolveCapabilities = (): AgentEnvironmentCapabilities => {
     const declared = options.capabilities ?? defaultCliBridgeCapabilities();
+    assertNoGenericEnvironmentCreateCapability(declared, name);
     return declared.observation === undefined
       ? declared
       : {
@@ -45,16 +49,28 @@ export function createCliBridgeProvider(
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    if (input.idempotencyKey !== undefined) {
+      throw new Error(
+        "cli-bridge provider cannot guarantee durable environment idempotency; omit idempotencyKey",
+      );
+    }
+    if (input.secrets !== undefined) {
+      throw new Error(
+        "cli-bridge provider does not support generic environment secret references",
+      );
+    }
+    input.signal?.throwIfAborted();
     if (typeof input.profile === "string") {
       throw new Error(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
       );
     }
+    const { signal: _signal, ...persistentInput } = input;
     const environmentInput: CreateAgentEnvironmentInput = {
-      ...input,
+      ...persistentInput,
       profile: snapshotAgentProfile(input.profile),
     };
-    const environmentId = input.idempotencyKey ?? crypto.randomUUID();
+    const environmentId = crypto.randomUUID();
     return createCliBridgeEnvironment({
       options,
       providerName: name,
@@ -72,7 +88,7 @@ export function createCliBridgeProvider(
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,
-        () => createEnvironment(input),
+        (snapshot) => createEnvironment(snapshot),
       );
     },
     async get(id) {

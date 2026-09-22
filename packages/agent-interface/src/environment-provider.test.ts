@@ -2,11 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentNativeContextContinuationResultSchema,
+  AGENT_ENVIRONMENT_CREATE_MAX_RECORDS,
+  AgentEnvironmentCreateRetryBlockedError,
+  attachAgentEnvironmentCreateRetention,
+  awaitAgentEnvironmentWithSignal,
   agentNativeContextContinuationResultMatchesRequest,
   agentEnvironmentCreateInputDigest,
+  createAgentEnvironmentResource,
   createAgentEnvironmentWithIdempotency,
+  snapshotAgentEnvironmentCreateInput,
+  withoutAgentEnvironmentCreateSignal,
 } from "./environment-provider.js";
-import type { AgentEnvironmentCreateIdempotencyRecord } from "./environment-provider.js";
+import type {
+  AgentEnvironment,
+  AgentEnvironmentCreateIdempotencyRecord,
+  CreateAgentEnvironmentInput,
+} from "./environment-provider.js";
 import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
@@ -138,6 +149,233 @@ describe("generic environment create idempotency", () => {
         create,
       ),
     ).rejects.toThrow("retry cancelled");
+  });
+
+  it("snapshots caller input before the provider callback runs", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+    >();
+    const original = {
+      profile: { name: "before" },
+      metadata: { owner: "before" },
+      idempotencyKey: "snapshot-1",
+    };
+    const create = vi.fn(async (snapshot: CreateAgentEnvironmentInput) => ({
+      id: `${(snapshot.profile as { name: string }).name}:${(snapshot.metadata as { owner: string }).owner}`,
+    }));
+    const firstPromise = createAgentEnvironmentWithIdempotency(
+      records,
+      original,
+      create,
+    );
+    original.profile.name = "after";
+    original.metadata.owner = "after";
+
+    await expect(firstPromise).resolves.toEqual({ id: "before:before" });
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        {
+          profile: { name: "before" },
+          metadata: { owner: "before" },
+          idempotencyKey: "snapshot-1",
+        },
+        create,
+      ),
+    ).resolves.toEqual({ id: "before:before" });
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("gives each coalesced caller an independent abortable wait", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+    >();
+    let resolveCreate!: (value: { id: string }) => void;
+    const create = vi.fn(
+      () => new Promise<{ id: string }>((resolve) => { resolveCreate = resolve; }),
+    );
+    const keyedInput = { profile: { name: "worker" }, idempotencyKey: "wait-1" };
+    const first = createAgentEnvironmentWithIdempotency(records, keyedInput, create);
+    const controller = new AbortController();
+    const retry = createAgentEnvironmentWithIdempotency(
+      records,
+      { ...keyedInput, signal: controller.signal },
+      create,
+    );
+    controller.abort(new Error("retry waiter cancelled"));
+    await expect(retry).rejects.toThrow("retry waiter cancelled");
+    resolveCreate({ id: "environment-1" });
+    await expect(first).resolves.toEqual({ id: "environment-1" });
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("retains a late operation after the first caller aborts", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+    >();
+    let resolveCreate!: (value: { id: string }) => void;
+    const create = vi.fn(
+      (attempt: CreateAgentEnvironmentInput) => {
+        expect(attempt.signal).toBeUndefined();
+        return new Promise<{ id: string }>((resolve) => { resolveCreate = resolve; });
+      },
+    );
+    const controller = new AbortController();
+    const first = createAgentEnvironmentWithIdempotency(
+      records,
+      {
+        profile: { name: "worker" },
+        idempotencyKey: "late-1",
+        signal: controller.signal,
+      },
+      create,
+    );
+    const retry = createAgentEnvironmentWithIdempotency(
+      records,
+      { profile: { name: "worker" }, idempotencyKey: "late-1" },
+      create,
+    );
+    controller.abort(new Error("first waiter cancelled"));
+    await expect(first).rejects.toThrow("first waiter cancelled");
+    resolveCreate({ id: "environment-1" });
+    await expect(retry).resolves.toEqual({ id: "environment-1" });
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("does not let a keyed caller abort the shared provider attempt", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{ id: string }>
+    >();
+    const controller = new AbortController();
+    const create = vi.fn(async (attempt: CreateAgentEnvironmentInput) => {
+      expect(attempt.signal).toBeUndefined();
+      return { id: "environment-1" };
+    });
+    const first = createAgentEnvironmentWithIdempotency(
+      records,
+      { profile: { name: "worker" }, idempotencyKey: "signal-1", signal: controller.signal },
+      create,
+    );
+    controller.abort(new Error("first waiter cancelled"));
+    await expect(first).rejects.toThrow("first waiter cancelled");
+    await expect(
+      createAgentEnvironmentWithIdempotency(
+        records,
+        { profile: { name: "worker" }, idempotencyKey: "signal-1" },
+        create,
+      ),
+    ).resolves.toEqual({ id: "environment-1" });
+    expect(create).toHaveBeenCalledOnce();
+    expect(withoutAgentEnvironmentCreateSignal({ signal: controller.signal })).toEqual({});
+  });
+
+  it("bounds retention and freezes replay identity", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<{
+        id: string;
+        metadata: { value: string };
+      }>
+    >();
+    const create = vi.fn(async (input: { idempotencyKey?: string }) => ({
+      id: input.idempotencyKey ?? "unkeyed",
+      metadata: { value: "stable" },
+    }));
+    const first = await createAgentEnvironmentWithIdempotency(
+      records,
+      { profile: { name: "worker" }, idempotencyKey: "retained-0" },
+      create,
+    );
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.metadata)).toBe(true);
+    expect(() => {
+      first.metadata.value = "changed";
+    }).toThrow();
+
+    for (let index = 1; index <= AGENT_ENVIRONMENT_CREATE_MAX_RECORDS; index += 1) {
+      await createAgentEnvironmentWithIdempotency(
+        records,
+        { profile: { name: "worker" }, idempotencyKey: `retained-${index}` },
+        create,
+      );
+    }
+    expect(records.size).toBe(AGENT_ENVIRONMENT_CREATE_MAX_RECORDS);
+  });
+
+  it("does not let an evicted keyed handle destroy a later replay", async () => {
+    const records = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
+    >();
+    const destroyed = vi.fn(async () => {});
+    const create = vi.fn(async (input: CreateAgentEnvironmentInput) => {
+      const environment: AgentEnvironment = {
+        id: input.idempotencyKey ?? "unkeyed",
+        provider: "test",
+        status: async () => "running",
+        async *stream() {},
+        destroy: destroyed,
+      };
+      return attachAgentEnvironmentCreateRetention(
+        environment,
+        records,
+        input.idempotencyKey,
+      );
+    });
+    const first = await createAgentEnvironmentWithIdempotency(
+      records,
+      { profile: { name: "worker" }, idempotencyKey: "evicted-0" },
+      create,
+    );
+    for (let index = 1; index <= AGENT_ENVIRONMENT_CREATE_MAX_RECORDS; index += 1) {
+      await createAgentEnvironmentWithIdempotency(
+        records,
+        { profile: { name: "worker" }, idempotencyKey: `evicted-${index}` },
+        create,
+      );
+    }
+
+    if (!first.destroy) throw new Error("test environment must be destroyable");
+    await expect(first.destroy()).rejects.toBeInstanceOf(
+      AgentEnvironmentCreateRetryBlockedError,
+    );
+    expect(destroyed).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized canonical input before hashing", () => {
+    let value: Record<string, unknown> = { leaf: true };
+    for (let index = 0; index < 32; index += 1) value = { next: value };
+    expect(() => snapshotAgentEnvironmentCreateInput({
+      profile: { name: "worker" },
+      metadata: value,
+      idempotencyKey: "deep-1",
+    })).toThrow(/exceeds the contract bounds/);
+  });
+
+  it("waits for non-aborted operations without changing their result", async () => {
+    await expect(
+      awaitAgentEnvironmentWithSignal(Promise.resolve("ready")),
+    ).resolves.toBe("ready");
+  });
+
+  it("cleans an already-started allocation when the signal is pre-aborted", async () => {
+    const controller = new AbortController();
+    const cleanup = vi.fn(async () => {});
+    controller.abort(new Error("allocation cancelled"));
+
+    await expect(
+      createAgentEnvironmentResource(
+        Promise.resolve({ id: "allocated" }),
+        controller.signal,
+        () => ({ id: "mapped" }),
+        cleanup,
+      ),
+    ).rejects.toThrow("allocation cancelled");
+    expect(cleanup).toHaveBeenCalledWith({ id: "allocated" });
   });
 });
 

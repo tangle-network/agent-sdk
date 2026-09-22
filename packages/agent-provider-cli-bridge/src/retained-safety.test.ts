@@ -18,7 +18,6 @@ describe("retained cli-bridge safety", () => {
     });
     const environment = await provider.create({
       profile: { name: "worker" },
-      idempotencyKey: "environment-1",
     });
     const reference = await environment.dispatch?.({
       prompt: "work",

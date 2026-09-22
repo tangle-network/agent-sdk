@@ -128,7 +128,28 @@ export function assertNoInlineSecretValues(input: CreateAgentEnvironmentInput): 
 }
 
 /** A custom mapper must not smuggle a value map into the Sandbox request. */
-export function assertMappedSecretNames(options: CreateSandboxOptions): void {
+export function assertMappedSecretNames(
+  options: CreateSandboxOptions,
+  requestedSecrets?: CreateAgentEnvironmentInput["secrets"],
+): void {
+  assertMappedSecretShape(options);
+  if (requestedSecrets !== undefined) {
+    if (!Array.isArray(requestedSecrets)) {
+      throw new Error("Tangle input secrets must be an array of stored secret names");
+    }
+    if (
+      options.secrets === undefined ||
+      options.secrets.length !== requestedSecrets.length ||
+      options.secrets.some((secret, index) => secret !== requestedSecrets[index])
+    ) {
+      throw new Error("Tangle mapped create options must preserve input secrets");
+    }
+  } else if (options.secrets !== undefined) {
+    throw new Error("Tangle mapped create options must not add input secrets");
+  }
+}
+
+function assertMappedSecretShape(options: CreateSandboxOptions): void {
   if (options.secrets !== undefined && !Array.isArray(options.secrets)) {
     throw new Error("Tangle mapped secrets must be an array of stored secret names");
   }
@@ -199,7 +220,7 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
   }
   if (options.idempotencyKey !== undefined) boundedIdentifier(options.idempotencyKey, "Tangle mapped idempotency key");
   if (options.env !== undefined) assertStringRecord(options.env, "Tangle mapped");
-  assertMappedSecretNames(options);
+  assertMappedSecretShape(options);
 }
 
 function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, string> {

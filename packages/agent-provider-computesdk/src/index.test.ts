@@ -42,4 +42,43 @@ describe("createComputeSdkProvider", () => {
     for await (const event of environment.stream({ prompt: "hello" })) events.push(event);
     expect(events.at(-1)).toMatchObject({ data: { finalText: "ran:agent hello" } });
   });
+
+  it("rejects unsupported keyed or secret creates and cleans mapping failures", async () => {
+    let allocations = 0;
+    let sandboxCleanup = 0;
+    const compute: ComputeSdkLike = {
+      sandbox: {
+        async create() {
+          allocations += 1;
+          return {
+            runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+            destroy: async () => {
+              sandboxCleanup += 1;
+            },
+          };
+        },
+      },
+    };
+    const provider = createComputeSdkProvider({ compute });
+
+    await expect(
+      provider.create({ profile: { name: "worker" }, idempotencyKey: "unsupported" }),
+    ).rejects.toThrow(/cannot guarantee durable/);
+    await expect(
+      provider.create({ profile: { name: "worker" }, secrets: ["TOKEN"] }),
+    ).rejects.toThrow(/does not support.*secret/);
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(
+      /returned no id/,
+    );
+    expect(allocations).toBe(1);
+    expect(sandboxCleanup).toBe(1);
+
+    const mappedProvider = createComputeSdkProvider({
+      compute,
+      mapCreateInput: () => ({ signal: undefined }),
+    });
+    await expect(mappedProvider.create({ profile: { name: "worker" } })).rejects.toThrow(
+      /must not map generic signal/,
+    );
+  });
 });

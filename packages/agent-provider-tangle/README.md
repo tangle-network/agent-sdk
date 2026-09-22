@@ -16,6 +16,9 @@ const provider = createTangleProvider({
 })
 ```
 
+Tangle advertises durable keyed environment creation when the Sandbox deployment advertises the same capability.
+`secrets` must contain names resolved by the deployment, not inline secret values; custom create mappers must forward both fields unchanged.
+
 Detached dispatch returns the immutable Sandbox execution receipt in `controlRef`.
 The adapter validates its complete capability document and omits optional environment methods whose capabilities are disabled.
 Created and reconstructed environments expose a recursively frozen Sandbox metadata snapshot for constant-time annotation checks.
