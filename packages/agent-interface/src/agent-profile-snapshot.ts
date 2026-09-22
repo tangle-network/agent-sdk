@@ -1,5 +1,6 @@
-import { canonicalAgentProfileValue } from "./agent-profile-canonical.js";
+import { canonicalAgentProfileValueDetached } from "./agent-profile-canonical.js";
 import type { AgentProfile } from "./agent-profile.js";
+import { detachAgentProfileJson } from "./agent-profile-safe-json.js";
 import { agentProfileSchema } from "./profile-schema.js";
 
 /**
@@ -10,18 +11,22 @@ import { agentProfileSchema } from "./profile-schema.js";
  * existing canonical profile JSON domain fail instead of becoming mutable state.
  */
 export function snapshotAgentProfile(value: unknown): AgentProfile {
-  const parsed = agentProfileSchema.parse(structuredClone(value));
-  canonicalAgentProfileValue(parsed);
+  const parsed = agentProfileSchema.parse(
+    detachAgentProfileJson(value, { rejectPrototypeSensitiveKeys: true }),
+  );
+  canonicalAgentProfileValueDetached(parsed);
   return deepFreeze(parsed);
 }
 
-function deepFreeze<T>(value: T, seen = new Set<object>()): T {
-  if (value === null || typeof value !== "object" || seen.has(value)) {
-    return value;
+function deepFreeze<T>(value: T): T {
+  const pending: object[] = [];
+  if (value !== null && typeof value === "object") pending.push(value);
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const child of Object.values(current)) {
+      if (child !== null && typeof child === "object") pending.push(child);
+    }
+    Object.freeze(current);
   }
-  seen.add(value);
-  for (const child of Object.values(value)) {
-    deepFreeze(child, seen);
-  }
-  return Object.freeze(value);
+  return value;
 }

@@ -3,6 +3,7 @@ import {
   canonicalCandidateJson,
   isWellFormedUnicode,
 } from "./agent-candidate-schema-common.js";
+import { detachAgentProfileJson } from "./agent-profile-safe-json.js";
 
 /**
  * Normalize profile-shaped data into the canonical JSON domain used for public
@@ -13,6 +14,12 @@ import {
  * profile-level operations that own validation, identity, or diff semantics.
  */
 export function canonicalAgentProfileValue(
+  value: unknown,
+): AgentCandidateJsonValue | undefined {
+  return canonicalAgentProfileValueDetached(detachAgentProfileJson(value));
+}
+
+export function canonicalAgentProfileValueDetached(
   value: unknown,
 ): AgentCandidateJsonValue | undefined {
   return normalizeAgentProfileValue(value, [], new Set<object>());

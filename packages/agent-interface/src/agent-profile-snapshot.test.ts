@@ -44,12 +44,13 @@ describe("snapshotAgentProfile", () => {
 
   it("detaches and freezes nested arrays and record maps", () => {
     const nested = { score: 1 };
+    const mapped = { score: 1 };
     const input = {
       prompt: { instructions: ["initial"] },
       tools: { execute: true },
       metadata: {
         nested,
-        map: { result: nested },
+        map: { result: mapped },
       },
     };
 
@@ -67,7 +68,8 @@ describe("snapshotAgentProfile", () => {
     expect(snapshot.prompt?.instructions).toEqual(["initial"]);
     expect(snapshot.tools?.execute).toBe(true);
     expect(snapshotNested.score).toBe(1);
-    expect(snapshotMap.result).toBe(snapshotNested);
+    expect(snapshotMap.result).not.toBe(snapshotNested);
+    expect(snapshotMap.result).toEqual({ score: 1 });
 
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.prompt)).toBe(true);
@@ -85,7 +87,7 @@ describe("snapshotAgentProfile", () => {
     }).toThrow();
   });
 
-  it("reads untrusted getters once before validation", () => {
+  it("rejects getters without executing them", () => {
     let reads = 0;
     const moving: Record<string, unknown> = {};
     Object.defineProperty(moving, "value", {
@@ -96,11 +98,10 @@ describe("snapshotAgentProfile", () => {
       },
     });
 
-    const snapshot = snapshotAgentProfile({ metadata: { moving } });
-
-    expect(reads).toBe(1);
-    expect(snapshot.metadata?.moving).toEqual({ value: { read: 1 } });
-    expect(Object.isFrozen(snapshot.metadata?.moving)).toBe(true);
+    expect(() => snapshotAgentProfile({ metadata: { moving } })).toThrow(
+      /getter or setter/,
+    );
+    expect(reads).toBe(0);
   });
 
   it("rejects mutable exotic values and cycles outside the portable contract", () => {

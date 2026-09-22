@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import {
   REASONING_EFFORTS,
   type AgentProfile,
@@ -7,11 +6,13 @@ import {
 } from "./agent-profile.js";
 import { harnessTypeSchema } from "./harness.js";
 import { validateAgentProfileSecurity } from "./profile-security.js";
+import { removeModelInputSchemaArtifacts } from "./profile-schema-json.js";
 import {
   agentProfileDiffSchema,
   agentProfileJsonSchema,
   agentProfileSchema,
   capabilitySchema,
+  parseAgentProfileModelInput,
   reasoningEffortSchema,
 } from "./profile-schema.js";
 
@@ -312,6 +313,147 @@ describe("agentProfileSchema", () => {
     }
   });
 
+  it("keeps every MCP branch and custom refinement aligned across contracts", () => {
+    const corpus: Array<[string, unknown, boolean]> = [
+      [
+        "local",
+        {
+          mcp: {
+            local: {
+              command: "mcp",
+              args: [{ kind: "public", value: "serve" }],
+              cwd: "workspace",
+              env: { MODE: { kind: "public", value: "read-only" } },
+            },
+          },
+        },
+        true,
+      ],
+      [
+        "remote",
+        {
+          mcp: {
+            remote: {
+              transport: "http",
+              url: "https://mcp.example.com/path",
+              headers: {
+                Authorization: {
+                  kind: "secret-ref",
+                  key: "REMOTE_AUTH",
+                  format: "bearer",
+                },
+              },
+            },
+          },
+        },
+        true,
+      ],
+      ["disabled", { mcp: { disabled: { enabled: false } } }, true],
+      [
+        "remote command",
+        { mcp: { invalid: { url: "https://mcp.example.com", command: "mcp" } } },
+        false,
+      ],
+      [
+        "remote args",
+        {
+          mcp: {
+            invalid: {
+              url: "https://mcp.example.com",
+              args: [{ kind: "public", value: "serve" }],
+            },
+          },
+        },
+        false,
+      ],
+      [
+        "disabled URL",
+        {
+          mcp: {
+            invalid: { enabled: false, url: "https://mcp.example.com" },
+          },
+        },
+        false,
+      ],
+      [
+        "ftp URL",
+        { mcp: { invalid: { url: "ftp://mcp.example.com" } } },
+        false,
+      ],
+      ["local shell command", { mcp: { invalid: { command: "bash" } } }, false],
+      [
+        "uppercase local shell command",
+        { mcp: { invalid: { command: "BASH" } } },
+        false,
+      ],
+      [
+        "public Authorization Bearer",
+        {
+          mcp: {
+            invalid: {
+              command: "mcp",
+              env: { AUTHORIZATION: { kind: "public", value: "Bearer token" } },
+            },
+          },
+        },
+        false,
+      ],
+      [
+        "uppercase secret-capable key with public value",
+        {
+          mcp: {
+            invalid: {
+              command: "mcp",
+              env: { TOKEN: { kind: "public", value: "read-only" } },
+            },
+          },
+        },
+        false,
+      ],
+      [
+        "uppercase credential query key",
+        {
+          mcp: {
+            invalid: {
+              url: "https://mcp.example.com?API_KEY=value",
+            },
+          },
+        },
+        false,
+      ],
+      [
+        "invalid header key",
+        {
+          mcp: {
+            invalid: {
+              url: "https://mcp.example.com",
+              headers: {
+                "bad header": { kind: "secret-ref", key: "REMOTE_AUTH" },
+              },
+            },
+          },
+        },
+        false,
+      ],
+    ];
+
+    for (const [label, input, expected] of corpus) {
+      const parsed = (() => {
+        try {
+          parseAgentProfileModelInput(input);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      expect(parsed, `${label}: canonical model parser`).toBe(expected);
+      expect(
+        jsonSchemaAccepts(agentProfileJsonSchema, input),
+        `${label}: generated JSON Schema`,
+      ).toBe(expected);
+    }
+  });
+
   it("requires tagged hook config and secret references for sensitive names", () => {
     const invalidProfiles = [
       { hooks: { beforeRun: [{ command: "prepare", env: { MODE: "raw" } }] } },
@@ -404,6 +546,10 @@ describe("agentProfileJsonSchema", () => {
     expect(properties.tools).toMatchObject({
       type: "object",
       additionalProperties: { type: "boolean" },
+      propertyNames: {
+        type: "string",
+        pattern: "^(?!__proto__$|constructor$|prototype$)[\\s\\S]*$",
+      },
     });
     expect(properties.permissions).toMatchObject({
       type: "object",
@@ -423,8 +569,163 @@ describe("agentProfileJsonSchema", () => {
 
     const serialized = JSON.stringify(agentProfileJsonSchema);
     expect(serialized).not.toContain("^u(?:[0-9a-f]{4})*$");
-    expect(serialized).not.toContain('"propertyNames"');
+    expect(serialized).toContain(
+      '"pattern":"^(?!__proto__$|constructor$|prototype$)',
+    );
+    expect(serialized).toContain("[\\\\s\\\\S]*$");
     expect(serialized).not.toContain('"$schema"');
+  });
+
+  it("fails closed for prototype-sensitive model record keys", () => {
+    const tools = propertiesOf(agentProfileJsonSchema).tools as Record<
+      string,
+      unknown
+    >;
+    const propertyNames = tools.propertyNames as Record<string, unknown>;
+    const keyPattern = new RegExp(String(propertyNames.pattern));
+
+    expect(keyPattern.test("normal")).toBe(true);
+    expect(keyPattern.test("__proto__")).toBe(false);
+    expect(keyPattern.test("constructor")).toBe(false);
+    expect(keyPattern.test("prototype")).toBe(false);
+
+    const hostile = JSON.parse(
+      '{"tools":{"__proto__":true,"normal":true}}',
+    );
+    const canonical = agentProfileSchema.parse(hostile);
+    expect(Object.keys(canonical.tools ?? {})).toEqual(["__proto__", "normal"]);
+    expect(
+      Object.prototype.hasOwnProperty.call(canonical.tools, "__proto__"),
+    ).toBe(true);
+
+    expect(jsonSchemaAccepts(agentProfileJsonSchema, hostile)).toBe(false);
+    expect(() => parseAgentProfileModelInput(hostile)).toThrow(
+      /prototype-sensitive key/,
+    );
+  });
+
+  it("rejects prototype-sensitive keys in nested open records before conversion", () => {
+    const nestedInputs: Array<[string, unknown]> = [
+      [
+        "permissions.shell.__proto__",
+        JSON.parse('{"permissions":{"shell":{"__proto__":"deny"}}}'),
+      ],
+      [
+        "model.metadata.constructor",
+        JSON.parse('{"model":{"metadata":{"constructor":true}}}'),
+      ],
+      [
+        "mcp.local.metadata.prototype",
+        JSON.parse(
+          '{"mcp":{"local":{"command":"mcp","metadata":{"prototype":true}}}}',
+        ),
+      ],
+      [
+        "subagents.reviewer.tools.__proto__",
+        JSON.parse(
+          '{"subagents":{"reviewer":{"tools":{"__proto__":true}}}}',
+        ),
+      ],
+      [
+        "extensions.provider.constructor",
+        JSON.parse('{"extensions":{"provider":{"constructor":true}}}'),
+      ],
+    ];
+
+    for (const [path, input] of nestedInputs) {
+      expect(() => parseAgentProfileModelInput(input), path).toThrow(path);
+    }
+  });
+
+  it("admits ordinary model record keys through the canonical schema", () => {
+    const input = JSON.parse(
+      '{"tools":{"read_file":true,"write-file":false},"metadata":{"owner":{"team":"sdk"}}}',
+    );
+
+    const admitted = parseAgentProfileModelInput(input);
+
+    expect(Object.keys(admitted.tools ?? {})).toEqual([
+      "read_file",
+      "write-file",
+    ]);
+    expect(admitted.metadata).toEqual({ owner: { team: "sdk" } });
+  });
+
+  it("rejects model input at the shared bounded JSON depth", () => {
+    let nested: unknown = true;
+    for (let depth = 0; depth <= 512; depth += 1) {
+      nested = { nested };
+    }
+
+    expect(() => parseAgentProfileModelInput({ metadata: { nested } })).toThrow(
+      /maximum JSON depth of 512/,
+    );
+  });
+
+  it("removes encoded record artifacts from every supported emitter shape", () => {
+    const encoded = "^u(?:[0-9a-f]{4})*$";
+    const cleaned = removeModelInputSchemaArtifacts({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      propertyNames: { type: "string", pattern: encoded },
+      patternProperties: {
+        [encoded]: { type: "boolean" },
+        "^safe$": { type: "boolean", pattern: encoded },
+      },
+      additionalProperties: { type: "string", pattern: encoded },
+      nested: [{ $schema: "ignored", pattern: encoded }],
+    }) as Record<string, unknown>;
+
+    const serialized = JSON.stringify(cleaned);
+    expect(serialized).not.toContain(encoded);
+    expect(cleaned).not.toHaveProperty("$schema");
+    expect(cleaned).toMatchObject({
+      type: "object",
+      patternProperties: { "^safe$": { type: "boolean" } },
+      additionalProperties: { type: "boolean" },
+      nested: [{}],
+      propertyNames: {
+        type: "string",
+        pattern: "^(?!__proto__$|constructor$|prototype$)[\\s\\S]*$",
+      },
+    });
+
+    for (const additionalProperties of [undefined, false]) {
+      const rewritten = removeModelInputSchemaArtifacts({
+        type: "object",
+        patternProperties: {
+          [encoded]: { type: "boolean" },
+        },
+        ...(additionalProperties === undefined ? {} : { additionalProperties }),
+      }) as Record<string, unknown>;
+
+      expect(rewritten).toMatchObject({
+        additionalProperties: { type: "boolean" },
+        propertyNames: {
+          type: "string",
+          pattern: "^(?!__proto__$|constructor$|prototype$)[\\s\\S]*$",
+        },
+      });
+    }
+  });
+
+  it("keeps well-formed line-terminator keys aligned across both contracts", () => {
+    const tools = propertiesOf(agentProfileJsonSchema).tools as Record<
+      string,
+      unknown
+    >;
+    const propertyNames = tools.propertyNames as Record<string, unknown>;
+    const keyPattern = new RegExp(String(propertyNames.pattern));
+    const keys = ["line\nbreak", "line\rbreak", "line\u2028break", "line\u2029break"];
+
+    for (const key of keys) {
+      const input = JSON.parse(JSON.stringify({ tools: { [key]: true } }));
+      expect(keyPattern.test(key), JSON.stringify(key)).toBe(true);
+      expect(parseAgentProfileModelInput(input).tools).toEqual({ [key]: true });
+      expect(jsonSchemaAccepts(agentProfileJsonSchema, input), JSON.stringify(key)).toBe(
+        true,
+      );
+    }
   });
 
   it("admits one ordinary complete profile through both published contracts", () => {
@@ -537,12 +838,159 @@ describe("agentProfileJsonSchema", () => {
       },
     };
 
-    const modelInputSchema = z.fromJSONSchema(agentProfileJsonSchema);
-
-    expect(modelInputSchema.safeParse(profile).success).toBe(true);
-    expect(agentProfileSchema.safeParse(profile).success).toBe(true);
+    expect(jsonSchemaAccepts(agentProfileJsonSchema, profile)).toBe(true);
+    expect(parseAgentProfileModelInput(profile)).toEqual(profile);
   });
 });
+
+function propertiesOf(schema: Record<string, unknown>): Record<string, unknown> {
+  return schema.properties as Record<string, unknown>;
+}
+
+function jsonSchemaAccepts(schema: unknown, value: unknown): boolean {
+  if (schema === true || schema === undefined) return true;
+  if (schema === false || !schema || typeof schema !== "object") return false;
+  const record = schema as Record<string, unknown>;
+  if (record.not !== undefined && jsonSchemaAccepts(record.not, value)) {
+    return false;
+  }
+  if (
+    Array.isArray(record.allOf) &&
+    !record.allOf.every((entry) => jsonSchemaAccepts(entry, value))
+  ) {
+    return false;
+  }
+  if (
+    Array.isArray(record.anyOf) &&
+    !record.anyOf.some((entry) => jsonSchemaAccepts(entry, value))
+  ) {
+    return false;
+  }
+  if (Array.isArray(record.oneOf)) {
+    const matches = record.oneOf.filter((entry) =>
+      jsonSchemaAccepts(entry, value),
+    ).length;
+    if (matches !== 1) return false;
+  }
+  if (record.const !== undefined && !Object.is(record.const, value)) {
+    return false;
+  }
+  if (
+    Array.isArray(record.enum) &&
+    !record.enum.some((entry) => Object.is(entry, value))
+  ) {
+    return false;
+  }
+
+  if (record.type !== undefined && !matchesJsonType(record.type, value)) {
+    return false;
+  }
+  if (typeof value === "string") {
+    if (
+      typeof record.minLength === "number" &&
+      value.length < record.minLength
+    ) {
+      return false;
+    }
+    if (
+      typeof record.maxLength === "number" &&
+      value.length > record.maxLength
+    ) {
+      return false;
+    }
+    if (typeof record.pattern === "string" && !new RegExp(record.pattern).test(value)) {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) {
+    if (
+      typeof record.minItems === "number" &&
+      value.length < record.minItems
+    ) {
+      return false;
+    }
+    if (
+      typeof record.maxItems === "number" &&
+      value.length > record.maxItems
+    ) {
+      return false;
+    }
+    if (
+      record.items !== undefined &&
+      !value.every((entry) => jsonSchemaAccepts(record.items, entry))
+    ) {
+      return false;
+    }
+    return true;
+  }
+  if (value === null || typeof value !== "object") return true;
+
+  const objectValue = value as Record<string, unknown>;
+  const properties = isRecordSchema(record.properties)
+    ? record.properties
+    : {};
+  const required = Array.isArray(record.required) ? record.required : [];
+  for (const key of required) {
+    if (typeof key !== "string" || !Object.hasOwn(objectValue, key)) {
+      return false;
+    }
+  }
+  const propertyNames = record.propertyNames;
+  const patternProperties = isRecordSchema(record.patternProperties)
+    ? record.patternProperties
+    : {};
+  const additional = record.additionalProperties;
+  for (const [key, entry] of Object.entries(objectValue)) {
+    if (
+      propertyNames !== undefined &&
+      !jsonSchemaAccepts(propertyNames, key)
+    ) {
+      return false;
+    }
+    let matched = false;
+    if (Object.hasOwn(properties, key)) {
+      matched = true;
+      if (!jsonSchemaAccepts(properties[key], entry)) return false;
+    }
+    for (const [pattern, patternSchema] of Object.entries(patternProperties)) {
+      if (new RegExp(pattern).test(key)) {
+        matched = true;
+        if (!jsonSchemaAccepts(patternSchema, entry)) return false;
+      }
+    }
+    if (!matched && additional === false) return false;
+    if (!matched && additional !== undefined && additional !== true) {
+      if (!jsonSchemaAccepts(additional, entry)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesJsonType(type: unknown, value: unknown): boolean {
+  if (Array.isArray(type)) return type.some((entry) => matchesJsonType(entry, value));
+  switch (type) {
+    case "array":
+      return Array.isArray(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "null":
+      return value === null;
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "object":
+      return value !== null && typeof value === "object" && !Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    default:
+      return true;
+  }
+}
+
+function isRecordSchema(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 describe("profile container schemas", () => {
   it("rejects unknown diff and capability fields", () => {

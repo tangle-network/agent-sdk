@@ -2,6 +2,9 @@
 
 Wraps a running `cli-bridge` server as an `AgentEnvironmentProvider`.
 
+This package requires Node.js >=20.18.1 because its `undici` transport dependency
+does not support older Node.js runtimes.
+
 ```ts
 import { createCliBridgeProvider } from '@tangle-network/agent-provider-cli-bridge'
 

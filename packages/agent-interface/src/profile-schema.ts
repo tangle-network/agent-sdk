@@ -19,70 +19,15 @@ import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
 } from "./sandbox-size.js";
-
-/**
- * Zod records currently assign parsed values onto an ordinary object. The
- * special own key `__proto__` therefore invokes the legacy prototype setter
- * and disappears instead of being validated. Encode every own key before Zod
- * sees it, then restore the exact UTF-16 key with defineProperty so all string
- * keys allowed by `Record<string, ...>` remain data rather than object syntax.
- */
-function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
-  valueSchema: ValueSchema,
-): z.ZodType<Record<string, z.output<ValueSchema>>> {
-  return z.preprocess(
-    encodeOwnRecordKeys,
-    z.record(
-      z
-        .string()
-        .regex(
-          /^u(?:[0-9a-f]{4})*$/,
-          "record keys must contain valid Unicode",
-        ),
-      valueSchema,
-    ).transform((record) => {
-      const restored: Record<string, z.output<ValueSchema>> = {};
-      for (const [encodedKey, value] of Object.entries(record)) {
-        Object.defineProperty(restored, decodeRecordKey(encodedKey), {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      return restored;
-    }),
-  ) as z.ZodType<Record<string, z.output<ValueSchema>>>;
-}
-
-function encodeOwnRecordKeys(value: unknown): unknown {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const encoded: Record<string, unknown> = Object.create(null);
-  for (const [key, entry] of Object.entries(value)) {
-    encoded[encodeRecordKey(key)] = entry;
-  }
-  return encoded;
-}
-
-function encodeRecordKey(value: string): string {
-  let encoded = isWellFormedUnicode(value) ? "u" : "i";
-  for (let index = 0; index < value.length; index += 1) {
-    encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
-  }
-  return encoded;
-}
-
-function decodeRecordKey(value: string): string {
-  let decoded = "";
-  for (let index = 1; index < value.length; index += 4) {
-    decoded += String.fromCharCode(
-      Number.parseInt(value.slice(index, index + 4), 16),
-    );
-  }
-  return decoded;
-}
+import {
+  detachAgentProfileModelInput,
+  ownPropertyRecordSchema,
+  validateNestedRecordKeys,
+} from "./profile-schema-records.js";
+import {
+  applyModelInputSchemaConstraints,
+  removeModelInputSchemaArtifacts,
+} from "./profile-schema-json.js";
 
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
@@ -404,38 +349,19 @@ export const agentProfileSchema = z
     validateNestedRecordKeys(profile, context, [], new Set<object>());
   });
 
-const encodedRecordKeyPattern = "^u(?:[0-9a-f]{4})*$";
-
-function isEncodedRecordKeyPropertyNames(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const propertyNames = value as Record<string, unknown>;
-  return (
-    propertyNames.type === "string" &&
-    propertyNames.pattern === encodedRecordKeyPattern
-  );
-}
-
-function removeModelInputSchemaArtifacts(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(removeModelInputSchemaArtifacts);
-  }
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "$schema") {
-      continue;
-    }
-    if (key === "propertyNames" && isEncodedRecordKeyPropertyNames(entry)) {
-      continue;
-    }
-    result[key] = removeModelInputSchemaArtifacts(entry);
-  }
-  return result;
+/**
+ * Admit one raw model-authored profile through the canonical runtime schema.
+ *
+ * The key scan intentionally runs on the original unknown value before the
+ * schema's record-key encoding or any other conversion can occur. Every
+ * nested object is visited because open records occur throughout an
+ * AgentProfile, including inside extension and metadata values. Direct
+ * callers that construct a profile in code may use {@link agentProfileSchema}
+ * when exact prototype-sensitive keys are required; raw model input must use
+ * this admission function instead.
+ */
+export function parseAgentProfileModelInput(input: unknown): AgentProfile {
+  return agentProfileSchema.parse(detachAgentProfileModelInput(input));
 }
 
 /**
@@ -445,37 +371,24 @@ function removeModelInputSchemaArtifacts(value: unknown): unknown {
  * than restating the profile shape. Zod sees encoded record keys at its
  * preprocessing boundary, so the generated `propertyNames` constraints for
  * that internal encoding are removed before exposing the schema to callers.
+ * Open record fields also reject prototype-sensitive own keys so downstream
+ * schema consumers cannot silently discard a model-authored field.
  * The root dialect declaration is also omitted because tool APIs embed this
  * value as a subschema rather than serving it as a standalone document.
- * Runtime admission remains the canonical Zod validator above.
+ * This schema and any parser derived from it with `z.fromJSONSchema` are
+ * display/tool-generation guidance only. They must never admit raw model
+ * input; use {@link parseAgentProfileModelInput}, which scans the original
+ * value before validating with the canonical Zod schema.
  */
-export const agentProfileJsonSchema = removeModelInputSchemaArtifacts(
-  z.toJSONSchema(agentProfileSchema, {
-    target: "draft-2020-12",
-    io: "input",
-    unrepresentable: "any",
-  }),
+export const agentProfileJsonSchema = applyModelInputSchemaConstraints(
+  removeModelInputSchemaArtifacts(
+    z.toJSONSchema(agentProfileSchema, {
+      target: "draft-2020-12",
+      io: "input",
+      unrepresentable: "any",
+    }),
+  ),
 ) as z.core.JSONSchema.JSONSchema;
-
-function validateNestedRecordKeys(
-  value: unknown,
-  context: z.RefinementCtx,
-  path: PropertyKey[],
-  seen: Set<object>,
-): void {
-  if (value === null || typeof value !== "object" || seen.has(value)) return;
-  seen.add(value);
-  for (const [key, entry] of Object.entries(value)) {
-    if (!isWellFormedUnicode(key)) {
-      context.addIssue({
-        code: "custom",
-        path: [...path, key],
-        message: "record keys must contain valid Unicode",
-      });
-    }
-    validateNestedRecordKeys(entry, context, [...path, key], seen);
-  }
-}
 
 export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObject(
   {
@@ -541,7 +454,7 @@ export interface Capability {
 }
 
 export const capabilitySchema: z.ZodType<Capability> = z.strictObject({
-    id: z.string().min(1),
-    definition: agentProfileSchema as z.ZodType<AgentProfile>,
-    recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
+  id: z.string().min(1),
+  definition: agentProfileSchema as z.ZodType<AgentProfile>,
+  recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
 });
