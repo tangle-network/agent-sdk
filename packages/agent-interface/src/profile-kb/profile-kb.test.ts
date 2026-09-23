@@ -378,6 +378,22 @@ describe("guidance ownership", () => {
     expect(composed.prompt?.appendSystemPrompt).toBe(team);
   });
 
+  it("replaces a 2.11 owned block when caller text quotes a closer mid-line", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nsee <profile-guidance x\n</profile-guidance>';
+    const own = "Quote </profile-guidance> literally.";
+    const model = [{ source: "model", id: "k", text: "K" }];
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${legacy}\n\n${own}` } },
+      model,
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${own}`,
+    );
+  });
+
   it("replaces a 2.11 owned block whose text carried an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';

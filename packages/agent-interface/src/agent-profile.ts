@@ -804,7 +804,8 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
 function mayBeCutShort(text: string, block: string, offset: number): boolean {
   if (!block.includes(GUIDANCE_OPEN_MARKER, 1)) return false;
   const rest = text.slice(offset + block.length);
-  const nextClose = rest.indexOf(GUIDANCE_CLOSE_MARKER);
+  // A closer ends a block only at a line start, as in GUIDANCE_BLOCK.
+  const nextClose = rest.indexOf(`\n${GUIDANCE_CLOSE_MARKER}`);
   if (nextClose === -1) return false;
   const nextOpen = rest.indexOf(GUIDANCE_OPEN_MARKER);
   return nextOpen === -1 || nextClose < nextOpen;
