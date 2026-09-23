@@ -352,6 +352,19 @@ describe("guidance ownership", () => {
     expect(composed.prompt?.appendSystemPrompt).toBe(`${nested}\n\nown`);
   });
 
+  it("keeps every nested example inside a caller block", () => {
+    const team =
+      '<profile-guidance source="team" id="t">\nEx1: <profile-guidance source="team" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: team } },
+      [{ source: "model", id: "k", text: "K" }],
+      "appendSystemPrompt",
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team}`,
+    );
+  });
+
   it("replaces a 2.11 owned block whose text carried an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';

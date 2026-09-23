@@ -811,6 +811,28 @@ function mayBeCutShort(text: string, block: string, offset: number): boolean {
   return nextOpen === -1 || nextClose < nextOpen;
 }
 
+/**
+ * The end of the block that opens at `offset`, counting nested markers, or -1
+ * when the markers never balance (a 2.11 block whose text carried an opener).
+ */
+function balancedBlockEnd(text: string, offset: number): number {
+  let depth = 0;
+  let at = offset;
+  for (;;) {
+    const open = text.indexOf(GUIDANCE_OPEN_MARKER, at);
+    const close = text.indexOf(GUIDANCE_CLOSE_MARKER, at);
+    if (close === -1) return -1;
+    if (open !== -1 && open < close) {
+      depth += 1;
+      at = open + GUIDANCE_OPEN_MARKER.length;
+    } else {
+      depth -= 1;
+      at = close + GUIDANCE_CLOSE_MARKER.length;
+      if (depth === 0) return at;
+    }
+  }
+}
+
 /** Remove previously composed guidance blocks from the owned sources. */
 function stripGuidanceText(
   text: string | undefined,
@@ -818,6 +840,9 @@ function stripGuidanceText(
 ): string | undefined {
   if (text === undefined || text === "") return text;
   let strippedLast = false;
+  // A kept block that nests markers extends to its balanced end; every match
+  // inside it is caller text and is kept too.
+  let keptUntil = 0;
   let stripped = text.replace(
     GUIDANCE_BLOCK,
     (
@@ -826,7 +851,14 @@ function stripGuidanceText(
       gap: string | undefined,
       offset: number,
     ) => {
-      if (!owned.has(source) || mayBeCutShort(text, block, offset)) {
+      if (
+        offset < keptUntil ||
+        !owned.has(source) ||
+        mayBeCutShort(text, block, offset)
+      ) {
+        if (block.includes(GUIDANCE_OPEN_MARKER, 1)) {
+          keptUntil = Math.max(keptUntil, balancedBlockEnd(text, offset));
+        }
         return block;
       }
       if (gap === undefined && offset + block.length === text.length) {
