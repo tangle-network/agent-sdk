@@ -1,3 +1,4 @@
+import { deepFreeze } from "./freeze.js";
 import type { ProfileKbDiscrepancy, ProfileKbLearning } from "./types.js";
 
 const CHECKED = "2026-09-22";
@@ -7,13 +8,13 @@ const CHECKED = "2026-09-22";
  * agent-eval check reproduced it strongly; none has met that bar yet, so the
  * list is empty rather than filled with single-run observations.
  */
-export const profileKbLearnings: readonly ProfileKbLearning[] = [];
+export const profileKbLearnings: readonly ProfileKbLearning[] = deepFreeze([]);
 
 /**
  * Names the platform asked for that vendor sources state differently, as read
  * on 2026-09-22. Recorded instead of guessed.
  */
-export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
+export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = deepFreeze([
   {
     subject: "OpenAI Codex models",
     requested: "gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna as the current Codex models",
@@ -67,4 +68,4 @@ export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
       },
     ],
   },
-];
+]);

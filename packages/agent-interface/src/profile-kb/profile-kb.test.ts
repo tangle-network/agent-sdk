@@ -115,6 +115,19 @@ describe("profile-kb content", () => {
   });
 });
 
+describe("immutability", () => {
+  it("freezes every exported record, so no consumer can change later compositions", () => {
+    const model = findProfileKbModel("claude-opus-5-5")!;
+    expect(Object.isFrozen(profileKbModels)).toBe(true);
+    expect(Object.isFrozen(model)).toBe(true);
+    expect(Object.isFrozen(model.prompt)).toBe(true);
+    expect(Object.isFrozen(model.sources[0])).toBe(true);
+    expect(Object.isFrozen(profileKbHarnesses[0]!.operator)).toBe(true);
+    expect(Object.isFrozen(profileKbDiscrepancies[0]!.sources)).toBe(true);
+    expect(() => (model.prompt as string[]).push("x")).toThrow(TypeError);
+  });
+});
+
 describe("model lookup", () => {
   it("resolves vendor ids, router ids, route prefixes, and suffixes", () => {
     expect(findProfileKbModel("claude-opus-5-5")?.id).toBe("claude-opus-5-5");
@@ -281,6 +294,17 @@ describe("guidance ownership", () => {
     const switched = withProfileKb(composed, { model: "gpt-6-luna" });
     expect(JSON.stringify(switched.prompt)).not.toContain("GPT-6 Sol");
     expect(switched.prompt?.instructions?.[2]).toContain('source="team"');
+  });
+
+  it("keeps a caller instruction that only starts with a marker", () => {
+    const partial = '<profile-guidance source="model" id="example">\nliteral text';
+    const composed = withProfileKb({
+      harness: "codex",
+      model: { default: "gpt-6-sol" },
+      prompt: { instructions: [partial] },
+    });
+    expect(composed.prompt?.instructions?.at(-1)).toBe(partial);
+    expect(withProfileKb(composed)).toEqual(composed);
   });
 
   it("replaces a layer's earlier blocks when that layer recomposes", () => {

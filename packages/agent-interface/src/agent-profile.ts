@@ -760,7 +760,8 @@ export interface AgentProfileGuidanceBlock {
  */
 export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
-const GUIDANCE_OPEN = /^<profile-guidance source="([^"]*)" id="[^"]*">\n/;
+const GUIDANCE_LINE =
+  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
 const GUIDANCE_BLOCK =
   /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
 
@@ -801,8 +802,12 @@ function stripGuidanceText(
   return stripped === "" ? undefined : stripped;
 }
 
+/**
+ * True only for a whole line that is one complete composed block from an owned
+ * source. A line that merely starts with an opening marker is caller text.
+ */
 function isOwnedGuidanceLine(line: string, owned: ReadonlySet<string>): boolean {
-  const match = GUIDANCE_OPEN.exec(line);
+  const match = GUIDANCE_LINE.exec(line);
   return match !== null && owned.has(match[1]!);
 }
 

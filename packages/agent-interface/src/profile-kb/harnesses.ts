@@ -1,3 +1,4 @@
+import { deepFreeze } from "./freeze.js";
 import type { ProfileKbHarness } from "./types.js";
 
 const CHECKED = "2026-09-22";
@@ -9,7 +10,7 @@ const CHECKED = "2026-09-22";
  * `prompt` lines go into the agent's prompt; `operator` lines are launch
  * facts. Each harness is described on its own terms.
  */
-export const profileKbHarnesses: readonly ProfileKbHarness[] = [
+export const profileKbHarnesses: readonly ProfileKbHarness[] = deepFreeze([
   {
     id: "claude-code",
     name: "Claude Code",
@@ -115,4 +116,4 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
       "Effort is the `[thinking] effort` key in `~/.kimi-code/config.toml`: low, high, or max.",
     ],
   },
-];
+]);

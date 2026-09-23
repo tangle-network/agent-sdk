@@ -1,3 +1,4 @@
+import { deepFreeze } from "./freeze.js";
 import type { ProfileKbModel, ProfileKbSource } from "./types.js";
 
 const CHECKED = "2026-09-22";
@@ -20,7 +21,7 @@ function routerCheck(note: string): ProfileKbSource {
  * run. Vendor facts carry their source. Nothing here compares one model with
  * another.
  */
-export const profileKbModels: readonly ProfileKbModel[] = [
+export const profileKbModels: readonly ProfileKbModel[] = deepFreeze([
   {
     id: "claude-opus-5-5",
     name: "Claude Opus 5.5",
@@ -413,4 +414,4 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       "Return the complete assistant message unchanged in multi-turn and tool-call histories.",
     ],
   },
-];
+]);
