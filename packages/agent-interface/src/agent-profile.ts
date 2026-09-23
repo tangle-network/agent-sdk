@@ -787,17 +787,16 @@ export interface AgentProfileGuidanceOptions {
 }
 
 function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
-  if (/["\n<>]/.test(block.source) || /["\n<>]/.test(block.id)) {
+  if (/["\n]/.test(block.source) || /["\n]/.test(block.id)) {
     throw new TypeError(
-      "profile guidance source and id must not contain quotes, newlines, or angle brackets",
+      "profile guidance source and id must not contain quotes or newlines",
     );
   }
-  if (
-    block.text.includes(GUIDANCE_CLOSE_MARKER) ||
-    block.text.includes(GUIDANCE_OPEN_MARKER)
-  ) {
+  // Only a closer can end a block early. An opener in the text is the 2.11
+  // input contract, and stripGuidanceText keeps such a block whole.
+  if (block.text.includes(GUIDANCE_CLOSE_MARKER)) {
     throw new TypeError(
-      "profile guidance text must not contain an opening or closing block marker",
+      "profile guidance text must not contain a closing block marker",
     );
   }
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
