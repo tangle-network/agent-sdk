@@ -394,6 +394,21 @@ describe("guidance ownership", () => {
     );
   });
 
+  it("ignores opener text inside an owned block's attributes", () => {
+    const own = "Tail.\n</profile-guidance>";
+    const model = { source: "model", id: "<profile-guidance x", text: "K" };
+    const once = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: own } },
+      [model],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    const twice = composeAgentProfileGuidance(once, [model], "appendSystemPrompt", {
+      replaceSources: ["model"],
+    });
+    expect(twice).toEqual(once);
+  });
+
   it("replaces a 2.11 owned block whose text carried an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';

@@ -801,8 +801,13 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
 }
 
+/** True when the block's body, after its opening tag line, holds an opener. */
+function nestsOpener(block: string): boolean {
+  return block.includes(GUIDANCE_OPEN_MARKER, block.indexOf("\n"));
+}
+
 function mayBeCutShort(text: string, block: string, offset: number): boolean {
-  if (!block.includes(GUIDANCE_OPEN_MARKER, 1)) return false;
+  if (!nestsOpener(block)) return false;
   const rest = text.slice(offset + block.length);
   // A closer ends a block only at a line start, as in GUIDANCE_BLOCK.
   const nextClose = rest.indexOf(`\n${GUIDANCE_CLOSE_MARKER}`);
@@ -868,7 +873,7 @@ function stripGuidanceText(
         !owned.has(source) ||
         mayBeCutShort(text, block, offset)
       ) {
-        if (block.includes(GUIDANCE_OPEN_MARKER, 1)) {
+        if (nestsOpener(block)) {
           keptUntil = Math.max(keptUntil, balancedBlockEnd(text, offset));
         }
         return block;
