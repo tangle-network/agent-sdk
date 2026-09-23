@@ -126,14 +126,17 @@ describe("snapshot isolation", () => {
     const harness = findProfileKbHarness("claude-code")!;
     const savedPrompt = [...model.prompt];
     const savedName = harness.name;
+    const savedId = harness.id;
     try {
       model.prompt.push("Injected after load.");
       harness.name = "Edited";
+      harness.id = "codex";
       expect(withProfileKb(profile)).toEqual(before);
       expect(findProfileKbModel("claude-opus-5-5")).toBe(model);
     } finally {
       model.prompt.splice(0, model.prompt.length, ...savedPrompt);
       harness.name = savedName;
+      harness.id = savedId;
     }
   });
 });

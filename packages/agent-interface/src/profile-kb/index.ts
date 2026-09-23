@@ -194,8 +194,9 @@ export function withProfileKb(
   const harness = selection.harness ?? profile.harness;
   const model = selection.model ?? profile.model?.default;
   const blocks = profileKbGuidance({ harness, model });
+  const known = harness ? harnessSnapshot[harnessPosition(harness)] : undefined;
   const channel = harnessSystemPromptIntents(
-    findProfileKbHarness(harness)?.id ?? (harness as HarnessType | undefined),
+    known?.id ?? (harness as HarnessType | undefined),
   ).append
     ? "appendSystemPrompt"
     : "instructions";
