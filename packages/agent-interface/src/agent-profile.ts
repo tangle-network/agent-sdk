@@ -761,9 +761,11 @@ export interface AgentProfileGuidanceBlock {
 export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
 const GUIDANCE_LINE =
-  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
+  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>|<profile-guidance )[\s\S])*\n<\/profile-guidance>$/;
+// A block body never contains another opening marker, so an unclosed marker in
+// caller text cannot swallow the composed block after it.
 const GUIDANCE_BLOCK =
-  /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+  /<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<profile-guidance )[\s\S])*?\n<\/profile-guidance>(\n\n)?/g;
 
 /** Options for {@link composeAgentProfileGuidance}. */
 export interface AgentProfileGuidanceOptions {
@@ -771,7 +773,8 @@ export interface AgentProfileGuidanceOptions {
    * The block sources this composition owns. Existing blocks from these
    * sources are removed before the new blocks are composed; blocks from any
    * other source stay where they are. Defaults to the sources of the blocks
-   * being composed.
+   * being composed, so composing no blocks removes nothing; pass the sources
+   * explicitly to clear a layer.
    */
   replaceSources?: readonly string[];
 }

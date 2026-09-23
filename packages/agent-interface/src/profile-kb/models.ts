@@ -204,7 +204,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     sources: [
       { url: `${openaiDocs}/models/gpt-6-sol`, checkedAt: CHECKED },
       {
-        url: `${openaiDocs}/guides/latest-model?model=gpt-6-astra`,
+        url: `${openaiDocs}/guides/latest-model?model=gpt-6-sol`,
         checkedAt: CHECKED,
         note: "Using GPT-6: prompting guidance",
       },

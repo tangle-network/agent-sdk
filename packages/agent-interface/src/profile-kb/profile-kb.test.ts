@@ -14,6 +14,8 @@ import {
   profileKbHarnesses,
   profileKbLearnings,
   profileKbModels,
+  PROFILE_KB_SOURCES,
+  type ProfileKbModel,
   withProfileKb,
 } from "./index.js";
 
@@ -318,6 +320,44 @@ describe("guidance ownership", () => {
     });
     expect(composed.prompt?.instructions?.at(-1)).toBe(partial);
     expect(withProfileKb(composed)).toEqual(composed);
+  });
+
+  it("removes a stale owned block that follows an unclosed caller marker", () => {
+    const text =
+      '<profile-guidance source="mine" id="u">\nuser text\n\n<profile-guidance source="model" id="m">\nold guidance\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: text } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    const out = composed.prompt?.appendSystemPrompt ?? "";
+    expect(out).not.toContain("old guidance");
+    expect(out).toContain('<profile-guidance source="mine" id="u">\nuser text');
+  });
+
+  it("clears a layer only when its sources are named", () => {
+    const layered = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
+    expect(composeAgentProfileGuidance(layered, [], "appendSystemPrompt")).toEqual(
+      layered,
+    );
+    expect(
+      composeAgentProfileGuidance(layered, [], "appendSystemPrompt", {
+        replaceSources: ["team"],
+      }).prompt?.appendSystemPrompt,
+    ).toBeUndefined();
+  });
+
+  it("finds records by id after a consumer reorders the exported arrays", () => {
+    const models = profileKbModels as ProfileKbModel[];
+    const saved = [...models];
+    try {
+      models.reverse();
+      expect(findProfileKbModel("glm-5.3")?.id).toBe("glm-5.3");
+      expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe("claude-opus-5-5");
+    } finally {
+      models.splice(0, models.length, ...saved);
+    }
   });
 
   it("replaces a layer's earlier blocks when that layer recomposes", () => {

@@ -13,10 +13,10 @@ import {
   type AgentProfileGuidanceBlock,
 } from "../agent-profile.js";
 import type { HarnessType } from "../harness.js";
+import { deepFreeze } from "../deep-freeze.js";
 import { harnessSystemPromptIntents } from "../harness-capabilities.js";
 import { profileKbHarnesses } from "./harnesses.js";
 import { profileKbModels } from "./models.js";
-import { deepFreeze } from "./freeze.js";
 import { profileKbDiscrepancies, profileKbLearnings } from "./records.js";
 import type {
   ProfileKbHarness,
@@ -46,7 +46,7 @@ export function findProfileKbHarness(
   harness: HarnessType | string | undefined,
 ): ProfileKbHarness | undefined {
   if (!harness) return undefined;
-  return profileKbHarnesses[harnessPosition(harness)];
+  return profileKbHarnesses.find((entry) => entry.id === harness);
 }
 
 /*
@@ -95,23 +95,41 @@ const modelIndex: ReadonlyMap<string, number> = (() => {
 export function findProfileKbModel(
   model: string | undefined,
 ): ProfileKbModel | undefined {
-  const position = modelPosition(model);
-  return position < 0 ? undefined : profileKbModels[position];
+  // Public lookups search the exported records as they are now; composition
+  // alone reads the frozen snapshot, so neither can desynchronize the other.
+  return matchModelName(model, (candidate) =>
+    profileKbModels.find((entry) =>
+      [entry.id, ...entry.aliases].some(
+        (name) => name.toLowerCase() === candidate,
+      ),
+    ),
+  );
 }
 
-function modelPosition(model: string | undefined): number {
-  if (!model) return -1;
+/**
+ * Try the name as given, then without each leading `provider/` or route
+ * segment, after dropping a trailing `:suffix`.
+ */
+function matchModelName<T>(
+  model: string | undefined,
+  lookup: (candidate: string) => T | undefined,
+): T | undefined {
+  if (!model) return undefined;
   const colon = model.lastIndexOf(":");
   let candidate = (colon > 0 ? model.slice(0, colon) : model)
     .trim()
     .toLowerCase();
   for (;;) {
-    const found = modelIndex.get(candidate);
+    const found = lookup(candidate);
     if (found !== undefined) return found;
     const slash = candidate.indexOf("/");
-    if (slash < 0) return -1;
+    if (slash < 0) return undefined;
     candidate = candidate.slice(slash + 1);
   }
+}
+
+function modelPosition(model: string | undefined): number {
+  return matchModelName(model, (candidate) => modelIndex.get(candidate)) ?? -1;
 }
 
 function learningsFor(
