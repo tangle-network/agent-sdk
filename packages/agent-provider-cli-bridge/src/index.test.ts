@@ -3,14 +3,9 @@ import type { AgentEnvironment } from "@tangle-network/agent-interface/environme
 import { describe, expect, it } from "vitest";
 import {
   createCliBridgeProvider as createProvider,
-  defaultCliBridgeCapabilities,
 } from "./index.js";
 
-const createCliBridgeProvider = (options: Parameters<typeof createProvider>[0]) =>
-  createProvider({
-    ...options,
-    capabilities: options.capabilities ?? defaultCliBridgeCapabilities(),
-  });
+const createCliBridgeProvider = createProvider;
 
 describe("createCliBridgeProvider", () => {
   it("streams canonical text, tool, usage, and result events", async () => {
@@ -343,24 +338,24 @@ describe("createCliBridgeProvider", () => {
       executionId: "run-2",
     });
     expect(bodies).toHaveLength(2);
-    expect(bodies).toEqual([
-      expect.objectContaining({
-        model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-1",
-      }),
-      expect.objectContaining({
-        model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-2",
-      }),
-    ]);
+    expect(bodies[0]).toMatchObject({
+      model: "pi/tangle-router/glm-5.2",
+      session_id: "session-1",
+      run_id: expect.stringMatching(/^agent-[a-f0-9]{64}$/u),
+    });
+    expect(bodies[1]).toMatchObject({
+      model: "pi/tangle-router/glm-5.2",
+      session_id: "session-1",
+      run_id: expect.stringMatching(/^agent-[a-f0-9]{64}$/u),
+    });
+    expect(bodies[0]!.run_id).not.toBe(bodies[1]!.run_id);
     expect(await provider.capabilities()).toMatchObject({ streaming: { replay: false } });
   });
 
   it("waits through a 202 cancellation when a caller stops reading", async () => {
     let status: "running" | "cancelled" = "running";
     let getCalls = 0;
+    let wireRunId = "";
     const requested: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
@@ -370,14 +365,15 @@ describe("createCliBridgeProvider", () => {
         if (init?.method === "GET") {
           getCalls += 1;
           if (getCalls === 1) {
-            return runResponse("run-reader-stop", "running", false);
+            return runResponse(wireRunId, "running", false);
           }
           status = "cancelled";
-          return runResponse("run-reader-stop", status, true);
+          return runResponse(wireRunId, status, true);
         }
         if (String(url).endsWith("/cancel")) {
-          return cancelResponse("run-reader-stop", "running", false, 202);
+          return cancelResponse(wireRunId, "running", false, 202);
         }
+        wireRunId = String((JSON.parse(String(init?.body)) as Record<string, unknown>).run_id);
         return new Response(
           [
             'id: 1\ndata: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
@@ -399,9 +395,9 @@ describe("createCliBridgeProvider", () => {
     });
     await iterator.return?.();
 
-    expect(requested).toContain("http://bridge.local/v1/runs/run-reader-stop/cancel");
+    expect(requested).toContain(`http://bridge.local/v1/runs/${wireRunId}/cancel`);
     expect(requested).toContain(
-      "http://bridge.local/v1/runs/run-reader-stop?wait_ms=30000",
+      `http://bridge.local/v1/runs/${wireRunId}?wait_ms=30000`,
     );
     expect(getCalls).toBe(2);
   });
@@ -456,17 +452,19 @@ describe("createCliBridgeProvider", () => {
       startedResolve = resolve;
     });
     const requested: string[] = [];
+    let wireRunId = "";
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (url, init) => {
         requested.push(String(url));
         if (String(url).endsWith("/cancel")) {
-          return cancelResponse("run-no-session", "cancelled", true);
+          return cancelResponse(wireRunId, "cancelled", true);
         }
         if (init?.method === "GET") {
-          return runResponse("run-no-session", "cancelled", true);
+          return runResponse(wireRunId, "cancelled", true);
         }
+        wireRunId = String((JSON.parse(String(init?.body)) as Record<string, unknown>).run_id);
         startedResolve();
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
@@ -484,7 +482,7 @@ describe("createCliBridgeProvider", () => {
 
     await environment.destroy?.();
     await expect(running).rejects.toThrow("cli-bridge run ended cancelled");
-    expect(requested).toContain("http://bridge.local/v1/runs/run-no-session/cancel");
+    expect(requested).toContain(`http://bridge.local/v1/runs/${wireRunId}/cancel`);
   });
 
   it("isolates derived run ids across environments and keeps them wire-safe", async () => {
@@ -494,7 +492,7 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
+        if (typeof body.run_id === "string") runIds.push(body.run_id);
         return terminalResponse("ok");
       },
     });
@@ -518,8 +516,9 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
+        if (init?.method === "GET") return new Response("", { status: 501 });
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
+        if (typeof body.run_id === "string") runIds.push(body.run_id);
         return terminalResponse("ok");
       },
     });

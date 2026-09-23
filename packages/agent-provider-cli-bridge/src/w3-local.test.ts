@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentRunCancellationRequestDigest } from "@tangle-network/agent-interface";
 import { createCliBridgeProvider } from "./index.js";
 
 describe("live retained bridge contract", () => {
@@ -82,9 +83,138 @@ describe("live retained bridge contract", () => {
           metadata: {
             runId: dispatched.controlRef.runId,
             executionId: "provider-live-turn",
+            requestDigest: dispatched.controlRef.requestDigest,
           },
         });
         expect(result.text.trim()).toBe("braid provider live.");
+      } finally {
+        await environment.destroy?.();
+      }
+    },
+    240_000,
+  );
+
+  it.skipIf(!process.env.CLI_BRIDGE_LIVE_URL || process.env.CLI_BRIDGE_LIVE_TURN !== "1")(
+    "answers a real Pi permission through the retained provider",
+    async () => {
+      const model = process.env.CLI_BRIDGE_LIVE_MODEL ?? "pi/deepseek/deepseek-v4-pro";
+      const sessionId = `provider-live-interaction-${Date.now()}`;
+      const provider = createCliBridgeProvider({
+        baseUrl: process.env.CLI_BRIDGE_LIVE_URL!,
+        defaultModel: model,
+        bearerToken: process.env.CLI_BRIDGE_LIVE_TOKEN,
+      });
+      const environment = await provider.create({
+        profile: { name: "w3-provider-live-interaction", harness: "pi", model: { default: model } },
+        idempotencyKey: sessionId,
+      });
+      try {
+        const dispatched = await environment.dispatch?.({
+          prompt: "You must use the read tool to read package.json before answering. Then reply with exactly: provider permission resumed.",
+          executionId: "provider-live-interaction-execution",
+        });
+        if (!dispatched?.controlRef || !environment.session) {
+          throw new Error("retained provider did not return interaction control");
+        }
+        const session = environment.session(sessionId, { controlRef: dispatched.controlRef });
+        let interactionId: string | undefined;
+        for await (const event of session.events({
+          executionId: dispatched.controlRef.executionId,
+        })) {
+          if (event.normalized?.type === "interaction") {
+            interactionId = event.normalized.request.id;
+            break;
+          }
+        }
+        if (!interactionId || !session.respondToInteraction) {
+          throw new Error("retained provider did not expose the real Pi permission");
+        }
+        const command = {
+          operationId: "provider-live-interaction-response",
+          binding: {
+            runId: dispatched.controlRef.runId,
+            environmentId: dispatched.controlRef.environmentId,
+            sessionId,
+            interactionId,
+          },
+          response: {
+            id: interactionId,
+            outcome: "accepted" as const,
+            data: { grant: ["allow_once"] },
+          },
+        };
+        const acknowledgement = await session.respondToInteraction(command);
+        expect(acknowledgement).toMatchObject({
+          operationId: command.operationId,
+          binding: command.binding,
+          status: "accepted",
+        });
+        await expect(session.respondToInteraction(command)).resolves.toEqual(acknowledgement);
+        await expect(session.result()).resolves.toMatchObject({
+          success: true,
+          text: "provider permission resumed.",
+          sessionId,
+        });
+      } finally {
+        await environment.destroy?.();
+      }
+    },
+    240_000,
+  );
+
+  it.skipIf(!process.env.CLI_BRIDGE_LIVE_URL || process.env.CLI_BRIDGE_LIVE_TURN !== "1")(
+    "cancels a real Pi process through the retained provider exactly once",
+    async () => {
+      const model = process.env.CLI_BRIDGE_LIVE_MODEL ?? "pi/deepseek/deepseek-v4-pro";
+      const sessionId = `provider-live-cancel-${Date.now()}`;
+      const provider = createCliBridgeProvider({
+        baseUrl: process.env.CLI_BRIDGE_LIVE_URL!,
+        defaultModel: model,
+        bearerToken: process.env.CLI_BRIDGE_LIVE_TOKEN,
+      });
+      const environment = await provider.create({
+        profile: { name: "w3-provider-live-cancel", harness: "pi", model: { default: model } },
+        idempotencyKey: sessionId,
+      });
+      try {
+        const dispatched = await environment.dispatch?.({
+          prompt: "You must use the read tool to read package.json before answering.",
+          executionId: "provider-live-cancel-execution",
+        });
+        if (!dispatched?.controlRef || !environment.session) {
+          throw new Error("retained provider did not return cancellation control");
+        }
+        const session = environment.session(sessionId, { controlRef: dispatched.controlRef });
+        for await (const event of session.events({
+          executionId: dispatched.controlRef.executionId,
+        })) {
+          if (event.normalized?.type === "interaction") break;
+        }
+        if (!session.cancelRun) throw new Error("retained provider did not expose cancellation");
+        const material = {
+          operationId: "provider-live-cancel-operation",
+          run: dispatched.controlRef,
+          reason: "provider live cancellation proof",
+        };
+        const request = {
+          ...material,
+          requestDigest: agentRunCancellationRequestDigest(material),
+        };
+        const acknowledgement = await session.cancelRun(request);
+        expect(acknowledgement).toMatchObject({
+          operationId: material.operationId,
+          status: "accepted",
+          effect: "cancelled",
+          run: dispatched.controlRef,
+        });
+        await expect(session.cancelRun(request)).resolves.toEqual(acknowledgement);
+        await expect(session.status()).resolves.toBe("cancelled");
+
+        const changedMaterial = { ...material, reason: "changed cancellation reason" };
+        await expect(session.cancelRun({
+          ...changedMaterial,
+          requestDigest: agentRunCancellationRequestDigest(changedMaterial),
+        })).resolves.toMatchObject({ status: "conflict", effect: "unknown" });
       } finally {
         await environment.destroy?.();
       }

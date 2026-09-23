@@ -12,6 +12,7 @@ import {
   agentRunCancellationRequestDigest,
   canonicalCandidateDigest,
   agentRunCancellationAcknowledgementMatchesRequest,
+  normalizeInputParts,
   sha256DigestSchema,
   snapshotAgentProfile,
 } from "@tangle-network/agent-interface";
@@ -20,6 +21,7 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
+  AgentEnvironmentQuery,
   AgentProfileRef,
   AgentSession,
   AgentSessionRef,
@@ -78,17 +80,38 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
     ? AgentEnvironmentCapabilitiesSchema.parse(options.capabilities)
     : undefined;
   let discoveredCapabilities: Promise<AgentEnvironmentCapabilities> | undefined;
+  let discoveredCapabilitiesDigest: string | undefined;
   const providerCapabilities = (): AgentEnvironmentCapabilities | Promise<AgentEnvironmentCapabilities> => {
-    if (configuredCapabilities) return configuredCapabilities;
-    if (!options.defaultModel) return defaultCliBridgeCapabilities();
+    if (!options.defaultModel) return configuredCapabilities ?? defaultCliBridgeCapabilities();
     discoveredCapabilities ??= discoverRetainedCapabilities(options, options.defaultModel)
+      .then((discovered) => {
+        const digest = canonicalCandidateDigest(discovered);
+        if (
+          configuredCapabilities &&
+          canonicalCandidateDigest(configuredCapabilities) !== digest
+        ) {
+          throw new Error("configured cli-bridge capabilities do not match the live endpoint");
+        }
+        discoveredCapabilitiesDigest = digest;
+        return discovered;
+      })
       .catch((error) => {
         discoveredCapabilities = undefined;
+        discoveredCapabilitiesDigest = undefined;
         throw error;
       });
     return discoveredCapabilities;
   };
+  const ensureCapabilitiesDiscovered = async (): Promise<string | undefined> => {
+    if (!options.defaultModel) return undefined;
+    await providerCapabilities();
+    if (!discoveredCapabilitiesDigest) {
+      throw new Error("cli-bridge capability discovery did not produce an exact document");
+    }
+    return discoveredCapabilitiesDigest;
+  };
   const getBridgeEnvironment = async (): Promise<AgentEnvironment | null> => {
+    const expectedCapabilitiesDigest = await ensureCapabilitiesDiscovered();
     const capabilities = await providerCapabilities();
     if (!retainedCapabilitiesAdmit(capabilities)) return null;
     const transport = createTransport(options);
@@ -106,12 +129,13 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
       }
       const body = parseJsonText(await response.text(), "cli-bridge session list");
       const first = Array.isArray(body.data) ? body.data[0] : undefined;
-      if (first !== undefined) parseRetainedSessionView(first);
+      if (first !== undefined) parseRetainedSessionView(first, expectedCapabilitiesDigest);
       return createRetainedEnvironmentShell(
         options,
         transport,
         name,
         true,
+        expectedCapabilitiesDigest,
       );
     } catch (error) {
       await transport.close();
@@ -119,11 +143,12 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
     }
   };
   const getEnvironment = async (id: string): Promise<AgentEnvironment | null> => {
+    const expectedCapabilitiesDigest = await ensureCapabilitiesDiscovered();
     if (options.capabilities?.streaming.detach === false) return null;
     if (id === RETAINED_ENVIRONMENT_ID) return getBridgeEnvironment();
     const transport = createTransport(options);
     try {
-      const view = await getRetainedSessionView(options, transport, id);
+      const view = await getRetainedSessionView(options, transport, id, expectedCapabilitiesDigest);
       if (!view) {
         await transport.close();
         return null;
@@ -149,7 +174,15 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
       throw error;
     }
   };
-  const listEnvironments = async () => {
+  const listEnvironments = async (query?: AgentEnvironmentQuery) => {
+    if (
+      query?.name !== undefined ||
+      query?.metadata !== undefined ||
+      query?.providerOptions !== undefined
+    ) {
+      throw new Error("cli-bridge retained session listing does not support filtered queries");
+    }
+    const expectedCapabilitiesDigest = await ensureCapabilitiesDiscovered();
     if (options.capabilities?.sessions.list === false) return [];
     const transport = createTransport(options);
     try {
@@ -164,7 +197,7 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
       const body = parseJsonText(await response.text(), "cli-bridge session list");
       const data = Array.isArray(body?.data) ? body.data : [];
       return data.map((item: unknown) => {
-        const view = parseRetainedSessionView(item);
+        const view = parseRetainedSessionView(item, expectedCapabilitiesDigest);
         return {
           id: view.id,
           provider: name,
@@ -189,18 +222,28 @@ export function createCliBridgeProvider(options: CliBridgeProviderOptions): Agen
     async create(input) {
       const profile = snapshotInlineProfile(input.profile);
       const environmentInput = profile ? { ...input, profile } : input;
-      const transport = createTransport(options);
       const model = tryResolveBridgeModel(options, input, profile);
+      const retainedCandidate = options.defaultModel !== undefined &&
+        model !== undefined &&
+        input.idempotencyKey !== undefined &&
+        (profile !== undefined || typeof input.profile === "string") &&
+        options.capabilities?.streaming.detach !== false &&
+        retainedCreateInputSupported(options, environmentInput);
+      const expectedCapabilitiesDigest = retainedCandidate
+        ? await ensureCapabilitiesDiscovered()
+        : undefined;
+      const transport = createTransport(options);
       let retained: RetainedSessionState | undefined;
       try {
-        if (
-          options.defaultModel &&
-          model &&
-          (profile || typeof input.profile === "string") &&
-          options.capabilities?.streaming.detach !== false &&
-          retainedCreateInputSupported(options, environmentInput)
-        ) {
-          retained = await tryCreateRetainedSession(options, transport, environmentInput, profile ?? input.profile, model);
+        if (retainedCandidate) {
+          retained = await tryCreateRetainedSession(
+            options,
+            transport,
+            environmentInput,
+            profile ?? input.profile,
+            model,
+            expectedCapabilitiesDigest,
+          );
         }
       } catch (error) {
         await transport.close();
@@ -247,6 +290,7 @@ type RetainedStatus =
 
 interface RetainedRunSnapshot {
   readonly id: string;
+  readonly executionId: string;
   readonly requestDigest: `sha256:${string}`;
   readonly status: "running" | "done" | "error" | "cancelled" | "unknown";
   readonly terminal: boolean;
@@ -255,6 +299,15 @@ interface RetainedRunSnapshot {
 }
 
 type RetainedCancelEffect = "cancel_requested" | "cancelled" | "not_live" | "unknown";
+
+type DigestBearingControlRef = AgentRunControlRef & {
+  executionId: string;
+  requestDigest: NonNullable<AgentRunControlRef["requestDigest"]>;
+};
+
+type ExactRetainedControlRef = DigestBearingControlRef & {
+  sessionId: string;
+};
 
 interface ExactRetainedCancelOptions {
   readonly executionId?: string;
@@ -267,19 +320,34 @@ interface RetainedSessionState {
   readonly sessionId: string;
   readonly model: string;
   readonly capabilities: AgentEnvironmentCapabilities;
+  readonly capabilitiesDigest: string;
   readonly profile?: AgentProfile;
   view: RetainedSessionView;
   profileReceipt?: Record<string, unknown>;
   profileReceiptDigest?: string;
   controlRef?: AgentRunControlRef;
-  activeReaders: Set<AbortController>;
+  activeReaders: Map<AbortController, string>;
   activeRun?: RetainedRunSnapshot;
   cancelOperations: Map<string, {
     digest: string;
     promise: Promise<AgentRunCancellationAcknowledgement>;
   }>;
-  cancelRequested?: boolean;
+  readonly observedEvents: Map<string, RetainedRunEventState>;
+  readonly cancelRequestedRunIds: Set<string>;
+  viewLane: Promise<void>;
   suppressReaderDetach?: boolean;
+}
+
+interface RetainedRunEventObservation {
+  readonly eventId: string;
+  readonly sequence: number;
+  readonly payloadDigest: string;
+}
+
+interface RetainedRunEventState {
+  readonly byEventId: Map<string, RetainedRunEventObservation>;
+  readonly bySequence: Map<number, RetainedRunEventObservation>;
+  terminalSequence?: number;
 }
 
 function createLegacyEnvironment(
@@ -363,6 +431,7 @@ interface RetainedEnvironmentContext {
   readonly input: CreateAgentEnvironmentInput;
   readonly name: string;
   readonly state: RetainedSessionState;
+  readonly expectedCapabilitiesDigest: string;
   readonly isDestroyed: () => boolean;
 }
 
@@ -372,9 +441,13 @@ async function tryCreateRetainedSession(
   input: CreateAgentEnvironmentInput,
   profile: AgentProfileRef,
   model: string,
+  expectedCapabilitiesDigest?: string,
 ): Promise<RetainedSessionState | undefined> {
   if (!options.defaultModel || !retainedCreateInputSupported(options, input)) return undefined;
-  const sessionId = input.idempotencyKey ?? crypto.randomUUID();
+  if (!input.idempotencyKey) {
+    throw new Error("cli-bridge retained session creation requires a stable idempotencyKey");
+  }
+  const sessionId = input.idempotencyKey;
   const body: Record<string, unknown> = {
     id: sessionId,
     model,
@@ -394,7 +467,12 @@ async function tryCreateRetainedSession(
   const text = await response.text();
   if (isRetainedUnsupported(response.status, text, response.headers)) return undefined;
   if (response.status === 409) {
-    const existing = await getRetainedSessionView(options, transport, sessionId);
+    const existing = await getRetainedSessionView(
+      options,
+      transport,
+      sessionId,
+      expectedCapabilitiesDigest,
+    );
     if (existing) {
       if (
         existing.model !== model ||
@@ -413,19 +491,36 @@ async function tryCreateRetainedSession(
   if (!response.ok) {
     throw new CliBridgeRequestRejectedError(response.status, text || "retained session creation rejected");
   }
-  const parsed = parseJsonText(text, "cli-bridge retained session creation");
-  const created = parseRetainedSessionView(parsed);
-  if (created.create_request_digest !== createRequestDigest) {
-    await closeUnusableRetainedSession(options, transport, sessionId);
-    throw new Error("cli-bridge retained session changed its exact create request digest");
+  try {
+    const parsed = parseJsonText(text, "cli-bridge retained session creation");
+    const created = parseRetainedSessionView(parsed, expectedCapabilitiesDigest);
+    if (created.id !== sessionId) {
+      throw new Error("cli-bridge retained session creation returned a different session");
+    }
+    if (created.create_request_digest !== createRequestDigest) {
+      throw new Error("cli-bridge retained session changed its exact create request digest");
+    }
+    const state = createRetainedState(
+      created,
+      typeof profile === "string" ? undefined : profile,
+    );
+    if (!retainedCapabilitiesAdmit(state.capabilities) ||
+      (typeof profile === "string" && !state.capabilities.profile.namedProfiles)) {
+      await closeUnusableRetainedSession(options, transport, sessionId);
+      return undefined;
+    }
+    return state;
+  } catch (error) {
+    try {
+      await closeUnusableRetainedSession(options, transport, sessionId);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "cli-bridge retained session validation and cleanup both failed",
+      );
+    }
+    throw error;
   }
-  const state = createRetainedState(created, typeof profile === "string" ? undefined : profile);
-  if (!retainedCapabilitiesAdmit(state.capabilities) ||
-    (typeof profile === "string" && !state.capabilities.profile.namedProfiles)) {
-    await closeUnusableRetainedSession(options, transport, sessionId);
-    return undefined;
-  }
-  return state;
 }
 
 function retainedCreateInputSupported(
@@ -438,6 +533,7 @@ function retainedCreateInputSupported(
     input.env === undefined &&
     input.secrets === undefined &&
     input.providerOptions === undefined &&
+    retainedMetadataSupported(input.metadata) &&
     (workspace === undefined || (
       workspace.environment === undefined &&
       workspace.image === undefined &&
@@ -445,6 +541,32 @@ function retainedCreateInputSupported(
       workspace.gitRef === undefined &&
       workspace.providerOptions === undefined
     ));
+}
+
+const retainedMetadataSecret = /(?:bearer\s+\S+|(?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*\S+|(?:sk|rk|pk|ghp|xox[baprs]|AIza)[-_A-Za-z0-9]{8,}|-----BEGIN [^-]+ PRIVATE KEY-----)/iu;
+
+function retainedMetadataSupported(value: Record<string, unknown> | undefined): boolean {
+  if (value === undefined) return true;
+  const keys = Object.keys(value);
+  if (keys.some((key) => !["label", "description", "client", "tags"].includes(key))) return false;
+  if (value.label !== undefined && (typeof value.label !== "string" || value.label.length < 1 || value.label.length > 256)) return false;
+  if (value.description !== undefined && (typeof value.description !== "string" || value.description.length > 2_048)) return false;
+  if (value.client !== undefined && (typeof value.client !== "string" || value.client.length < 1 || value.client.length > 128)) return false;
+  if (value.tags !== undefined && (
+    !Array.isArray(value.tags) ||
+    value.tags.length > 32 ||
+    value.tags.some((tag) => typeof tag !== "string" || tag.length < 1 || tag.length > 64)
+  )) return false;
+  return !retainedMetadataContainsSecret(value);
+}
+
+function retainedMetadataContainsSecret(value: unknown): boolean {
+  if (typeof value === "string") return retainedMetadataSecret.test(value);
+  if (Array.isArray(value)) return value.some(retainedMetadataContainsSecret);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(retainedMetadataContainsSecret);
+  }
+  return false;
 }
 
 function retainedCapabilitiesAdmit(capabilities: AgentEnvironmentCapabilities): boolean {
@@ -473,6 +595,9 @@ async function discoverRetainedCapabilities(
     );
     if ([404, 405, 501].includes(response.status)) return defaultCliBridgeCapabilities();
     const text = await response.text();
+    if (isRetainedUnsupported(response.status, text, response.headers)) {
+      return defaultCliBridgeCapabilities();
+    }
     if (!response.ok) {
       throw new CliBridgeRequestRejectedError(response.status, text || "capability discovery rejected");
     }
@@ -510,10 +635,14 @@ function createRetainedState(
     sessionId: view.id,
     model: view.model,
     capabilities: view.capabilities,
+    capabilitiesDigest: canonicalCandidateDigest(view.capabilities),
     ...(profile ? { profile } : {}),
     view,
-    activeReaders: new Set<AbortController>(),
+    activeReaders: new Map<AbortController, string>(),
     cancelOperations: new Map(),
+    observedEvents: new Map(),
+    cancelRequestedRunIds: new Set(),
+    viewLane: Promise.resolve(),
   };
   observeRetainedView(state, view, "cli-bridge");
   return state;
@@ -524,17 +653,43 @@ function observeRetainedView(
   view: RetainedSessionView,
   providerName: string,
 ): void {
+  const currentRun = state.activeRun;
+  if (
+    currentRun?.terminal &&
+    view.run_id === currentRun.id &&
+    (view.status === "running" || view.run?.terminal === false)
+  ) {
+    return;
+  }
   state.view = view;
   state.activeRun = view.run;
   if (view.run_id) {
+    if (
+      state.controlRef?.runId === view.run_id &&
+      state.controlRef.requestDigest &&
+      view.run?.requestDigest &&
+      state.controlRef.requestDigest !== view.run.requestDigest
+    ) {
+      throw new Error("cli-bridge retained run changed its exact request digest");
+    }
+    const executionId = view.run?.id === view.run_id
+      ? view.run.executionId
+      : state.controlRef?.runId === view.run_id
+        ? state.controlRef.executionId
+        : undefined;
+    if (!executionId) {
+      throw new Error("cli-bridge retained run did not preserve its public execution identity");
+    }
     state.controlRef = makeControlRef(
       providerName,
       view.id,
       view.run_id,
-      state.controlRef?.runId === view.run_id
-        ? state.controlRef.executionId
-        : view.run_id,
-      view.run?.id === view.run_id ? view.run.requestDigest : undefined,
+      executionId,
+      view.run?.id === view.run_id
+        ? view.run.requestDigest
+        : state.controlRef?.runId === view.run_id
+          ? state.controlRef.requestDigest
+          : undefined,
     );
   }
   if (view.profile_materialization_receipt !== null) {
@@ -545,6 +700,59 @@ function observeRetainedView(
     }
     state.profileReceipt = receipt;
     state.profileReceiptDigest = digest;
+  }
+}
+
+function observeCurrentRetainedRun(
+  state: RetainedSessionState,
+  run: RetainedRunSnapshot,
+  providerName: string,
+): boolean {
+  if (run.sessionId !== state.sessionId) {
+    throw new Error("cli-bridge retained run does not bind to this session");
+  }
+  if (state.view.run_id !== run.id) return false;
+  if (
+    state.controlRef?.runId === run.id &&
+    (state.controlRef.executionId !== run.executionId ||
+      state.controlRef.requestDigest !== run.requestDigest)
+  ) {
+    throw new Error("cli-bridge retained run changed its exact control identity");
+  }
+  state.activeRun = run;
+  state.view = {
+    ...state.view,
+    status: run.status === "cancelled"
+      ? "cancelled"
+      : run.terminal
+        ? "completed"
+        : state.view.status,
+    run,
+  };
+  state.controlRef = makeControlRef(
+    providerName,
+    state.sessionId,
+    run.id,
+    run.executionId,
+    run.requestDigest,
+  );
+  return true;
+}
+
+async function inRetainedViewLane<T>(
+  state: RetainedSessionState,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = state.viewLane;
+  let release!: () => void;
+  state.viewLane = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
   }
 }
 
@@ -582,6 +790,7 @@ function createRetainedEnvironment(
     input,
     name,
     state,
+    expectedCapabilitiesDigest: state.capabilitiesDigest,
     isDestroyed: () => destroyed,
   };
   const supportsSession = retainedCapabilitiesAdmit(state.capabilities);
@@ -650,7 +859,7 @@ function createRetainedEnvironment(
         } else if (state.activeRun && !state.activeRun.terminal) {
           await detachRetainedSession(context, state);
         }
-        for (const reader of state.activeReaders) {
+        for (const reader of state.activeReaders.keys()) {
           reader.abort(new DOMException("cli-bridge environment was destroyed", "AbortError"));
         }
         await transport.close();
@@ -673,6 +882,7 @@ interface RetainedShellContext {
   readonly options: CliBridgeProviderOptions;
   readonly transport: CliBridgeTransport;
   readonly name: string;
+  readonly expectedCapabilitiesDigest?: string;
   readonly states: Map<string, RetainedSessionState>;
   readonly contexts: Map<string, RetainedEnvironmentContext>;
   readonly isDestroyed: () => boolean;
@@ -683,6 +893,7 @@ function createRetainedEnvironmentShell(
   transport: CliBridgeTransport,
   name: string,
   supportsSession: boolean,
+  expectedCapabilitiesDigest?: string,
 ): AgentEnvironment {
   let destroyed = false;
   let closePromise: Promise<void> | undefined;
@@ -690,6 +901,7 @@ function createRetainedEnvironmentShell(
     options,
     transport,
     name,
+    expectedCapabilitiesDigest,
     states: new Map(),
     contexts: new Map(),
     isDestroyed: () => destroyed,
@@ -715,7 +927,7 @@ function createRetainedEnvironmentShell(
           if (state.activeRun && !state.activeRun.terminal) {
             await detachRetainedSession(retainedContext, state);
           }
-          for (const reader of state.activeReaders) {
+          for (const reader of state.activeReaders.keys()) {
             reader.abort(new DOMException("cli-bridge environment was destroyed", "AbortError"));
           }
         }
@@ -748,7 +960,12 @@ function createLazyRetainedSession(
     if (shell.isDestroyed()) throw new Error("cli-bridge environment is destroyed");
     if (loaded) return loaded;
     loaded = (async () => {
-      const view = await getRetainedSessionView(shell.options, shell.transport, sessionId);
+      const view = await getRetainedSessionView(
+        shell.options,
+        shell.transport,
+        sessionId,
+        shell.expectedCapabilitiesDigest,
+      );
       if (!view) throw new CliBridgeUnknownStateError(`cli-bridge retained session ${JSON.stringify(sessionId)} is unknown`);
       if (!retainedCapabilitiesAdmit(view.capabilities)) {
         throw new Error("cli-bridge retained session does not advertise the complete retained contract");
@@ -761,11 +978,14 @@ function createLazyRetainedSession(
         input: { profile: { name: "reconnected" }, idempotencyKey: sessionId },
         name: shell.name,
         state,
+        expectedCapabilitiesDigest: state.capabilitiesDigest,
         isDestroyed: shell.isDestroyed,
       };
       const session = createRetainedSession(context, state, activeControlRef);
       loadedSession = session;
-      activeControlRef = session.controlRef ?? activeControlRef;
+      activeControlRef = session.controlRef
+        ? exactRequestedControlRef(session.controlRef)
+        : activeControlRef;
       shell.states.set(sessionId, state);
       shell.contexts.set(sessionId, context);
       return session;
@@ -791,7 +1011,9 @@ function createLazyRetainedSession(
     prompt: async (turn) => {
       const session = await load();
       const result = await session.prompt(turn);
-      activeControlRef = session.controlRef ?? activeControlRef;
+      activeControlRef = session.controlRef
+        ? exactRequestedControlRef(session.controlRef)
+        : activeControlRef;
       return result;
     },
     respondToInteraction: async (command, responseOptions) => {
@@ -815,7 +1037,7 @@ async function* streamRetainedTurn(
   context: RetainedEnvironmentContext,
   turn: AgentTurnInput,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  rejectUnsupportedRetainedInput(turn);
+  rejectUnsupportedRetainedInput(context, turn);
   if (turn.detach) {
     await dispatchRetainedTurn(context, turn);
     return;
@@ -823,16 +1045,31 @@ async function* streamRetainedTurn(
   const state = context.state;
   const attach = !hasTurnContent(turn) &&
     (turn.lastEventId !== undefined || turn.controlRef !== undefined);
+  const attachControlRef = attach
+    ? historicalRetainedControlRef(
+        context,
+        state,
+        turn.controlRef,
+        turn.executionId,
+      )
+    : undefined;
   const runId = attach
-    ? await resolveRetainedRunId(context, state, turn.controlRef)
+    ? await resolveRetainedRunId(context, state, attachControlRef)
     : (await startRetainedTurn(context, turn)).id;
+  const exactControlRef = state.controlRef?.runId === runId
+    ? exactRetainedControlRef(context, state, state.controlRef)
+    : attachControlRef;
+  if (!exactControlRef) {
+    throw new Error("cli-bridge retained replay requires an exact digest-bearing controlRef");
+  }
   yield* streamRetainedEvents(
     context,
     state,
     runId,
     turn.lastEventId,
     turn.signal,
-    turn.controlRef?.requestDigest ?? state.controlRef?.requestDigest,
+    exactControlRef.requestDigest,
+    exactControlRef.executionId,
   );
 }
 
@@ -840,7 +1077,7 @@ async function dispatchRetainedTurn(
   context: RetainedEnvironmentContext,
   turn: AgentTurnInput,
 ): Promise<AgentSessionRef> {
-  rejectUnsupportedRetainedInput(turn);
+  rejectUnsupportedRetainedInput(context, turn);
   const run = await startRetainedTurn(context, turn);
   const state = context.state;
   const controlRef = state.controlRef ?? makeControlRef(context.name, state.sessionId, run.id);
@@ -864,6 +1101,13 @@ async function startRetainedTurn(
   context: RetainedEnvironmentContext,
   turn: AgentTurnInput,
 ): Promise<RetainedRunSnapshot> {
+  return inRetainedViewLane(context.state, () => startRetainedTurnInLane(context, turn));
+}
+
+async function startRetainedTurnInLane(
+  context: RetainedEnvironmentContext,
+  turn: AgentTurnInput,
+): Promise<RetainedRunSnapshot> {
   if (!hasTurnContent(turn)) {
     throw new Error("cli-bridge retained turns require a non-empty prompt or parts");
   }
@@ -871,19 +1115,42 @@ async function startRetainedTurn(
   if (turn.sessionId && turn.sessionId !== state.sessionId) {
     throw new Error("cli-bridge retained turn sessionId does not match the retained session");
   }
-  if (turn.controlRef) validateControlRef(context, state, turn.controlRef);
-  const publicExecutionId = turn.executionId ?? turn.turnId;
+  const retryControlRef = turn.controlRef
+    ? exactRetainedControlRef(context, state, turn.controlRef)
+    : undefined;
+  const publicExecutionId = turn.executionId ?? turn.turnId ?? retryControlRef?.executionId;
   if (!stablePublicId(publicExecutionId)) {
     throw new Error("cli-bridge retained turns require a stable executionId or turnId");
   }
-  state.cancelRequested = false;
   const runId = retainedRunId(state.sessionId, publicExecutionId);
+  const turnId = turn.turnId ?? publicExecutionId;
   const body: Record<string, unknown> = {
     ...(turn.prompt ? { message: turn.prompt } : {}),
-    ...(turn.parts ? { parts: turn.parts } : {}),
-    turn_id: turn.turnId ?? publicExecutionId,
+    ...(turn.parts && turn.parts.length > 0 ? { parts: turn.parts } : {}),
+    turn_id: turnId,
+    execution_id: publicExecutionId,
     run_id: runId,
   };
+  const inputParts = normalizeInputParts({
+    message: typeof body.message === "string" ? body.message : undefined,
+    parts: Array.isArray(body.parts) ? body.parts : undefined,
+  });
+  const expectedRequestDigest = canonicalCandidateDigest({
+    sessionId: state.sessionId,
+    runId,
+    executionId: publicExecutionId,
+    model: state.model,
+    input: inputParts,
+    turnId,
+  });
+  if (retryControlRef && (
+    retryControlRef.runId !== runId ||
+    retryControlRef.executionId !== publicExecutionId ||
+    retryControlRef.requestDigest !== expectedRequestDigest
+  )) {
+    throw new Error("cli-bridge retained turn does not match its exact retry controlRef");
+  }
+  state.cancelRequestedRunIds.delete(runId);
   const response = await context.transport.fetch(
     `${trimSlash(context.options.baseUrl)}/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`,
     {
@@ -898,23 +1165,32 @@ async function startRetainedTurn(
     throw new CliBridgeRequestRejectedError(response.status, text || "retained turn rejected");
   }
   const parsed = parseJsonText(text, "cli-bridge retained turn");
-  const session = parseRetainedSessionView(parsed.session);
+  const session = parseRetainedSessionView(parsed.session, context.expectedCapabilitiesDigest);
   if (session.id !== state.sessionId) {
     throw new Error("cli-bridge retained turn returned a different session");
   }
   const run = parseRetainedRun(parsed.run);
-  if (run.id !== runId || run.sessionId !== state.sessionId) {
+  if (
+    run.id !== runId ||
+    run.sessionId !== state.sessionId ||
+    run.executionId !== publicExecutionId
+  ) {
     throw new Error("cli-bridge retained turn returned a different run identity");
   }
+  if (
+    session.run && (
+      session.run.id !== run.id ||
+      session.run.executionId !== run.executionId ||
+      session.run.requestDigest !== run.requestDigest
+    )
+  ) {
+    throw new Error("cli-bridge retained turn returned a session view with a mismatched run digest");
+  }
+  if (run.requestDigest !== expectedRequestDigest) {
+    throw new Error("cli-bridge retained turn changed its exact request digest");
+  }
   observeRetainedView(state, session, context.name);
-  state.activeRun = run;
-  state.controlRef = makeControlRef(
-    context.name,
-    state.sessionId,
-    run.id,
-    publicExecutionId,
-    run.requestDigest,
-  );
+  observeCurrentRetainedRun(state, run, context.name);
   return run;
 }
 
@@ -924,13 +1200,15 @@ async function* streamRetainedEvents(
   runId: string,
   since: string | undefined,
   signal: AbortSignal | undefined,
-  expectedRequestDigest?: AgentRunControlRef["requestDigest"],
+  expectedRequestDigest: AgentRunControlRef["requestDigest"],
+  expectedExecutionId: string,
 ): AsyncIterable<AgentEnvironmentEvent> {
   const initialRun = await getRetainedRunStatus(
     context,
     state,
     runId,
     expectedRequestDigest,
+    expectedExecutionId,
   );
   if (!initialRun || initialRun.status === "unknown") {
     throw new CliBridgeUnknownStateError(
@@ -938,10 +1216,15 @@ async function* streamRetainedEvents(
     );
   }
   const afterCursor = parseCursor(since);
+  const eventState = retainedRunEventState(state, runId);
   const controller = new AbortController();
-  state.activeReaders.add(controller);
+  state.activeReaders.set(controller, runId);
   const combinedSignal = combineSignals([signal, controller.signal]);
   let terminal = false;
+  let terminalInResponse = false;
+  let lastSequence = afterCursor ?? -1;
+  const responseEventIds = new Set<string>();
+  const responseSequences = new Set<number>();
   let attached = false;
   let streamError: unknown;
   try {
@@ -968,23 +1251,41 @@ async function* streamRetainedEvents(
         parseJsonText(frame.data, "cli-bridge runtime event envelope"),
       );
       const envelope = sourceEnvelope;
-      const cursor = frame.id ?? envelope.cursor;
-      const numericCursor = cursor === undefined ? undefined : parseCursor(cursor);
-      if (afterCursor !== undefined && numericCursor !== undefined && numericCursor <= afterCursor) {
-        continue;
+      const numericSequence = parseCursor(frame.id);
+      if (numericSequence === undefined || frame.id === undefined) {
+        throw new Error("cli-bridge retained event requires a numeric SSE frame id");
+      }
+      if (numericSequence !== envelope.sequence) {
+        throw new Error("cli-bridge retained event frame id does not match envelope.sequence");
+      }
+      if (terminalInResponse) {
+        throw new Error("cli-bridge retained event arrived after a terminal event");
+      }
+      if (numericSequence <= lastSequence) {
+        throw new Error("cli-bridge retained event sequence is not strictly increasing from Last-Event-ID");
       }
       if (envelope.runId !== runId) {
         throw new Error("cli-bridge retained event changed its exact run identity");
       }
-      const event = canonicalEnvironmentEvent(envelope, cursor);
+      observeRetainedEvent(
+        eventState,
+        envelope,
+        numericSequence,
+        responseEventIds,
+        responseSequences,
+      );
+      lastSequence = numericSequence;
+      const event = canonicalEnvironmentEvent(envelope, frame.id);
       if (event.normalized?.type === "status" && ["completed", "failed"].includes(event.normalized.status)) {
         terminal = true;
-        state.activeRun = {
-          ...(state.activeRun ?? initialRun),
+        terminalInResponse = true;
+        eventState.terminalSequence = numericSequence;
+        observeCurrentRetainedRun(state, {
+          ...initialRun,
           id: runId,
           status: event.normalized.status === "completed" ? "done" : "error",
           terminal: true,
-        };
+        }, context.name);
       }
       yield event;
     }
@@ -994,13 +1295,14 @@ async function* streamRetainedEvents(
         state,
         runId,
         expectedRequestDigest,
+        expectedExecutionId,
       );
       if (!finalRun || !finalRun.terminal || finalRun.status === "unknown") {
         throw new CliBridgeUnknownStateError(
           `cli-bridge retained run ${JSON.stringify(runId)} ended without a known terminal outcome`,
         );
       }
-      state.activeRun = finalRun;
+      observeCurrentRetainedRun(state, finalRun, context.name);
       terminal = true;
     }
   } catch (error) {
@@ -1008,7 +1310,13 @@ async function* streamRetainedEvents(
     throw error;
   } finally {
     state.activeReaders.delete(controller);
-    if (attached && !terminal && !state.cancelRequested && !state.suppressReaderDetach) {
+    if (
+      attached &&
+      !terminal &&
+      !state.cancelRequestedRunIds.has(runId) &&
+      state.view.run_id === runId &&
+      !state.suppressReaderDetach
+    ) {
       try {
         await detachRetainedSession(context, state);
       } catch (detachError) {
@@ -1023,10 +1331,19 @@ async function refreshRetainedState(
   context: RetainedEnvironmentContext,
   throwOnUnknown: boolean,
 ): Promise<RetainedSessionView> {
+  return inRetainedViewLane(context.state, () =>
+    refreshRetainedStateInLane(context, throwOnUnknown));
+}
+
+async function refreshRetainedStateInLane(
+  context: RetainedEnvironmentContext,
+  throwOnUnknown: boolean,
+): Promise<RetainedSessionView> {
   const view = await getRetainedSessionStatusView(
     context.options,
     context.transport,
     context.state.sessionId,
+    context.expectedCapabilitiesDigest,
   );
   if (!view) {
     context.state.view = { ...context.state.view, status: "unknown" };
@@ -1039,7 +1356,7 @@ async function refreshRetainedState(
     return context.state.view;
   }
   observeRetainedView(context.state, view, context.name);
-  return view;
+  return context.state.view;
 }
 
 function createRetainedSession(
@@ -1057,11 +1374,13 @@ function createRetainedSession(
     },
     status: async () => {
       if (requestedControlRef) {
+        const exactRef = exactRetainedControlRef(context, state, requestedControlRef);
         const run = await getRetainedRunStatus(
           context,
           state,
-          requestedControlRef.runId,
-          requestedControlRef.requestDigest,
+          exactRef.runId,
+          exactRef.requestDigest,
+          exactRef.executionId,
         );
         return run ? retainedRunStatus(run) : "unknown";
       }
@@ -1069,14 +1388,12 @@ function createRetainedSession(
       return retainedSessionStatus(view.status);
     },
     events: (eventOptions) => {
-      const eventControlRef = (eventOptions?.executionId
-        ? makeControlRef(
-            context.name,
-            state.sessionId,
-            retainedRunId(state.sessionId, eventOptions.executionId),
-            eventOptions.executionId,
-          )
-        : undefined) ?? requestedControlRef ?? state.controlRef;
+      const eventControlRef = historicalRetainedControlRef(
+        context,
+        state,
+        requestedControlRef,
+        eventOptions?.executionId,
+      );
       const runId = resolveRetainedRunIdSync(context, state, eventControlRef);
       return streamRetainedEvents(
         context,
@@ -1085,30 +1402,39 @@ function createRetainedSession(
         eventOptions?.since,
         eventOptions?.signal,
         eventControlRef?.requestDigest,
+        eventControlRef?.executionId,
       );
     },
     result: async (resultOptions?: { executionId?: string }) => {
-      const exactRef = resultOptions?.executionId
-        ? makeControlRef(
-            context.name,
-            state.sessionId,
-            retainedRunId(state.sessionId, resultOptions.executionId),
-            resultOptions.executionId,
-          )
-        : requestedControlRef ?? state.controlRef;
+      const exactRef = historicalRetainedControlRef(
+        context,
+        state,
+        requestedControlRef,
+        resultOptions?.executionId,
+      );
       return collectRetainedResult(context, state, exactRef);
     },
     prompt: async (turn) => {
-      rejectUnsupportedRetainedInput(turn);
+      rejectUnsupportedRetainedInput(context, turn);
       const attach = !hasTurnContent(turn) &&
         (turn.lastEventId !== undefined || turn.controlRef !== undefined);
+      const attachControlRef = attach
+        ? historicalRetainedControlRef(
+            context,
+            state,
+            turn.controlRef ?? requestedControlRef,
+            turn.executionId,
+          )
+        : undefined;
       const run = attach
-        ? await resolveRetainedRunId(context, state, turn.controlRef ?? requestedControlRef ?? state.controlRef)
+        ? await resolveRetainedRunId(context, state, attachControlRef)
         : (await startRetainedTurn(context, turn)).id;
-      const exactRef = turn.controlRef ??
-        (state.controlRef?.runId === run ? state.controlRef : undefined) ??
-        requestedControlRef ??
-        makeControlRef(context.name, state.sessionId, run);
+      const exactRef = state.controlRef?.runId === run
+        ? exactRetainedControlRef(context, state, state.controlRef)
+        : attachControlRef;
+      if (!exactRef) {
+        throw new Error("cli-bridge retained result requires an exact digest-bearing controlRef");
+      }
       return collectRetainedResult(context, state, exactRef, turn.lastEventId, turn.signal);
     },
     ...(state.capabilities.interactions
@@ -1129,7 +1455,10 @@ function createRetainedSession(
     ),
     cancelRun: async (request: AgentRunCancellationRequest, cancelOptions) => {
       const exactRequest = AgentRunCancellationRequestSchema.parse(request);
-      validateControlRef(context, state, exactRequest.run);
+      if (!exactRequest.run.requestDigest) {
+        throw new Error("cli-bridge retained cancellation requires the admitted run request digest");
+      }
+      exactRetainedControlRef(context, state, exactRequest.run);
       return sendRetainedCancellation(
         context,
         state,
@@ -1148,7 +1477,8 @@ async function collectRetainedResult(
   since?: string,
   signal?: AbortSignal,
 ): Promise<AgentTurnResult> {
-  const runId = await resolveRetainedRunId(context, state, controlRef);
+  const exactControlRef = historicalRetainedControlRef(context, state, controlRef);
+  const runId = await resolveRetainedRunId(context, state, exactControlRef);
   const events: AgentEnvironmentEvent[] = [];
   for await (const event of streamRetainedEvents(
     context,
@@ -1156,7 +1486,8 @@ async function collectRetainedResult(
     runId,
     since,
     signal,
-    controlRef?.requestDigest,
+    exactControlRef.requestDigest,
+    exactControlRef.executionId,
   )) {
     events.push(event);
   }
@@ -1164,14 +1495,26 @@ async function collectRetainedResult(
     context,
     state,
     runId,
-    controlRef?.requestDigest,
+    exactControlRef.requestDigest,
+    exactControlRef.executionId,
   );
   if (!exactRun) {
     throw new CliBridgeUnknownStateError(`cli-bridge retained run ${JSON.stringify(runId)} is unknown`);
   }
+  await refreshRetainedState(context, false);
   const view = state.view;
-  const text = textFromCanonicalEvents(events);
-  const usage = events.reduce<TokenUsage | undefined>(
+  const completeEvents = since === undefined
+    ? events
+    : await collectRetainedEvents(
+        context,
+        state,
+        runId,
+        exactControlRef.requestDigest,
+        exactControlRef.executionId,
+        signal,
+      );
+  const text = textFromCanonicalEvents(completeEvents);
+  const usage = completeEvents.reduce<TokenUsage | undefined>(
     (current, event) => event.usage ?? current,
     undefined,
   );
@@ -1191,7 +1534,8 @@ async function collectRetainedResult(
     metadata: {
       status: retainedRunStatus(run),
       runId,
-      executionId: controlRef?.executionId ?? runId,
+      executionId: exactControlRef.executionId,
+      requestDigest: run.requestDigest,
       run: run ?? null,
       capabilities: state.capabilities,
       ...(state.profileReceipt ? { profileMaterializationReceipt: state.profileReceipt } : {}),
@@ -1201,6 +1545,29 @@ async function collectRetainedResult(
     events,
   };
   return AgentTurnResultSchema.parse(result);
+}
+
+async function collectRetainedEvents(
+  context: RetainedEnvironmentContext,
+  state: RetainedSessionState,
+  runId: string,
+  requestDigest: NonNullable<AgentRunControlRef["requestDigest"]>,
+  executionId: string,
+  signal?: AbortSignal,
+): Promise<AgentEnvironmentEvent[]> {
+  const events: AgentEnvironmentEvent[] = [];
+  for await (const event of streamRetainedEvents(
+    context,
+    state,
+    runId,
+    undefined,
+    signal,
+    requestDigest,
+    executionId,
+  )) {
+    events.push(event);
+  }
+  return events;
 }
 
 async function cancelRetainedSession(
@@ -1254,21 +1621,21 @@ async function retainedControlRef(
   state: RetainedSessionState,
   requestedControlRef?: AgentRunControlRef,
 ): Promise<AgentRunControlRef> {
-  const runId = await resolveRetainedRunId(context, state, requestedControlRef);
+  const exactRequestedRef = historicalRetainedControlRef(context, state, requestedControlRef);
+  const runId = exactRequestedRef.runId;
   const run = await getRetainedRunStatus(
     context,
     state,
     runId,
-    requestedControlRef?.requestDigest,
+    exactRequestedRef.requestDigest,
+    exactRequestedRef.executionId,
   );
   if (!run) {
     throw new CliBridgeUnknownStateError(
       `cli-bridge retained run ${JSON.stringify(runId)} is unknown`,
     );
   }
-  const executionId = requestedControlRef?.executionId ??
-    (state.controlRef?.runId === runId ? state.controlRef.executionId : undefined) ??
-    runId;
+  const executionId = exactRequestedRef.executionId;
   return makeControlRef(
     context.name,
     state.sessionId,
@@ -1285,56 +1652,86 @@ async function sendRetainedCancellation(
   signal?: AbortSignal,
 ): Promise<AgentRunCancellationAcknowledgement> {
   const exactRequest = AgentRunCancellationRequestSchema.parse(request);
-  validateControlRef(context, state, exactRequest.run);
-  await getRetainedRunStatus(
-    context,
-    state,
-    exactRequest.run.runId,
-    exactRequest.run.requestDigest,
-  );
+  if (!exactRequest.run.requestDigest) {
+    throw new Error("cli-bridge retained cancellation requires the admitted run request digest");
+  }
   const operationId = exactRequest.operationId;
   const digest = exactRequest.requestDigest;
   const existing = state.cancelOperations.get(operationId);
   if (existing) {
     if (existing.digest === digest) return existing.promise;
+    return cancellationConflict(exactRequest);
   }
-  const operation = (async () => {
-    const waitMs = Math.min(context.options.cancelWaitMs ?? 30_000, 30_000);
-    const response = await context.transport.fetch(
-      `${trimSlash(context.options.baseUrl)}/v1/sessions/${encodeURIComponent(state.sessionId)}/cancel?wait_ms=${waitMs}`,
-      {
-        method: "POST",
-        headers: requestHeaders(context.options),
-        body: JSON.stringify(exactRequest),
-        signal,
-      },
-    );
-    const text = await response.text();
-    let acknowledgement: AgentRunCancellationAcknowledgement;
+  const exactRun = exactRetainedControlRef(context, state, exactRequest.run);
+  let resolveOperation!: (value: AgentRunCancellationAcknowledgement) => void;
+  let rejectOperation!: (error: unknown) => void;
+  const operation = new Promise<AgentRunCancellationAcknowledgement>((resolve, reject) => {
+    resolveOperation = resolve;
+    rejectOperation = reject;
+  });
+  state.cancelOperations.set(operationId, { digest, promise: operation });
+  void (async () => {
     try {
-      acknowledgement = AgentRunCancellationAcknowledgementSchema.parse(
-        parseJsonText(text, "cli-bridge retained cancellation acknowledgement"),
+      const knownRun = await getRetainedRunStatus(
+        context,
+        state,
+        exactRun.runId,
+        exactRun.requestDigest,
+        exactRun.executionId,
       );
+      const waitMs = Math.min(context.options.cancelWaitMs ?? 30_000, 30_000);
+      const response = await context.transport.fetch(
+        `${trimSlash(context.options.baseUrl)}/v1/sessions/${encodeURIComponent(state.sessionId)}/cancel?wait_ms=${waitMs}`,
+        {
+          method: "POST",
+          headers: requestHeaders(context.options),
+          body: JSON.stringify(exactRequest),
+          signal,
+        },
+      );
+      const text = await response.text();
+      let acknowledgement: AgentRunCancellationAcknowledgement;
+      try {
+        acknowledgement = AgentRunCancellationAcknowledgementSchema.parse(
+          parseJsonText(text, "cli-bridge retained cancellation acknowledgement"),
+        );
+      } catch (error) {
+        if (!response.ok) {
+          throw new CliBridgeRequestRejectedError(response.status, text || "retained cancellation rejected");
+        }
+        throw error;
+      }
+      if (!agentRunCancellationAcknowledgementMatchesRequest(exactRequest, acknowledgement)) {
+        throw new Error("cli-bridge cancellation acknowledgement changed its exact request binding");
+      }
+      if (["accepted", "replayed"].includes(acknowledgement.status)) {
+        state.cancelRequestedRunIds.add(exactRun.runId);
+      }
+      if (acknowledgement.effect === "cancelled") {
+        if (!knownRun) {
+          throw new CliBridgeUnknownStateError(
+            `cli-bridge could not bind cancellation to retained run ${JSON.stringify(exactRun.runId)}`,
+          );
+        }
+        observeCurrentRetainedRun(state, {
+          ...knownRun,
+          status: "cancelled",
+          terminal: true,
+        }, context.name);
+        for (const [reader, readerRunId] of state.activeReaders) {
+          if (readerRunId === exactRun.runId) {
+            reader.abort(new DOMException("cli-bridge run was explicitly cancelled", "AbortError"));
+          }
+        }
+      }
+      resolveOperation(acknowledgement);
     } catch (error) {
-      if (!response.ok) {
-        throw new CliBridgeRequestRejectedError(response.status, text || "retained cancellation rejected");
+      if (state.cancelOperations.get(operationId)?.promise === operation) {
+        state.cancelOperations.delete(operationId);
       }
-      throw error;
+      rejectOperation(error);
     }
-    if (!agentRunCancellationAcknowledgementMatchesRequest(exactRequest, acknowledgement)) {
-      throw new Error("cli-bridge cancellation acknowledgement changed its exact request binding");
-    }
-    if (["accepted", "replayed"].includes(acknowledgement.status)) {
-      state.cancelRequested = true;
-    }
-    if (acknowledgement.effect === "cancelled") {
-      for (const reader of state.activeReaders) {
-        reader.abort(new DOMException("cli-bridge run was explicitly cancelled", "AbortError"));
-      }
-    }
-    return acknowledgement;
   })();
-  if (!existing) state.cancelOperations.set(operationId, { digest, promise: operation });
   try {
     return await operation;
   } catch (error) {
@@ -1345,7 +1742,27 @@ async function sendRetainedCancellation(
   }
 }
 
+function cancellationConflict(
+  request: AgentRunCancellationRequest,
+): AgentRunCancellationAcknowledgement {
+  return AgentRunCancellationAcknowledgementSchema.parse({
+    operationId: request.operationId,
+    requestDigest: request.requestDigest,
+    run: request.run,
+    status: "conflict",
+    effect: "unknown",
+    message: "cli-bridge cancellation operationId is already bound to a different request",
+  });
+}
+
 async function detachRetainedSession(
+  context: RetainedEnvironmentContext,
+  state: RetainedSessionState,
+): Promise<void> {
+  return inRetainedViewLane(state, () => detachRetainedSessionInLane(context, state));
+}
+
+async function detachRetainedSessionInLane(
   context: RetainedEnvironmentContext,
   state: RetainedSessionState,
 ): Promise<void> {
@@ -1360,10 +1777,23 @@ async function detachRetainedSession(
   }
   if (!response.ok) throw new CliBridgeRequestRejectedError(response.status, text || "retained detach rejected");
   const parsed = parseJsonText(text, "cli-bridge retained detach");
-  if (parsed.session) observeRetainedView(state, parseRetainedSessionView(parsed.session), context.name);
+  if (parsed.session) {
+    const view = parseRetainedSessionView(parsed.session, context.expectedCapabilitiesDigest);
+    if (view.id !== state.sessionId) {
+      throw new Error("cli-bridge retained detach returned a mismatched session");
+    }
+    observeRetainedView(state, view, context.name);
+  }
 }
 
 async function closeRetainedSession(
+  context: RetainedEnvironmentContext,
+  state: RetainedSessionState,
+): Promise<void> {
+  return inRetainedViewLane(state, () => closeRetainedSessionInLane(context, state));
+}
+
+async function closeRetainedSessionInLane(
   context: RetainedEnvironmentContext,
   state: RetainedSessionState,
 ): Promise<void> {
@@ -1388,7 +1818,7 @@ async function closeRetainedSession(
   if (!parsed.session) {
     throw new Error("cli-bridge retained close omitted the exact session view");
   }
-  const view = parseRetainedSessionView(parsed.session);
+  const view = parseRetainedSessionView(parsed.session, context.expectedCapabilitiesDigest);
   if (view.id !== state.sessionId || view.status !== "closed") {
     throw new Error("cli-bridge retained close returned a mismatched session");
   }
@@ -1402,15 +1832,17 @@ async function respondToRetainedInteraction(
   signal?: AbortSignal,
 ): Promise<InteractionAcknowledgement> {
   const parsed = InteractionResponseCommandSchema.parse(command);
-  validateControlRef(context, state, {
-    runId: parsed.binding.runId,
-    provider: context.name,
-    environmentId: RETAINED_ENVIRONMENT_ID,
-    ...(parsed.binding.sessionId ? { sessionId: parsed.binding.sessionId } : {}),
-    executionId: parsed.binding.runId,
-  });
   if (parsed.binding.environmentId !== RETAINED_ENVIRONMENT_ID) {
     throw new Error("cli-bridge interaction binding has the wrong environmentId");
+  }
+  if (parsed.binding.sessionId !== state.sessionId) {
+    throw new Error("cli-bridge interaction binding must include this retained session");
+  }
+  const currentControlRef = state.controlRef
+    ? exactRetainedControlRef(context, state, state.controlRef)
+    : undefined;
+  if (!currentControlRef || parsed.binding.runId !== currentControlRef.runId) {
+    throw new Error("cli-bridge interaction binding does not match the current retained run");
   }
   const transportFailure = (error: unknown): InteractionAcknowledgement =>
     InteractionAcknowledgementSchema.parse({
@@ -1507,26 +1939,68 @@ function validateControlRef(
   }
 }
 
+function exactRequestedControlRef(value: AgentRunControlRef): DigestBearingControlRef {
+  const controlRef = Object.freeze({ ...AgentRunControlRefSchema.parse(value) });
+  if (!controlRef.executionId || !controlRef.requestDigest) {
+    throw new Error("cli-bridge historical run access requires an exact executionId and request digest");
+  }
+  return controlRef as DigestBearingControlRef;
+}
+
+function exactRetainedControlRef(
+  context: RetainedEnvironmentContext,
+  state: RetainedSessionState,
+  value: AgentRunControlRef,
+): ExactRetainedControlRef {
+  const controlRef = exactRequestedControlRef(value);
+  validateControlRef(context, state, controlRef);
+  if (controlRef.sessionId !== state.sessionId) {
+    throw new Error("cli-bridge exact controlRef must include this retained session");
+  }
+  if (controlRef.runId !== retainedRunId(state.sessionId, controlRef.executionId)) {
+    throw new Error("cli-bridge exact controlRef does not match the deterministic retained run id");
+  }
+  return controlRef as ExactRetainedControlRef;
+}
+
+function historicalRetainedControlRef(
+  context: RetainedEnvironmentContext,
+  state: RetainedSessionState,
+  requestedControlRef?: AgentRunControlRef,
+  executionId?: string,
+): ExactRetainedControlRef {
+  const candidate = requestedControlRef ?? (
+    executionId === undefined
+      ? state.controlRef
+      : state.controlRef?.executionId === executionId
+        ? state.controlRef
+        : undefined
+  );
+  if (!candidate) {
+    throw new Error("cli-bridge historical run access requires an exact digest-bearing controlRef");
+  }
+  const exact = exactRetainedControlRef(context, state, candidate);
+  if (executionId !== undefined && exact.executionId !== executionId) {
+    throw new Error("cli-bridge requested executionId does not match the exact controlRef");
+  }
+  return exact;
+}
+
 async function resolveRetainedRunId(
   context: RetainedEnvironmentContext,
   state: RetainedSessionState,
   controlRef?: AgentRunControlRef,
 ): Promise<string> {
-  if (controlRef) {
-    validateControlRef(context, state, controlRef);
-    const run = await getRetainedRunStatus(
-      context,
-      state,
-      controlRef.runId,
-      controlRef.requestDigest,
-    );
-    if (!run) throw new CliBridgeUnknownStateError("cli-bridge retained run is unknown");
-    return controlRef.runId;
-  }
-  const view = await refreshRetainedState(context, true);
-  const runId = state.controlRef?.runId ?? view.run_id;
-  if (!runId) throw new CliBridgeUnknownStateError("cli-bridge retained session has no admitted run");
-  return runId;
+  const exact = historicalRetainedControlRef(context, state, controlRef);
+  const run = await getRetainedRunStatus(
+    context,
+    state,
+    exact.runId,
+    exact.requestDigest,
+    exact.executionId,
+  );
+  if (!run) throw new CliBridgeUnknownStateError("cli-bridge retained run is unknown");
+  return exact.runId;
 }
 
 function resolveRetainedRunIdSync(
@@ -1534,15 +2008,30 @@ function resolveRetainedRunIdSync(
   state: RetainedSessionState,
   controlRef?: AgentRunControlRef,
 ): string {
-  if (controlRef) validateControlRef(context, state, controlRef);
-  const runId = controlRef?.runId ?? state.controlRef?.runId ?? state.view.run_id;
-  if (!runId) throw new CliBridgeUnknownStateError("cli-bridge retained session has no admitted run");
-  return runId;
+  return historicalRetainedControlRef(context, state, controlRef).runId;
 }
 
-function rejectUnsupportedRetainedInput(turn: AgentTurnInput): void {
+function rejectUnsupportedRetainedInput(
+  context: RetainedEnvironmentContext,
+  turn: AgentTurnInput,
+): void {
   if (turn.contextTransfer) throw new Error("cli-bridge retained sessions do not advertise portable context transfer");
   if (turn.nativeContinuation) throw new Error("cli-bridge retained sessions do not advertise native continuation");
+  if (turn.model !== undefined && turn.model !== context.state.model) {
+    throw new Error("cli-bridge retained sessions cannot change model after creation");
+  }
+  if (turn.timeoutMs !== undefined) {
+    throw new Error("cli-bridge retained sessions do not implement per-turn timeoutMs");
+  }
+  if (turn.context !== undefined) {
+    throw new Error("cli-bridge retained sessions do not implement per-turn context metadata");
+  }
+  if (turn.providerOptions !== undefined) {
+    throw new Error("cli-bridge retained sessions do not implement per-turn providerOptions");
+  }
+  if (turn.parts?.some((part) => part.type !== "text" || part.text.length === 0)) {
+    throw new Error("cli-bridge retained sessions currently accept text input parts only");
+  }
 }
 
 function hasTurnContent(turn: AgentTurnInput): boolean {
@@ -1566,7 +2055,10 @@ function tryResolveBridgeModel(
   }
 }
 
-function parseRetainedSessionView(value: unknown): RetainedSessionView {
+function parseRetainedSessionView(
+  value: unknown,
+  expectedCapabilitiesDigest?: string,
+): RetainedSessionView {
   if (!value || typeof value !== "object") throw new Error("cli-bridge retained session returned an invalid view");
   const record = value as Record<string, unknown>;
   if (
@@ -1601,6 +2093,15 @@ function parseRetainedSessionView(value: unknown): RetainedSessionView {
   if (boundary !== null && (boundary === undefined || typeof boundary !== "object" || Array.isArray(boundary))) {
     throw new Error("cli-bridge retained session returned an invalid context boundary");
   }
+  const capabilities = AgentEnvironmentCapabilitiesSchema.parse(record.capabilities);
+  if (
+    expectedCapabilitiesDigest !== undefined &&
+    canonicalCandidateDigest(capabilities) !== expectedCapabilitiesDigest
+  ) {
+    throw new CliBridgeCapabilitiesMismatchError(
+      "cli-bridge retained session capabilities do not match the discovered capability document",
+    );
+  }
   return {
     id: record.id,
     create_request_digest: record.create_request_digest as `sha256:${string}`,
@@ -1610,7 +2111,7 @@ function parseRetainedSessionView(value: unknown): RetainedSessionView {
     run_id: record.run_id as string | null,
     internal_session_id: record.internal_session_id as string | null,
     turns: record.turns,
-    capabilities: AgentEnvironmentCapabilitiesSchema.parse(record.capabilities),
+    capabilities,
     profile_materialization_receipt: receipt as Record<string, unknown> | null,
     context_boundary: boundary as Record<string, unknown> | null,
     ...(run ? { run } : {}),
@@ -1622,6 +2123,7 @@ function parseRetainedRun(value: unknown): RetainedRunSnapshot {
   const record = value as Record<string, unknown>;
   if (
     typeof record.id !== "string" ||
+    typeof record.executionId !== "string" ||
     !sha256DigestSchema.safeParse(record.requestDigest).success ||
     !["running", "done", "error", "cancelled", "unknown"].includes(String(record.status)) ||
     typeof record.terminal !== "boolean" ||
@@ -1636,6 +2138,7 @@ async function getRetainedSessionView(
   options: CliBridgeProviderOptions,
   transport: CliBridgeTransport,
   id: string,
+  expectedCapabilitiesDigest?: string,
 ): Promise<RetainedSessionView | null> {
   const response = await transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(id)}`,
@@ -1643,13 +2146,21 @@ async function getRetainedSessionView(
   );
   if (response.status === 404 || response.status === 405 || response.status === 501) return null;
   if (!response.ok) throw new CliBridgeRequestRejectedError(response.status, await response.text());
-  return parseRetainedSessionView(parseJsonText(await response.text(), "cli-bridge retained session view"));
+  const view = parseRetainedSessionView(
+    parseJsonText(await response.text(), "cli-bridge retained session view"),
+    expectedCapabilitiesDigest,
+  );
+  if (view.id !== id) {
+    throw new Error("cli-bridge retained session view does not match the requested session");
+  }
+  return view;
 }
 
 async function getRetainedSessionStatusView(
   options: CliBridgeProviderOptions,
   transport: CliBridgeTransport,
   id: string,
+  expectedCapabilitiesDigest?: string,
 ): Promise<RetainedSessionView | null> {
   const response = await transport.fetch(
     `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(id)}/status`,
@@ -1657,15 +2168,26 @@ async function getRetainedSessionStatusView(
   );
   if (response.status === 404) return null;
   if (!response.ok) throw new CliBridgeRequestRejectedError(response.status, await response.text());
-  return parseRetainedSessionView(parseJsonText(await response.text(), "cli-bridge retained session status"));
+  const view = parseRetainedSessionView(
+    parseJsonText(await response.text(), "cli-bridge retained session status"),
+    expectedCapabilitiesDigest,
+  );
+  if (view.id !== id) {
+    throw new Error("cli-bridge retained session status does not match the requested session");
+  }
+  return view;
 }
 
 async function getRetainedRunStatus(
   context: RetainedEnvironmentContext,
   state: RetainedSessionState,
   runId: string,
-  expectedRequestDigest?: AgentRunControlRef["requestDigest"],
+  expectedRequestDigest: AgentRunControlRef["requestDigest"],
+  expectedExecutionId: string,
 ): Promise<RetainedRunSnapshot | null> {
+  if (!expectedRequestDigest || !expectedExecutionId) {
+    throw new Error("cli-bridge historical run access requires an exact executionId and request digest");
+  }
   const response = await context.transport.fetch(
     `${trimSlash(context.options.baseUrl)}/v1/runs/${encodeURIComponent(runId)}`,
     { method: "GET", headers: requestHeaders(context.options) },
@@ -1680,35 +2202,25 @@ async function getRetainedRunStatus(
   if (run.id !== runId || run.sessionId !== state.sessionId) {
     throw new Error("cli-bridge retained run status does not bind to this session");
   }
-  if (
-    expectedRequestDigest !== undefined &&
-    run.requestDigest !== expectedRequestDigest
-  ) {
+  if (run.requestDigest !== expectedRequestDigest) {
     throw new Error("cli-bridge retained run changed its exact request digest");
   }
-  state.activeRun = run;
-  if (state.controlRef?.runId === runId) {
-    state.controlRef = makeControlRef(
-      context.name,
-      state.sessionId,
-      runId,
-      state.controlRef.executionId,
-      run.requestDigest,
-    );
+  if (run.executionId !== expectedExecutionId) {
+    throw new Error("cli-bridge retained run changed its public execution identity");
   }
   return run;
 }
 
 function canonicalEnvironmentEvent(
   envelope: RuntimeEventEnvelope,
-  replayCursor?: string,
+  replaySequence: string,
 ): AgentEnvironmentEvent {
   const event = envelope.event;
   const data = { ...(event as unknown as Record<string, unknown>) };
   return {
     type: event.type,
     data,
-    id: replayCursor ?? envelope.cursor ?? envelope.eventId,
+    id: replaySequence,
     normalized: event,
     providerEvent: envelope,
     ...(usageFromCanonicalEvent(event) ? { usage: usageFromCanonicalEvent(event) } : {}),
@@ -1720,6 +2232,79 @@ function usageFromCanonicalEvent(event: StreamEvent): TokenUsage | undefined {
   const raw = event.event as Record<string, unknown>;
   const usage = raw.usage ?? (raw.data && typeof raw.data === "object" ? (raw.data as Record<string, unknown>).usage : undefined);
   return usageFromUsageRecord(usage);
+}
+
+function retainedRunEventState(
+  state: RetainedSessionState,
+  runId: string,
+): RetainedRunEventState {
+  const existing = state.observedEvents.get(runId);
+  if (existing) return existing;
+  const created: RetainedRunEventState = {
+    byEventId: new Map(),
+    bySequence: new Map(),
+  };
+  state.observedEvents.set(runId, created);
+  return created;
+}
+
+function observeRetainedEvent(
+  eventState: RetainedRunEventState,
+  envelope: RuntimeEventEnvelope,
+  sequence: number,
+  responseEventIds: Set<string>,
+  responseSequences: Set<number>,
+): void {
+  if (responseEventIds.has(envelope.eventId) || responseSequences.has(sequence)) {
+    throw new Error("cli-bridge retained event contains a duplicate event identity");
+  }
+  if (
+    eventState.terminalSequence !== undefined &&
+    sequence > eventState.terminalSequence
+  ) {
+    throw new Error("cli-bridge retained event arrived after a terminal event");
+  }
+  const payloadDigest = canonicalCandidateDigest({
+    runId: envelope.runId,
+    eventId: envelope.eventId,
+    sequence: envelope.sequence,
+    event: envelope.event,
+  });
+  const byEventId = eventState.byEventId.get(envelope.eventId);
+  if (byEventId && (
+    byEventId.sequence !== sequence ||
+    byEventId.payloadDigest !== payloadDigest
+  )) {
+    throw new Error("cli-bridge retained event changed its event id binding or payload");
+  }
+  const bySequence = eventState.bySequence.get(sequence);
+  if (bySequence && (
+    bySequence.eventId !== envelope.eventId ||
+    bySequence.payloadDigest !== payloadDigest
+  )) {
+    throw new Error("cli-bridge retained event changed its sequence binding or payload");
+  }
+  if (
+    eventState.terminalSequence !== undefined &&
+    isTerminalRetainedEvent(envelope.event) &&
+    eventState.terminalSequence !== sequence
+  ) {
+    throw new Error("cli-bridge retained event changed its terminal identity");
+  }
+  const observation = byEventId ?? bySequence ?? {
+    eventId: envelope.eventId,
+    sequence,
+    payloadDigest,
+  };
+  eventState.byEventId.set(envelope.eventId, observation);
+  eventState.bySequence.set(sequence, observation);
+  responseEventIds.add(envelope.eventId);
+  responseSequences.add(sequence);
+  if (isTerminalRetainedEvent(envelope.event)) eventState.terminalSequence = sequence;
+}
+
+function isTerminalRetainedEvent(event: StreamEvent): boolean {
+  return event.type === "status" && ["completed", "failed"].includes(event.status);
 }
 
 function usageFromUsageRecord(value: unknown): TokenUsage | undefined {
@@ -1830,6 +2415,13 @@ class CliBridgeUnknownStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CliBridgeUnknownStateError";
+  }
+}
+
+class CliBridgeCapabilitiesMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CliBridgeCapabilitiesMismatchError";
   }
 }
 
@@ -2444,14 +3036,9 @@ function cliBridgeRunId(
   turn: AgentTurnInput,
   turnId: string,
 ): string {
-  if (
-    turn.executionId &&
-    turn.executionId.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(turn.executionId)
-  ) {
-    return turn.executionId;
-  }
   const digest = createHash("sha256")
+    .update("legacy")
+    .update("\0")
     .update(environmentId)
     .update("\0")
     .update(turn.sessionId ?? "")
@@ -2466,6 +3053,8 @@ function retainedRunId(
   executionId: string,
 ): string {
   const digest = createHash("sha256")
+    .update("retained")
+    .update("\0")
     .update(RETAINED_ENVIRONMENT_ID)
     .update("\0")
     .update(sessionId)
