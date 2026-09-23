@@ -54,6 +54,10 @@
     "./interaction": {
       "import": "./dist/interaction.js",
       "types": "./src/interaction.ts"
+    },
+    "./profile-kb": {
+      "import": "./dist/profile-kb/index.js",
+      "types": "./src/profile-kb/index.ts"
     }
   },
   "repository": {
@@ -126,6 +130,11 @@
         "import": "./dist/interaction.js",
         "types": "./dist/interaction.d.ts",
         "default": "./dist/interaction.js"
+      },
+      "./profile-kb": {
+        "import": "./dist/profile-kb/index.js",
+        "types": "./dist/profile-kb/index.d.ts",
+        "default": "./dist/profile-kb/index.js"
       }
     }
   },
