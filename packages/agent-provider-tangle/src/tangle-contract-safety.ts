@@ -92,7 +92,10 @@ function safeTypeName(value: unknown): string | undefined {
  * stack happened to hold last would be a new way to mislead. Only the first violation is
  * reported — later ones may exist.
  */
-export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | undefined {
+export function firstJsonBoundViolation(
+  value: unknown,
+  fileContentPaths?: ReadonlySet<string>,
+): JsonBoundViolation | undefined {
   const pending: Array<{ value: unknown; depth: number; path: string; leave?: boolean }> = [
     { value, depth: 0, path: "" },
   ];
@@ -113,7 +116,7 @@ export function firstJsonBoundViolation(value: unknown): JsonBoundViolation | un
     if (current === undefined) return { rule: "undefined", path: item.path };
     if (current === null || typeof current === "boolean") continue;
     if (typeof current === "string") {
-      if (current.length > MAX_STRING_LENGTH) {
+      if (current.length > MAX_STRING_LENGTH && !fileContentPaths?.has(item.path)) {
         return { rule: "string", path: item.path, observed: current.length, limit: MAX_STRING_LENGTH, limitName: "MAX_STRING_LENGTH" };
       }
       continue;
@@ -226,8 +229,12 @@ export function describeJsonBoundViolation(violation: JsonBoundViolation): strin
  * profile, the metadata, or a providerOptions map — which is how three children settled on five
  * words that identified nothing.
  */
-export function assertBoundedJson(value: unknown, label = "value"): void {
-  const violation = firstJsonBoundViolation(value);
+export function assertBoundedJson(
+  value: unknown,
+  label = "value",
+  fileContentPaths?: ReadonlySet<string>,
+): void {
+  const violation = firstJsonBoundViolation(value, fileContentPaths);
   if (violation === undefined) return;
   // A rule with no limit counted nothing: a Date, a cycle, a NaN and an absent value are not
   // oversized, and "exceeds" sends the reader after a size problem that does not exist.

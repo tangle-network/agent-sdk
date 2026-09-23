@@ -271,7 +271,8 @@ export function createTangleProvider(
       assertCreateInputShape(input);
       assertNoInlineSecretValues(input);
       for (const [field, value] of Object.entries(material)) {
-        if (value !== undefined) assertBoundedJson(value, `Tangle create ${field}`);
+        // assertCreateInputShape already checked profile control fields and deferred file mounts.
+        if (value !== undefined && field !== "profile") assertBoundedJson(value, `Tangle create ${field}`);
       }
       const acceptedInput = Object.freeze({
         ...deepFreeze(structuredClone(material)),

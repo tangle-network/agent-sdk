@@ -1,8 +1,10 @@
 import {
   parseBackendType,
+  validateDeferredProfileFileMounts,
   type BackendType,
   type CreateSandboxOptions,
 } from "@tangle-network/sandbox";
+import { agentProfileFileMountSchema, type AgentProfile } from "@tangle-network/agent-interface";
 import {
   AgentEnvironmentEgressPolicySchema,
   WorkspaceRequestSchema,
@@ -250,7 +252,7 @@ export function assertCreateInputShape(
     if (!input.profile || typeof input.profile !== "object" || Array.isArray(input.profile)) {
       throw new Error("Tangle profile must be an object or bounded reference");
     }
-    assertBoundedJson(input.profile, "Tangle create profile");
+    assertCreateProfileBounds(input.profile, "Tangle create profile");
   }
   if (input.resources !== undefined) {
     if (!input.resources || typeof input.resources !== "object" || Array.isArray(input.resources)) {
@@ -270,7 +272,14 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
   }
-  assertBoundedJson(options, "Tangle mapped create options");
+  assertBoundedJson(
+    options,
+    "Tangle mapped create options",
+    options.autoMaterializeProfileFiles === false
+      ? undefined
+      : profileFileContentPaths(options.backend?.profile, "backend.profile."),
+  );
+  validateProfileFiles(options.backend?.profile);
   if (options.backend?.runtimeAttachments !== undefined) {
     tangleRuntimeAttachments(options.backend.runtimeAttachments, options.backend.profile);
   }
@@ -319,8 +328,46 @@ function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, 
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
     throw new Error("Tangle inline AgentProfile must be an object");
   }
-  assertBoundedJson(profile, "Tangle inline AgentProfile");
+  assertCreateProfileBounds(profile, "Tangle inline AgentProfile");
   return profile;
+}
+
+/** File bytes use Sandbox's deferred file transport. Other profile fields retain JSON bounds. */
+export function assertCreateProfileBounds(profile: AgentProfileRef, label: string): void {
+  assertBoundedJson(profile, label, profileFileContentPaths(profile));
+  validateProfileFiles(profile);
+}
+
+function profileFileContentPaths(
+  profile: AgentProfile | string | undefined,
+  prefix = "",
+): ReadonlySet<string> {
+  const paths = new Set<string>();
+  if (!profile || typeof profile !== "object") return paths;
+  const files = profile.resources?.files;
+  // Leave malformed and oversized collections to the complete bounded walk.
+  if (!Array.isArray(files) || files.length > MAX_ARRAY_LENGTH) return paths;
+  for (const [index, file] of files.entries()) {
+    if (file?.resource?.kind !== "inline" || typeof file.resource.content !== "string") continue;
+    paths.add(`${prefix}resources.files[${index}].resource.content`);
+  }
+  return paths;
+}
+
+function validateProfileFiles(profile: AgentProfile | string | undefined): void {
+  if (!profile || typeof profile !== "object" || profile.resources?.files === undefined) return;
+  const files = profile.resources.files;
+  if (!Array.isArray(files)) throw new Error("Tangle profile resources.files must be an array");
+  for (const [index, file] of files.entries()) {
+    const parsed = agentProfileFileMountSchema.safeParse(file);
+    if (!parsed.success) throw new Error(`Tangle profile resources.files[${index}] has an invalid file mount shape`);
+    if (parsed.data.resource.kind !== "inline") continue;
+    try {
+      validateDeferredProfileFileMounts([parsed.data]);
+    } catch {
+      throw new Error(`Tangle profile resources.files[${index}] has an unsafe or unsupported file path`);
+    }
+  }
 }
 
 function assertBoundedRecord(value: unknown, label: string): asserts value is Record<string, unknown> {

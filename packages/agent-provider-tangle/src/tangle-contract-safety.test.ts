@@ -52,6 +52,10 @@ function profileWithOversizedBrief(content = "x".repeat(20_872)) {
   };
 }
 
+function profileWithOversizedControl(content = "x".repeat(20_872)) {
+  return { ...profileWithOversizedBrief(), description: content };
+}
+
 function thrownMessage(act: () => unknown): string {
   try {
     act();
@@ -169,7 +173,7 @@ describe("a rejection reason discloses no payload", () => {
       expect(message.length, message.slice(0, 80)).toBeLessThanOrEqual(512);
       expect(message).not.toContain("\n");
     }
-    expect(thrownMessage(() => assertCreateInputShape({ profile: profileWithOversizedBrief(secret) } as never)).length).toBeLessThanOrEqual(512);
+    expect(thrownMessage(() => assertCreateInputShape({ profile: profileWithOversizedControl(secret) } as never)).length).toBeLessThanOrEqual(512);
   });
 });
 
@@ -182,7 +186,7 @@ describe("a rejection says which field was rejected", () => {
   });
 
   it("distinguishes the create-path call sites that share the walker", () => {
-    const profile = thrownMessage(() => assertCreateInputShape({ profile: { ...profileWithOversizedBrief() } } as never));
+    const profile = thrownMessage(() => assertCreateInputShape({ profile: profileWithOversizedControl() } as never));
     const providerOptions = thrownMessage(() => assertNoInlineSecretValues({ providerOptions: oversized } as never));
     expect(profile).not.toBe(providerOptions);
     expect(profile).toContain("profile");
@@ -192,10 +196,10 @@ describe("a rejection says which field was rejected", () => {
   it("survives the runtime's cause flattening as one readable line", () => {
     // agent-runtime's errMessage (supervise/scope.ts) renders a wrapped cause exactly this way,
     // and the result is the `reason` an operator reads in observer.jsonl.
-    const cause = new Error(thrownMessage(() => assertCreateInputShape({ profile: profileWithOversizedBrief() } as never)));
+    const cause = new Error(thrownMessage(() => assertCreateInputShape({ profile: profileWithOversizedControl() } as never)));
     const reason = `retained provider execution requires reconciliation before replacement: caused by ${cause.name}: ${cause.message}`;
     expect(reason).not.toContain("\n");
-    expect(reason).toContain("resources.files[0].resource.content");
+    expect(reason).toContain("description");
     expect(reason).toContain("20872");
     expect(reason).toContain("16384");
   });
