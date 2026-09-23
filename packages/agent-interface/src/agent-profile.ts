@@ -787,9 +787,9 @@ export interface AgentProfileGuidanceOptions {
 }
 
 function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
-  if (/["\n]/.test(block.source) || /["\n]/.test(block.id)) {
+  if (/["\n<>]/.test(block.source) || /["\n<>]/.test(block.id)) {
     throw new TypeError(
-      "profile guidance source and id must not contain quotes or newlines",
+      "profile guidance source and id must not contain quotes, newlines, or angle brackets",
     );
   }
   if (
@@ -818,11 +818,28 @@ function stripGuidanceText(
   owned: ReadonlySet<string>,
 ): string | undefined {
   if (text === undefined || text === "") return text;
-  const stripped = text.replace(
+  let strippedLast = false;
+  let stripped = text.replace(
     GUIDANCE_BLOCK,
-    (block: string, source: string, _gap: unknown, offset: number) =>
-      owned.has(source) && !mayBeCutShort(text, block, offset) ? "" : block,
+    (
+      block: string,
+      source: string,
+      gap: string | undefined,
+      offset: number,
+    ) => {
+      if (!owned.has(source) || mayBeCutShort(text, block, offset)) {
+        return block;
+      }
+      if (gap === undefined && offset + block.length === text.length) {
+        strippedLast = true;
+      }
+      return "";
+    },
   );
+  // A removed final block leaves the separator written before it.
+  if (strippedLast && stripped.endsWith("\n\n")) {
+    stripped = stripped.slice(0, -2);
+  }
   return stripped === "" ? undefined : stripped;
 }
 

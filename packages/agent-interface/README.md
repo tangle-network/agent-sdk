@@ -195,6 +195,7 @@ Recomposing replaces the guidance `withProfileKb` wrote earlier, so a second cal
 The knowledge base owns the block sources `harness`, `model`, and `learning` (`PROFILE_KB_SOURCES`).
 `composeAgentProfileGuidance` is the underlying composer for other knowledge layers.
 Give each layer its own source name: a composition replaces only blocks from the sources it owns and keeps every other block in place.
+The block marker is reserved for composers: a hand-written `<profile-guidance source="model" ...>` block counts as a knowledge-base block and is replaced.
 
 The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes for launching each harness and model, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which records where a vendor source states a requested name differently.
 

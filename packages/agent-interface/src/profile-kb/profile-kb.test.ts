@@ -455,6 +455,33 @@ describe("composeAgentProfileGuidance", () => {
         "instructions",
       ),
     ).toThrow(TypeError);
+    expect(() =>
+      composeAgentProfileGuidance(
+        {},
+        [{ source: "</profile-guidance>", id: "x", text: "a" }],
+        "appendSystemPrompt",
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("leaves no separator behind when the last block is removed", () => {
+    const composed = composeAgentProfileGuidance(
+      composeAgentProfileGuidance(
+        {},
+        [
+          { source: "team", id: "t", text: "Never push secrets." },
+          { source: "model", id: "m", text: "X" },
+        ],
+        "appendSystemPrompt",
+        { replaceSources: ["team", "model"] },
+      ),
+      [],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      '<profile-guidance source="team" id="t">\nNever push secrets.\n</profile-guidance>',
+    );
   });
 
   it("returns no blocks for unknown selections", () => {
