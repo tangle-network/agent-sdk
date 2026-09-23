@@ -762,10 +762,13 @@ export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
 const GUIDANCE_LINE =
   /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>|<profile-guidance )[\s\S])*\n<\/profile-guidance>$/;
-// A block body never contains another opening marker, so an unclosed marker in
-// caller text cannot swallow the composed block after it.
+// A block runs from an opening marker to the first closing marker after it,
+// which is how every released composer wrote blocks. Text in which one marker
+// is nested inside another block is ambiguous, so it is attributed to the
+// outer block and kept whole: recomposition may leave a stale block in
+// malformed caller text, but it never truncates caller text.
 const GUIDANCE_BLOCK =
-  /<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<profile-guidance )[\s\S])*?\n<\/profile-guidance>(\n\n)?/g;
+  /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
 
 /** Options for {@link composeAgentProfileGuidance}. */
 export interface AgentProfileGuidanceOptions {

@@ -322,18 +322,18 @@ describe("guidance ownership", () => {
     expect(withProfileKb(composed)).toEqual(composed);
   });
 
-  it("removes a stale owned block that follows an unclosed caller marker", () => {
-    const text =
-      '<profile-guidance source="mine" id="u">\nuser text\n\n<profile-guidance source="model" id="m">\nold guidance\n</profile-guidance>';
+  it("keeps caller text whole when markers nest, as 2.11 could emit", () => {
+    // A 2.11 composition could hold an unowned block whose text carried an
+    // owned opener. The outer block owns the text, so nothing is truncated.
+    const legacy =
+      '<profile-guidance source="team" id="t">\nquote:\n<profile-guidance source="model" id="m">\nexample\n</profile-guidance>';
     const composed = composeAgentProfileGuidance(
-      { prompt: { appendSystemPrompt: text } },
+      { prompt: { appendSystemPrompt: `${legacy}\n\nown` } },
       [],
       "appendSystemPrompt",
       { replaceSources: PROFILE_KB_SOURCES },
     );
-    const out = composed.prompt?.appendSystemPrompt ?? "";
-    expect(out).not.toContain("old guidance");
-    expect(out).toContain('<profile-guidance source="mine" id="u">\nuser text');
+    expect(composed.prompt?.appendSystemPrompt).toBe(`${legacy}\n\nown`);
   });
 
   it("clears a layer only when its sources are named", () => {
