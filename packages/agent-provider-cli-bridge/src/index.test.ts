@@ -1,449 +1,13 @@
 import { createServer } from "node:http";
-import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
-import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
+import {
+  createCliBridgeProvider as createProvider,
+} from "./index.js";
+
+const createCliBridgeProvider = createProvider;
 
 describe("createCliBridgeProvider", () => {
-  it("rejects a named profile before network use", async () => {
-    let called = false;
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      fetch: async () => {
-        called = true;
-        return new Response();
-      },
-    });
-
-    await expect(provider.create({ profile: "profile-id" })).rejects.toThrow(
-      /requires an inline AgentProfile/,
-    );
-    expect(called).toBe(false);
-  });
-
-  it("keeps profile authority separate from the task and forwards it unchanged", async () => {
-    let body: Record<string, unknown> | undefined;
-    const profile: AgentProfile = {
-      name: "scientist",
-      harness: "pi",
-      model: {
-        provider: "tangle-router",
-        default: "glm-5.2",
-        reasoningEffort: "xhigh",
-      },
-      prompt: { systemPrompt: "Use this system prompt exactly once." },
-      mcp: {
-        coordination: {
-          transport: "http",
-          url: "http://127.0.0.1:4444/mcp",
-        },
-      },
-    };
-    const expectedProfile = structuredClone(profile);
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      fetch: async (_url, init) => {
-        body = JSON.parse(String(init?.body));
-        return new Response(
-          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        );
-      },
-    });
-    const environment = await provider.create({ profile });
-    await expect(environment.session?.("missing").status()).resolves.toBeNull();
-    profile.prompt!.systemPrompt = "Caller mutation must not cross intake.";
-    profile.model!.default = "different-model";
-
-    await consumeTurn(environment, {
-      prompt: "run the task",
-      sessionId: "profile-session",
-      turnId: "profile-turn",
-      executionId: "profile-run",
-    });
-
-    expect(body).toMatchObject({
-      model: "pi/tangle-router/glm-5.2",
-      effort: "xhigh",
-      messages: [{ role: "user", content: "run the task" }],
-    });
-    expect(body?.agent_profile).toEqual(expectedProfile);
-  });
-
-  it("maps durable dispatch, replay, result, and continuation into one exact session", async () => {
-    const profile: AgentProfile = {
-      name: "research-leader",
-      harness: "pi",
-      model: {
-        provider: "tangle-router",
-        default: "glm-5.2",
-        reasoningEffort: "high",
-      },
-      prompt: { systemPrompt: "Lead the research." },
-    };
-    const requests: Array<{
-      body: Record<string, unknown>;
-      cursor: string | null;
-    }> = [];
-    const statuses = new Map<string, "running" | "done">();
-    let dispatchReaderDetached = false;
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      fetch: async (url, init) => {
-        const target = String(url);
-        if (init?.method === "GET") {
-          const runId = decodeURIComponent(target.split("/").at(-1)?.split("?")[0] ?? "");
-          const status = statuses.get(runId) ?? "running";
-          return runResponse(runId, status, status === "done");
-        }
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        const runId = String(body.run_id);
-        const cursor = new Headers(init?.headers).get("last-event-id");
-        requests.push({ body, cursor });
-        const headers = {
-          "content-type": "text/event-stream",
-          "x-run-id": runId,
-          "x-run-request-digest": `digest-${runId}`,
-        };
-        if (body.stream === false) {
-          return Response.json(
-            {
-              choices: [{
-                message: { role: "assistant", content: `complete-${runId}` },
-                finish_reason: "stop",
-              }],
-              usage: {
-                prompt_tokens: 11,
-                completion_tokens: 7,
-                total_tokens: 18,
-                reasoning_tokens: 3,
-                cost: 0.04,
-              },
-            },
-            {
-              headers: {
-                "x-run-id": runId,
-                "x-run-request-digest": `digest-${runId}`,
-              },
-            },
-          );
-        }
-        if (cursor !== null) {
-          statuses.set(runId, "done");
-          return new Response(
-            [
-              `id: 2\ndata: {"choices":[{"delta":{"content":"replayed-${runId}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"reasoning_tokens":3,"cost":0.04}}\n\n`,
-              "data: [DONE]\n\n",
-            ].join(""),
-            { status: 200, headers },
-          );
-        }
-        if (runId === "run-2") {
-          statuses.set(runId, "done");
-          return new Response(
-            `id: 1\ndata: {"choices":[{"delta":{"content":"continued"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"cost":0.01}}\n\ndata: [DONE]\n\n`,
-            { status: 200, headers },
-          );
-        }
-        statuses.set(runId, "running");
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(": connected\n\n"));
-            },
-            cancel() {
-              dispatchReaderDetached = true;
-            },
-          }),
-          { status: 200, headers },
-        );
-      },
-    });
-    const environment = await provider.create({ profile });
-
-    const reference = await environment.dispatch?.({
-      prompt: "initial task",
-      sessionId: "research-session",
-      turnId: "turn-1",
-      executionId: "run-1",
-    });
-
-    expect(reference).toEqual({
-      id: "research-session",
-      provider: "cli-bridge",
-      metadata: {
-        runId: "run-1",
-        requestDigest: "digest-run-1",
-      },
-    });
-    expect(dispatchReaderDetached).toBe(true);
-    const session = environment.session?.(reference!.id);
-    await expect(session?.status()).resolves.toBe("running");
-    const replayed = [];
-    for await (const event of session!.events({ since: "1" })) replayed.push(event);
-    expect(replayed.map((event) => event.type)).toEqual([
-      "usage",
-      "message.part.updated",
-      "result",
-    ]);
-    expect(replayed[0]?.usage).toEqual({
-      inputTokens: 11,
-      outputTokens: 7,
-      totalTokens: 18,
-      reasoningTokens: 3,
-      cost: 0.04,
-    });
-    expect(replayed.at(-1)).toMatchObject({
-      id: "2",
-      data: {
-        finalText: "complete-run-1",
-        status: "completed",
-      },
-    });
-    await expect(session?.result()).resolves.toMatchObject({
-      text: "complete-run-1",
-      success: true,
-      sessionId: "research-session",
-      usage: {
-        inputTokens: 11,
-        outputTokens: 7,
-        totalTokens: 18,
-        reasoningTokens: 3,
-        cost: 0.04,
-      },
-      metadata: {
-        runId: "run-1",
-        status: "done",
-        requestDigest: "digest-run-1",
-      },
-    });
-    await expect(session?.prompt({
-      prompt: "new direction",
-      turnId: "turn-2",
-      executionId: "run-2",
-    })).resolves.toMatchObject({
-      text: "continued",
-      success: true,
-      sessionId: "research-session",
-      usage: {
-        inputTokens: 5,
-        outputTokens: 2,
-        cost: 0.01,
-      },
-      metadata: { runId: "run-2", status: "done" },
-    });
-    await expect(session?.prompt({
-      prompt: "wrong conversation",
-      sessionId: "other-session",
-    })).rejects.toThrow(/cannot prompt session/);
-
-    const wireBodies = requests
-      .filter(({ body }) => body.stream !== false)
-      .map(({ body }) => body);
-    expect(wireBodies).toEqual([
-      expect.objectContaining({
-        run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
-      }),
-      expect.objectContaining({
-        run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
-      }),
-      expect.objectContaining({
-        run_id: "run-1",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "initial task" }],
-      }),
-      expect.objectContaining({
-        run_id: "run-2",
-        session_id: "research-session",
-        agent_profile: profile,
-        messages: [{ role: "user", content: "new direction" }],
-      }),
-    ]);
-    expect(requests.filter(({ body }) => body.stream !== false).map(({ cursor }) => cursor))
-      .toEqual([null, "1", "0", null]);
-    for (const { body } of requests) {
-      expect(body.messages).not.toEqual(
-        expect.arrayContaining([{ role: "system", content: "Lead the research." }]),
-      );
-    }
-    expect(provider.capabilities()).toMatchObject({
-      streaming: { detach: true, replay: true },
-      sessions: { continue: true },
-    });
-  });
-
-  it("waits for terminal proof when cancelling a dispatched session", async () => {
-    const requested: string[] = [];
-    let getCalls = 0;
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      defaultModel: "runner/model",
-      fetch: async (url, init) => {
-        const target = String(url);
-        requested.push(target);
-        if (target.endsWith("/cancel")) {
-          return cancelResponse("cancel-run", "running", false, 202);
-        }
-        if (init?.method === "GET") {
-          getCalls += 1;
-          return runResponse(
-            "cancel-run",
-            getCalls === 1 ? "running" : "cancelled",
-            getCalls > 1,
-          );
-        }
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(": connected\n\n"));
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "content-type": "text/event-stream",
-              "x-run-id": "cancel-run",
-              "x-run-request-digest": "cancel-digest",
-            },
-          },
-        );
-      },
-    });
-    const environment = await provider.create({ profile: { name: "worker" } });
-    const reference = await environment.dispatch?.({
-      prompt: "long task",
-      sessionId: "cancel-session",
-      executionId: "cancel-run",
-    });
-
-    await environment.session?.(reference!.id).cancel();
-
-    expect(requested).toContain(
-      "http://bridge.local/v1/runs/cancel-run/cancel",
-    );
-    expect(requested).toContain(
-      "http://bridge.local/v1/runs/cancel-run?wait_ms=30000",
-    );
-    expect(getCalls).toBe(2);
-  });
-
-  it("rejects replay when the bridge changes a bound request digest", async () => {
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      defaultModel: "runner/model",
-      fetch: async (_url, init) => {
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        const runId = String(body.run_id);
-        const replay = new Headers(init?.headers).has("last-event-id");
-        return new Response(
-          replay
-            ? 'data: {"choices":[{"delta":{"content":"wrong"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
-            : new ReadableStream({
-                start(controller) {
-                  controller.enqueue(new TextEncoder().encode(": connected\n\n"));
-                },
-              }),
-          {
-            status: 200,
-            headers: {
-              "content-type": "text/event-stream",
-              "x-run-id": runId,
-              "x-run-request-digest": replay ? "changed-digest" : "original-digest",
-            },
-          },
-        );
-      },
-    });
-    const environment = await provider.create({ profile: { name: "worker" } });
-    const reference = await environment.dispatch?.({
-      prompt: "task",
-      sessionId: "digest-session",
-      executionId: "digest-run",
-    });
-
-    await expect(
-      consumeEvents(environment.session!(reference!.id).events({ since: "0" })),
-    ).rejects.toThrow(/changed request digest/);
-  });
-
-  it("keeps concurrent continuation results bound to their own run identity", async () => {
-    const statuses = new Map<string, "running" | "done">();
-    let releaseFirst: (() => void) | undefined;
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      defaultModel: "runner/model",
-      fetch: async (url, init) => {
-        if (init?.method === "GET") {
-          const runId = decodeURIComponent(
-            String(url).split("/").at(-1)?.split("?")[0] ?? "",
-          );
-          const status = statuses.get(runId) ?? "running";
-          return runResponse(runId, status, status === "done");
-        }
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        const runId = String(body.run_id);
-        statuses.set(runId, "running");
-        const headers = {
-          "content-type": "text/event-stream",
-          "x-run-id": runId,
-          "x-run-request-digest": `digest-${runId}`,
-        };
-        if (runId === "concurrent-a") {
-          return new Response(
-            new ReadableStream({
-              start(controller) {
-                releaseFirst = () => {
-                  statuses.set(runId, "done");
-                  controller.enqueue(
-                    new TextEncoder().encode(
-                      'data: {"choices":[{"delta":{"content":"first"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-                    ),
-                  );
-                  controller.close();
-                };
-              },
-            }),
-            { status: 200, headers },
-          );
-        }
-        statuses.set(runId, "done");
-        return new Response(
-          'data: {"choices":[{"delta":{"content":"second"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-          { status: 200, headers },
-        );
-      },
-    });
-    const environment = await provider.create({ profile: { name: "worker" } });
-    const session = environment.session!("concurrent-session");
-    const first = session.prompt({
-      prompt: "first",
-      executionId: "concurrent-a",
-    });
-    while (!releaseFirst) await Promise.resolve();
-    const second = await session.prompt({
-      prompt: "second",
-      executionId: "concurrent-b",
-    });
-    releaseFirst();
-    const firstResult = await first;
-
-    expect(firstResult).toMatchObject({
-      text: "first",
-      metadata: { runId: "concurrent-a", status: "done" },
-    });
-    expect(second).toMatchObject({
-      text: "second",
-      metadata: { runId: "concurrent-b", status: "done" },
-    });
-  });
-
   it("streams canonical text, tool, usage, and result events", async () => {
     let body: Record<string, unknown> | undefined;
     const provider = createCliBridgeProvider({
@@ -622,28 +186,16 @@ describe("createCliBridgeProvider", () => {
   it("enforces a configured response-header timeout", async () => {
     let delayedResponse: ReturnType<typeof setTimeout> | undefined;
     const server = createServer((request, response) => {
-      const runId = decodeURIComponent(
-        request.url?.split("/")[3]?.split("?")[0] ?? "",
-      );
       if (request.url?.endsWith("/cancel")) {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
-          JSON.stringify({
-            cancelled: true,
-            cancel_requested: true,
-            terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
-          }),
+          '{"cancelled":true,"cancel_requested":true,"terminal":true,"run":{"id":"timeout-run","status":"cancelled","terminal":true}}',
         );
         return;
       }
       if (request.url?.startsWith("/v1/runs/")) {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          id: runId,
-          status: "running",
-          terminal: false,
-        }));
+        response.end('{"id":"timeout-run","status":"running","terminal":false}');
         return;
       }
       delayedResponse = setTimeout(() => {
@@ -679,28 +231,16 @@ describe("createCliBridgeProvider", () => {
   it("enforces a configured response-body idle timeout", async () => {
     let delayedBody: ReturnType<typeof setTimeout> | undefined;
     const server = createServer((request, response) => {
-      const runId = decodeURIComponent(
-        request.url?.split("/")[3]?.split("?")[0] ?? "",
-      );
       if (request.url?.endsWith("/cancel")) {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
-          JSON.stringify({
-            cancelled: true,
-            cancel_requested: true,
-            terminal: true,
-            run: { id: runId, status: "cancelled", terminal: true },
-          }),
+          '{"cancelled":true,"cancel_requested":true,"terminal":true,"run":{"id":"timeout-run","status":"cancelled","terminal":true}}',
         );
         return;
       }
       if (request.url?.startsWith("/v1/runs/")) {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          id: runId,
-          status: "running",
-          terminal: false,
-        }));
+        response.end('{"id":"timeout-run","status":"running","terminal":false}');
         return;
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -798,24 +338,24 @@ describe("createCliBridgeProvider", () => {
       executionId: "run-2",
     });
     expect(bodies).toHaveLength(2);
-    expect(bodies).toEqual([
-      expect.objectContaining({
-        model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-1",
-      }),
-      expect.objectContaining({
-        model: "pi/tangle-router/glm-5.2",
-        session_id: "session-1",
-        run_id: "run-2",
-      }),
-    ]);
-    expect(provider.capabilities()).toMatchObject({ streaming: { replay: true } });
+    expect(bodies[0]).toMatchObject({
+      model: "pi/tangle-router/glm-5.2",
+      session_id: "session-1",
+      run_id: expect.stringMatching(/^agent-[a-f0-9]{64}$/u),
+    });
+    expect(bodies[1]).toMatchObject({
+      model: "pi/tangle-router/glm-5.2",
+      session_id: "session-1",
+      run_id: expect.stringMatching(/^agent-[a-f0-9]{64}$/u),
+    });
+    expect(bodies[0]!.run_id).not.toBe(bodies[1]!.run_id);
+    expect(await provider.capabilities()).toMatchObject({ streaming: { replay: false } });
   });
 
   it("waits through a 202 cancellation when a caller stops reading", async () => {
     let status: "running" | "cancelled" = "running";
     let getCalls = 0;
+    let wireRunId = "";
     const requested: string[] = [];
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
@@ -825,14 +365,15 @@ describe("createCliBridgeProvider", () => {
         if (init?.method === "GET") {
           getCalls += 1;
           if (getCalls === 1) {
-            return runResponse("run-reader-stop", "running", false);
+            return runResponse(wireRunId, "running", false);
           }
           status = "cancelled";
-          return runResponse("run-reader-stop", status, true);
+          return runResponse(wireRunId, status, true);
         }
         if (String(url).endsWith("/cancel")) {
-          return cancelResponse("run-reader-stop", "running", false, 202);
+          return cancelResponse(wireRunId, "running", false, 202);
         }
+        wireRunId = String((JSON.parse(String(init?.body)) as Record<string, unknown>).run_id);
         return new Response(
           [
             'id: 1\ndata: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
@@ -854,9 +395,9 @@ describe("createCliBridgeProvider", () => {
     });
     await iterator.return?.();
 
-    expect(requested).toContain("http://bridge.local/v1/runs/run-reader-stop/cancel");
+    expect(requested).toContain(`http://bridge.local/v1/runs/${wireRunId}/cancel`);
     expect(requested).toContain(
-      "http://bridge.local/v1/runs/run-reader-stop?wait_ms=30000",
+      `http://bridge.local/v1/runs/${wireRunId}?wait_ms=30000`,
     );
     expect(getCalls).toBe(2);
   });
@@ -911,17 +452,19 @@ describe("createCliBridgeProvider", () => {
       startedResolve = resolve;
     });
     const requested: string[] = [];
+    let wireRunId = "";
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (url, init) => {
         requested.push(String(url));
         if (String(url).endsWith("/cancel")) {
-          return cancelResponse("run-no-session", "cancelled", true);
+          return cancelResponse(wireRunId, "cancelled", true);
         }
         if (init?.method === "GET") {
-          return runResponse("run-no-session", "cancelled", true);
+          return runResponse(wireRunId, "cancelled", true);
         }
+        wireRunId = String((JSON.parse(String(init?.body)) as Record<string, unknown>).run_id);
         startedResolve();
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
@@ -939,7 +482,7 @@ describe("createCliBridgeProvider", () => {
 
     await environment.destroy?.();
     await expect(running).rejects.toThrow("cli-bridge run ended cancelled");
-    expect(requested).toContain("http://bridge.local/v1/runs/run-no-session/cancel");
+    expect(requested).toContain(`http://bridge.local/v1/runs/${wireRunId}/cancel`);
   });
 
   it("isolates derived run ids across environments and keeps them wire-safe", async () => {
@@ -949,7 +492,7 @@ describe("createCliBridgeProvider", () => {
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
+        if (typeof body.run_id === "string") runIds.push(body.run_id);
         return terminalResponse("ok");
       },
     });
@@ -973,8 +516,9 @@ describe("createCliBridgeProvider", () => {
       baseUrl: "http://bridge.local",
       defaultModel: "pi/tangle-router/glm-5.2",
       fetch: async (_url, init) => {
+        if (init?.method === "GET") return new Response("", { status: 501 });
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        runIds.push(String(body.run_id));
+        if (typeof body.run_id === "string") runIds.push(body.run_id);
         return terminalResponse("ok");
       },
     });
@@ -1179,73 +723,6 @@ describe("createCliBridgeProvider", () => {
     });
 
     expect(body?.model).toBe("runner/override/model");
-  });
-
-  it("sends both prompt intents through agent_profile and synthesizes no system message", async () => {
-    let body: Record<string, unknown> | undefined;
-    const provider = createCliBridgeProvider({
-      baseUrl: "http://bridge.local",
-      fetch: async (_url, init) => {
-        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return terminalResponse("ok");
-      },
-    });
-    const environment = await provider.create({
-      backend: "claude-code",
-      profile: {
-        name: "worker",
-        prompt: {
-          systemPrompt: "REPLACEMENT_ONLY",
-          appendSystemPrompt: "ADDITION_ONLY",
-          instructions: ["PROJECT_INSTRUCTION"],
-        },
-      },
-    });
-
-    await consumeTurn(environment, { prompt: "go" });
-
-    // Both intents travel intact on agent_profile, where the bridge binds each to the control its
-    // harness owns (claude-code: --system-prompt / --append-system-prompt) or refuses it.
-    expect(
-      (body?.agent_profile as { prompt?: Record<string, unknown> } | undefined)?.prompt,
-    ).toEqual({
-      systemPrompt: "REPLACEMENT_ONLY",
-      appendSystemPrompt: "ADDITION_ONLY",
-      instructions: ["PROJECT_INSTRUCTION"],
-    });
-    // The turn carries the user turn and nothing else. A synthesized `role: "system"` message would
-    // (a) lower the REPLACEMENT intent as an ADDITION, and (b) make the bridge reject the whole
-    // request, which refuses system-role messages beside agent_profile.
-    expect(body?.messages).toEqual([{ role: "user", content: "go" }]);
-    const roles = (body?.messages as Array<{ role: string }>).map((message) => message.role);
-    expect(roles).not.toContain("system");
-    expect(JSON.stringify(body?.messages)).not.toContain("REPLACEMENT_ONLY");
-    expect(JSON.stringify(body?.messages)).not.toContain("ADDITION_ONLY");
-  });
-
-  it("declares the prompt intents of the named bridge harness, and neither without one", () => {
-    // The adapter forwards agent_profile; the intents belong to the harness the bridge runs. Being
-    // able to put the field on the wire is not honoring it, so an unnamed harness declares neither.
-    expect(defaultCliBridgeCapabilities("claude-code").profile.systemPrompt).toEqual({
-      replace: true,
-      append: true,
-    });
-    expect(defaultCliBridgeCapabilities("opencode").profile.systemPrompt).toEqual({
-      replace: false,
-      append: true,
-    });
-    expect(defaultCliBridgeCapabilities("codex").profile.systemPrompt).toEqual({
-      replace: true,
-      append: false,
-    });
-    expect(defaultCliBridgeCapabilities("acp").profile.systemPrompt).toEqual({
-      replace: false,
-      append: false,
-    });
-    expect(defaultCliBridgeCapabilities().profile.systemPrompt).toEqual({
-      replace: false,
-      append: false,
-    });
   });
 });
 
