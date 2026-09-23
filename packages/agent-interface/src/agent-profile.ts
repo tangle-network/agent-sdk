@@ -779,9 +779,8 @@ export interface AgentProfileGuidanceOptions {
   /**
    * The block sources this composition owns. Existing blocks from these
    * sources are removed before the new blocks are composed; blocks from any
-   * other source stay where they are. Defaults to the sources of the blocks
-   * being composed, so composing no blocks removes nothing; pass the sources
-   * explicitly to clear a layer.
+   * other source stay where they are. When omitted, every previously composed
+   * block is removed, as in 2.11. Pass it to keep other layers in place.
    */
   replaceSources?: readonly string[];
 }
@@ -833,10 +832,16 @@ function balancedBlockEnd(text: string, offset: number): number {
   }
 }
 
+/** The block sources a composition replaces. */
+interface SourceFilter {
+  has(source: string): boolean;
+}
+const ALL_SOURCES: SourceFilter = { has: () => true };
+
 /** Remove previously composed guidance blocks from the owned sources. */
 function stripGuidanceText(
   text: string | undefined,
-  owned: ReadonlySet<string>,
+  owned: SourceFilter,
 ): string | undefined {
   if (text === undefined || text === "") return text;
   let strippedLast = false;
@@ -878,7 +883,7 @@ function stripGuidanceText(
  * True only for a whole line that is one complete composed block from an owned
  * source. A line that merely starts with an opening marker is caller text.
  */
-function isOwnedGuidanceLine(line: string, owned: ReadonlySet<string>): boolean {
+function isOwnedGuidanceLine(line: string, owned: SourceFilter): boolean {
   const match = GUIDANCE_LINE.exec(line);
   return match !== null && owned.has(match[1]!);
 }
@@ -889,10 +894,10 @@ function isOwnedGuidanceLine(line: string, owned: ReadonlySet<string>): boolean 
  * The blocks come first, in the order given, and the profile's own text comes
  * last, so the most specific instruction (the profile's) is the one a model
  * reads after the general guidance. Composition replaces the blocks a previous
- * composition added for the same sources (`options.replaceSources`, by
- * default the sources of `blocks`), on both channels, so recomposing after a
- * harness or model change never stacks stale guidance. Blocks from other
- * sources, such as a team's own layer, are kept in place. Composing the same
+ * composition added, on both channels, so recomposing after a harness or
+ * model change never stacks stale guidance. By default it replaces every
+ * block; with `options.replaceSources` it replaces only those sources and
+ * keeps the others, such as a team's own layer, in place. Composing the same
  * blocks twice yields the same profile, and with it the same canonical
  * identity.
  */
@@ -902,9 +907,11 @@ export function composeAgentProfileGuidance(
   channel: AgentProfileGuidanceChannel,
   options: AgentProfileGuidanceOptions = {},
 ): AgentProfile {
-  const owned = new Set(
-    options.replaceSources ?? blocks.map((block) => block.source),
-  );
+  // Without replaceSources, every composed block is replaced, as in 2.11.
+  const owned: SourceFilter =
+    options.replaceSources === undefined
+      ? ALL_SOURCES
+      : new Set(options.replaceSources);
   const prompt = profile.prompt ?? {};
   const ownAppend = stripGuidanceText(prompt.appendSystemPrompt, owned);
   const ownInstructions = prompt.instructions?.filter(

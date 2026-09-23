@@ -359,6 +359,7 @@ describe("guidance ownership", () => {
       { prompt: { appendSystemPrompt: team } },
       [{ source: "model", id: "k", text: "K" }],
       "appendSystemPrompt",
+      { replaceSources: ["model"] },
     );
     expect(composed.prompt?.appendSystemPrompt).toBe(
       `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team}`,
@@ -389,14 +390,25 @@ describe("guidance ownership", () => {
     expect(composed.prompt?.instructions).toEqual(["Run the tests."]);
   });
 
-  it("clears a layer only when its sources are named", () => {
-    const layered = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
-    expect(composeAgentProfileGuidance(layered, [], "appendSystemPrompt")).toEqual(
-      layered,
+  it("replaces every block by default, as 2.11 did, and only named sources otherwise", () => {
+    const layered = composeAgentProfileGuidance(
+      {},
+      [team, { source: "harness", id: "h", text: "H" }],
+      "appendSystemPrompt",
     );
+    const model = { source: "model", id: "m", text: "M" };
+    expect(
+      composeAgentProfileGuidance(layered, [model], "appendSystemPrompt").prompt
+        ?.appendSystemPrompt,
+    ).toBe('<profile-guidance source="model" id="m">\nM\n</profile-guidance>');
     expect(
       composeAgentProfileGuidance(layered, [], "appendSystemPrompt", {
-        replaceSources: ["team"],
+        replaceSources: ["other"],
+      }),
+    ).toEqual(layered);
+    expect(
+      composeAgentProfileGuidance(layered, [], "appendSystemPrompt", {
+        replaceSources: ["team", "harness"],
       }).prompt?.appendSystemPrompt,
     ).toBeUndefined();
   });
@@ -470,8 +482,9 @@ describe("composeAgentProfileGuidance", () => {
       "appendSystemPrompt",
     );
     const model = [{ source: "model", id: "k", text: "K" }];
-    const once = composeAgentProfileGuidance(team, model, "appendSystemPrompt");
-    const twice = composeAgentProfileGuidance(once, model, "appendSystemPrompt");
+    const own = { replaceSources: ["model"] };
+    const once = composeAgentProfileGuidance(team, model, "appendSystemPrompt", own);
+    const twice = composeAgentProfileGuidance(once, model, "appendSystemPrompt", own);
     expect(twice).toEqual(once);
     expect(once.prompt?.appendSystemPrompt).toBe(
       `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team.prompt?.appendSystemPrompt}`,
