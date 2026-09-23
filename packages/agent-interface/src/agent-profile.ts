@@ -761,7 +761,7 @@ export interface AgentProfileGuidanceBlock {
 export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
 const GUIDANCE_LINE =
-  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>|<profile-guidance )[\s\S])*\n<\/profile-guidance>$/;
+  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
 // A block runs from an opening marker to the first closing marker after it,
 // which is how every released composer wrote blocks. Text in which one marker
 // is nested inside another block is ambiguous, so it is attributed to the

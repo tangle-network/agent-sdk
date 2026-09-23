@@ -336,6 +336,18 @@ describe("guidance ownership", () => {
     expect(composed.prompt?.appendSystemPrompt).toBe(`${legacy}\n\nown`);
   });
 
+  it("replaces a whole owned instruction line even when its text nests an opener", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nquote:\n<profile-guidance source="x" id="y">\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { instructions: [legacy, "Run the tests."] } },
+      [],
+      "instructions",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.instructions).toEqual(["Run the tests."]);
+  });
+
   it("clears a layer only when its sources are named", () => {
     const layered = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
     expect(composeAgentProfileGuidance(layered, [], "appendSystemPrompt")).toEqual(
