@@ -25,7 +25,13 @@ import type {
 } from "./types.js";
 
 export type * from "./types.js";
+export type {
+  AgentProfileGuidanceBlock,
+  AgentProfileGuidanceChannel,
+  AgentProfileGuidanceOptions,
+} from "../agent-profile.js";
 export {
+  composeAgentProfileGuidance,
   profileKbDiscrepancies,
   profileKbHarnesses,
   profileKbLearnings,

@@ -71,6 +71,10 @@ describe("profile-kb content", () => {
     }
     for (const entry of [...profileKbModels, ...profileKbHarnesses]) {
       expect(entry.prompt.length).toBeGreaterThan(0);
+      expect(
+        entry.sources.some((source) => source.url.startsWith("https://")),
+        `${entry.id} cites a vendor URL`,
+      ).toBe(true);
     }
   });
 
@@ -336,6 +340,30 @@ describe("guidance ownership", () => {
     expect(composed.prompt?.appendSystemPrompt).toBe(`${legacy}\n\nown`);
   });
 
+  it("keeps caller text whole when an owned block nests a complete inner block", () => {
+    const nested =
+      '<profile-guidance source="model" id="m">\nquote:\n<profile-guidance source="team" id="t">\ninner\n</profile-guidance>\nmore\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${nested}\n\nown` } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(`${nested}\n\nown`);
+  });
+
+  it("replaces a 2.11 owned block whose text carried an opener", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${legacy}\n\nown` } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe("own");
+  });
+
   it("replaces a whole owned instruction line even when its text nests an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote:\n<profile-guidance source="x" id="y">\n</profile-guidance>';
@@ -387,6 +415,11 @@ describe("guidance ownership", () => {
 });
 
 describe("composeAgentProfileGuidance", () => {
+  it("is exported from the profile-kb entry point", async () => {
+    const entry = await import("./index.js");
+    expect(entry.composeAgentProfileGuidance).toBe(composeAgentProfileGuidance);
+  });
+
   it("preserves an explicitly empty appended prompt", () => {
     const profile: AgentProfile = { prompt: { appendSystemPrompt: "" } };
     expect(composeAgentProfileGuidance(profile, [], "appendSystemPrompt")).toEqual(

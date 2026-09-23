@@ -763,10 +763,14 @@ export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 const GUIDANCE_LINE =
   /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
 // A block runs from an opening marker to the first closing marker after it,
-// which is how every released composer wrote blocks. Text in which one marker
-// is nested inside another block is ambiguous, so it is attributed to the
-// outer block and kept whole: recomposition may leave a stale block in
-// malformed caller text, but it never truncates caller text.
+// which is how every released composer wrote blocks (2.11 text could carry an
+// opener but never a closer). When a match holds a second opener and another
+// closer follows before the next opener, the match may be an outer block cut
+// short by an inner one. That extent is ambiguous, so the match is kept whole:
+// recomposition may leave a stale block in such caller text, but it never
+// truncates caller text.
+const GUIDANCE_OPEN_MARKER = "<profile-guidance ";
+const GUIDANCE_CLOSE_MARKER = "</profile-guidance>";
 const GUIDANCE_BLOCK =
   /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
 
@@ -789,8 +793,8 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
     );
   }
   if (
-    block.text.includes("</profile-guidance>") ||
-    block.text.includes("<profile-guidance ")
+    block.text.includes(GUIDANCE_CLOSE_MARKER) ||
+    block.text.includes(GUIDANCE_OPEN_MARKER)
   ) {
     throw new TypeError(
       "profile guidance text must not contain an opening or closing block marker",
@@ -799,14 +803,25 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
 }
 
+function mayBeCutShort(text: string, block: string, offset: number): boolean {
+  if (!block.includes(GUIDANCE_OPEN_MARKER, 1)) return false;
+  const rest = text.slice(offset + block.length);
+  const nextClose = rest.indexOf(GUIDANCE_CLOSE_MARKER);
+  if (nextClose === -1) return false;
+  const nextOpen = rest.indexOf(GUIDANCE_OPEN_MARKER);
+  return nextOpen === -1 || nextClose < nextOpen;
+}
+
 /** Remove previously composed guidance blocks from the owned sources. */
 function stripGuidanceText(
   text: string | undefined,
   owned: ReadonlySet<string>,
 ): string | undefined {
   if (text === undefined || text === "") return text;
-  const stripped = text.replace(GUIDANCE_BLOCK, (block, source: string) =>
-    owned.has(source) ? "" : block,
+  const stripped = text.replace(
+    GUIDANCE_BLOCK,
+    (block: string, source: string, _gap: unknown, offset: number) =>
+      owned.has(source) && !mayBeCutShort(text, block, offset) ? "" : block,
   );
   return stripped === "" ? undefined : stripped;
 }

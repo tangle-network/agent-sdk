@@ -81,6 +81,14 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
     name: "Pi",
     version: "0.87.1",
     sources: [
+      {
+        url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md",
+        checkedAt: CHECKED,
+      },
+      {
+        url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md",
+        checkedAt: CHECKED,
+      },
       { url: "cli:pi --help", checkedAt: CHECKED, note: "0.87.1" },
     ],
     prompt: [
