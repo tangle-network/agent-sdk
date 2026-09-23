@@ -14,6 +14,8 @@ import {
   profileKbHarnesses,
   profileKbLearnings,
   profileKbModels,
+  PROFILE_KB_SOURCES,
+  type ProfileKbModel,
   withProfileKb,
 } from "./index.js";
 
@@ -32,7 +34,10 @@ describe("profile-kb content", () => {
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-luna",
         "gpt-6-pro",
+        "gpt-6-sol",
         "kimi-k3",
       ].sort(),
     );
@@ -66,6 +71,10 @@ describe("profile-kb content", () => {
     }
     for (const entry of [...profileKbModels, ...profileKbHarnesses]) {
       expect(entry.prompt.length).toBeGreaterThan(0);
+      expect(
+        entry.sources.some((source) => source.url.startsWith("https://")),
+        `${entry.id} cites a vendor URL`,
+      ).toBe(true);
     }
   });
 
@@ -77,8 +86,25 @@ describe("profile-kb content", () => {
           if (other === model.id || other === model.name) continue;
           expect(line.toLowerCase()).not.toContain(other.toLowerCase());
         }
-        expect(line).not.toMatch(/\b(better|worse|than|beats?)\b/i);
       }
+      // Operator lines may name the model a mode runs on; neither kind ranks.
+      for (const line of [...model.prompt, ...model.operator]) {
+        expect(line).not.toMatch(
+          /\b(better|worse|than|beats?|lineup|fastest|slowest|cheapest|strongest|smartest|most capable|least)\b/i,
+        );
+      }
+    }
+  });
+
+  it("lists the router surface only with a dated router check", () => {
+    for (const model of profileKbModels) {
+      const routerSources = model.sources.filter((source) =>
+        source.url.startsWith("https://router.tangle.tools/"),
+      );
+      expect(
+        model.surfaces.includes("router"),
+        `${model.id} router surface needs a router check`,
+      ).toBe(routerSources.length > 0);
     }
   });
 
@@ -92,6 +118,32 @@ describe("profile-kb content", () => {
       ).toBe(true);
     }
     expect(profileKbLearnings.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe("snapshot isolation", () => {
+  it("composes from a load-time snapshot, so editing an exported record changes nothing", () => {
+    const profile: AgentProfile = {
+      harness: "claude-code",
+      model: { default: "claude-opus-5-5" },
+    };
+    const before = withProfileKb(profile);
+    const model = findProfileKbModel("claude-opus-5-5")!;
+    const harness = findProfileKbHarness("claude-code")!;
+    const savedPrompt = [...model.prompt];
+    const savedName = harness.name;
+    const savedId = harness.id;
+    try {
+      model.prompt.push("Injected after load.");
+      harness.name = "Edited";
+      harness.id = "codex";
+      expect(withProfileKb(profile)).toEqual(before);
+      expect(findProfileKbModel("claude-opus-5-5")).toBe(model);
+    } finally {
+      model.prompt.splice(0, model.prompt.length, ...savedPrompt);
+      harness.name = savedName;
+      harness.id = savedId;
+    }
   });
 });
 
@@ -211,7 +263,245 @@ describe("withProfileKb", () => {
   });
 });
 
+describe("guidance ownership", () => {
+  const team = { source: "team", id: "security", text: "Never push secrets." };
+
+  it("keeps a caller's own guidance layer when withProfileKb recomposes", () => {
+    const layered = composeAgentProfileGuidance(
+      { harness: "claude-code", prompt: { appendSystemPrompt: "own" } },
+      [team],
+      "appendSystemPrompt",
+    );
+    const composed = withProfileKb({
+      ...layered,
+      model: { default: "claude-opus-5-5" },
+    });
+    const text = composed.prompt?.appendSystemPrompt ?? "";
+    expect(text).toContain("Never push secrets.");
+    expect(text.indexOf('source="model"')).toBeLessThan(
+      text.indexOf('source="team"'),
+    );
+    expect(text.endsWith("own")).toBe(true);
+    expect(withProfileKb(composed)).toEqual(composed);
+  });
+
+  it("keeps a block the user wrote into their own prompt", () => {
+    const own =
+      '<profile-guidance source="mine" id="style">\nWrite tersely.\n</profile-guidance>\n\nCite files.';
+    const composed = withProfileKb({
+      harness: "claude-code",
+      model: { default: "claude-opus-5-5" },
+      prompt: { appendSystemPrompt: own },
+    });
+    expect(composed.prompt?.appendSystemPrompt?.endsWith(own)).toBe(true);
+  });
+
+  it("keeps a caller's instruction block across a codex recomposition", () => {
+    const layered = composeAgentProfileGuidance(
+      { harness: "codex", prompt: { instructions: ["Run the tests."] } },
+      [team],
+      "instructions",
+    );
+    const composed = withProfileKb({
+      ...layered,
+      model: { default: "gpt-6-sol" },
+    });
+    const instructions = composed.prompt?.instructions ?? [];
+    expect(instructions).toHaveLength(4);
+    expect(instructions[2]).toContain('source="team"');
+    expect(instructions[3]).toBe("Run the tests.");
+    const switched = withProfileKb(composed, { model: "gpt-6-luna" });
+    expect(JSON.stringify(switched.prompt)).not.toContain("GPT-6 Sol");
+    expect(switched.prompt?.instructions?.[2]).toContain('source="team"');
+  });
+
+  it("keeps a caller instruction that only starts with a marker", () => {
+    const partial = '<profile-guidance source="model" id="example">\nliteral text';
+    const composed = withProfileKb({
+      harness: "codex",
+      model: { default: "gpt-6-sol" },
+      prompt: { instructions: [partial] },
+    });
+    expect(composed.prompt?.instructions?.at(-1)).toBe(partial);
+    expect(withProfileKb(composed)).toEqual(composed);
+  });
+
+  it("keeps caller text whole when markers nest, as 2.11 could emit", () => {
+    // A 2.11 composition could hold an unowned block whose text carried an
+    // owned opener. The outer block owns the text, so nothing is truncated.
+    const legacy =
+      '<profile-guidance source="team" id="t">\nquote:\n<profile-guidance source="model" id="m">\nexample\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${legacy}\n\nown` } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(`${legacy}\n\nown`);
+  });
+
+  it("keeps caller text whole when an owned block nests a complete inner block", () => {
+    const nested =
+      '<profile-guidance source="model" id="m">\nquote:\n<profile-guidance source="team" id="t">\ninner\n</profile-guidance>\nmore\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${nested}\n\nown` } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(`${nested}\n\nown`);
+  });
+
+  it("keeps every nested example inside a caller block", () => {
+    const team =
+      '<profile-guidance source="team" id="t">\nEx1: <profile-guidance source="team" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: team } },
+      [{ source: "model", id: "k", text: "K" }],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team}`,
+    );
+  });
+
+  it("ignores marker text inside a kept block's attributes", () => {
+    const team =
+      '<profile-guidance source="team</profile-guidance>" id="t">\nEx1: <profile-guidance source="team" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: team } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(team);
+  });
+
+  it("replaces a 2.11 owned block when caller text quotes a closer mid-line", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nsee <profile-guidance x\n</profile-guidance>';
+    const own = "Quote </profile-guidance> literally.";
+    const model = [{ source: "model", id: "k", text: "K" }];
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${legacy}\n\n${own}` } },
+      model,
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${own}`,
+    );
+  });
+
+  it("ignores opener text inside an owned block's attributes", () => {
+    const own = "Tail.\n</profile-guidance>";
+    const model = { source: "model", id: "<profile-guidance x", text: "K" };
+    const once = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: own } },
+      [model],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    const twice = composeAgentProfileGuidance(once, [model], "appendSystemPrompt", {
+      replaceSources: ["model"],
+    });
+    expect(twice).toEqual(once);
+  });
+
+  it("keeps an owned block whole when it nests several complete examples", () => {
+    const outer =
+      '<profile-guidance source="model" id="o">\nEx1: <profile-guidance source="model" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${outer}\n\nOwn.` } },
+      [{ source: "model", id: "k", text: "K" }],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${outer}\n\nOwn.`,
+    );
+  });
+
+  it("replaces a 2.11 owned block whose text carried an opener", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${legacy}\n\nown` } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe("own");
+  });
+
+  it("replaces a whole owned instruction line even when its text nests an opener", () => {
+    const legacy =
+      '<profile-guidance source="model" id="old">\nquote:\n<profile-guidance source="x" id="y">\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { instructions: [legacy, "Run the tests."] } },
+      [],
+      "instructions",
+      { replaceSources: PROFILE_KB_SOURCES },
+    );
+    expect(composed.prompt?.instructions).toEqual(["Run the tests."]);
+  });
+
+  it("replaces every block by default, as 2.11 did, and only named sources otherwise", () => {
+    const layered = composeAgentProfileGuidance(
+      {},
+      [team, { source: "harness", id: "h", text: "H" }],
+      "appendSystemPrompt",
+    );
+    const model = { source: "model", id: "m", text: "M" };
+    expect(
+      composeAgentProfileGuidance(layered, [model], "appendSystemPrompt").prompt
+        ?.appendSystemPrompt,
+    ).toBe('<profile-guidance source="model" id="m">\nM\n</profile-guidance>');
+    expect(
+      composeAgentProfileGuidance(layered, [], "appendSystemPrompt", {
+        replaceSources: ["other"],
+      }),
+    ).toEqual(layered);
+    expect(
+      composeAgentProfileGuidance(layered, [], "appendSystemPrompt", {
+        replaceSources: ["team", "harness"],
+      }).prompt?.appendSystemPrompt,
+    ).toBeUndefined();
+  });
+
+  it("finds records by id after a consumer reorders the exported arrays", () => {
+    const models = profileKbModels as ProfileKbModel[];
+    const saved = [...models];
+    try {
+      models.reverse();
+      expect(findProfileKbModel("glm-5.3")?.id).toBe("glm-5.3");
+      expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe("claude-opus-5-5");
+    } finally {
+      models.splice(0, models.length, ...saved);
+    }
+  });
+
+  it("replaces a layer's earlier blocks when that layer recomposes", () => {
+    const first = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
+    const second = composeAgentProfileGuidance(
+      first,
+      [{ ...team, text: "Rotate keys monthly." }],
+      "appendSystemPrompt",
+    );
+    expect(second.prompt?.appendSystemPrompt).not.toContain(
+      "Never push secrets.",
+    );
+    expect(second.prompt?.appendSystemPrompt).toContain("Rotate keys monthly.");
+  });
+});
+
 describe("composeAgentProfileGuidance", () => {
+  it("is exported from the profile-kb entry point", async () => {
+    const entry = await import("./index.js");
+    expect(entry.composeAgentProfileGuidance).toBe(composeAgentProfileGuidance);
+  });
+
   it("preserves an explicitly empty appended prompt", () => {
     const profile: AgentProfile = { prompt: { appendSystemPrompt: "" } };
     expect(composeAgentProfileGuidance(profile, [], "appendSystemPrompt")).toEqual(
@@ -234,6 +524,48 @@ describe("composeAgentProfileGuidance", () => {
         "instructions",
       ),
     ).toThrow(TypeError);
+  });
+
+  it("accepts an opener in block text, as 2.11 did, and recomposes stably", () => {
+    const team = composeAgentProfileGuidance(
+      {},
+      [
+        {
+          source: "team",
+          id: "x",
+          text: 'a\n<profile-guidance source="model" id="m">\nb',
+        },
+      ],
+      "appendSystemPrompt",
+    );
+    const model = [{ source: "model", id: "k", text: "K" }];
+    const own = { replaceSources: ["model"] };
+    const once = composeAgentProfileGuidance(team, model, "appendSystemPrompt", own);
+    const twice = composeAgentProfileGuidance(once, model, "appendSystemPrompt", own);
+    expect(twice).toEqual(once);
+    expect(once.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team.prompt?.appendSystemPrompt}`,
+    );
+  });
+
+  it("leaves no separator behind when the last block is removed", () => {
+    const composed = composeAgentProfileGuidance(
+      composeAgentProfileGuidance(
+        {},
+        [
+          { source: "team", id: "t", text: "Never push secrets." },
+          { source: "model", id: "m", text: "X" },
+        ],
+        "appendSystemPrompt",
+        { replaceSources: ["team", "model"] },
+      ),
+      [],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      '<profile-guidance source="team" id="t">\nNever push secrets.\n</profile-guidance>',
+    );
   });
 
   it("returns no blocks for unknown selections", () => {

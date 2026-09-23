@@ -36,13 +36,13 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
   {
     id: "codex",
     name: "Codex CLI",
-    version: "0.152.1",
+    version: "0.156.1",
     sources: [
       { url: "https://learn.chatgpt.com/docs/models", checkedAt: CHECKED },
       {
         url: "cli:codex exec --help; codex features list",
         checkedAt: CHECKED,
-        note: "0.152.1; multi_agent stable and enabled",
+        note: "0.156.1; multi_agent stable and enabled",
       },
     ],
     prompt: [
@@ -61,10 +61,10 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    version: "1.18.18",
+    version: "1.18.32",
     sources: [
       { url: "https://opencode.ai/docs/cli/", checkedAt: CHECKED },
-      { url: "cli:opencode run --help", checkedAt: CHECKED, note: "1.18.18" },
+      { url: "cli:opencode run --help", checkedAt: CHECKED, note: "1.18.32" },
     ],
     prompt: [
       "Delegate a focused subtask to a named agent when its persona or model fits the subtask.",
@@ -79,9 +79,17 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
   {
     id: "pi",
     name: "Pi",
-    version: "0.83.0",
+    version: "0.87.1",
     sources: [
-      { url: "cli:pi --help", checkedAt: CHECKED, note: "0.83.0" },
+      {
+        url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md",
+        checkedAt: CHECKED,
+      },
+      {
+        url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md",
+        checkedAt: CHECKED,
+      },
+      { url: "cli:pi --help", checkedAt: CHECKED, note: "0.87.1" },
     ],
     prompt: [
       "Expect steering messages mid-run and fold each one into the current plan.",
@@ -97,13 +105,13 @@ export const profileKbHarnesses: readonly ProfileKbHarness[] = [
   {
     id: "kimi-code",
     name: "Kimi Code CLI",
-    version: "0.36.1",
+    version: "2.0.2",
     sources: [
       { url: "https://moonshotai.github.io/kimi-code/", checkedAt: CHECKED },
       {
         url: "cli:kimi --help; ~/.kimi-code/config.toml",
         checkedAt: CHECKED,
-        note: "0.36.1",
+        note: "2.0.2",
       },
     ],
     prompt: [

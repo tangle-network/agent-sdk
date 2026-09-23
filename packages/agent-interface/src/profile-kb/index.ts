@@ -13,6 +13,7 @@ import {
   type AgentProfileGuidanceBlock,
 } from "../agent-profile.js";
 import type { HarnessType } from "../harness.js";
+import { deepFreeze } from "../deep-freeze.js";
 import { harnessSystemPromptIntents } from "../harness-capabilities.js";
 import { profileKbHarnesses } from "./harnesses.js";
 import { profileKbModels } from "./models.js";
@@ -24,12 +25,24 @@ import type {
 } from "./types.js";
 
 export type * from "./types.js";
+export type {
+  AgentProfileGuidanceBlock,
+  AgentProfileGuidanceChannel,
+  AgentProfileGuidanceOptions,
+} from "../agent-profile.js";
 export {
+  composeAgentProfileGuidance,
   profileKbDiscrepancies,
   profileKbHarnesses,
   profileKbLearnings,
   profileKbModels,
 };
+
+/**
+ * The guidance block sources the knowledge base owns. {@link withProfileKb}
+ * replaces blocks from these sources and keeps blocks any other layer added.
+ */
+export const PROFILE_KB_SOURCES = ["harness", "model", "learning"] as const;
 
 /** Date the knowledge base was last checked against its sources. */
 export const PROFILE_KB_CHECKED_AT = "2026-09-22";
@@ -42,17 +55,37 @@ export function findProfileKbHarness(
   return profileKbHarnesses.find((entry) => entry.id === harness);
 }
 
-const modelIndex: ReadonlyMap<string, ProfileKbModel> = (() => {
-  const index = new Map<string, ProfileKbModel>();
-  for (const model of profileKbModels) {
+/*
+ * Composition reads a frozen snapshot taken at load, never the exported
+ * records. A consumer that edits an exported entry therefore cannot change
+ * later compositions or desynchronize the lookup index, and the exported
+ * types stay as they were published.
+ */
+const harnessSnapshot: readonly ProfileKbHarness[] = deepFreeze(
+  structuredClone(profileKbHarnesses),
+);
+const modelSnapshot: readonly ProfileKbModel[] = deepFreeze(
+  structuredClone(profileKbModels),
+);
+const learningSnapshot: readonly ProfileKbLearning[] = deepFreeze(
+  structuredClone(profileKbLearnings),
+);
+
+function harnessPosition(harness: string): number {
+  return harnessSnapshot.findIndex((entry) => entry.id === harness);
+}
+
+const modelIndex: ReadonlyMap<string, number> = (() => {
+  const index = new Map<string, number>();
+  modelSnapshot.forEach((model, position) => {
     for (const name of [model.id, ...model.aliases]) {
       const key = name.toLowerCase();
       if (index.has(key)) {
         throw new Error(`profile-kb: model name ${name} is declared twice`);
       }
-      index.set(key, model);
+      index.set(key, position);
     }
-  }
+  });
   return index;
 })();
 
@@ -68,25 +101,48 @@ const modelIndex: ReadonlyMap<string, ProfileKbModel> = (() => {
 export function findProfileKbModel(
   model: string | undefined,
 ): ProfileKbModel | undefined {
+  // Public lookups search the exported records as they are now; composition
+  // alone reads the frozen snapshot, so neither can desynchronize the other.
+  return matchModelName(model, (candidate) =>
+    profileKbModels.find((entry) =>
+      [entry.id, ...entry.aliases].some(
+        (name) => name.toLowerCase() === candidate,
+      ),
+    ),
+  );
+}
+
+/**
+ * Try the name as given, then without each leading `provider/` or route
+ * segment, after dropping a trailing `:suffix`.
+ */
+function matchModelName<T>(
+  model: string | undefined,
+  lookup: (candidate: string) => T | undefined,
+): T | undefined {
   if (!model) return undefined;
   const colon = model.lastIndexOf(":");
   let candidate = (colon > 0 ? model.slice(0, colon) : model)
     .trim()
     .toLowerCase();
   for (;;) {
-    const found = modelIndex.get(candidate);
-    if (found) return found;
+    const found = lookup(candidate);
+    if (found !== undefined) return found;
     const slash = candidate.indexOf("/");
     if (slash < 0) return undefined;
     candidate = candidate.slice(slash + 1);
   }
 }
 
+function modelPosition(model: string | undefined): number {
+  return matchModelName(model, (candidate) => modelIndex.get(candidate)) ?? -1;
+}
+
 function learningsFor(
   harness: ProfileKbHarness | undefined,
   model: ProfileKbModel | undefined,
 ): ProfileKbLearning[] {
-  return profileKbLearnings.filter((learning) => {
+  return learningSnapshot.filter((learning) => {
     const scope = learning.appliesTo;
     if (scope.harness !== undefined && scope.harness !== harness?.id) {
       return false;
@@ -114,8 +170,10 @@ export interface ProfileKbSelection {
 export function profileKbGuidance(
   selection: ProfileKbSelection,
 ): AgentProfileGuidanceBlock[] {
-  const harness = findProfileKbHarness(selection.harness);
-  const model = findProfileKbModel(selection.model);
+  const harness = selection.harness
+    ? harnessSnapshot[harnessPosition(selection.harness)]
+    : undefined;
+  const model = modelSnapshot[modelPosition(selection.model)];
   const blocks: AgentProfileGuidanceBlock[] = [];
   if (harness && harness.prompt.length > 0) {
     blocks.push({
@@ -150,7 +208,8 @@ export function profileKbGuidance(
  * Guidance goes into `appendSystemPrompt` where the harness owns an additive
  * system-prompt control and into `instructions` otherwise, so a harness that
  * refuses appended system text still receives it. The profile's own text
- * stays last. Recomposing replaces earlier guidance, so the result is stable.
+ * stays last. Recomposing replaces the guidance this function wrote earlier,
+ * so the result is stable; blocks from other sources are kept.
  */
 export function withProfileKb(
   profile: AgentProfile,
@@ -159,10 +218,13 @@ export function withProfileKb(
   const harness = selection.harness ?? profile.harness;
   const model = selection.model ?? profile.model?.default;
   const blocks = profileKbGuidance({ harness, model });
+  const known = harness ? harnessSnapshot[harnessPosition(harness)] : undefined;
   const channel = harnessSystemPromptIntents(
-    findProfileKbHarness(harness)?.id ?? (harness as HarnessType | undefined),
+    known?.id ?? (harness as HarnessType | undefined),
   ).append
     ? "appendSystemPrompt"
     : "instructions";
-  return composeAgentProfileGuidance(profile, blocks, channel);
+  return composeAgentProfileGuidance(profile, blocks, channel, {
+    replaceSources: PROFILE_KB_SOURCES,
+  });
 }

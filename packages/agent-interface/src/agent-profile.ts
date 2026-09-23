@@ -760,9 +760,31 @@ export interface AgentProfileGuidanceBlock {
  */
 export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
-const GUIDANCE_OPEN = /^<profile-guidance source="[^"]*" id="[^"]*">\n/;
+const GUIDANCE_LINE =
+  /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
+// A block runs from an opening marker to the first closing marker after it,
+// which is how every released composer wrote blocks (2.11 text could carry an
+// opener but never a closer). When a match holds a second opener and the
+// markers balance from its start, the match may be an outer block cut short by
+// an inner one. That extent is ambiguous, so the balanced extent is kept whole:
+// recomposition may leave a stale block in such caller text, but it never
+// truncates caller text. When the markers never balance, the match is a 2.11
+// block whose text carried an opener, and it is replaced.
+const GUIDANCE_OPEN_MARKER = "<profile-guidance ";
+const GUIDANCE_CLOSE_MARKER = "</profile-guidance>";
 const GUIDANCE_BLOCK =
-  /<profile-guidance source="[^"]*" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+  /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+
+/** Options for {@link composeAgentProfileGuidance}. */
+export interface AgentProfileGuidanceOptions {
+  /**
+   * The block sources this composition owns. Existing blocks from these
+   * sources are removed before the new blocks are composed; blocks from any
+   * other source stay where they are. When omitted, every previously composed
+   * block is removed, as in 2.11. Pass it to keep other layers in place.
+   */
+  replaceSources?: readonly string[];
+}
 
 function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
   if (/["\n]/.test(block.source) || /["\n]/.test(block.id)) {
@@ -770,19 +792,99 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
       "profile guidance source and id must not contain quotes or newlines",
     );
   }
-  if (block.text.includes("</profile-guidance>")) {
+  // Only a closer can end a block early. An opener in the text is the 2.11
+  // input contract, and stripGuidanceText keeps such a block whole.
+  if (block.text.includes(GUIDANCE_CLOSE_MARKER)) {
     throw new TypeError(
-      "profile guidance text must not contain the closing block marker",
+      "profile guidance text must not contain a closing block marker",
     );
   }
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
 }
 
-/** Remove every previously composed guidance block from appended prompt text. */
-function stripGuidanceText(text: string | undefined): string | undefined {
+/** True when the block's body, after its opening tag line, holds an opener. */
+function nestsOpener(block: string): boolean {
+  return block.includes(GUIDANCE_OPEN_MARKER, block.indexOf("\n"));
+}
+
+/**
+ * The end of the block that opens at `offset`, counting nested markers, or -1
+ * when the markers never balance (a 2.11 block whose text carried an opener).
+ */
+function balancedBlockEnd(text: string, offset: number): number {
+  // As in GUIDANCE_BLOCK, a closer counts only at the start of a line, and an
+  // opener's attributes (one line, since source and id hold no newline) are
+  // skipped, so marker text inside them cannot end a block.
+  const closer = `\n${GUIDANCE_CLOSE_MARKER}`;
+  let depth = 0;
+  let at = offset;
+  for (;;) {
+    const open = text.indexOf(GUIDANCE_OPEN_MARKER, at);
+    const close = text.indexOf(closer, at);
+    if (close === -1) return -1;
+    if (open !== -1 && open < close) {
+      depth += 1;
+      const lineEnd = text.indexOf("\n", open);
+      if (lineEnd === -1) return -1;
+      at = lineEnd;
+    } else {
+      depth -= 1;
+      at = close + closer.length;
+      if (depth === 0) return at;
+    }
+  }
+}
+
+/** The block sources a composition replaces. */
+interface SourceFilter {
+  has(source: string): boolean;
+}
+const ALL_SOURCES: SourceFilter = { has: () => true };
+
+/** Remove previously composed guidance blocks from the owned sources. */
+function stripGuidanceText(
+  text: string | undefined,
+  owned: SourceFilter,
+): string | undefined {
   if (text === undefined || text === "") return text;
-  const stripped = text.replace(GUIDANCE_BLOCK, "");
+  let strippedLast = false;
+  // A kept block that nests markers extends to its balanced end; every match
+  // inside it is caller text and is kept too.
+  let keptUntil = 0;
+  let stripped = text.replace(
+    GUIDANCE_BLOCK,
+    (
+      block: string,
+      source: string,
+      gap: string | undefined,
+      offset: number,
+    ) => {
+      if (offset < keptUntil) return block;
+      const end = nestsOpener(block) ? balancedBlockEnd(text, offset) : -1;
+      if (!owned.has(source) || end !== -1) {
+        keptUntil = Math.max(keptUntil, end);
+        return block;
+      }
+      if (gap === undefined && offset + block.length === text.length) {
+        strippedLast = true;
+      }
+      return "";
+    },
+  );
+  // A removed final block leaves the separator written before it.
+  if (strippedLast && stripped.endsWith("\n\n")) {
+    stripped = stripped.slice(0, -2);
+  }
   return stripped === "" ? undefined : stripped;
+}
+
+/**
+ * True only for a whole line that is one complete composed block from an owned
+ * source. A line that merely starts with an opening marker is caller text.
+ */
+function isOwnedGuidanceLine(line: string, owned: SourceFilter): boolean {
+  const match = GUIDANCE_LINE.exec(line);
+  return match !== null && owned.has(match[1]!);
 }
 
 /**
@@ -790,20 +892,29 @@ function stripGuidanceText(text: string | undefined): string | undefined {
  *
  * The blocks come first, in the order given, and the profile's own text comes
  * last, so the most specific instruction (the profile's) is the one a model
- * reads after the general guidance. Composition replaces any blocks a previous
+ * reads after the general guidance. Composition replaces the blocks a previous
  * composition added, on both channels, so recomposing after a harness or
- * model change never stacks stale guidance. Composing the same blocks twice
- * yields the same profile, and with it the same canonical identity.
+ * model change never stacks stale guidance. By default it replaces every
+ * block; with `options.replaceSources` it replaces only those sources and
+ * keeps the others, such as a team's own layer, in place. Composing the same
+ * blocks twice yields the same profile, and with it the same canonical
+ * identity.
  */
 export function composeAgentProfileGuidance(
   profile: AgentProfile,
   blocks: readonly AgentProfileGuidanceBlock[],
   channel: AgentProfileGuidanceChannel,
+  options: AgentProfileGuidanceOptions = {},
 ): AgentProfile {
+  // Without replaceSources, every composed block is replaced, as in 2.11.
+  const owned: SourceFilter =
+    options.replaceSources === undefined
+      ? ALL_SOURCES
+      : new Set(options.replaceSources);
   const prompt = profile.prompt ?? {};
-  const ownAppend = stripGuidanceText(prompt.appendSystemPrompt);
+  const ownAppend = stripGuidanceText(prompt.appendSystemPrompt, owned);
   const ownInstructions = prompt.instructions?.filter(
-    (line) => !GUIDANCE_OPEN.test(line),
+    (line) => !isOwnedGuidanceLine(line, owned),
   );
   const rendered = blocks.map(renderGuidanceBlock);
 
