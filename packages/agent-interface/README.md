@@ -172,6 +172,30 @@ When caller environment values merge into a bridge or harness process, reject na
 Use `isCredentialBearingProfileConfigName(name)` before retaining public config.
 These checks do not apply to a replacement environment owned by caller code.
 
+## Profile knowledge base
+
+`@tangle-network/agent-interface/profile-kb` holds how to get the best from each frontier harness and model this platform runs.
+Every entry cites a vendor source or a command run on a dated check.
+Guidance is specific to one harness or model and never compares models.
+
+`withProfileKb(profile)` composes harness guidance, then model guidance, then the profile's own text into the profile's prompt:
+
+```ts
+import { withProfileKb } from "@tangle-network/agent-interface/profile-kb";
+
+const worker = withProfileKb({
+  harness: "claude-code",
+  model: { default: "claude-opus-5-5" },
+  prompt: { appendSystemPrompt: "Cite the file you read." },
+});
+```
+
+Guidance goes into `appendSystemPrompt` where the harness owns an additive system-prompt control, and into `instructions` otherwise.
+Recomposing replaces earlier guidance, so a second call, or a call with an executor's harness or model override, yields a stable profile.
+`composeAgentProfileGuidance` is the underlying composer for other knowledge layers.
+
+The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes for launching each harness and model, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which records where a vendor source states a requested name differently.
+
 ## Failed execution accounting
 
 An adapter can reject with `AgentExecutionError` and retain observed usage and timing in its immutable `receipt`.

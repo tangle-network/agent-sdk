@@ -737,3 +737,94 @@ export function mergeAgentProfiles(
     extensions: mergeRecord(base?.extensions, overlay?.extensions),
   });
 }
+
+/**
+ * One block of standing guidance composed into a profile's prompt.
+ *
+ * `source` names the layer the text came from (`harness`, `model`, or another
+ * knowledge layer) and `id` names the subject, so a composed block can be
+ * found and replaced later. The profile's own prompt text is never a block:
+ * it is what the blocks are composed in front of.
+ */
+export interface AgentProfileGuidanceBlock {
+  source: string;
+  id: string;
+  text: string;
+}
+
+/**
+ * Where composed guidance lands. `appendSystemPrompt` keeps the harness's
+ * system prompt and adds the guidance to it; `instructions` uses the
+ * harness's caller-instruction surface, for harnesses that own no additive
+ * system-prompt control.
+ */
+export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
+
+const GUIDANCE_OPEN = /^<profile-guidance source="[^"]*" id="[^"]*">\n/;
+const GUIDANCE_BLOCK =
+  /<profile-guidance source="[^"]*" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+
+function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
+  if (/["\n]/.test(block.source) || /["\n]/.test(block.id)) {
+    throw new TypeError(
+      "profile guidance source and id must not contain quotes or newlines",
+    );
+  }
+  if (block.text.includes("</profile-guidance>")) {
+    throw new TypeError(
+      "profile guidance text must not contain the closing block marker",
+    );
+  }
+  return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
+}
+
+/** Remove every previously composed guidance block from appended prompt text. */
+function stripGuidanceText(text: string | undefined): string | undefined {
+  if (text === undefined || text === "") return text;
+  const stripped = text.replace(GUIDANCE_BLOCK, "");
+  return stripped === "" ? undefined : stripped;
+}
+
+/**
+ * Compose harness, model, and other layered guidance into a profile's prompt.
+ *
+ * The blocks come first, in the order given, and the profile's own text comes
+ * last, so the most specific instruction (the profile's) is the one a model
+ * reads after the general guidance. Composition replaces any blocks a previous
+ * composition added, on both channels, so recomposing after a harness or
+ * model change never stacks stale guidance. Composing the same blocks twice
+ * yields the same profile, and with it the same canonical identity.
+ */
+export function composeAgentProfileGuidance(
+  profile: AgentProfile,
+  blocks: readonly AgentProfileGuidanceBlock[],
+  channel: AgentProfileGuidanceChannel,
+): AgentProfile {
+  const prompt = profile.prompt ?? {};
+  const ownAppend = stripGuidanceText(prompt.appendSystemPrompt);
+  const ownInstructions = prompt.instructions?.filter(
+    (line) => !GUIDANCE_OPEN.test(line),
+  );
+  const rendered = blocks.map(renderGuidanceBlock);
+
+  const next: AgentProfilePrompt = { ...prompt };
+  delete next.appendSystemPrompt;
+  delete next.instructions;
+  if (channel === "appendSystemPrompt") {
+    const parts = [...rendered, ...(ownAppend ? [ownAppend] : [])];
+    if (parts.length > 0) next.appendSystemPrompt = parts.join("\n\n");
+    else if (ownAppend !== undefined) next.appendSystemPrompt = ownAppend;
+    if (ownInstructions !== undefined) next.instructions = ownInstructions;
+  } else {
+    if (ownAppend !== undefined) next.appendSystemPrompt = ownAppend;
+    const lines = [...rendered, ...(ownInstructions ?? [])];
+    if (lines.length > 0 || prompt.instructions !== undefined) {
+      next.instructions = lines;
+    }
+  }
+  const result: AgentProfile = { ...profile };
+  if (Object.keys(next).length > 0 || profile.prompt !== undefined) {
+    result.prompt = next;
+  }
+  return result;
+}
