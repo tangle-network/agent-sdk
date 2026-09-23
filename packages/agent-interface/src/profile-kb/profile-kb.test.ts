@@ -115,16 +115,26 @@ describe("profile-kb content", () => {
   });
 });
 
-describe("immutability", () => {
-  it("freezes every exported record, so no consumer can change later compositions", () => {
+describe("snapshot isolation", () => {
+  it("composes from a load-time snapshot, so editing an exported record changes nothing", () => {
+    const profile: AgentProfile = {
+      harness: "claude-code",
+      model: { default: "claude-opus-5-5" },
+    };
+    const before = withProfileKb(profile);
     const model = findProfileKbModel("claude-opus-5-5")!;
-    expect(Object.isFrozen(profileKbModels)).toBe(true);
-    expect(Object.isFrozen(model)).toBe(true);
-    expect(Object.isFrozen(model.prompt)).toBe(true);
-    expect(Object.isFrozen(model.sources[0])).toBe(true);
-    expect(Object.isFrozen(profileKbHarnesses[0]!.operator)).toBe(true);
-    expect(Object.isFrozen(profileKbDiscrepancies[0]!.sources)).toBe(true);
-    expect(() => (model.prompt as string[]).push("x")).toThrow(TypeError);
+    const harness = findProfileKbHarness("claude-code")!;
+    const savedPrompt = [...model.prompt];
+    const savedName = harness.name;
+    try {
+      model.prompt.push("Injected after load.");
+      harness.name = "Edited";
+      expect(withProfileKb(profile)).toEqual(before);
+      expect(findProfileKbModel("claude-opus-5-5")).toBe(model);
+    } finally {
+      model.prompt.splice(0, model.prompt.length, ...savedPrompt);
+      harness.name = savedName;
+    }
   });
 });
 

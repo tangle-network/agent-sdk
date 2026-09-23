@@ -16,6 +16,7 @@ import type { HarnessType } from "../harness.js";
 import { harnessSystemPromptIntents } from "../harness-capabilities.js";
 import { profileKbHarnesses } from "./harnesses.js";
 import { profileKbModels } from "./models.js";
+import { deepFreeze } from "./freeze.js";
 import { profileKbDiscrepancies, profileKbLearnings } from "./records.js";
 import type {
   ProfileKbHarness,
@@ -45,20 +46,40 @@ export function findProfileKbHarness(
   harness: HarnessType | string | undefined,
 ): ProfileKbHarness | undefined {
   if (!harness) return undefined;
-  return profileKbHarnesses.find((entry) => entry.id === harness);
+  return profileKbHarnesses[harnessPosition(harness)];
 }
 
-const modelIndex: ReadonlyMap<string, ProfileKbModel> = (() => {
-  const index = new Map<string, ProfileKbModel>();
-  for (const model of profileKbModels) {
+/*
+ * Composition reads a frozen snapshot taken at load, never the exported
+ * records. A consumer that edits an exported entry therefore cannot change
+ * later compositions or desynchronize the lookup index, and the exported
+ * types stay as they were published.
+ */
+const harnessSnapshot: readonly ProfileKbHarness[] = deepFreeze(
+  structuredClone(profileKbHarnesses),
+);
+const modelSnapshot: readonly ProfileKbModel[] = deepFreeze(
+  structuredClone(profileKbModels),
+);
+const learningSnapshot: readonly ProfileKbLearning[] = deepFreeze(
+  structuredClone(profileKbLearnings),
+);
+
+function harnessPosition(harness: string): number {
+  return harnessSnapshot.findIndex((entry) => entry.id === harness);
+}
+
+const modelIndex: ReadonlyMap<string, number> = (() => {
+  const index = new Map<string, number>();
+  modelSnapshot.forEach((model, position) => {
     for (const name of [model.id, ...model.aliases]) {
       const key = name.toLowerCase();
       if (index.has(key)) {
         throw new Error(`profile-kb: model name ${name} is declared twice`);
       }
-      index.set(key, model);
+      index.set(key, position);
     }
-  }
+  });
   return index;
 })();
 
@@ -74,16 +95,21 @@ const modelIndex: ReadonlyMap<string, ProfileKbModel> = (() => {
 export function findProfileKbModel(
   model: string | undefined,
 ): ProfileKbModel | undefined {
-  if (!model) return undefined;
+  const position = modelPosition(model);
+  return position < 0 ? undefined : profileKbModels[position];
+}
+
+function modelPosition(model: string | undefined): number {
+  if (!model) return -1;
   const colon = model.lastIndexOf(":");
   let candidate = (colon > 0 ? model.slice(0, colon) : model)
     .trim()
     .toLowerCase();
   for (;;) {
     const found = modelIndex.get(candidate);
-    if (found) return found;
+    if (found !== undefined) return found;
     const slash = candidate.indexOf("/");
-    if (slash < 0) return undefined;
+    if (slash < 0) return -1;
     candidate = candidate.slice(slash + 1);
   }
 }
@@ -92,7 +118,7 @@ function learningsFor(
   harness: ProfileKbHarness | undefined,
   model: ProfileKbModel | undefined,
 ): ProfileKbLearning[] {
-  return profileKbLearnings.filter((learning) => {
+  return learningSnapshot.filter((learning) => {
     const scope = learning.appliesTo;
     if (scope.harness !== undefined && scope.harness !== harness?.id) {
       return false;
@@ -120,8 +146,10 @@ export interface ProfileKbSelection {
 export function profileKbGuidance(
   selection: ProfileKbSelection,
 ): AgentProfileGuidanceBlock[] {
-  const harness = findProfileKbHarness(selection.harness);
-  const model = findProfileKbModel(selection.model);
+  const harness = selection.harness
+    ? harnessSnapshot[harnessPosition(selection.harness)]
+    : undefined;
+  const model = modelSnapshot[modelPosition(selection.model)];
   const blocks: AgentProfileGuidanceBlock[] = [];
   if (harness && harness.prompt.length > 0) {
     blocks.push({
