@@ -31,6 +31,12 @@ export {
   profileKbModels,
 };
 
+/**
+ * The guidance block sources the knowledge base owns. {@link withProfileKb}
+ * replaces blocks from these sources and keeps blocks any other layer added.
+ */
+export const PROFILE_KB_SOURCES = ["harness", "model", "learning"] as const;
+
 /** Date the knowledge base was last checked against its sources. */
 export const PROFILE_KB_CHECKED_AT = "2026-09-22";
 
@@ -150,7 +156,8 @@ export function profileKbGuidance(
  * Guidance goes into `appendSystemPrompt` where the harness owns an additive
  * system-prompt control and into `instructions` otherwise, so a harness that
  * refuses appended system text still receives it. The profile's own text
- * stays last. Recomposing replaces earlier guidance, so the result is stable.
+ * stays last. Recomposing replaces the guidance this function wrote earlier,
+ * so the result is stable; blocks from other sources are kept.
  */
 export function withProfileKb(
   profile: AgentProfile,
@@ -164,5 +171,7 @@ export function withProfileKb(
   ).append
     ? "appendSystemPrompt"
     : "instructions";
-  return composeAgentProfileGuidance(profile, blocks, channel);
+  return composeAgentProfileGuidance(profile, blocks, channel, {
+    replaceSources: PROFILE_KB_SOURCES,
+  });
 }

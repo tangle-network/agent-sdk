@@ -1,7 +1,17 @@
-import type { ProfileKbModel } from "./types.js";
+import type { ProfileKbModel, ProfileKbSource } from "./types.js";
 
 const CHECKED = "2026-09-22";
 const claudeDocs = "https://platform.claude.com/docs/en";
+const openaiDocs = "https://developers.openai.com/api/docs";
+
+/** A router surface is listed only with a dated check that the router served the id. */
+function routerCheck(note: string): ProfileKbSource {
+  return {
+    url: "https://router.tangle.tools/v1/chat/completions",
+    checkedAt: CHECKED,
+    note,
+  };
+}
 
 /**
  * Current frontier models, from vendor sources read on 2026-09-22.
@@ -15,7 +25,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     id: "claude-opus-5-5",
     name: "Claude Opus 5.5",
     vendor: "Anthropic",
-    surfaces: ["api", "router"],
+    surfaces: ["api"],
     aliases: ["anthropic/claude-opus-5-5", "anthropic.claude-opus-5-5"],
     defaultEffort: "medium",
     sources: [
@@ -51,7 +61,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     id: "claude-fable-5-1",
     name: "Claude Fable 5.1",
     vendor: "Anthropic",
-    surfaces: ["api", "router"],
+    surfaces: ["api"],
     aliases: ["anthropic/claude-fable-5-1", "anthropic.claude-fable-5-1"],
     defaultEffort: "high",
     sources: [
@@ -91,6 +101,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
         url: `${claudeDocs}/build-with-claude/prompt-engineering/prompting-claude-sonnet-5`,
         checkedAt: CHECKED,
       },
+      routerCheck("claude-sonnet-5 returned HTTP 200"),
     ],
     prompt: [
       "Apply each instruction to every case it names; where an instruction should apply broadly, the prompt says so.",
@@ -109,7 +120,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     id: "claude-haiku-4-5",
     name: "Claude Haiku 4.5",
     vendor: "Anthropic",
-    surfaces: ["api", "router"],
+    surfaces: ["api"],
     aliases: [
       "claude-haiku-4-5-20251001",
       "anthropic/claude-haiku-4-5",
@@ -122,9 +133,9 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       "Answer directly and keep each step scoped to the task in hand.",
     ],
     operator: [
-      "Model id claude-haiku-4-5-20251001 (alias claude-haiku-4-5); 200K context, 64K max output. The fastest model in the current lineup.",
+      "Model id claude-haiku-4-5-20251001 (alias claude-haiku-4-5); 200K context, 64K max output.",
       "Uses manual extended thinking (thinking.type enabled with budget_tokens); it takes no effort parameter.",
-      "Retirement not sooner than 2026-10-15.",
+      "Retirement date: 2026-10-15 at the earliest.",
     ],
   },
   {
@@ -152,6 +163,96 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     ],
   },
   {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    vendor: "OpenAI",
+    surfaces: ["codex", "api"],
+    aliases: ["openai/gpt-6-astra"],
+    defaultEffort: "medium",
+    sources: [
+      { url: `${openaiDocs}/models/gpt-6-astra`, checkedAt: CHECKED },
+      {
+        url: `${openaiDocs}/guides/latest-model?model=gpt-6-astra`,
+        checkedAt: CHECKED,
+        note: "Using GPT-6: prompting guidance",
+      },
+      { url: "https://learn.chatgpt.com/docs/models", checkedAt: CHECKED },
+      {
+        url: "cli:codex exec -m gpt-6-astra 'Reply with exactly: OK'",
+        checkedAt: CHECKED,
+        note: "codex-cli 0.156.1 on a ChatGPT account returned OK",
+      },
+    ],
+    prompt: [
+      "Infer the user's intent and task scope from the instructions and prior context, bias toward action, and carry the intended task to completion.",
+      "When you can parallelize work by delegating tasks to another agent, do so with the collaboration tools.",
+      "Write clear, concise paragraphs that each develop one idea; use lists only for parallel or sequential items.",
+    ],
+    operator: [
+      "Built for end-to-end work with sustained reasoning across many tools: coding, computer use, research, and documents.",
+      "API: 1,050,000-token context, 128K max output; efforts low, medium, high, xhigh, max.",
+      "Codex: 272K context; efforts low to max plus ultra, which delegates tasks automatically; default medium.",
+    ],
+  },
+  {
+    id: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    vendor: "OpenAI",
+    surfaces: ["codex", "api"],
+    aliases: ["openai/gpt-6-sol"],
+    defaultEffort: "medium",
+    sources: [
+      { url: `${openaiDocs}/models/gpt-6-sol`, checkedAt: CHECKED },
+      {
+        url: `${openaiDocs}/guides/latest-model?model=gpt-6-astra`,
+        checkedAt: CHECKED,
+        note: "Using GPT-6: prompting guidance",
+      },
+      {
+        url: "cli:codex exec -m gpt-6-sol 'Reply with exactly: OK'",
+        checkedAt: CHECKED,
+        note: "codex-cli 0.156.1 on a ChatGPT account returned OK",
+      },
+    ],
+    prompt: [
+      "Treat a request such as 'can you', 'I want to', or 'help me' as an instruction to do the work.",
+      "The user's explicit instructions take precedence over a skill's instructions; if a skill makes you pause or ask, name the SKILL.md file.",
+      "Carry the task to completion and report the checks you ran.",
+    ],
+    operator: [
+      "Built for complex coding and agentic workflows, and for ambiguous or high-value tasks that need analysis and polish.",
+      "API: 1,050,000-token context, 128K max output; efforts none, low, medium (default), high, xhigh, max. Inputs over 272K tokens bill at 2x input and 1.5x output.",
+      "Codex: 272K context; efforts low to max plus ultra; default medium.",
+      "Use the Responses API for built-in tools; Chat Completions supports function calling only at effort none.",
+    ],
+  },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    vendor: "OpenAI",
+    surfaces: ["codex", "api"],
+    aliases: ["openai/gpt-6-luna"],
+    defaultEffort: "medium",
+    sources: [
+      { url: `${openaiDocs}/models/gpt-6-luna`, checkedAt: CHECKED },
+      { url: "https://learn.chatgpt.com/docs/models", checkedAt: CHECKED },
+      {
+        url: "cli:codex exec -m gpt-6-luna 'Reply with exactly: OK'",
+        checkedAt: CHECKED,
+        note: "codex-cli 0.156.1 on a ChatGPT account returned OK",
+      },
+    ],
+    prompt: [
+      "Work to the stated success criteria and output format for each item.",
+      "Scale testing to the change: once the targeted checks pass, test further only when new changes or failures justify it.",
+    ],
+    operator: [
+      "Built for focused, high-volume tasks with known success criteria: summarization, extraction, and focused coding.",
+      "API: 1,050,000-token context, 128K max output; efforts none, low, medium (default), high, xhigh, max.",
+      "Codex: 272K context; efforts low to max; default medium.",
+    ],
+  },
+  {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     vendor: "OpenAI",
@@ -171,8 +272,9 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       {
         url: "file://~/.codex/models_cache.json",
         checkedAt: CHECKED,
-        note: "codex-cli 0.152.1 served list; `codex exec -m gpt-5.6-sol` returned OK",
+        note: "codex-cli 0.156.1 served list; `codex exec -m gpt-5.6-sol` returned OK",
       },
+      routerCheck("gpt-5.6-sol returned HTTP 200"),
     ],
     prompt: [
       "Work from the outcome: know what good looks like and the stopping condition, then choose the method yourself.",
@@ -201,8 +303,9 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       {
         url: "file://~/.codex/models_cache.json",
         checkedAt: CHECKED,
-        note: "codex-cli 0.152.1 served list; `codex exec -m gpt-5.6-terra` returned OK",
+        note: "codex-cli 0.156.1 served list; `codex exec -m gpt-5.6-terra` returned OK",
       },
+      routerCheck("gpt-5.6-terra returned HTTP 200"),
     ],
     prompt: [
       "Work from the outcome and the stopping condition; choose the method yourself and verify before you report.",
@@ -228,8 +331,9 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       {
         url: "file://~/.codex/models_cache.json",
         checkedAt: CHECKED,
-        note: "codex-cli 0.152.1 served list; `codex exec -m gpt-5.6-luna` returned OK",
+        note: "codex-cli 0.156.1 served list; `codex exec -m gpt-5.6-luna` returned OK",
       },
+      routerCheck("gpt-5.6-luna returned HTTP 200"),
     ],
     prompt: [
       "Follow the stated format exactly and finish each item before moving to the next.",
@@ -255,11 +359,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
         url: "https://api-docs.deepseek.com/quick_start/pricing",
         checkedAt: CHECKED,
       },
-      {
-        url: "https://router.tangle.tools/v1/chat/completions",
-        checkedAt: CHECKED,
-        note: "deepseek/deepseek-v4.1-flash returned HTTP 200 and served that id",
-      },
+      routerCheck("deepseek/deepseek-v4.1-flash returned HTTP 200 and served that id"),
     ],
     prompt: [
       "State the goal and the finished result up front, and use the tools you are given to check your work.",
@@ -279,11 +379,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     defaultEffort: "ultracode",
     sources: [
       { url: "https://docs.z.ai/guides/llm/glm-5.3", checkedAt: CHECKED },
-      {
-        url: "https://router.tangle.tools/v1/chat/completions",
-        checkedAt: CHECKED,
-        note: "glm-5.3 returned HTTP 200, served as z-ai/glm-5.3",
-      },
+      routerCheck("glm-5.3 returned HTTP 200, served as z-ai/glm-5.3"),
     ],
     prompt: [
       "Work the task through to a verified result, using the tools to run and check each change.",
@@ -305,11 +401,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
         url: "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart",
         checkedAt: CHECKED,
       },
-      {
-        url: "https://router.tangle.tools/v1/chat/completions",
-        checkedAt: CHECKED,
-        note: "kimi-k3 returned HTTP 200, served as moonshotai/kimi-k3",
-      },
+      routerCheck("kimi-k3 returned HTTP 200, served as moonshotai/kimi-k3"),
     ],
     prompt: [
       "Navigate the repository, run the code, and iterate against tests, logs, and runtime output until the result holds.",

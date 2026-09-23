@@ -760,9 +760,20 @@ export interface AgentProfileGuidanceBlock {
  */
 export type AgentProfileGuidanceChannel = "appendSystemPrompt" | "instructions";
 
-const GUIDANCE_OPEN = /^<profile-guidance source="[^"]*" id="[^"]*">\n/;
+const GUIDANCE_OPEN = /^<profile-guidance source="([^"]*)" id="[^"]*">\n/;
 const GUIDANCE_BLOCK =
-  /<profile-guidance source="[^"]*" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+  /<profile-guidance source="([^"]*)" id="[^"]*">\n[\s\S]*?\n<\/profile-guidance>(\n\n)?/g;
+
+/** Options for {@link composeAgentProfileGuidance}. */
+export interface AgentProfileGuidanceOptions {
+  /**
+   * The block sources this composition owns. Existing blocks from these
+   * sources are removed before the new blocks are composed; blocks from any
+   * other source stay where they are. Defaults to the sources of the blocks
+   * being composed.
+   */
+  replaceSources?: readonly string[];
+}
 
 function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
   if (/["\n]/.test(block.source) || /["\n]/.test(block.id)) {
@@ -778,11 +789,21 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
 }
 
-/** Remove every previously composed guidance block from appended prompt text. */
-function stripGuidanceText(text: string | undefined): string | undefined {
+/** Remove previously composed guidance blocks from the owned sources. */
+function stripGuidanceText(
+  text: string | undefined,
+  owned: ReadonlySet<string>,
+): string | undefined {
   if (text === undefined || text === "") return text;
-  const stripped = text.replace(GUIDANCE_BLOCK, "");
+  const stripped = text.replace(GUIDANCE_BLOCK, (block, source: string) =>
+    owned.has(source) ? "" : block,
+  );
   return stripped === "" ? undefined : stripped;
+}
+
+function isOwnedGuidanceLine(line: string, owned: ReadonlySet<string>): boolean {
+  const match = GUIDANCE_OPEN.exec(line);
+  return match !== null && owned.has(match[1]!);
 }
 
 /**
@@ -790,20 +811,27 @@ function stripGuidanceText(text: string | undefined): string | undefined {
  *
  * The blocks come first, in the order given, and the profile's own text comes
  * last, so the most specific instruction (the profile's) is the one a model
- * reads after the general guidance. Composition replaces any blocks a previous
- * composition added, on both channels, so recomposing after a harness or
- * model change never stacks stale guidance. Composing the same blocks twice
- * yields the same profile, and with it the same canonical identity.
+ * reads after the general guidance. Composition replaces the blocks a previous
+ * composition added for the same sources (`options.replaceSources`, by
+ * default the sources of `blocks`), on both channels, so recomposing after a
+ * harness or model change never stacks stale guidance. Blocks from other
+ * sources, such as a team's own layer, are kept in place. Composing the same
+ * blocks twice yields the same profile, and with it the same canonical
+ * identity.
  */
 export function composeAgentProfileGuidance(
   profile: AgentProfile,
   blocks: readonly AgentProfileGuidanceBlock[],
   channel: AgentProfileGuidanceChannel,
+  options: AgentProfileGuidanceOptions = {},
 ): AgentProfile {
+  const owned = new Set(
+    options.replaceSources ?? blocks.map((block) => block.source),
+  );
   const prompt = profile.prompt ?? {};
-  const ownAppend = stripGuidanceText(prompt.appendSystemPrompt);
+  const ownAppend = stripGuidanceText(prompt.appendSystemPrompt, owned);
   const ownInstructions = prompt.instructions?.filter(
-    (line) => !GUIDANCE_OPEN.test(line),
+    (line) => !isOwnedGuidanceLine(line, owned),
   );
   const rendered = blocks.map(renderGuidanceBlock);
 

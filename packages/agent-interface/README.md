@@ -191,8 +191,10 @@ const worker = withProfileKb({
 ```
 
 Guidance goes into `appendSystemPrompt` where the harness owns an additive system-prompt control, and into `instructions` otherwise.
-Recomposing replaces earlier guidance, so a second call, or a call with an executor's harness or model override, yields a stable profile.
+Recomposing replaces the guidance `withProfileKb` wrote earlier, so a second call, or a call with an executor's harness or model override, yields a stable profile.
+The knowledge base owns the block sources `harness`, `model`, and `learning` (`PROFILE_KB_SOURCES`).
 `composeAgentProfileGuidance` is the underlying composer for other knowledge layers.
+Give each layer its own source name: a composition replaces only blocks from the sources it owns and keeps every other block in place.
 
 The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes for launching each harness and model, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which records where a vendor source states a requested name differently.
 

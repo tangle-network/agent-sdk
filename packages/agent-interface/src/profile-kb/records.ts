@@ -18,15 +18,15 @@ export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
     subject: "OpenAI Codex models",
     requested: "gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna as the current Codex models",
     observed:
-      "OpenAI's Codex model page lists GPT-6 Astra, GPT-6 Sol, and GPT-6 Luna as the current recommended models. " +
-      "On this box, codex-cli 0.152.1 on a ChatGPT account serves gpt-5.6-sol, gpt-5.6-terra, and gpt-5.6-luna (each returned OK) " +
-      "and labels them 'Older'; gpt-6-sol and gpt-6-luna return 'not supported when using Codex with a ChatGPT account', " +
-      "and gpt-6-astra returns 'requires a newer version of Codex'. The knowledge base keeps the gpt-5.6 tiers because they are what this box can run.",
+      "OpenAI's Codex model page lists GPT-6 Astra, GPT-6 Sol, and GPT-6 Luna as the current models. " +
+      "codex-cli 0.156.1 on a ChatGPT account serves all three (each returned OK) and labels the gpt-5.6 tiers 'Older'. " +
+      "The knowledge base carries the GPT-6 tiers as the current Codex models and keeps the requested gpt-5.6 tiers, which Codex and the API still serve.",
     sources: [
       { url: "https://learn.chatgpt.com/docs/models", checkedAt: CHECKED },
       {
         url: "cli:codex exec -m <model> 'Reply with exactly: OK'",
         checkedAt: CHECKED,
+        note: "codex-cli 0.156.1",
       },
     ],
   },

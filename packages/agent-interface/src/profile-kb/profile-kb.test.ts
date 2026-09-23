@@ -32,7 +32,10 @@ describe("profile-kb content", () => {
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-luna",
         "gpt-6-pro",
+        "gpt-6-sol",
         "kimi-k3",
       ].sort(),
     );
@@ -77,8 +80,25 @@ describe("profile-kb content", () => {
           if (other === model.id || other === model.name) continue;
           expect(line.toLowerCase()).not.toContain(other.toLowerCase());
         }
-        expect(line).not.toMatch(/\b(better|worse|than|beats?)\b/i);
       }
+      // Operator lines may name the model a mode runs on; neither kind ranks.
+      for (const line of [...model.prompt, ...model.operator]) {
+        expect(line).not.toMatch(
+          /\b(better|worse|than|beats?|lineup|fastest|slowest|cheapest|strongest|smartest|most capable|least)\b/i,
+        );
+      }
+    }
+  });
+
+  it("lists the router surface only with a dated router check", () => {
+    for (const model of profileKbModels) {
+      const routerSources = model.sources.filter((source) =>
+        source.url.startsWith("https://router.tangle.tools/"),
+      );
+      expect(
+        model.surfaces.includes("router"),
+        `${model.id} router surface needs a router check`,
+      ).toBe(routerSources.length > 0);
     }
   });
 
@@ -208,6 +228,72 @@ describe("withProfileKb", () => {
     expect(composed.prompt?.instructions?.[0]).toContain(
       'source="model" id="deepseek-v4.1-flash"',
     );
+  });
+});
+
+describe("guidance ownership", () => {
+  const team = { source: "team", id: "security", text: "Never push secrets." };
+
+  it("keeps a caller's own guidance layer when withProfileKb recomposes", () => {
+    const layered = composeAgentProfileGuidance(
+      { harness: "claude-code", prompt: { appendSystemPrompt: "own" } },
+      [team],
+      "appendSystemPrompt",
+    );
+    const composed = withProfileKb({
+      ...layered,
+      model: { default: "claude-opus-5-5" },
+    });
+    const text = composed.prompt?.appendSystemPrompt ?? "";
+    expect(text).toContain("Never push secrets.");
+    expect(text.indexOf('source="model"')).toBeLessThan(
+      text.indexOf('source="team"'),
+    );
+    expect(text.endsWith("own")).toBe(true);
+    expect(withProfileKb(composed)).toEqual(composed);
+  });
+
+  it("keeps a block the user wrote into their own prompt", () => {
+    const own =
+      '<profile-guidance source="mine" id="style">\nWrite tersely.\n</profile-guidance>\n\nCite files.';
+    const composed = withProfileKb({
+      harness: "claude-code",
+      model: { default: "claude-opus-5-5" },
+      prompt: { appendSystemPrompt: own },
+    });
+    expect(composed.prompt?.appendSystemPrompt?.endsWith(own)).toBe(true);
+  });
+
+  it("keeps a caller's instruction block across a codex recomposition", () => {
+    const layered = composeAgentProfileGuidance(
+      { harness: "codex", prompt: { instructions: ["Run the tests."] } },
+      [team],
+      "instructions",
+    );
+    const composed = withProfileKb({
+      ...layered,
+      model: { default: "gpt-6-sol" },
+    });
+    const instructions = composed.prompt?.instructions ?? [];
+    expect(instructions).toHaveLength(4);
+    expect(instructions[2]).toContain('source="team"');
+    expect(instructions[3]).toBe("Run the tests.");
+    const switched = withProfileKb(composed, { model: "gpt-6-luna" });
+    expect(JSON.stringify(switched.prompt)).not.toContain("GPT-6 Sol");
+    expect(switched.prompt?.instructions?.[2]).toContain('source="team"');
+  });
+
+  it("replaces a layer's earlier blocks when that layer recomposes", () => {
+    const first = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
+    const second = composeAgentProfileGuidance(
+      first,
+      [{ ...team, text: "Rotate keys monthly." }],
+      "appendSystemPrompt",
+    );
+    expect(second.prompt?.appendSystemPrompt).not.toContain(
+      "Never push secrets.",
+    );
+    expect(second.prompt?.appendSystemPrompt).toContain("Rotate keys monthly.");
   });
 });
 
