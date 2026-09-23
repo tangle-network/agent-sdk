@@ -815,18 +815,24 @@ function mayBeCutShort(text: string, block: string, offset: number): boolean {
  * when the markers never balance (a 2.11 block whose text carried an opener).
  */
 function balancedBlockEnd(text: string, offset: number): number {
+  // As in GUIDANCE_BLOCK, a closer counts only at the start of a line, and an
+  // opener's attributes (one line, since source and id hold no newline) are
+  // skipped, so marker text inside them cannot end a block.
+  const closer = `\n${GUIDANCE_CLOSE_MARKER}`;
   let depth = 0;
   let at = offset;
   for (;;) {
     const open = text.indexOf(GUIDANCE_OPEN_MARKER, at);
-    const close = text.indexOf(GUIDANCE_CLOSE_MARKER, at);
+    const close = text.indexOf(closer, at);
     if (close === -1) return -1;
     if (open !== -1 && open < close) {
       depth += 1;
-      at = open + GUIDANCE_OPEN_MARKER.length;
+      const lineEnd = text.indexOf("\n", open);
+      if (lineEnd === -1) return -1;
+      at = lineEnd;
     } else {
       depth -= 1;
-      at = close + GUIDANCE_CLOSE_MARKER.length;
+      at = close + closer.length;
       if (depth === 0) return at;
     }
   }

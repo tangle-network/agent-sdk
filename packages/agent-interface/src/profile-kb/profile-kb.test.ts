@@ -366,6 +366,18 @@ describe("guidance ownership", () => {
     );
   });
 
+  it("ignores marker text inside a kept block's attributes", () => {
+    const team =
+      '<profile-guidance source="team</profile-guidance>" id="t">\nEx1: <profile-guidance source="team" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: team } },
+      [],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(team);
+  });
+
   it("replaces a 2.11 owned block whose text carried an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';
