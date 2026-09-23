@@ -6,39 +6,85 @@ import type {
   PromptResult,
   SandboxEvent,
 } from "@tangle-network/sandbox";
-import { createHash, randomUUID } from "node:crypto";
 import {
   AgentEnvironmentCapabilitiesSchema,
-  type AgentEnvironment,
+  AgentNativeContextContinuationResultSchema,
+  AgentTurnResultSchema,
+  CanonicalStreamEventSchema,
+  ContextTransferRequestSchema,
+  ContextTransferResultSchema,
+  InteractionBindingSchema,
+  InteractionRequestSchema,
+  InteractionAcknowledgementSchema,
+  InteractionResponseCommandSchema,
+  NativeContextBoundaryProofSchema,
+  NativeContextContinuationRequestSchema,
+  agentNativeContextContinuationResultMatchesRequest,
+  canonicalCandidateDigest,
+  contextTransferResultMatchesRequest,
+  canonicalAgentProfileDigest,
+  nativeContextContinuationTurnDigest,
+  snapshotAgentProfile,
   type AgentEnvironmentCapabilities,
-  type AgentEnvironmentEvent,
-  type AgentEnvironmentProvider,
-  type AgentEnvironmentQuery,
-  type AgentEnvironmentStatus,
-  type AgentEnvironmentSummary,
-  type AgentProfileRef,
-  type AgentSession,
-  type AgentSessionRef,
-  type AgentSessionStatus,
-  type AgentTurnInput,
-  type AgentTurnResult,
-  type CheckpointRef,
-  type CheckpointRequest,
-  type CreateAgentEnvironmentInput,
-  type ExecRequest,
-  type ExecResult,
-  type ForkRequest,
-  type PlacementInfo,
-  type ResourceRequest,
+  type AgentNativeContextContinuationOptions,
+  type AgentNativeContextContinuationResult,
+  type AgentProfile,
+  type AgentProfileValidationResult,
+  type AgentRunControlRef,
+  type AgentWorkspaceBranching,
+  type ContextTransferRequest,
+  type ContextTransferResult,
+  type InteractionAcknowledgement,
+  type InteractionResponseCommand,
+  type NativeContextBoundaryProof,
+  type NativeContextContinuationRequest,
+  type WorkspaceCheckpointLookupResult,
+  type WorkspaceCheckpointResult,
+  type WorkspaceCleanupAcknowledgement,
+  type WorkspaceCleanupRequest,
+  type WorkspaceForkLookupResult,
+  type WorkspaceForkResult,
+  type WorkspaceOperationLookupRequest,
+} from "@tangle-network/agent-interface";
+import type {
+  AgentEnvironment,
+  AgentEnvironmentEvent,
+  AgentEnvironmentProvider,
+  AgentEnvironmentQuery,
+  AgentEnvironmentStatus,
+  AgentEnvironmentSummary,
+  AgentProfileRef,
+  AgentSession,
+  AgentSessionRef,
+  AgentSessionStatus,
+  AgentTurnInput,
+  AgentTurnResult,
+  CheckpointRef,
+  CheckpointRequest,
+  CreateAgentEnvironmentInput,
+  ExecRequest,
+  ExecResult,
+  ForkRequest,
+  PlacementInfo,
+  ResourceRequest,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
-  AgentRunControlRef,
   InputPart,
   TokenUsage,
 } from "@tangle-network/agent-interface";
 import {
   AgentRunControlRefSchema,
   ContextTransferReceiptSchema,
+  WorkspaceCheckpointLookupResultSchema,
+  WorkspaceCheckpointResultSchema,
+  WorkspaceCleanupAcknowledgementSchema,
+  WorkspaceCleanupRequestSchema,
+  WorkspaceForkLookupResultSchema,
+  WorkspaceForkResultSchema,
+  WorkspaceOperationLookupRequestSchema,
+  workspaceCheckpointResultMatchesRequest,
+  workspaceCleanupAcknowledgementMatches,
+  workspaceForkResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import {
   createTangleExactProcessProvider,
@@ -55,6 +101,7 @@ export interface SandboxClientLike {
   get?(id: string): Promise<SandboxInstanceLike | null>;
   list?(options?: unknown): Promise<SandboxInstanceLike[]>;
   describePlacement?(box: SandboxInstanceLike): unknown;
+  validateProfile?(profile: AgentProfile): Promise<unknown>;
 }
 
 export interface SandboxProcessStatusLike {
@@ -99,6 +146,14 @@ export interface SandboxInstanceLike {
   prompt?(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
   dispatchPrompt?(message: string | InputPart[], options?: PromptOptions): Promise<unknown>;
   session?(id: string): SandboxSessionLike;
+  validateProfile?(profile: AgentProfile): Promise<unknown>;
+  resourceUsage?(): Promise<unknown | null>;
+  teeAttestation?(options?: unknown): Promise<unknown>;
+  workspaceBranching?: AgentWorkspaceBranching;
+  transferContext?(
+    request: ContextTransferRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<ContextTransferResult>;
   read?(path: string, options?: { sessionId?: string }): Promise<string>;
   write?(path: string, content: string, options?: { sessionId?: string }): Promise<unknown>;
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
@@ -140,7 +195,16 @@ export interface SandboxSessionLike {
   }): AsyncIterable<SandboxEvent>;
   result(options?: { executionId?: string }): Promise<PromptResult>;
   prompt(message: string | InputPart[], options?: PromptOptions): Promise<PromptResult>;
-  interrupt(options?: { executionId?: string }): Promise<{ cancelled: boolean }>;
+  interrupt(options?: { executionId?: string }): Promise<unknown>;
+  interactions?(): Promise<unknown>;
+  respondToInteraction?(command: unknown): Promise<unknown>;
+  contextBoundary?(options?: { signal?: AbortSignal }): Promise<unknown | null>;
+  continueNative?(
+    request: NativeContextContinuationRequest,
+    options: AgentNativeContextContinuationOptions,
+  ): Promise<unknown>;
+  sendMessage?(request: unknown, options?: unknown): Promise<unknown>;
+  steer?(input: AgentTurnInput): Promise<unknown>;
 }
 
 export interface TangleProviderOptions {
@@ -153,9 +217,82 @@ export interface TangleProviderOptions {
   exactProcess?: TangleExactProcessOptions;
 }
 
+export interface TangleInterruptResult {
+  cancelled: boolean;
+  outcome?: string;
+  reason?: string;
+  sessionState?: string;
+  reconnectable?: boolean;
+  activeExecutionId?: string | null;
+  lastTerminalReason?: string;
+}
+
+export interface TangleAgentSession extends AgentSession {
+  /** The unmodified provider status record, when the provider supplies one. */
+  statusSnapshot?(): Promise<unknown | null>;
+  /** Exact cancellation receipt; this never destroys the environment. */
+  cancelExecution?(): Promise<TangleInterruptResult>;
+  /** Provider-native queued input, only when the sandbox exposes it. */
+  steer?(input: AgentTurnInput): Promise<unknown>;
+}
+
+export interface TangleProfileReceipt {
+  ok: boolean;
+  issues: Array<{
+    level: "error" | "warning" | "info";
+    code: string;
+    message: string;
+    path?: string;
+  }>;
+  effectiveCapabilities: Record<string, boolean>;
+  capabilities: AgentEnvironmentCapabilities;
+  placement: {
+    environmentId: string;
+    requested: boolean;
+    verified: false;
+    reason: string;
+  };
+  session: {
+    eventsReplay: boolean;
+    terminalResult: boolean;
+    exactExecutionCancel: boolean;
+    interactions: boolean;
+  };
+  usage: { tokenUsage: boolean; cost: boolean };
+  materialization?: {
+    profileDigest: string;
+    receiptId: string;
+    resourceCounts: Record<string, number>;
+    secretsMaterialized: false;
+  };
+  confidentiality: { requested: boolean; verified: false; evidence: null };
+}
+
+export interface TangleAgentEnvironment extends AgentEnvironment {
+  readonly profileReceipt?: TangleProfileReceipt;
+  readonly profileDigest?: string;
+  evidence?(): Promise<{
+    profile?: TangleProfileReceipt;
+    placement?: PlacementInfo;
+    usage?: unknown | null;
+    confidentiality?: unknown;
+  }>;
+  attestation?(options?: unknown): Promise<unknown>;
+  transferContext?(
+    request: ContextTransferRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<ContextTransferResult>;
+  session?(id: string, options?: { controlRef?: AgentRunControlRef }): TangleAgentSession;
+}
+
+export interface TangleAgentEnvironmentProvider extends AgentEnvironmentProvider {
+  create(input: CreateAgentEnvironmentInput): Promise<TangleAgentEnvironment>;
+  get?(id: string): Promise<TangleAgentEnvironment | null>;
+}
+
 export function createTangleProvider(
   options: TangleProviderOptions,
-): AgentEnvironmentProvider {
+): TangleAgentEnvironmentProvider {
   const providerName = options.name ?? "tangle-sandbox";
   const exactProcess = options.exactProcess
     ? createTangleExactProcessProvider({
@@ -188,26 +325,45 @@ export function createTangleProvider(
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
     capabilities: resolveCapabilities,
-    ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
+    ...(options.validateProfile || options.client.validateProfile
+      ? {
+          async validateProfile(profile: AgentProfile): Promise<AgentProfileValidationResult> {
+            const snapshot = snapshotAgentProfile(profile);
+            const result = await (options.validateProfile
+              ? options.validateProfile(snapshot)
+              : options.client.validateProfile!(snapshot));
+            return profileValidationResultFromUnknown(result);
+          },
+        }
+      : {}),
     async create(input) {
       const capabilities = await resolveCapabilities();
+      const profile = snapshotAgentProfile(inlineAgentProfile(input.profile));
       const createOptions =
-        options.mapCreateInput?.(input) ??
-        sandboxOptionsFromCreateInput(input, options.defaultBackend ?? "opencode");
+        options.mapCreateInput?.({ ...input, profile }) ??
+        sandboxOptionsFromCreateInput(
+          { ...input, profile },
+          options.defaultBackend ?? "opencode",
+        );
       const box = await options.client.create(
         createOptions,
         input.signal ? { signal: input.signal } : undefined,
       );
+      const profileReceipt = box.validateProfile
+        ? validateProfileReceipt(await box.validateProfile(profile))
+        : undefined;
       return sandboxInstanceAsEnvironment(
         box,
         providerName,
         options.client,
         capabilities,
+        profileReceipt,
+        canonicalAgentProfileDigest(profile),
       );
     },
     ...(options.client.get
       ? {
-          async get(id: string): Promise<AgentEnvironment | null> {
+          async get(id: string): Promise<TangleAgentEnvironment | null> {
             const box = await options.client.get?.(id);
             return box
               ? sandboxInstanceAsEnvironment(
@@ -215,6 +371,8 @@ export function createTangleProvider(
                   providerName,
                   options.client,
                   await resolveCapabilities(),
+                  undefined,
+                  undefined,
                 )
               : null;
           },
@@ -242,11 +400,23 @@ function sandboxInstanceAsEnvironment(
   providerName: string,
   client: SandboxClientLike,
   capabilities: AgentEnvironmentCapabilities,
-): AgentEnvironment {
+  profileReceipt?: TangleProfileReceipt,
+  profileDigest?: string,
+): TangleAgentEnvironment {
+  const environmentId = String(box.id);
+  const durableBranching =
+    capabilities.branching.checkpoint &&
+    capabilities.branching.fork &&
+    capabilities.branching.retrySafe === true &&
+    capabilities.branching.lookup === true &&
+    capabilities.branching.cleanup === true &&
+    box.workspaceBranching !== undefined;
   return {
-    id: String(box.id),
+    id: environmentId,
     provider: providerName,
     ...(box.name ? { name: box.name } : {}),
+    ...(profileReceipt ? { profileReceipt } : {}),
+    ...(profileDigest ? { profileDigest } : {}),
     async status(): Promise<AgentEnvironmentStatus> {
       await box.refresh?.();
       return statusFromUnknown(box.status);
@@ -258,7 +428,8 @@ function sandboxInstanceAsEnvironment(
         promptFromTurnInput(input),
         promptOptionsFromTurnInput(input, {
           provider: providerName,
-          environmentId: String(box.id),
+          environmentId,
+          supportsContextTransfer: box.transferContext !== undefined,
         }),
       )) {
         yield environmentEventFromSandboxEvent(event, {
@@ -274,7 +445,8 @@ function sandboxInstanceAsEnvironment(
               promptFromTurnInput(input),
               promptOptionsFromTurnInput(input, {
                 provider: providerName,
-                environmentId: String(box.id),
+                environmentId,
+                supportsContextTransfer: box.transferContext !== undefined,
               }),
             );
             return sessionRefFromSandboxDispatch(
@@ -306,8 +478,56 @@ function sandboxInstanceAsEnvironment(
                 String(box.id),
               ),
               providerName,
-              String(box.id),
+              environmentId,
+              capabilities,
+              box,
             );
+          },
+        }
+      : {}),
+    ...(capabilities.interactions && box.session
+      ? {
+          async respondToInteraction(
+            command: InteractionResponseCommand,
+            options?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            const parsed = InteractionResponseCommandSchema.parse(command);
+            if (parsed.binding.environmentId !== environmentId) {
+              return interactionAcknowledgement(parsed, "binding_mismatch");
+            }
+            if (!parsed.binding.sessionId) {
+              throw new Error(
+                "Tangle interaction response requires an exact sessionId",
+              );
+            }
+            const interactionSession = box.session?.(parsed.binding.sessionId);
+            if (!interactionSession) {
+              throw new Error("sandbox session(id) returned undefined");
+            }
+            return respondToSandboxInteraction(
+              interactionSession,
+              parsed,
+              providerName,
+              environmentId,
+              options,
+            );
+          },
+        }
+      : {}),
+    ...(box.transferContext
+      ? {
+          async transferContext(
+            request: ContextTransferRequest,
+            transferOptions?: { signal?: AbortSignal },
+          ): Promise<ContextTransferResult> {
+            const parsedRequest = ContextTransferRequestSchema.parse(request);
+            const result = ContextTransferResultSchema.parse(
+              await box.transferContext!(parsedRequest, transferOptions),
+            );
+            if (!contextTransferResultMatchesRequest(parsedRequest, result)) {
+              throw new Error("Tangle context transfer result does not match its request");
+            }
+            return result;
           },
         }
       : {}),
@@ -350,12 +570,16 @@ function sandboxInstanceAsEnvironment(
           },
         }
       : {}),
+    ...(durableBranching
+      ? { workspaceBranching: validatedWorkspaceBranching(box.workspaceBranching!) }
+      : {}),
     ...(capabilities.placement
       ? {
           async placement(): Promise<PlacementInfo> {
             return placementInfoFromLoopPlacement(
-              client.describePlacement?.(box),
-              box,
+              client.describePlacement
+                ? await client.describePlacement(box)
+                : undefined,
             );
           },
         }
@@ -366,6 +590,49 @@ function sandboxInstanceAsEnvironment(
     async destroy(): Promise<void> {
       await box.delete?.();
     },
+    ...(capabilities.confidential && box.teeAttestation
+      ? {
+          async attestation(attestationOptions?: unknown): Promise<unknown> {
+            return immutableUnknown(
+              await box.teeAttestation!(attestationOptions),
+              "Tangle attestation evidence",
+            );
+          },
+        }
+      : {}),
+    ...(profileReceipt || box.resourceUsage || client.describePlacement
+      ? {
+          async evidence() {
+            return {
+              ...(profileReceipt ? { profile: profileReceipt } : {}),
+              ...(client.describePlacement
+                ? {
+                    placement: placementInfoFromLoopPlacement(
+                      await client.describePlacement(box),
+                    ),
+                  }
+                : {}),
+              ...(box.resourceUsage
+                ? {
+                    usage: immutableUnknown(
+                      await box.resourceUsage(),
+                      "Tangle usage evidence",
+                    ),
+                  }
+                : {}),
+              ...(capabilities.confidential && box.teeAttestation
+                ? {
+                    confidentiality: {
+                      requested: true,
+                      verified: false,
+                      evidence: null,
+                    },
+                  }
+                : {}),
+            };
+          },
+        }
+      : {}),
   };
 }
 
@@ -374,8 +641,21 @@ function sandboxSessionAsAgentSession(
   controlRef: AgentRunControlRef | undefined,
   provider: string,
   environmentId: string,
-): AgentSession {
+  capabilities: AgentEnvironmentCapabilities,
+  box: SandboxInstanceLike,
+): TangleAgentSession {
   let activeControlRef = controlRef;
+  const cancelExecution = async (): Promise<TangleInterruptResult> => {
+    const executionId = activeControlRef?.executionId;
+    if (executionId === undefined) {
+      throw new Error(
+        "Tangle session cancellation requires an exact executionId from its control reference",
+      );
+    }
+    return interruptResultFromUnknown(
+      await session.interrupt({ executionId }),
+    );
+  };
   return {
     id: session.id,
     get controlRef(): AgentRunControlRef | undefined {
@@ -385,6 +665,9 @@ function sandboxSessionAsAgentSession(
       const status = await session.status();
       if (!status) return null;
       return sessionStatusFromUnknown((status as { status?: unknown }).status);
+    },
+    async statusSnapshot(): Promise<unknown | null> {
+      return session.status();
     },
     async *events(options?: {
       since?: string;
@@ -451,7 +734,7 @@ function sandboxSessionAsAgentSession(
           "Tangle session result did not confirm its exact executionId",
         );
       }
-      return agentTurnResultFromPromptRecord(resultRecord);
+      return agentTurnResultFromPromptRecord(resultRecord, session.id);
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
       if (input.sessionId !== undefined && input.sessionId !== session.id) {
@@ -483,11 +766,10 @@ function sandboxSessionAsAgentSession(
           "Tangle replay executionId conflicts with the control reference",
         );
       }
-      const executionId = replay
+      const requestedExecutionId = replay
         ? input.executionId ?? sourceControlRef?.executionId
-        : input.executionId ??
-          sessionPromptExecutionId(provider, environmentId, session.id, input.turnId);
-      if (executionId === undefined) {
+        : input.executionId;
+      if (replay && requestedExecutionId === undefined) {
         throw new Error(
           "Tangle session replay requires the exact executionId from its control reference",
         );
@@ -498,19 +780,31 @@ function sandboxSessionAsAgentSession(
           {
             ...input,
             sessionId: session.id,
-            executionId,
+            ...(requestedExecutionId
+              ? { executionId: requestedExecutionId }
+              : {}),
             controlRef: undefined,
           },
           {
             provider,
             environmentId,
             sessionId: session.id,
+            supportsContextTransfer: box.transferContext !== undefined,
           },
         ),
       );
       const resultRecord = validatedSandboxPromptResult(result);
 
-      if (resultRecord.executionId !== executionId) {
+      const admittedExecutionId = nonEmptyString(resultRecord.executionId);
+      if (admittedExecutionId === undefined) {
+        throw new Error(
+          "Tangle session prompt returned no exact executionId",
+        );
+      }
+      if (
+        requestedExecutionId !== undefined &&
+        admittedExecutionId !== requestedExecutionId
+      ) {
         throw new Error(
           "Tangle session prompt did not confirm its exact executionId",
         );
@@ -520,28 +814,146 @@ function sandboxSessionAsAgentSession(
           sourceControlRef ??
           retainedSessionControlRef(
             session.id,
-            executionId,
+            admittedExecutionId,
             provider,
             environmentId,
           );
-        return agentTurnResultFromPromptRecord(resultRecord);
+        return agentTurnResultFromPromptRecord(resultRecord, session.id);
       }
       activeControlRef = retainedSessionControlRef(
         session.id,
-        executionId,
+        admittedExecutionId,
         provider,
         environmentId,
       );
-      return agentTurnResultFromPromptRecord(resultRecord);
+      return agentTurnResultFromPromptRecord(resultRecord, session.id);
     },
+    ...(capabilities.interactions && session.respondToInteraction
+      ? {
+          async respondToInteraction(
+            command: InteractionResponseCommand,
+            options?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            return respondToSandboxInteraction(
+              session,
+              command,
+              provider,
+              environmentId,
+              options,
+            );
+          },
+        }
+      : {}),
+    ...(capabilities.nativeContinuation && session.contextBoundary
+      ? {
+          async contextBoundary(options?: { signal?: AbortSignal }) {
+            const proof = await session.contextBoundary?.(options);
+            if (proof === null || proof === undefined) return null;
+            return exactBoundaryProof(
+              NativeContextBoundaryProofSchema.parse(proof),
+              activeControlRef,
+              provider,
+              environmentId,
+              session.id,
+            );
+          },
+        }
+      : {}),
+    ...(capabilities.nativeContinuation && session.continueNative
+      ? {
+          async continueNative(
+            request: NativeContextContinuationRequest,
+            options: AgentNativeContextContinuationOptions,
+          ): Promise<AgentNativeContextContinuationResult> {
+            const parsedRequest = NativeContextContinuationRequestSchema.parse(request);
+            if (
+              nativeContextContinuationTurnDigest(options.turn) !==
+              parsedRequest.turnDigest
+            ) {
+              throw new Error(
+                "Tangle native continuation turn does not match its request digest",
+              );
+            }
+            exactRunForTarget(
+              parsedRequest.run,
+              provider,
+              environmentId,
+              session.id,
+              activeControlRef,
+            );
+            const outcome = AgentNativeContextContinuationResultSchema.parse(
+              await session.continueNative?.(parsedRequest, options),
+            );
+            if (
+              "controlRef" in outcome &&
+              (outcome.acknowledgement.status === "accepted" ||
+                outcome.acknowledgement.status === "replayed") &&
+              !agentNativeContextContinuationResultMatchesRequest(
+                parsedRequest,
+                outcome,
+              )
+            ) {
+              throw new Error(
+                "Tangle native continuation returned a mismatched acknowledgement",
+              );
+            }
+            if (
+              "controlRef" in outcome &&
+              (outcome.acknowledgement.status === "accepted" ||
+                outcome.acknowledgement.status === "replayed") &&
+              (outcome.controlRef.runId !== parsedRequest.run.runId ||
+                outcome.controlRef.executionId !== parsedRequest.run.executionId)
+            ) {
+              throw new Error(
+                "Tangle native continuation returned a different execution control reference",
+              );
+            }
+            return outcome;
+          },
+        }
+      : {}),
+    ...(capabilities.sessions.messages && (session.steer || session.sendMessage)
+      ? {
+          async steer(input: AgentTurnInput): Promise<unknown> {
+            if (input.executionId !== undefined) {
+              exactRunForTarget(
+                {
+                  runId: input.executionId,
+                  provider,
+                  environmentId,
+                  sessionId: session.id,
+                  executionId: input.executionId,
+                },
+                provider,
+                environmentId,
+                session.id,
+                activeControlRef,
+              );
+            }
+            if (session.steer) return session.steer(input);
+            const parts = input.parts ??
+              (input.prompt !== undefined
+                ? [{ type: "text" as const, text: input.prompt }]
+                : []);
+            if (parts.length === 0) {
+              throw new Error("Tangle steer requires prompt or input parts");
+            }
+            return session.sendMessage!({
+              parts,
+              ...(input.model
+                ? { model: { providerId: provider, modelId: input.model } }
+                : {}),
+              ...(input.turnId ? { turnId: input.turnId } : {}),
+            }, {
+              ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+              ...(input.signal ? { signal: input.signal } : {}),
+            });
+          },
+        }
+      : {}),
+    cancelExecution,
     async cancel(): Promise<void> {
-      const executionId = activeControlRef?.executionId;
-      if (executionId === undefined) {
-        throw new Error(
-          "Tangle session cancellation requires an exact executionId from its control reference",
-        );
-      }
-      await session.interrupt({ executionId });
+      await cancelExecution();
     },
   };
 }
@@ -583,6 +995,478 @@ function inlineAgentProfile(profile: AgentProfileRef): Exclude<AgentProfileRef, 
     throw new Error("Tangle provider requires an inline AgentProfile, not a profile reference");
   }
   return profile;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepFreeze<T>(value: T, seen = new Set<object>()): T {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze(child, seen);
+  return Object.freeze(value);
+}
+
+function immutableUnknown(value: unknown, label: string): unknown {
+  try {
+    return deepFreeze(structuredClone(value));
+  } catch (error) {
+    throw new Error(`${label} is not immutable JSON evidence`, { cause: error });
+  }
+}
+
+function profileValidationResultFromUnknown(
+  value: unknown,
+): AgentProfileValidationResult {
+  if (!isRecord(value) || typeof value.ok !== "boolean" || !Array.isArray(value.issues)) {
+    throw new Error("Tangle profile validation returned an invalid result");
+  }
+  const issues = value.issues.map((issue) => {
+    if (!isRecord(issue)) throw new Error("Tangle profile issue is invalid");
+    if (
+      (issue.level !== "error" &&
+        issue.level !== "warning" &&
+        issue.level !== "info") ||
+      typeof issue.code !== "string" ||
+      typeof issue.message !== "string" ||
+      (issue.path !== undefined && typeof issue.path !== "string")
+    ) {
+      throw new Error("Tangle profile issue is invalid");
+    }
+    return {
+      level: issue.level,
+      code: issue.code,
+      message: issue.message,
+      ...(typeof issue.path === "string" ? { path: issue.path } : {}),
+    } as const;
+  });
+  const normalizedProfile =
+    value.normalizedProfile === undefined
+      ? undefined
+      : snapshotAgentProfile(value.normalizedProfile);
+  return deepFreeze({
+    ok: value.ok,
+    issues,
+    ...(normalizedProfile ? { normalizedProfile } : {}),
+  });
+}
+
+function validateProfileReceipt(value: unknown): TangleProfileReceipt {
+  if (!isRecord(value)) throw new Error("Tangle profile receipt is invalid");
+  const capabilities = AgentEnvironmentCapabilitiesSchema.parse(value.capabilities);
+  if (
+    typeof value.ok !== "boolean" ||
+    !Array.isArray(value.issues) ||
+    !isRecord(value.effectiveCapabilities) ||
+    !isRecord(value.placement) ||
+    !isRecord(value.session) ||
+    !isRecord(value.usage) ||
+    !isRecord(value.confidentiality)
+  ) {
+    throw new Error("Tangle profile receipt is incomplete");
+  }
+  const issues = value.issues.map((issue) => {
+    if (!isRecord(issue)) throw new Error("Tangle profile receipt issue is invalid");
+    if (
+      (issue.level !== "error" &&
+        issue.level !== "warning" &&
+        issue.level !== "info") ||
+      typeof issue.code !== "string" ||
+      typeof issue.message !== "string" ||
+      (issue.path !== undefined && typeof issue.path !== "string")
+    ) {
+      throw new Error("Tangle profile receipt issue is invalid");
+    }
+    return {
+      level: issue.level,
+      code: issue.code,
+      message: issue.message,
+      ...(typeof issue.path === "string" ? { path: issue.path } : {}),
+    } as const;
+  });
+  const effectiveCapabilities: Record<string, boolean> = {};
+  for (const [key, enabled] of Object.entries(value.effectiveCapabilities)) {
+    if (typeof enabled !== "boolean") {
+      throw new Error("Tangle effective capability is invalid");
+    }
+    effectiveCapabilities[key] = enabled;
+  }
+  const placement = value.placement;
+  const session = value.session;
+  const usage = value.usage;
+  const confidentiality = value.confidentiality;
+  if (
+    typeof placement.environmentId !== "string" ||
+    typeof placement.requested !== "boolean" ||
+    placement.verified !== false ||
+    typeof placement.reason !== "string" ||
+    typeof session.eventsReplay !== "boolean" ||
+    typeof session.terminalResult !== "boolean" ||
+    typeof session.exactExecutionCancel !== "boolean" ||
+    typeof session.interactions !== "boolean" ||
+    typeof usage.tokenUsage !== "boolean" ||
+    typeof usage.cost !== "boolean" ||
+    typeof confidentiality.requested !== "boolean" ||
+    confidentiality.verified !== false ||
+    confidentiality.evidence !== null
+  ) {
+    throw new Error("Tangle profile receipt contains invalid evidence");
+  }
+  let materialization: TangleProfileReceipt["materialization"];
+  if (value.materialization !== undefined) {
+    if (!isRecord(value.materialization)) {
+      throw new Error("Tangle profile materialization evidence is invalid");
+    }
+    const material = value.materialization;
+    if (
+      typeof material.profileDigest !== "string" ||
+      typeof material.receiptId !== "string" ||
+      !isRecord(material.resourceCounts) ||
+      material.secretsMaterialized !== false
+    ) {
+      throw new Error("Tangle profile materialization evidence is invalid");
+    }
+    const resourceCounts: Record<string, number> = {};
+    for (const [key, count] of Object.entries(material.resourceCounts)) {
+      if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+        throw new Error("Tangle profile resource count is invalid");
+      }
+      resourceCounts[key] = count;
+    }
+    materialization = {
+      profileDigest: material.profileDigest,
+      receiptId: material.receiptId,
+      resourceCounts,
+      secretsMaterialized: false,
+    };
+  }
+  return deepFreeze({
+    ok: value.ok,
+    issues,
+    effectiveCapabilities,
+    capabilities,
+    placement: {
+      environmentId: placement.environmentId,
+      requested: placement.requested,
+      verified: false,
+      reason: placement.reason,
+    },
+    session: {
+      eventsReplay: session.eventsReplay,
+      terminalResult: session.terminalResult,
+      exactExecutionCancel: session.exactExecutionCancel,
+      interactions: session.interactions,
+    },
+    usage: { tokenUsage: usage.tokenUsage, cost: usage.cost },
+    ...(materialization ? { materialization } : {}),
+    confidentiality: { requested: confidentiality.requested, verified: false, evidence: null },
+  });
+}
+
+function validatedWorkspaceBranching(
+  branching: AgentWorkspaceBranching,
+): AgentWorkspaceBranching {
+  return {
+    async checkpoint(request, options) {
+      const parsed = WorkspaceCheckpointResultSchema.parse(
+        await branching.checkpoint(request, options),
+      );
+      if (
+        (parsed.status === "created" || parsed.status === "replayed") &&
+        !workspaceCheckpointResultMatchesRequest(request, parsed)
+      ) {
+        throw new Error("Tangle checkpoint result does not match its request");
+      }
+      return parsed;
+    },
+    async lookupCheckpoint(request, options) {
+      const parsedRequest = WorkspaceOperationLookupRequestSchema.parse(request);
+      const result = WorkspaceCheckpointLookupResultSchema.parse(
+        await branching.lookupCheckpoint(parsedRequest, options),
+      );
+      if (
+        result.status === "found" &&
+        (result.idempotencyKey !== parsedRequest.idempotencyKey ||
+          result.requestDigest !== parsedRequest.requestDigest ||
+          result.checkpoint.idempotencyKey !== parsedRequest.idempotencyKey ||
+          result.checkpoint.requestDigest !== parsedRequest.requestDigest)
+      ) {
+        throw new Error("Tangle checkpoint lookup does not match its request");
+      }
+      return result;
+    },
+    async deleteCheckpoint(request, options) {
+      const parsedRequest = WorkspaceCleanupRequestSchema.parse(request);
+      const acknowledgement = WorkspaceCleanupAcknowledgementSchema.parse(
+        await branching.deleteCheckpoint(parsedRequest, options),
+      );
+      if (
+        (acknowledgement.status === "deleted" ||
+          acknowledgement.status === "already_absent") &&
+        !workspaceCleanupAcknowledgementMatches(parsedRequest, acknowledgement)
+      ) {
+        throw new Error("Tangle checkpoint cleanup does not match its request");
+      }
+      return acknowledgement;
+    },
+    async fork(request, options) {
+      const parsed = WorkspaceForkResultSchema.parse(
+        await branching.fork(request, options),
+      );
+      if (
+        (parsed.status === "created" || parsed.status === "replayed") &&
+        !workspaceForkResultMatchesRequest(request, parsed)
+      ) {
+        throw new Error("Tangle fork result does not match its request");
+      }
+      return parsed;
+    },
+    async lookupFork(request, options) {
+      const parsedRequest = WorkspaceOperationLookupRequestSchema.parse(request);
+      const result = WorkspaceForkLookupResultSchema.parse(
+        await branching.lookupFork(parsedRequest, options),
+      );
+      if (
+        result.status === "found" &&
+        (result.idempotencyKey !== parsedRequest.idempotencyKey ||
+          result.requestDigest !== parsedRequest.requestDigest ||
+          result.environment.idempotencyKey !== parsedRequest.idempotencyKey ||
+          result.environment.requestDigest !== parsedRequest.requestDigest)
+      ) {
+        throw new Error("Tangle fork lookup does not match its request");
+      }
+      return result;
+    },
+    async destroyFork(request, options) {
+      const parsedRequest = WorkspaceCleanupRequestSchema.parse(request);
+      const acknowledgement = WorkspaceCleanupAcknowledgementSchema.parse(
+        await branching.destroyFork(parsedRequest, options),
+      );
+      if (
+        (acknowledgement.status === "deleted" ||
+          acknowledgement.status === "already_absent") &&
+        !workspaceCleanupAcknowledgementMatches(parsedRequest, acknowledgement)
+      ) {
+        throw new Error("Tangle fork cleanup does not match its request");
+      }
+      return acknowledgement;
+    },
+  };
+}
+
+function interactionAcknowledgement(
+  command: InteractionResponseCommand,
+  status: InteractionAcknowledgement["status"],
+  message?: string,
+): InteractionAcknowledgement {
+  return InteractionAcknowledgementSchema.parse({
+    operationId: command.operationId,
+    binding: command.binding,
+    status,
+    ...(message ? { message } : {}),
+  });
+}
+
+async function respondToSandboxInteraction(
+  session: SandboxSessionLike,
+  command: InteractionResponseCommand,
+  provider: string,
+  environmentId: string,
+  options?: { signal?: AbortSignal },
+): Promise<InteractionAcknowledgement> {
+  const parsed = InteractionResponseCommandSchema.parse(command);
+  if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  if (parsed.binding.environmentId !== environmentId) {
+    return interactionAcknowledgement(parsed, "binding_mismatch");
+  }
+  if (!parsed.binding.sessionId) {
+    throw new Error("Tangle interaction response requires an exact sessionId");
+  }
+  if (!session.respondToInteraction) {
+    throw new Error("Tangle runtime does not support interaction responses");
+  }
+
+  let wireCommand: unknown = parsed;
+  if (session.interactions) {
+    const rawList = await session.interactions();
+    if (!isRecord(rawList) || !Array.isArray(rawList.interactions)) {
+      throw new Error("Tangle interaction list is invalid");
+    }
+    const requestValue = rawList.interactions.find(
+      (candidate) => isRecord(candidate) && candidate.id === parsed.binding.interactionId,
+    );
+    const bindings = isRecord(rawList.bindings) ? rawList.bindings : undefined;
+    const resolved = Array.isArray(rawList.resolved)
+      ? rawList.resolved.find(
+          (candidate) =>
+            isRecord(candidate) &&
+            isRecord(candidate.binding) &&
+            candidate.binding.interactionId === parsed.binding.interactionId,
+        )
+      : undefined;
+    const request = requestValue
+      ? InteractionRequestSchema.parse(requestValue)
+      : undefined;
+    const bindingValue = request
+      ? bindings?.[request.id]
+      : isRecord(resolved) && isRecord(resolved.binding)
+        ? resolved.binding
+        : undefined;
+    if (!request && !resolved) {
+      return interactionAcknowledgement(parsed, "unknown_interaction");
+    }
+    if (!isRecord(bindingValue)) {
+      throw new Error("Tangle interaction list omitted its exact binding");
+    }
+    const executionId = nonEmptyString(bindingValue.executionId);
+    if (executionId === undefined) {
+      throw new Error("Tangle interaction binding omitted its executionId");
+    }
+    if (executionId !== parsed.binding.runId) {
+      return interactionAcknowledgement(parsed, "unknown_run");
+    }
+    const listedBinding = InteractionBindingSchema.parse({
+      runId: executionId,
+      environmentId: bindingValue.environmentId,
+      sessionId: bindingValue.sessionId,
+      interactionId: bindingValue.interactionId,
+    });
+    if (
+      listedBinding.environmentId !== parsed.binding.environmentId ||
+      listedBinding.sessionId !== parsed.binding.sessionId ||
+      listedBinding.interactionId !== parsed.binding.interactionId
+    ) {
+      return interactionAcknowledgement(parsed, "binding_mismatch");
+    }
+    const requestDigest = request
+      ? canonicalCandidateDigest(request)
+      : isRecord(resolved) && typeof resolved.requestDigest === "string"
+        ? resolved.requestDigest
+        : undefined;
+    if (requestDigest === undefined) {
+      throw new Error("Tangle interaction replay omitted its request digest");
+    }
+    wireCommand = {
+      ...parsed,
+      binding: { ...parsed.binding, executionId },
+      requestDigest,
+    };
+  }
+  const rawAcknowledgement = await session.respondToInteraction(wireCommand);
+  if (!isRecord(rawAcknowledgement)) {
+    throw new Error("Tangle interaction response returned no acknowledgement");
+  }
+  const rawBinding = isRecord(rawAcknowledgement.binding)
+    ? rawAcknowledgement.binding
+    : undefined;
+  const acknowledgement = InteractionAcknowledgementSchema.parse({
+    operationId: rawAcknowledgement.operationId,
+    binding: {
+      runId: rawBinding?.runId ?? parsed.binding.runId,
+      environmentId: rawBinding?.environmentId ?? parsed.binding.environmentId,
+      ...(rawBinding?.sessionId
+        ? { sessionId: rawBinding.sessionId }
+        : parsed.binding.sessionId
+          ? { sessionId: parsed.binding.sessionId }
+          : {}),
+      interactionId: rawBinding?.interactionId ?? parsed.binding.interactionId,
+    },
+    status: rawAcknowledgement.status,
+    ...(typeof rawAcknowledgement.message === "string"
+      ? { message: rawAcknowledgement.message }
+      : {}),
+    ...(typeof rawAcknowledgement.retryable === "boolean"
+      ? { retryable: rawAcknowledgement.retryable }
+      : {}),
+  });
+  if (
+    acknowledgement.operationId !== parsed.operationId ||
+    acknowledgement.binding.runId !== parsed.binding.runId ||
+    acknowledgement.binding.environmentId !== parsed.binding.environmentId ||
+    acknowledgement.binding.sessionId !== parsed.binding.sessionId ||
+    acknowledgement.binding.interactionId !== parsed.binding.interactionId
+  ) {
+    throw new Error("Tangle interaction acknowledgement is bound to another operation");
+  }
+  return acknowledgement;
+}
+
+function exactRunForTarget(
+  run: AgentRunControlRef,
+  provider: string,
+  environmentId: string,
+  sessionId: string,
+  activeControlRef?: AgentRunControlRef,
+): AgentRunControlRef {
+  const parsed = AgentRunControlRefSchema.parse(run);
+  if (
+    parsed.provider !== provider ||
+    parsed.environmentId !== environmentId ||
+    parsed.sessionId !== sessionId ||
+    parsed.executionId === undefined ||
+    parsed.runId !== parsed.executionId
+  ) {
+    throw new Error("Tangle operation is not bound to this exact session run");
+  }
+  if (activeControlRef && !sameRunControlRef(activeControlRef, parsed)) {
+    throw new Error("Tangle operation conflicts with the retained run");
+  }
+  return parsed;
+}
+
+function exactBoundaryProof(
+  proof: NativeContextBoundaryProof,
+  activeControlRef: AgentRunControlRef | undefined,
+  provider: string,
+  environmentId: string,
+  sessionId: string,
+): NativeContextBoundaryProof {
+  exactRunForTarget(
+    {
+      runId: proof.runId,
+      provider: proof.provider,
+      environmentId: proof.environmentId,
+      sessionId: proof.sessionId,
+      executionId: proof.runId,
+    },
+    provider,
+    environmentId,
+    sessionId,
+    activeControlRef,
+  );
+  return proof;
+}
+
+function interruptResultFromUnknown(value: unknown): TangleInterruptResult {
+  if (!isRecord(value) || typeof value.cancelled !== "boolean") {
+    throw new Error("Tangle cancellation returned an invalid result");
+  }
+  const result: TangleInterruptResult = { cancelled: value.cancelled };
+  for (const field of ["outcome", "reason", "sessionState", "lastTerminalReason"] as const) {
+    if (value[field] !== undefined) {
+      if (typeof value[field] !== "string") {
+        throw new Error(`Tangle cancellation returned an invalid ${field}`);
+      }
+      result[field] = value[field];
+    }
+  }
+  if (value.reconnectable !== undefined) {
+    if (typeof value.reconnectable !== "boolean") {
+      throw new Error("Tangle cancellation returned an invalid reconnectable flag");
+    }
+    result.reconnectable = value.reconnectable;
+  }
+  if (value.activeExecutionId !== undefined) {
+    if (
+      value.activeExecutionId !== null &&
+      typeof value.activeExecutionId !== "string"
+    ) {
+      throw new Error("Tangle cancellation returned an invalid active execution id");
+    }
+    result.activeExecutionId = value.activeExecutionId as string | null;
+  }
+  return result;
 }
 
 function environmentEventFromSandboxEvent(
@@ -636,10 +1520,13 @@ function environmentEventFromSandboxEvent(
   ) {
     throw new Error("Tangle exact session event identified a different sessionId");
   }
+  const normalizedCandidate = { ...data, type: record.type };
+  const normalized = CanonicalStreamEventSchema.safeParse(normalizedCandidate);
   return {
     type: record.type,
     data,
     ...(typeof record.id === "string" ? { id: record.id } : {}),
+    ...(normalized.success ? { normalized: normalized.data } : {}),
     usage: tokenUsageFromData(data),
     providerEvent: event,
   };
@@ -660,12 +1547,16 @@ function promptOptionsFromTurnInput(
     provider: string;
     environmentId: string;
     sessionId?: string;
+    supportsContextTransfer?: boolean;
   },
 ): PromptOptions {
   if (input.contextTransfer !== undefined) {
-    throw new Error(
-      "Tangle provider does not yet support portable context transfer",
-    );
+    if (!target.supportsContextTransfer) {
+      throw new Error(
+        "Tangle provider does not yet support portable context transfer",
+      );
+    }
+    ContextTransferRequestSchema.parse(input.contextTransfer);
   }
   if (input.nativeContinuation !== undefined) {
     throw new Error(
@@ -721,6 +1612,12 @@ function promptOptionsFromTurnInput(
     ...(input.lastEventId ? { lastEventId: input.lastEventId } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.detach !== undefined ? { detach: input.detach } : {}),
+    ...(input.contextTransfer
+      ? { contextTransfer: input.contextTransfer }
+      : {}),
+    ...(input.providerOptions
+      ? { providerOptions: input.providerOptions }
+      : {}),
   };
 }
 
@@ -795,6 +1692,7 @@ function validatedSandboxPromptResult(
 
 function agentTurnResultFromPromptRecord(
   record: ValidatedSandboxPromptResult,
+  sessionId?: string,
 ): AgentTurnResult {
   const text =
     typeof record.response === "string"
@@ -813,15 +1711,22 @@ function agentTurnResultFromPromptRecord(
   ) {
     throw new Error("Tangle prompt result contained an invalid context receipt");
   }
-  return {
+  const result = {
     text,
     success: record.success,
     ...(typeof record.error === "string" ? { error: record.error } : {}),
-    usage: tokenUsageFromData(record),
+    ...(sessionId ? { sessionId } : {}),
+    ...(tokenUsageFromData(record)
+      ? { usage: tokenUsageFromData(record) }
+      : {}),
+    ...(record.metadata && isRecord(record.metadata)
+      ? { metadata: record.metadata }
+      : {}),
     ...(contextTransferReceipt.success
       ? { contextTransferReceipt: contextTransferReceipt.data }
       : {}),
   };
+  return AgentTurnResultSchema.parse(result);
 }
 
 function sessionRefFromSandboxDispatch(
@@ -882,19 +1787,6 @@ function retainedSessionControlRef(
     sessionId,
     executionId,
   });
-}
-
-function sessionPromptExecutionId(
-  provider: string,
-  environmentId: string,
-  sessionId: string,
-  turnId: string | undefined,
-): string {
-  if (turnId === undefined) return randomUUID();
-  const digest = createHash("sha256")
-    .update(`${provider}\0${environmentId}\0${sessionId}\0${turnId}`)
-    .digest("hex");
-  return `session-turn-${digest}`;
 }
 
 function sameRunControlRef(
@@ -983,15 +1875,47 @@ function checkpointIdFromResult(result: unknown): string {
 
 function placementInfoFromLoopPlacement(
   placement: unknown,
-  box: SandboxInstanceLike,
 ): PlacementInfo {
-  if (!placement || typeof placement !== "object") return { kind: "sandbox", sandboxId: String(box.id) };
+  if (!placement || typeof placement !== "object") {
+    throw new Error("Tangle placement evidence is unavailable");
+  }
   const record = placement as Record<string, unknown>;
+  const kind =
+    record.kind === "sibling" && typeof record.sandboxId === "string"
+      ? "sandbox"
+      : record.kind;
+  if (
+    kind !== "local" &&
+    kind !== "sandbox" &&
+    kind !== "fleet" &&
+    kind !== "provider"
+  ) {
+    throw new Error("Tangle placement evidence contained an invalid kind");
+  }
+  const fields = ["sandboxId", "fleetId", "machineId", "region"] as const;
+  for (const field of fields) {
+    if (
+      record[field] !== undefined &&
+      (typeof record[field] !== "string" || record[field].length === 0)
+    ) {
+      throw new Error(`Tangle placement evidence contained an invalid ${field}`);
+    }
+  }
+  if (
+    record.providerMetadata !== undefined &&
+    !isRecord(record.providerMetadata)
+  ) {
+    throw new Error("Tangle placement evidence contained invalid metadata");
+  }
   return {
-    kind: record.kind === "fleet" ? "fleet" : "sandbox",
-    sandboxId: typeof record.sandboxId === "string" ? record.sandboxId : String(box.id),
+    kind,
+    ...(typeof record.sandboxId === "string" ? { sandboxId: record.sandboxId } : {}),
     ...(typeof record.fleetId === "string" ? { fleetId: record.fleetId } : {}),
     ...(typeof record.machineId === "string" ? { machineId: record.machineId } : {}),
+    ...(typeof record.region === "string" ? { region: record.region } : {}),
+    ...(isRecord(record.providerMetadata)
+      ? { providerMetadata: record.providerMetadata }
+      : {}),
   };
 }
 
@@ -1042,9 +1966,42 @@ function tokenUsageFromData(data: Record<string, unknown>): TokenUsage | undefin
   );
   const cost = nestedCost ?? topLevelCost;
   if (inputTokens === undefined && outputTokens === undefined && cost === undefined) return undefined;
+  if (inputTokens === undefined || outputTokens === undefined) {
+    throw new Error("Tangle usage is incomplete; provider did not report both token counts");
+  }
+  const totalTokens = firstValidatedNumber(
+    usageRecord,
+    ["totalTokens", "tokensTotal"],
+    "total token count",
+    true,
+  );
+  const cacheReadInputTokens = firstValidatedNumber(
+    usageRecord,
+    ["cacheReadInputTokens", "cache_read_input_tokens"],
+    "cache-read token count",
+    true,
+  );
+  const cacheCreationInputTokens = firstValidatedNumber(
+    usageRecord,
+    ["cacheCreationInputTokens", "cache_creation_input_tokens"],
+    "cache-creation token count",
+    true,
+  );
+  const reasoningTokens = firstValidatedNumber(
+    usageRecord,
+    ["reasoningTokens", "reasoning_tokens"],
+    "reasoning token count",
+    true,
+  );
   return {
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
+    inputTokens,
+    outputTokens,
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined
+      ? { cacheCreationInputTokens }
+      : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cost !== undefined ? { cost } : {}),
   };
 }

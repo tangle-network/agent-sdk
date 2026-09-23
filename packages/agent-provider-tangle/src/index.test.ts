@@ -328,7 +328,7 @@ describe("createTangleProvider", () => {
           status: "success",
           executionId: admitDifferentExecution
             ? "execution-from-another-caller"
-            : promptExecutionId,
+            : "execution-next",
           response: "next result",
           durationMs: 1,
         };
@@ -357,16 +357,16 @@ describe("createTangleProvider", () => {
     await expect(
       session.prompt({ prompt: "next", turnId: "turn-2" }),
     ).resolves.toMatchObject({ text: "next result", success: true });
-    expect(promptExecutionId).toMatch(/^session-turn-[a-f0-9]{64}$/);
+    expect(promptExecutionId).toBeUndefined();
     expect(session.controlRef).toMatchObject({
-      runId: promptExecutionId,
-      executionId: promptExecutionId,
+      runId: "execution-next",
+      executionId: "execution-next",
     });
     await expect(session.result()).resolves.toMatchObject({
       text: "current result",
       success: true,
     });
-    expect(resultExecutionId).toBe(promptExecutionId);
+    expect(resultExecutionId).toBe("execution-next");
 
     const resultMethod = sandboxSession.result;
     sandboxSession.result = async () => ({
@@ -394,13 +394,20 @@ describe("createTangleProvider", () => {
     ).rejects.toThrow(/did not confirm its exact executionId/);
     expect(session.controlRef).toEqual(advancedControlRef);
     await expect(
-      session.prompt({ prompt: "racing turn", turnId: "turn-3" }),
+      session.prompt({
+        prompt: "racing turn",
+        turnId: "turn-3",
+        executionId: "execution-requested",
+      }),
     ).rejects.toThrow(/did not confirm its exact executionId/);
     expect(session.controlRef).toEqual(advancedControlRef);
   });
 
   it("uses turnId, not prompt text, as the retry identity", async () => {
     const executionIds: string[] = [];
+    const turnIds: Array<string | undefined> = [];
+    const admitted = new Map<string, string>();
+    let nextExecution = 1;
     const sandboxSession: SandboxSessionLike = {
       id: "session-turn-identity",
       status: async () => ({ status: "running" }),
@@ -412,13 +419,17 @@ describe("createTangleProvider", () => {
         durationMs: 1,
       }),
       prompt: async (_message, options) => {
-        executionIds.push(options!.executionId!);
-        return {
-          success: true,
-          status: "success",
-          executionId: options!.executionId,
-          durationMs: 1,
-        };
+        turnIds.push(options?.turnId);
+        const executionId = options?.turnId
+          ? admitted.get(options.turnId) ??
+            (() => {
+              const next = `execution-${nextExecution++}`;
+              admitted.set(options.turnId!, next);
+              return next;
+            })()
+          : `execution-${nextExecution++}`;
+        executionIds.push(executionId);
+        return { success: true, status: "success", executionId, durationMs: 1 };
       },
       interrupt: async () => ({ cancelled: true }),
     };
@@ -438,6 +449,7 @@ describe("createTangleProvider", () => {
     await session.prompt({ prompt: "same text" });
     await session.prompt({ prompt: "same text" });
 
+    expect(turnIds[0]).toBe(turnIds[1]);
     expect(executionIds[0]).toBe(executionIds[1]);
     expect(executionIds[2]).not.toBe(executionIds[3]);
   });

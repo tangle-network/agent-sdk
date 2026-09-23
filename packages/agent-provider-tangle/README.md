@@ -43,3 +43,25 @@ const environment = await provider.exactProcess!.create({
 ```
 
 The adapter rejects ordinary sandboxes during create, recovery, and list operations.
+
+## Braid runtime contracts
+
+The adapter consumes Agent Interface 0.42.1 control types directly.
+
+Detached dispatch, session status, per-run replay, terminal result lookup, prompt input, queued steer input, and cancellation remain bound to the returned `sessionId` and `executionId`.
+
+The adapter never creates a runtime execution ID, event ID, timestamp, placement claim, usage count, attestation verdict, source reference, or capability receipt when the Sandbox runtime did not return one.
+
+Replay requires an exact execution control reference and converts the Sandbox SDK's inclusive cursor to the Agent Interface's exclusive cursor.
+
+`session.cancel()` calls exact execution cancellation and never calls `environment.destroy()`.
+
+When the Sandbox session exposes the W4 interaction endpoints, `respondToInteraction()` sends the canonical response command with the runtime execution binding and returns the canonical acknowledgement, including retry, conflict, expiry, and transport statuses.
+
+When the Sandbox instance exposes context transfer, native boundary, or durable workspace operations, the adapter validates every request and receipt against the shared Agent Interface schemas before returning it.
+
+The optional `profileReceipt`, `profileDigest`, `evidence()`, and `attestation()` surfaces preserve profile, effective capability, placement, resource usage, and confidentiality evidence without upgrading unverified evidence to a verified claim.
+
+Durable checkpoint and fork operations are exposed as `workspaceBranching` only when checkpoint, fork, lookup, retry identity, and cleanup are all present together.
+
+Unsupported operations and ambiguous replay are rejected before the Sandbox call.
