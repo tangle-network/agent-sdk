@@ -785,9 +785,12 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
       "profile guidance source and id must not contain quotes or newlines",
     );
   }
-  if (block.text.includes("</profile-guidance>")) {
+  if (
+    block.text.includes("</profile-guidance>") ||
+    block.text.includes("<profile-guidance ")
+  ) {
     throw new TypeError(
-      "profile guidance text must not contain the closing block marker",
+      "profile guidance text must not contain an opening or closing block marker",
     );
   }
   return `<profile-guidance source="${block.source}" id="${block.id}">\n${block.text}\n</profile-guidance>`;
