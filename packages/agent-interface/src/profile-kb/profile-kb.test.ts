@@ -409,6 +409,20 @@ describe("guidance ownership", () => {
     expect(twice).toEqual(once);
   });
 
+  it("keeps an owned block whole when it nests several complete examples", () => {
+    const outer =
+      '<profile-guidance source="model" id="o">\nEx1: <profile-guidance source="model" id="a">\nA\n</profile-guidance>\nEx2: <profile-guidance source="model" id="b">\nB\n</profile-guidance>\n</profile-guidance>';
+    const composed = composeAgentProfileGuidance(
+      { prompt: { appendSystemPrompt: `${outer}\n\nOwn.` } },
+      [{ source: "model", id: "k", text: "K" }],
+      "appendSystemPrompt",
+      { replaceSources: ["model"] },
+    );
+    expect(composed.prompt?.appendSystemPrompt).toBe(
+      `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${outer}\n\nOwn.`,
+    );
+  });
+
   it("replaces a 2.11 owned block whose text carried an opener", () => {
     const legacy =
       '<profile-guidance source="model" id="old">\nquote: <profile-guidance source="x" id="y">\n</profile-guidance>';

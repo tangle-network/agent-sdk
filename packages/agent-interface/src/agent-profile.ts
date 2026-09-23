@@ -764,11 +764,12 @@ const GUIDANCE_LINE =
   /^<profile-guidance source="([^"]*)" id="[^"]*">\n(?:(?!<\/profile-guidance>)[\s\S])*\n<\/profile-guidance>$/;
 // A block runs from an opening marker to the first closing marker after it,
 // which is how every released composer wrote blocks (2.11 text could carry an
-// opener but never a closer). When a match holds a second opener and another
-// closer follows before the next opener, the match may be an outer block cut
-// short by an inner one. That extent is ambiguous, so the match is kept whole:
+// opener but never a closer). When a match holds a second opener and the
+// markers balance from its start, the match may be an outer block cut short by
+// an inner one. That extent is ambiguous, so the balanced extent is kept whole:
 // recomposition may leave a stale block in such caller text, but it never
-// truncates caller text.
+// truncates caller text. When the markers never balance, the match is a 2.11
+// block whose text carried an opener, and it is replaced.
 const GUIDANCE_OPEN_MARKER = "<profile-guidance ";
 const GUIDANCE_CLOSE_MARKER = "</profile-guidance>";
 const GUIDANCE_BLOCK =
@@ -804,16 +805,6 @@ function renderGuidanceBlock(block: AgentProfileGuidanceBlock): string {
 /** True when the block's body, after its opening tag line, holds an opener. */
 function nestsOpener(block: string): boolean {
   return block.includes(GUIDANCE_OPEN_MARKER, block.indexOf("\n"));
-}
-
-function mayBeCutShort(text: string, block: string, offset: number): boolean {
-  if (!nestsOpener(block)) return false;
-  const rest = text.slice(offset + block.length);
-  // A closer ends a block only at a line start, as in GUIDANCE_BLOCK.
-  const nextClose = rest.indexOf(`\n${GUIDANCE_CLOSE_MARKER}`);
-  if (nextClose === -1) return false;
-  const nextOpen = rest.indexOf(GUIDANCE_OPEN_MARKER);
-  return nextOpen === -1 || nextClose < nextOpen;
 }
 
 /**
@@ -868,14 +859,10 @@ function stripGuidanceText(
       gap: string | undefined,
       offset: number,
     ) => {
-      if (
-        offset < keptUntil ||
-        !owned.has(source) ||
-        mayBeCutShort(text, block, offset)
-      ) {
-        if (nestsOpener(block)) {
-          keptUntil = Math.max(keptUntil, balancedBlockEnd(text, offset));
-        }
+      if (offset < keptUntil) return block;
+      const end = nestsOpener(block) ? balancedBlockEnd(text, offset) : -1;
+      if (!owned.has(source) || end !== -1) {
+        keptUntil = Math.max(keptUntil, end);
         return block;
       }
       if (gap === undefined && offset + block.length === text.length) {
