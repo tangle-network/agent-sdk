@@ -107,6 +107,11 @@ When `dispatch()` receives no `sessionId`, it creates one from that turn's stabl
 Replay and result reads fail loudly after cli-bridge's configured replay retention expires.
 Stopping a `session.events()` reader detaches only that replay observer.
 Stopping a direct `environment.stream()` reader or destroying the environment cancels its active bridge runs and waits for terminal confirmation.
+Destroying an environment does not close a native Bridge session that has reached a terminal result.
+For a one-shot Pi session, call `closeExactCliBridgeSession(options, controlRef)` after reading the result.
+The provider verifies the exact run and session before it closes the session.
+Repeat cleanup of the same closed session succeeds without sending another close request.
+Keep the `controlRef` from durable admission so a process restart can perform the same cleanup.
 
 Pi retained sessions also expose typed permission interactions and native continuation.
 The provider stores the selected harness, exact model route, and canonical create digest inside its opaque environment identifier.

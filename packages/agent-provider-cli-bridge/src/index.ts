@@ -51,6 +51,7 @@ export type { CliBridgeProviderOptions } from "./provider-options.js";
 export type { CliBridgeExecution } from "./provider-options.js";
 export type { CliBridgeRunLookupInput } from "./retained-control.js";
 export { safeEndpointFromBaseUrl } from "./observation.js";
+export { closeExactCliBridgeSession } from "./retained-control.js";
 
 export interface CliBridgeProvider extends AgentEnvironmentProvider {
   /** Recover the server-issued digest for one pre-dispatch retained admission. */

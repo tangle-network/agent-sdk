@@ -14,7 +14,7 @@ import {
   assertCliBridgeProviderOptions,
   type CliBridgeProviderOptions,
 } from "./provider-options.js";
-import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
+import { runFromControlRef, type CliBridgeRun, type CliBridgeRunSnapshot } from "./retained-run-state.js";
 import type { CliBridgeResponse, CliBridgeTransport } from "./transport.js";
 import {
   createCliBridgeTransport,
@@ -23,9 +23,82 @@ import {
   requestHeaders,
   trimSlash,
 } from "./transport.js";
-import { assertCliBridgeRunId, runSnapshot } from "./wire.js";
+import { assertCliBridgeRunId, runSnapshot, safeJson } from "./wire.js";
 
 const DEFAULT_CANCELLATION_WAIT_MS = 30_000;
+
+/** Release one terminal native session using the exact retained run it last owned. */
+export async function closeExactCliBridgeSession(
+  options: CliBridgeProviderOptions,
+  controlRef: AgentExactRunControlRef,
+  signal?: AbortSignal,
+): Promise<void> {
+  assertCliBridgeProviderOptions(options);
+  const exact = AgentExactRunControlRefSchema.parse(controlRef);
+  if (exact.provider !== (options.name ?? "cli-bridge")) {
+    throw new Error("cli-bridge session close targets another provider");
+  }
+  const timeoutSignal = AbortSignal.timeout(options.cancelWaitMs ?? DEFAULT_CANCELLATION_WAIT_MS);
+  const operationSignal = signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
+  const transport = createCliBridgeTransport(options);
+  try {
+    const run = await getCliBridgeRun(options, transport, runFromControlRef(exact), undefined, operationSignal);
+    if (!run?.terminal) {
+      throw new Error("cli-bridge cannot close a session before its exact run is terminal");
+    }
+    const endpoint = `${trimSlash(options.baseUrl)}/v1/sessions/${encodeURIComponent(exact.sessionId)}`;
+    const currentResponse = await transport.fetch(endpoint, {
+      method: "GET",
+      headers: requestHeaders(options),
+      signal: operationSignal,
+    });
+    const currentText = await readBoundedCliBridgeResponse(
+      currentResponse,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      operationSignal,
+    );
+    if (!currentResponse.ok) {
+      throw new Error(`cli-bridge session status returned HTTP ${currentResponse.status}`);
+    }
+    const current = safeJson(currentText);
+    if (current?.id !== exact.sessionId || current.run_id !== exact.runId) {
+      throw new Error("cli-bridge session close targets another retained run");
+    }
+    if (current.status === "closed") return;
+    if (current.status === "running") {
+      throw new Error("cli-bridge cannot close an active retained session");
+    }
+    const response = await transport.fetch(`${endpoint}/close`, {
+      method: "POST",
+      headers: requestHeaders(options),
+      signal: operationSignal,
+    });
+    const responseText = await readBoundedCliBridgeResponse(
+      response,
+      MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+      operationSignal,
+    );
+    if (!response.ok) {
+      throw new Error(`cli-bridge session close returned HTTP ${response.status}`);
+    }
+    const confirmation = safeJson(responseText);
+    const closed = confirmation?.session;
+    if (typeof closed !== "object" || closed === null || Array.isArray(closed)) {
+      throw new Error("cli-bridge session close did not confirm the exact closed session");
+    }
+    const session = closed as Record<string, unknown>;
+    if (
+      confirmation?.closed !== true ||
+      session.id !== exact.sessionId ||
+      session.run_id !== exact.runId ||
+      session.status !== "closed"
+    ) {
+      throw new Error("cli-bridge session close did not confirm the exact closed session");
+    }
+  } finally {
+    await transport.close();
+  }
+}
 
 export function cliBridgeCancellationSignal(
   options: CliBridgeProviderOptions,
