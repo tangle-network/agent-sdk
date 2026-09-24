@@ -8,6 +8,7 @@ import { AgentRunCancellationRequestSchema } from "@tangle-network/agent-interfa
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
 import {
+  closeExactCliBridgeSession,
   createCliBridgeProvider as createProvider,
   defaultCliBridgeCapabilities,
 } from "./index.js";
@@ -24,6 +25,53 @@ function createCliBridgeProvider(
 }
 
 describe("retained cli-bridge safety", () => {
+  it("closes only a terminal exact native session and makes repeat cleanup idempotent", async () => {
+    const controlRef = exactControlRef();
+    const requests: string[] = [];
+    let closed = false;
+    const options = {
+      baseUrl: "http://bridge.local",
+      fetch: async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const path = new URL(String(url)).pathname;
+        requests.push(`${init?.method ?? "GET"} ${path}`);
+        if (path === `/v1/runs/${controlRef.runId}`) {
+          return Response.json({ ...controlRef, id: controlRef.runId, status: "done", terminal: true });
+        }
+        if (path === `/v1/sessions/${controlRef.sessionId}` && init?.method !== "POST") {
+          return Response.json({ id: controlRef.sessionId, run_id: controlRef.runId, status: closed ? "closed" : "idle" });
+        }
+        if (path === `/v1/sessions/${controlRef.sessionId}/close` && init?.method === "POST") {
+          closed = true;
+          return Response.json({ closed: true, session: { id: controlRef.sessionId, run_id: controlRef.runId, status: "closed" } });
+        }
+        throw new Error(`unexpected route ${path}`);
+      },
+    };
+
+    await closeExactCliBridgeSession(options, controlRef);
+    await closeExactCliBridgeSession(options, controlRef);
+    expect(requests.filter((request) => request.endsWith("/close"))).toEqual([
+      `POST /v1/sessions/${controlRef.sessionId}/close`,
+    ]);
+  });
+
+  it("refuses to close a session bound to another retained run", async () => {
+    const controlRef = exactControlRef();
+    const requests: string[] = [];
+    await expect(closeExactCliBridgeSession({
+      baseUrl: "http://bridge.local",
+      fetch: async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        requests.push(`${init?.method ?? "GET"} ${path}`);
+        if (path === `/v1/runs/${controlRef.runId}`) {
+          return Response.json({ ...controlRef, id: controlRef.runId, status: "done", terminal: true });
+        }
+        return Response.json({ id: controlRef.sessionId, run_id: "another-run", status: "idle" });
+      },
+    }, controlRef)).rejects.toThrow(/another retained run/u);
+    expect(requests.some((request) => request.endsWith("/close"))).toBe(false);
+  });
+
   it("rejects unnormalized reasoning from visible result text", () => {
     expect(visibleTextDelta({
       type: "message.part.updated",
