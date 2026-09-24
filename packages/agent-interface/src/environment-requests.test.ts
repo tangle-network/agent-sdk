@@ -121,6 +121,32 @@ describe("WorkspaceRequestSchema", () => {
     expect(() => workspaceCwdSchema.parse({ base: "host", path: "/workspace", extra: true })).toThrow();
   });
 
+  it("starts a workspace from a durable checkpoint, but not also from a repository", () => {
+    const digest = (fill: string) => `sha256:${fill.repeat(64)}`;
+    const checkpoint = {
+      checkpointId: "snap-1",
+      provider: "tangle-sandbox",
+      source: {
+        runId: "run-1",
+        provider: "tangle-sandbox",
+        environmentId: "sandbox-gone",
+        sessionId: "session-1",
+        executionId: "execution-1",
+        requestDigest: digest("a"),
+      },
+      idempotencyKey: "checkpoint-key",
+      requestDigest: digest("b"),
+      createdAt: "2026-09-24T14:10:35.000Z",
+    };
+    expect(WorkspaceRequestSchema.parse({ checkpoint })).toEqual({ checkpoint });
+    expect(() =>
+      WorkspaceRequestSchema.parse({ checkpoint, repoUrl: "https://example.com/repo.git" }),
+    ).toThrow(/both a checkpoint and a repository/);
+    expect(() =>
+      WorkspaceRequestSchema.parse({ checkpoint: { ...checkpoint, provider: "other" } }),
+    ).toThrow(/checkpoint provider must match its source run/);
+  });
+
   it("rejects provider-invalid combinations", () => {
     expect(() =>
       WorkspaceRequestSchema.parse({ environment: "universal", image: "node:22" }),

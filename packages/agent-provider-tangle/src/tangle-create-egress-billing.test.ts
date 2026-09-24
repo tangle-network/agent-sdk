@@ -193,6 +193,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
       egress: ["open", "strict", "blocked"],
       billingOwner: true,
       runtimeAttachments: { mcp: true },
+      workspaceCheckpoint: true,
     });
   });
 });

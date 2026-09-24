@@ -25,7 +25,7 @@ import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
-import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, sandboxOptionsFromCreateInput } from "./tangle-create-options.js";
+import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import {
   awaitSandboxRunning,
@@ -144,6 +144,23 @@ export function createTangleProvider(
       );
     }
     assertMappedSecretNames(createOptions);
+    const checkpoint = parsedWorkspace?.checkpoint;
+    if (checkpoint !== undefined) {
+      // A checkpoint names a snapshot this provider took. Another provider's id means nothing to
+      // Sandbox, and a mapper that drops the restore would return an empty workspace as if full.
+      if (checkpoint.provider !== providerName) {
+        throw new Error(`Tangle cannot restore a workspace checkpoint taken by provider "${checkpoint.provider}"`);
+      }
+      const restore = sandboxRestoreFromCheckpoint(checkpoint);
+      if (
+        createOptions.fromSnapshot !== restore?.fromSnapshot ||
+        createOptions.fromSandboxId !== restore?.fromSandboxId
+      ) {
+        throw new Error("Tangle mapped create options must preserve the workspace checkpoint");
+      }
+    } else if (createOptions.fromSnapshot !== undefined || createOptions.fromSandboxId !== undefined) {
+      throw new Error("Tangle mapped create options restore a snapshot the create input did not name");
+    }
     if (input.runtimeAttachments !== undefined &&
       (createOptions.backend?.runtimeAttachments === undefined ||
         canonicalCandidateDigest(input.runtimeAttachments) !== canonicalCandidateDigest(createOptions.backend.runtimeAttachments))) {
@@ -153,6 +170,9 @@ export function createTangleProvider(
     // default cannot describe a sandbox that this projection routes elsewhere.
     const declaredCapabilities = await resolveDeclaredCapabilities(createOptions.backend?.type);
     narrowedProviderCapabilities(declaredCapabilities);
+    if (checkpoint !== undefined && declaredCapabilities.create?.workspaceCheckpoint !== true) {
+      throw new Error("Tangle workspace checkpoint restore is not supported by the declared capabilities");
+    }
     if (createOptions.backend?.runtimeAttachments !== undefined) {
       if (createOptions.backend.type === undefined || declaredCapabilities.create?.runtimeAttachments?.mcp !== true) {
         throw new Error("Tangle runtime attachments are not supported by the selected backend deployment");

@@ -7,6 +7,7 @@ import {
 } from "./contract-limits.js";
 import { workspaceCwdSchema } from "./workspace-cwd.js";
 import type { WorkspaceCwd } from "./workspace-cwd.js";
+import { WorkspaceCheckpointRefSchema, type WorkspaceCheckpointRef } from "./workspace-checkpoint.js";
 
 import type { AgentProfile } from "./agent-profile.js";
 
@@ -90,6 +91,18 @@ export interface WorkspaceRequest {
    * Repository paths use `base: "repository"`; host paths use `base: "host"`.
    */
   cwd?: WorkspaceCwd;
+  /**
+   * Start the workspace from this durable checkpoint.
+   *
+   * The provider restores the checkpoint's files into the new environment before create returns,
+   * or fails the create; it never returns an environment without them. The checkpoint's source
+   * environment need not exist any more, which is how a caller continues work whose environment
+   * was lost. Environment variables, secrets, egress and runtime attachments come from this create,
+   * never from the source. A provider honors this field only when
+   * {@link AgentEnvironmentCapabilities.create} states `workspaceCheckpoint: true`, and refuses a
+   * checkpoint another provider took.
+   */
+  checkpoint?: WorkspaceCheckpointRef;
   /** Opaque provider-native workspace fields. */
   providerOptions?: Record<string, unknown>;
 }
@@ -102,9 +115,17 @@ export const WorkspaceRequestSchema = z
     repoUrl: boundedStringSchema.min(1).optional(),
     gitRef: boundedIdentifierSchema.optional(),
     cwd: workspaceCwdSchema.optional(),
+    checkpoint: WorkspaceCheckpointRefSchema.optional(),
     providerOptions: boundedJsonRecordSchema.optional(),
   })
   .superRefine((workspace, refinement) => {
+    if (workspace.checkpoint !== undefined && workspace.repoUrl !== undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["checkpoint"],
+        message: "workspace cannot start from both a checkpoint and a repository",
+      });
+    }
     if (workspace.environment !== undefined && workspace.image !== undefined) {
       refinement.addIssue({
         code: "custom",
