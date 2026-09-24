@@ -691,4 +691,46 @@ export interface TangleProviderOptions {
   readyTimeoutMs?: number;
   /** External provider-key and measurement verifier for confidential forks. */
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+  /**
+   * Place many agents in one sandbox instead of one sandbox per agent.
+   * Absent, every create provisions its own sandbox.
+   */
+  sharedSandboxes?: TangleSharedSandboxOptions;
+}
+
+/** Where one agent runs: a sandbox shared with other agents, or its own. */
+export type TangleSandboxPlacement = "shared" | "dedicated";
+
+/**
+ * Shared sandbox placement.
+ *
+ * Each placed agent is its own Sandbox session with its own profile, runtime
+ * attachments, harness process, HOME and native session. Agents in one
+ * sandbox share its workspace directory, CPU and memory, and can read one
+ * another's files, so they must be one trust domain. Agents share a sandbox
+ * only when every sandbox-level create field (backend, resources, env,
+ * secrets, egress, billing owner, workspace) is canonically equal; a
+ * per-agent environment variable therefore places that agent alone.
+ */
+export interface TangleSharedSandboxOptions {
+  /**
+   * Agents one sandbox holds at once. Size it from the sandbox's memory: an
+   * idle sandbox uses about 180 MiB, and each OpenCode agent about 310 MiB of
+   * anonymous memory at its first turn and 510 to 570 MiB RSS in a long
+   * session (measured 2026-09-24; a 4 GiB sandbox OOM-killed 4 of 12).
+   */
+  agentsPerSandbox: number;
+  /**
+   * How long an empty shared sandbox waits for its next agent before it is
+   * deleted. Defaults to 0: the last agent's destroy deletes the sandbox.
+   * A deferred delete is lost if this process exits first, and the sandbox
+   * then lives until its own idle timeout or lifetime.
+   */
+  idleMs?: number;
+  /**
+   * Choose per create. Defaults to `dedicated` for a repository workspace and
+   * `shared` otherwise. Return `dedicated` for an agent that writes a
+   * repository, runs untrusted code, or otherwise needs its own filesystem.
+   */
+  placement?: (input: CreateAgentEnvironmentInput) => TangleSandboxPlacement;
 }

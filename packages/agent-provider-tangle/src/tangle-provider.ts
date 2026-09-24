@@ -21,6 +21,7 @@ import {
   narrowTangleCapabilitiesToBackend,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
+import { createSharedSandboxPool, validateSharedSandboxOptions } from "./tangle-shared-sandboxes.js";
 import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
@@ -55,6 +56,11 @@ export function createTangleProvider(
   if (modelCredentials !== undefined && mapCreateInput !== undefined) {
     throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
   }
+  // A custom mapper decides the whole sandbox, so no create field can be told apart as the agent's.
+  if (options.sharedSandboxes !== undefined && mapCreateInput !== undefined) {
+    throw new Error("Tangle sharedSandboxes cannot be combined with mapCreateInput");
+  }
+  if (options.sharedSandboxes !== undefined) validateSharedSandboxOptions(options.sharedSandboxes);
   const providerName = options.name ?? "tangle-sandbox";
   boundedIdentifier(providerName, "Tangle provider name");
   const readyTimeoutMs =
@@ -116,9 +122,10 @@ export function createTangleProvider(
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
-  const createEnvironment = async (
+  /** Create one sandbox, hold until it runs, and name what its environment may claim. */
+  const provisionSandbox = async (
     input: CreateAgentEnvironmentInput,
-  ): Promise<AgentEnvironment> => {
+  ): Promise<{ box: SandboxInstanceLike; declaredCapabilities: AgentEnvironmentCapabilities }> => {
     const parsedWorkspace = assertCreateInputShape(input);
     input.signal?.throwIfAborted();
     assertNoInlineSecretValues(input, parsedWorkspace);
@@ -194,22 +201,83 @@ export function createTangleProvider(
         ...(input.signal ? { signal: input.signal } : {}),
       });
       input.signal?.throwIfAborted();
-      const requestedResources = requestedResourceProfile(input.resources);
-      const environment = await sandboxInstanceAsEnvironment(
-        box,
-        providerName,
-        options.client,
-        declaredCapabilities,
-        input.signal ? { signal: input.signal } : undefined,
-        {
-          ...(requestedResources === undefined
-            ? {}
-            : { resources: requestedResources }),
-          ...confidentialVerifierOption(options.confidentialAttestationVerifier),
-        },
-      );
-      input.signal?.throwIfAborted();
-      return environment;
+      return { box, declaredCapabilities };
+    } catch (error) {
+      if (!box.delete) {
+        const baseError = error instanceof Error ? error : new Error(String(error));
+        throw Object.assign(baseError, { cleanupHandle: box });
+      }
+      try {
+        await box.delete();
+      } catch (cleanupError) {
+        const combined = new AggregateError([error, cleanupError], "Tangle environment validation and cleanup both failed");
+        attachCleanupHandle(combined, box, cleanupError);
+        throw combined;
+      }
+      throw error;
+    }
+  };
+  const composeEnvironment = async (
+    box: SandboxInstanceLike,
+    declaredCapabilities: AgentEnvironmentCapabilities,
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    const requestedResources = requestedResourceProfile(input.resources);
+    const environment = await sandboxInstanceAsEnvironment(
+      box,
+      providerName,
+      options.client,
+      declaredCapabilities,
+      input.signal ? { signal: input.signal } : undefined,
+      {
+        ...(requestedResources === undefined
+          ? {}
+          : { resources: requestedResources }),
+        ...confidentialVerifierOption(options.confidentialAttestationVerifier),
+      },
+    );
+    input.signal?.throwIfAborted();
+    return environment;
+  };
+  // The same backend selection the create mapping makes.
+  const harnessFor = (input: CreateAgentEnvironmentInput): string =>
+    input.backend ??
+    options.defaultBackend ??
+    (typeof input.profile === "object" ? input.profile.harness : undefined) ??
+    "opencode";
+  const sharedPool =
+    options.sharedSandboxes === undefined
+      ? undefined
+      : createSharedSandboxPool(options.sharedSandboxes, {
+          provision: async (input) => (await provisionSandbox(input)).box,
+          harnessFor,
+          ...(modelCredentials === undefined ? {} : { turnModel: { ...modelCredentials } }),
+        });
+  const createEnvironment = async (
+    input: CreateAgentEnvironmentInput,
+  ): Promise<AgentEnvironment> => {
+    if (sharedPool !== undefined && sharedPool.placement(input) === "shared") {
+      assertCreateInputShape(input);
+      assertNoInlineSecretValues(input);
+      if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
+        throw new Error("Tangle create providerOptions are not supported");
+      }
+      const declaredCapabilities = await resolveDeclaredCapabilities(harnessFor(input));
+      narrowedProviderCapabilities(declaredCapabilities);
+      if (input.runtimeAttachments !== undefined && declaredCapabilities.create?.runtimeAttachments?.mcp !== true) {
+        throw new Error("Tangle runtime attachments are not supported by the selected backend deployment");
+      }
+      const leased = await sharedPool.lease(input);
+      try {
+        return await composeEnvironment(leased.box, declaredCapabilities, input);
+      } catch (error) {
+        await leased.box.delete?.().catch(() => undefined);
+        throw error;
+      }
+    }
+    const { box, declaredCapabilities } = await provisionSandbox(input);
+    try {
+      return await composeEnvironment(box, declaredCapabilities, input);
     } catch (error) {
       if (!box.delete) {
         const baseError = error instanceof Error ? error : new Error(String(error));
@@ -308,7 +376,7 @@ export function createTangleProvider(
             }
             const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
             return await sandboxInstanceAsEnvironment(
-              box,
+              sharedPool === undefined ? box : sharedPool.reconstruct(box),
               providerName,
               options.client,
               declaredCapabilities,
@@ -385,8 +453,15 @@ export function createTangleProvider(
               status: statusFromUnknown(box.status),
               ...(box.metadata ? { metadata: box.metadata } : {}),
             }));
+            // One summary per agent placed in a shared sandbox, carrying that agent's metadata.
+            const leaseSummaries = (sharedPool?.summaries(providerName) ?? []).filter((summary) =>
+              (query?.name === undefined || summary.name === query.name) &&
+              (query?.metadata === undefined ||
+                Object.entries(query.metadata).every(([key, value]) =>
+                  Object.hasOwn(summary.metadata ?? {}, key) &&
+                  JSON.stringify(summary.metadata?.[key]) === JSON.stringify(value))));
             operation?.signal?.throwIfAborted();
-            return summaries;
+            return [...summaries, ...leaseSummaries];
           },
         }
       : {}),

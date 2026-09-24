@@ -103,6 +103,8 @@
     "dist/tangle-workspace-markers.js",
     "dist/tangle-workspace-recovery.d.ts",
     "dist/tangle-workspace-recovery.js",
+    "dist/tangle-shared-sandboxes.d.ts",
+    "dist/tangle-shared-sandboxes.js",
     "README.md",
     "LICENSE"
   ],
