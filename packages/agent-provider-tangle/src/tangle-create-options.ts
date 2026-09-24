@@ -91,6 +91,7 @@ export function sandboxOptionsFromCreateInput(
     "repository",
     "Tangle",
   );
+  const restore = sandboxRestoreFromCheckpoint(workspace.checkpoint);
   if (input.resources?.providerOptions && Object.keys(input.resources.providerOptions).length > 0) {
     throw new Error("Tangle resource providerOptions are not supported");
   }
@@ -120,6 +121,7 @@ export function sandboxOptionsFromCreateInput(
         }
       : {}),
     ...(resources ? { resources } : {}),
+    ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
     ...(Array.isArray(input.secrets) ? { secrets: input.secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
@@ -138,6 +140,22 @@ export function sandboxOptionsFromCreateInput(
     },
   };
   return mapped;
+}
+
+/**
+ * Project a portable workspace checkpoint onto the Sandbox restore fields.
+ *
+ * A Tangle checkpoint is a snapshot of its source box, and Sandbox names a snapshot by the pair
+ * (snapshot id, source box id). The source box may already be deleted.
+ */
+export function sandboxRestoreFromCheckpoint(
+  checkpoint: WorkspaceRequest["checkpoint"],
+): { fromSnapshot: string; fromSandboxId: string } | undefined {
+  if (checkpoint === undefined) return undefined;
+  return {
+    fromSnapshot: boundedIdentifier(checkpoint.checkpointId, "Tangle workspace checkpoint id"),
+    fromSandboxId: boundedIdentifier(checkpoint.source.environmentId, "Tangle workspace checkpoint source"),
+  };
 }
 
 /**

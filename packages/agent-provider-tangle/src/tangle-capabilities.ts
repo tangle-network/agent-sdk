@@ -131,10 +131,14 @@ export function defaultTangleSandboxCapabilities(
     // Create carries both fields to the Sandbox API unchanged. The API still authorizes the
     // caller for a delegated billing owner, and it rejects the create when it does not, so this
     // states only that neither field is dropped on the way.
+    // A workspace checkpoint is a Sandbox snapshot. Create restores it into the new box, and the
+    // snapshot outlives the box it was taken from (measured 2026-09-24: files byte-identical in
+    // a box created 19 s after the source box was deleted).
     create: {
       egress: ["open", "strict", "blocked"],
       billingOwner: true,
       runtimeAttachments: { mcp: true },
+      workspaceCheckpoint: true,
     },
     // This is intent only. Narrowing requires both raw TEE evidence and the
     // caller's external provider-key verifier before the flag survives.

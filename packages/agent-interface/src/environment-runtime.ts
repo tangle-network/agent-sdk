@@ -496,6 +496,11 @@ export interface AgentEnvironmentCapabilities {
     billingOwner?: boolean;
     /** Runtime-owned MCP bindings applied without changing the authored profile. */
     runtimeAttachments?: { mcp: true };
+    /**
+     * True when create restores {@link WorkspaceRequest.checkpoint} into the new environment,
+     * including a checkpoint whose source environment is gone. Absent means create refuses one.
+     */
+    workspaceCheckpoint?: boolean;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -611,6 +616,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
           .optional(),
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
+        workspaceCheckpoint: z.boolean().optional(),
       })
       .optional(),
     observation: z
@@ -731,7 +737,12 @@ export const AgentEnvironmentCapabilitiesSchema = z
     }
     const create = capabilities.create;
     if (create !== undefined) {
-      if (create.egress === undefined && create.billingOwner === undefined && create.runtimeAttachments === undefined) {
+      if (
+        create.egress === undefined &&
+        create.billingOwner === undefined &&
+        create.runtimeAttachments === undefined &&
+        create.workspaceCheckpoint === undefined
+      ) {
         refinement.addIssue({
           code: "custom",
           path: ["create"],
