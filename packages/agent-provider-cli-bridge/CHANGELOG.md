@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 1.1.0
+
+### Minor Changes
+
+- b52b455: Add an exact, idempotent close operation for completed native CLI Bridge sessions.
+
 ## 1.0.3
 
 ### Patch Changes
