@@ -42,7 +42,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-trace-contract':
-        specifier: ^1.1.0
+        specifier: ^1.2.0
         version: link:../agent-trace-contract
       zod:
         specifier: 'catalog:'

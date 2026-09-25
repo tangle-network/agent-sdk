@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-trace-contract",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zero-dependency OTLP span contract for agent traces: span shape, gen_ai attribute vocabulary, pure builders, and a conformance validator that reports what a trace can and cannot answer",
   "type": "module",
   "sideEffects": false,
