@@ -262,7 +262,8 @@ Copies that report the SAME tokens leave the token total exactly right however e
 
 **`resolveSpanKind(span)` is THE classifier. Call it; do not write a second one.**
 
-It answers "what is this span" for any span: a declared kind wins; otherwise a tool-name attribute means `TOOL`; otherwise `gen_ai.operation.name` decides through the mapping below; otherwise model and token attributes or an LLM-looking name mean `LLM`; otherwise `UNKNOWN`.
+It answers "what is this span" for any span: a declared kind wins; otherwise a tool-name attribute means `TOOL`; otherwise `gen_ai.operation.name` decides through the mapping below; otherwise a model attribute or an LLM-looking name means `LLM`; otherwise `UNKNOWN`.
+Token counts alone never make a span `LLM`, because an agent or run span carries the total of the calls beneath it.
 Inference is deliberately conservative — a wrongly-typed span silently changes token and cost breakdowns while looking perfectly healthy.
 `classifySpan(span)` returns the same kind plus `operationLoss` when the operation mapping lost meaning.
 

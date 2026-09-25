@@ -4,14 +4,14 @@
  * A conforming producer declares the kind, and a declared kind always wins. But
  * the point of this package is to read traces from systems that never heard of
  * it, so an undeclared span is classified from, in order: a tool-name
- * attribute, the OpenTelemetry GenAI `gen_ai.operation.name`, then model/token
- * attributes and LLM-looking names.
+ * attribute, the OpenTelemetry GenAI `gen_ai.operation.name`, then a model
+ * attribute or an LLM-looking name.
  *
- * The operation name is read BEFORE model and tokens because an agent or
- * workflow span routinely carries the token total of every model call beneath
- * it. Reading that span as an LLM call counts the same tokens twice. A real
- * agent-runtime export measured 3.00x its provider-reported tokens that way
- * (README, "GenAI operation mapping").
+ * Token counts never decide a kind. An agent or workflow span routinely carries
+ * the token total of every model call beneath it, so reading tokens as "model
+ * call" counts the same tokens twice: a real agent-runtime export measured 3.00x
+ * its provider-reported tokens that way (README, "GenAI operation mapping"). The
+ * operation name is read before the model for the same reason.
  *
  * Inference is deliberately conservative: everything unrecognised is `UNKNOWN`,
  * never a guessed `LLM`, because a wrongly-typed span silently changes token and
@@ -20,12 +20,9 @@
 
 import {
   attributeBag,
-  firstNumberAttr,
   firstStringAttr,
-  INPUT_TOKEN_ATTR_KEYS,
   MODEL_ATTR_KEYS,
   OPERATION_NAME_ATTR,
-  OUTPUT_TOKEN_ATTR_KEYS,
   readProperty,
   SPAN_KIND_ATTR_KEYS,
   TOOL_NAME_ATTR_KEYS,
@@ -187,12 +184,7 @@ export function classifySpan(span: unknown): SpanClassification {
       : { kind: mapping.kind, operationLoss: mapping };
   }
 
-  if (
-    firstStringAttr(attributes, MODEL_ATTR_KEYS) !== undefined ||
-    firstNumberAttr(attributes, INPUT_TOKEN_ATTR_KEYS) !== undefined ||
-    firstNumberAttr(attributes, OUTPUT_TOKEN_ATTR_KEYS) !== undefined ||
-    LLM_NAME_PATTERN.test(name)
-  ) {
+  if (firstStringAttr(attributes, MODEL_ATTR_KEYS) !== undefined || LLM_NAME_PATTERN.test(name)) {
     return { kind: "LLM" };
   }
 
