@@ -207,6 +207,7 @@ export const CACHE_READ_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
 /** Prompt tokens written INTO the provider's prompt cache, highest priority first. */
 export const CACHE_WRITE_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   "gen_ai.usage.cache_creation.input_tokens",
+  "gen_ai.usage.cache_write.input_tokens",
   "gen_ai.usage.cache_creation_input_tokens",
   "llm.token_count.prompt_cache_write",
   "llm.token_count.prompt_details.cache_write",
@@ -222,6 +223,7 @@ export const CACHE_WRITE_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
 /** Reasoning tokens, a subset of output, highest priority first. */
 export const REASONING_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   "gen_ai.usage.reasoning.output_tokens",
+  "codex.usage.reasoning_output_tokens",
   "llm.token_count.reasoning",
   "llm.token_count.completion_details.reasoning",
   "inference.llm.reasoning_tokens",
