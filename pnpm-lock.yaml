@@ -41,6 +41,9 @@ importers:
       '@tangle-network/agent-interface':
         specifier: workspace:*
         version: link:../agent-interface
+      '@tangle-network/agent-trace-contract':
+        specifier: ^1.1.0
+        version: link:../agent-trace-contract
       zod:
         specifier: 'catalog:'
         version: 4.5.4
