@@ -274,6 +274,12 @@ function hasCredentialBearingUrl(value: string): boolean {
   }
 }
 
+/**
+ * Whether a string holds an obvious credential: a provider key (`sk-`, `gh*_`,
+ * `github_pat_`, `AKIA`), a PEM private key, a bearer token, or a URL with
+ * userinfo or a credential-named query parameter. The agent-eval redaction
+ * core calls it, so candidate validation and trace redaction agree.
+ */
 export function looksLikeCredential(value: string): boolean {
   return obviousSecretValuePattern.test(value) || hasCredentialBearingUrl(value);
 }

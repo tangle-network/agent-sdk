@@ -93,6 +93,7 @@ export {
   canonicalCandidateBytes,
   canonicalCandidateDigest,
   canonicalCandidateJson,
+  looksLikeCredential,
   sha256Bytes,
   sha256DigestSchema,
   sha256Utf8,
