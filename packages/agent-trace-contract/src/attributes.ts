@@ -51,11 +51,12 @@ export const ATTR = Object.freeze({
   score: "agent.outcome.score",
   // how the producer chose parent_span_id — see ParentConfidence
   parentConfidence: "agent.parent.confidence",
-  // retry and side-effect safety — see SideEffect
+  // retry safety: a keyed re-attempt shares operationId and idempotencyKey,
+  // and carries its own attemptId — see agent-runtime's supervise re-spawn
+  // producer and agent-eval's contract-declared `retrySafe` reader.
   operationId: "agent.operation.id",
   attemptId: "agent.operation.attempt_id",
   idempotencyKey: "agent.operation.idempotency_key",
-  sideEffect: "agent.operation.side_effect",
 } as const);
 
 /**
@@ -89,23 +90,6 @@ export const PARENT_CONFIDENCES: readonly ParentConfidence[] = Object.freeze([
   "unknown",
 ]);
 
-/**
- * What an operation does to the world outside the process, the value of
- * {@link ATTR.sideEffect}.
- *
- * - `read` — changes nothing outside the process, so a retry is always safe.
- * - `write` — changes external state. A retry after an unknown outcome (a
- *   timeout, a lost response) is safe only with an
- *   {@link ATTR.idempotencyKey} the target honours.
- *
- * Retries of one logical operation share {@link ATTR.operationId}; each try
- * carries its own {@link ATTR.attemptId}, and a retry links to the attempt it
- * replaces with a `retry_of` link.
- */
-export type SideEffect = "read" | "write";
-
-/** Every {@link SideEffect}. */
-export const SIDE_EFFECTS: readonly SideEffect[] = Object.freeze(["read", "write"]);
 
 /** Any primary attribute key. */
 export type AttrKey = (typeof ATTR)[keyof typeof ATTR];

@@ -62,7 +62,6 @@ The rule for every one of them: **use the standard name wherever a standard exis
 | `agent.operation.id` | `ATTR.operationId` | retried work | One logical operation, shared by every attempt |
 | `agent.operation.attempt_id` | `ATTR.attemptId` | retried work | This attempt |
 | `agent.operation.idempotency_key` | `ATTR.idempotencyKey` | retried work | The key the target deduplicates on |
-| `agent.operation.side_effect` | `ATTR.sideEffect` | retried work | `read` (a retry is safe) · `write` (a retry needs the idempotency key) |
 | `agent.link.kind` | `LINK_KIND_ATTR` | **link** | `steered_by` · `graded_by` · `retry_of` |
 
 An attribute is **absent**, never a placeholder.
