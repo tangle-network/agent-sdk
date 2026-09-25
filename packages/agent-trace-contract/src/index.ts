@@ -63,8 +63,6 @@ export {
   PARENT_CONFIDENCES,
   type ParentConfidence,
   REASONING_TOKEN_ATTR_KEYS,
-  SIDE_EFFECTS,
-  type SideEffect,
   SPAN_KIND_ATTR_KEYS,
   TOOL_NAME_ATTR_KEYS,
 } from "./attributes.js";
