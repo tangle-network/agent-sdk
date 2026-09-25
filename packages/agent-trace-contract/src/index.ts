@@ -85,6 +85,8 @@ export {
 } from "./builders.js";
 export {
   type ContractSpan,
+  isModelCallKind,
+  MODEL_CALL_SPAN_KINDS,
   type Outcome,
   OUTCOMES,
   type SpanKind,
