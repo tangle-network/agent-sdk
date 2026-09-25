@@ -61,6 +61,25 @@ export const SPAN_KINDS: readonly SpanKind[] = Object.freeze([
   "UNKNOWN",
 ]);
 
+/**
+ * Kinds that are themselves a separately billed call to a model — as opposed to an
+ * aggregate span (AGENT, CHAIN, TOOL, RETRIEVER, GUARDRAIL, EVALUATOR, PROMPT) whose
+ * token/cost totals only ever restate what its model-call descendants already report.
+ * `LLM` is the chat/completion case; `EMBEDDING` and `RERANKER` are leaf model calls
+ * too and must count the same way, or their tokens silently vanish whenever a chat
+ * call anywhere in the same run also reports tokens.
+ */
+export const MODEL_CALL_SPAN_KINDS: readonly SpanKind[] = Object.freeze([
+  "LLM",
+  "EMBEDDING",
+  "RERANKER",
+]);
+
+/** Whether `kind` is a leaf model call whose tokens/cost must be counted directly. */
+export function isModelCallKind(kind: SpanKind): boolean {
+  return (MODEL_CALL_SPAN_KINDS as readonly string[]).includes(kind);
+}
+
 /** OTLP status codes, spelled exactly as the OTLP JSON encoding spells them. */
 export type SpanStatusCode =
   | "STATUS_CODE_UNSET"
