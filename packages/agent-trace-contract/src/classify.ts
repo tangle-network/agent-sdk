@@ -115,18 +115,35 @@ export interface DeclaredSpanKind {
 }
 
 /**
+ * OTLP's own span kind (client, server, internal...), which OTLP JSON and most
+ * row flatteners write into the same `kind` field. It says where a span sits on
+ * the wire, not what it is, so it never counts as a declaration.
+ */
+const OTLP_SPAN_KIND = /^(?:SPAN_KIND_)?(?:UNSPECIFIED|INTERNAL|SERVER|CLIENT|PRODUCER|CONSUMER)$/i;
+
+/**
  * Read the declared kind without inferring anything. `raw` non-null with `kind`
  * null is the interesting case: the producer said something, and it is not a
  * word this contract knows.
+ *
+ * A recognised `kind` field wins, then the span-kind attribute, then an
+ * unrecognised `kind` field. An OTLP span kind in the `kind` field is skipped,
+ * so a flattened OTLP row still yields its `openinference.span.kind`.
  */
 export function declaredSpanKind(span: unknown): DeclaredSpanKind {
   if (span === null || typeof span !== "object") return { raw: null, kind: null };
-  const attributes = attributeBag(readProperty(span, "attributes"));
-  const kind = readProperty(span, "kind");
-  const declared =
-    typeof kind === "string" && kind.length > 0
-      ? kind
-      : firstStringAttr(attributes, SPAN_KIND_ATTR_KEYS);
+  const field = readProperty(span, "kind");
+  const fieldValue =
+    typeof field === "string" && field.length > 0 && !OTLP_SPAN_KIND.test(field)
+      ? field
+      : undefined;
+  const fieldKind = fieldValue === undefined ? undefined : KIND_BY_NAME.get(fieldValue.toUpperCase());
+  if (fieldValue !== undefined && fieldKind !== undefined) return { raw: fieldValue, kind: fieldKind };
+  const attribute = firstStringAttr(
+    attributeBag(readProperty(span, "attributes")),
+    SPAN_KIND_ATTR_KEYS,
+  );
+  const declared = attribute ?? fieldValue;
   if (declared === undefined) return { raw: null, kind: null };
   return { raw: declared, kind: KIND_BY_NAME.get(declared.toUpperCase()) ?? null };
 }
