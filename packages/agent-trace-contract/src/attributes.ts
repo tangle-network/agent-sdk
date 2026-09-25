@@ -49,7 +49,63 @@ export const ATTR = Object.freeze({
   // outcome
   outcome: "agent.outcome",
   score: "agent.outcome.score",
+  // how the producer chose parent_span_id — see ParentConfidence
+  parentConfidence: "agent.parent.confidence",
+  // retry and side-effect safety — see SideEffect
+  operationId: "agent.operation.id",
+  attemptId: "agent.operation.attempt_id",
+  idempotencyKey: "agent.operation.idempotency_key",
+  sideEffect: "agent.operation.side_effect",
 } as const);
+
+/**
+ * The OpenTelemetry GenAI operation key. Readers use it to classify an
+ * undeclared span (`classifySpan`); it is not in {@link ATTR} because a
+ * contract producer declares the kind instead of implying it.
+ */
+export const OPERATION_NAME_ATTR = "gen_ai.operation.name";
+
+/**
+ * How a producer chose a span's `parent_span_id`, the value of
+ * {@link ATTR.parentConfidence}. An absent attribute means the producer did not
+ * say, which a reader reports as undeclared rather than guessing a level.
+ *
+ * - `explicit` — recorded at the call site: context propagation or a parent id
+ *   handed to the child.
+ * - `correlated` — joined afterwards by an id both sides recorded (run id,
+ *   session id, tool-call id), never by time.
+ * - `heuristic` — inferred from timing, order or naming, e.g. "the latest open
+ *   parent by start time". Tree and cost roll-ups through it are probable, not
+ *   certain.
+ * - `unknown` — the producer cannot say how the parent was chosen.
+ */
+export type ParentConfidence = "explicit" | "correlated" | "heuristic" | "unknown";
+
+/** Every {@link ParentConfidence}, strongest first. */
+export const PARENT_CONFIDENCES: readonly ParentConfidence[] = Object.freeze([
+  "explicit",
+  "correlated",
+  "heuristic",
+  "unknown",
+]);
+
+/**
+ * What an operation does to the world outside the process, the value of
+ * {@link ATTR.sideEffect}.
+ *
+ * - `read` — changes nothing outside the process, so a retry is always safe.
+ * - `write` — changes external state. A retry after an unknown outcome (a
+ *   timeout, a lost response) is safe only with an
+ *   {@link ATTR.idempotencyKey} the target honours.
+ *
+ * Retries of one logical operation share {@link ATTR.operationId}; each try
+ * carries its own {@link ATTR.attemptId}, and a retry links to the attempt it
+ * replaces with a `retry_of` link.
+ */
+export type SideEffect = "read" | "write";
+
+/** Every {@link SideEffect}. */
+export const SIDE_EFFECTS: readonly SideEffect[] = Object.freeze(["read", "write"]);
 
 /** Any primary attribute key. */
 export type AttrKey = (typeof ATTR)[keyof typeof ATTR];
@@ -124,6 +180,59 @@ export const OUTPUT_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   "llm.output_tokens",
   "tangle.tokens.out",
   "tokens.out",
+]);
+
+/**
+ * Prompt tokens served from the provider's prompt cache, highest priority first.
+ * Billed apart from {@link INPUT_TOKEN_ATTR_KEYS}, at a rate up to ~50x lower,
+ * so a total that folds the two together cannot be priced.
+ */
+export const CACHE_READ_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
+  "gen_ai.usage.cache_read.input_tokens",
+  "gen_ai.usage.cache_read_input_tokens",
+  "llm.token_count.prompt_cache_hit",
+  "llm.token_count.prompt_details.cache_read",
+  "inference.llm.cached_tokens",
+  "llm.cached_tokens",
+  "gen_ai.usage.cached_tokens",
+  "gen_ai.usage.prompt_tokens_details.cached_tokens",
+  "gen_ai.usage.input_tokens_details.cached_tokens",
+  "gen_ai.usage.cache_read_tokens",
+  "cache_read_tokens",
+  "cache_read_input_tokens",
+  "input_cache_read",
+  "tangle.tokens.cached",
+]);
+
+/** Prompt tokens written INTO the provider's prompt cache, highest priority first. */
+export const CACHE_WRITE_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
+  "gen_ai.usage.cache_creation.input_tokens",
+  "gen_ai.usage.cache_creation_input_tokens",
+  "llm.token_count.prompt_cache_write",
+  "llm.token_count.prompt_details.cache_write",
+  "inference.llm.cache_write_tokens",
+  "llm.cache_write_tokens",
+  "gen_ai.usage.cache_creation_tokens",
+  "cache_creation_tokens",
+  "cache_creation_input_tokens",
+  "input_cache_creation",
+  "tangle.tokens.cache_write",
+]);
+
+/** Reasoning tokens, a subset of output, highest priority first. */
+export const REASONING_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
+  "gen_ai.usage.reasoning.output_tokens",
+  "llm.token_count.reasoning",
+  "llm.token_count.completion_details.reasoning",
+  "inference.llm.reasoning_tokens",
+  "llm.reasoning_tokens",
+  "gen_ai.usage.reasoning_tokens",
+  "gen_ai.usage.reasoning_output_tokens",
+  "reasoning_tokens",
+  "reasoning_output_tokens",
+  "tangle.tokens.reasoning",
+  "gen_ai.usage.output_tokens_details.reasoning_tokens",
+  "gen_ai.usage.completion_tokens_details.reasoning_tokens",
 ]);
 
 /**

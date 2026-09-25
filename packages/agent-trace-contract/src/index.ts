@@ -10,17 +10,24 @@
 
 /**
  * THE span classifier. Any consumer deciding what a span IS — an LLM call, a
- * tool call, something it cannot name — calls `resolveSpanKind` and nothing
- * else. It is exported first because reimplementing it is a data-losing bug
+ * tool call, something it cannot name — calls `resolveSpanKind` (or
+ * `classifySpan`, which adds what a `gen_ai.operation.name` mapping lost) and
+ * nothing else. It is exported first because reimplementing it is a data-losing bug
  * rather than a duplication smell: a second classifier that disagrees produces a
  * different tool count, a different token total and a different cost for the
  * same file, and the two numbers both look healthy. `declaredSpanKind` is the
  * companion for telling "the producer said LLM" from "we inferred LLM".
  */
 export {
+  classifySpan,
   declaredSpanKind,
   type DeclaredSpanKind,
+  GEN_AI_OPERATION_MAPPINGS,
+  GEN_AI_SEMCONV_VERSION,
+  type GenAiOperationMapping,
+  type MappingLoss,
   resolveSpanKind,
+  type SpanClassification,
 } from "./classify.js";
 /**
  * Ids. `deriveHexId` maps a readable id onto the hex encoding OTLP and W3C
@@ -39,6 +46,8 @@ export {
   type AttrKey,
   attributeBag,
   BRANCH_ATTR_KEYS,
+  CACHE_READ_TOKEN_ATTR_KEYS,
+  CACHE_WRITE_TOKEN_ATTR_KEYS,
   COST_ATTR_KEYS,
   firstNumberAttr,
   firstStringAttr,
@@ -49,7 +58,13 @@ export {
   LINK_KINDS,
   type LinkKind,
   MODEL_ATTR_KEYS,
+  OPERATION_NAME_ATTR,
   OUTPUT_TOKEN_ATTR_KEYS,
+  PARENT_CONFIDENCES,
+  type ParentConfidence,
+  REASONING_TOKEN_ATTR_KEYS,
+  SIDE_EFFECTS,
+  type SideEffect,
   SPAN_KIND_ATTR_KEYS,
   TOOL_NAME_ATTR_KEYS,
 } from "./attributes.js";
@@ -88,6 +103,7 @@ export {
   type FindingCode,
   type FindingSeverity,
   MAX_SPANS_READ,
+  type ParentLinkBreakdown,
   type TraceValidation,
   validateTraceSpans,
 } from "./validate.js";
