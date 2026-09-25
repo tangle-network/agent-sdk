@@ -42,7 +42,7 @@ The rule for every one of them: **use the standard name wherever a standard exis
 
 | Key | Constant | Where | Meaning |
 | --- | --- | --- | --- |
-| `openinference.span.kind` | `ATTR.spanKind` | any | `AGENT` · `CHAIN` · `LLM` · `TOOL` · `EVALUATOR` · `RETRIEVER` · `UNKNOWN` |
+| `openinference.span.kind` | `ATTR.spanKind` | any | The OpenInference kinds: `AGENT` · `CHAIN` · `LLM` · `EMBEDDING` · `TOOL` · `RETRIEVER` · `RERANKER` · `GUARDRAIL` · `EVALUATOR` · `PROMPT` · `UNKNOWN` |
 | `gen_ai.request.model` | `ATTR.model` | LLM | Model slug that served the call |
 | `gen_ai.system` | `ATTR.system` | LLM | Provider, e.g. `anthropic` |
 | `gen_ai.usage.input_tokens` | `ATTR.inputTokens` | LLM | Prompt tokens |
@@ -286,7 +286,7 @@ The mapping is pinned to OpenTelemetry GenAI semantic conventions `GEN_AI_SEMCON
 | `create_agent` | `AGENT` | kind-degraded | Creating an agent reads as running one |
 | `invoke_workflow` | `CHAIN` | kind-degraded | No workflow kind; the workflow reads as one CHAIN step |
 | `retrieval` | `RETRIEVER` | none | |
-| `embeddings` | `UNKNOWN` | kind-degraded | No embedding kind; its tokens stay out of LLM totals |
+| `embeddings` | `EMBEDDING` | none | |
 | anything else | `UNKNOWN` | unsupported | Not defined in the pinned release |
 
 Every lossy mapping is reported as a `gen-ai-operation-loss` finding.

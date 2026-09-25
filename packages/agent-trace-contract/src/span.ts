@@ -26,7 +26,8 @@ export const TRACE_CONTRACT_VERSION = "1.1.0";
 /**
  * OpenInference span kinds, carried both as the optional `kind` field and as the
  * {@link ATTR.spanKind} attribute so a consumer that only reads attributes still
- * sees it.
+ * sees it. This is the full OpenInference vocabulary, so any OpenInference
+ * producer's declaration is recognised.
  *
  * `UNKNOWN` is a real, emittable value, not an error: a producer that genuinely
  * cannot classify a span should say so rather than guess, because a wrong `LLM`
@@ -36,9 +37,13 @@ export type SpanKind =
   | "AGENT"
   | "CHAIN"
   | "LLM"
+  | "EMBEDDING"
   | "TOOL"
-  | "EVALUATOR"
   | "RETRIEVER"
+  | "RERANKER"
+  | "GUARDRAIL"
+  | "EVALUATOR"
+  | "PROMPT"
   | "UNKNOWN";
 
 /** Every {@link SpanKind}, in declaration order — for validation and iteration. */
@@ -46,9 +51,13 @@ export const SPAN_KINDS: readonly SpanKind[] = Object.freeze([
   "AGENT",
   "CHAIN",
   "LLM",
+  "EMBEDDING",
   "TOOL",
-  "EVALUATOR",
   "RETRIEVER",
+  "RERANKER",
+  "GUARDRAIL",
+  "EVALUATOR",
+  "PROMPT",
   "UNKNOWN",
 ]);
 

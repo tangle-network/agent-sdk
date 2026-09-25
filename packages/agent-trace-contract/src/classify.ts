@@ -93,12 +93,7 @@ export const GEN_AI_OPERATION_MAPPINGS: readonly GenAiOperationMapping[] =
         lost: "the contract has no workflow kind, so the workflow reads as one CHAIN step",
       },
       { operation: "retrieval", kind: "RETRIEVER", loss: "none" },
-      {
-        operation: "embeddings",
-        kind: "UNKNOWN",
-        loss: "kind-degraded",
-        lost: "the contract has no embedding kind, so its tokens stay out of LLM totals",
-      },
+      { operation: "embeddings", kind: "EMBEDDING", loss: "none" },
     ].map((row) => Object.freeze(row as GenAiOperationMapping)),
   );
 

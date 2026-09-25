@@ -205,7 +205,7 @@ function malformedSpans(): unknown[] {
       trace_id: null,
       parent_span_id: "ghost",
       name: 99,
-      kind: "GUARDRAIL",
+      kind: "WIDGET",
       start_time: 5,
       end_time: "nope",
       status: null,
