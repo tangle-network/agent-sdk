@@ -160,7 +160,12 @@ export const MODEL_ATTR_KEYS: readonly string[] = Object.freeze([
   "tangle.model",
 ]);
 
-/** Input/prompt token reader candidates, highest priority first. */
+/**
+ * Input/prompt token reader candidates, highest priority first. `input_tokens`
+ * is last: it is the bare key Claude Code's native OTel capture writes
+ * (`claude_code.llm_request`), lowest priority because an unqualified name is
+ * the most likely to collide with an unrelated attribute.
+ */
 export const INPUT_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   ATTR.inputTokens,
   "gen_ai.usage.prompt_tokens",
@@ -169,9 +174,13 @@ export const INPUT_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   "llm.input_tokens",
   "tangle.tokens.in",
   "tokens.in",
+  "input_tokens",
 ]);
 
-/** Output/completion token reader candidates, highest priority first. */
+/**
+ * Output/completion token reader candidates, highest priority first.
+ * `output_tokens` is last for the same reason as `input_tokens` above.
+ */
 export const OUTPUT_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   ATTR.outputTokens,
   "gen_ai.usage.completion_tokens",
@@ -180,6 +189,7 @@ export const OUTPUT_TOKEN_ATTR_KEYS: readonly string[] = Object.freeze([
   "llm.output_tokens",
   "tangle.tokens.out",
   "tokens.out",
+  "output_tokens",
 ]);
 
 /**
