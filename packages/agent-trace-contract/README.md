@@ -296,6 +296,7 @@ A second classifier that disagrees is not a duplication smell, it is a data-losi
 Its behaviour is load-bearing for every consumer in this stack, which is why it is exported first and why `@tangle-network/agent-eval` reads the same candidate key sets.
 
 `declaredSpanKind(span)` returns what the producer actually said, so you can tell "the producer declared LLM" from "we inferred LLM".
+An OTLP span kind (`SPAN_KIND_INTERNAL`, `CLIENT`, ...) in the `kind` field is not a declaration, so a flattened OTLP row still yields its `openinference.span.kind` attribute.
 Both never throw, on any input.
 
 Spans must reach this package as OTLP **JSON** with ISO 8601 times.
