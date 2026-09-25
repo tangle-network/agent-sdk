@@ -21,7 +21,7 @@
  * rules is worse than none: it names no published artifact, and a reader who
  * trusts it cannot get back to the code that produced their spans.
  */
-export const TRACE_CONTRACT_VERSION = "1.2.0";
+export const TRACE_CONTRACT_VERSION = "1.3.0";
 
 /**
  * OpenInference span kinds, carried both as the optional `kind` field and as the
