@@ -1,5 +1,12 @@
 # @tangle-network/agent-core
 
+## 0.10.1
+
+### Patch Changes
+
+- Updated dependencies [3a7eddb]
+  - @tangle-network/agent-trace-contract@2.0.0
+
 ## 0.10.0
 
 ### Minor Changes
