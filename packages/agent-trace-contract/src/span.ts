@@ -15,13 +15,13 @@
  * export so a consumer reading it years later can look the shape up instead of
  * guessing at it.
  *
- * It is EQUAL to the npm version of `@tangle-network/agent-trace-contract`, and
- * a test asserts that equality against `package.json`, so bumping one without
- * the other fails the suite. A second version number that moves on its own
+ * It is EQUAL to the npm version of `@tangle-network/agent-trace-contract`:
+ * `pnpm changeset:version` rewrites it from `package.json`, and
+ * `pnpm check:control-artifacts` fails CI when the two differ. A second version number that moves on its own
  * rules is worse than none: it names no published artifact, and a reader who
  * trusts it cannot get back to the code that produced their spans.
  */
-export const TRACE_CONTRACT_VERSION = "1.0.2";
+export const TRACE_CONTRACT_VERSION = "1.1.0";
 
 /**
  * OpenInference span kinds, carried both as the optional `kind` field and as the

@@ -3,11 +3,15 @@
  *
  * A conforming producer declares the kind, and a declared kind always wins. But
  * the point of this package is to read traces from systems that never heard of
- * it, so an undeclared span is classified from the same signals
- * `@tangle-network/agent-eval` uses — tool-name attribute, model/token
- * attributes, and the operation-name conventions — which keeps the two
- * classifiers agreeing on a foreign trace instead of producing two different
- * tool counts for the same file.
+ * it, so an undeclared span is classified from, in order: a tool-name
+ * attribute, the OpenTelemetry GenAI `gen_ai.operation.name`, then model/token
+ * attributes and LLM-looking names.
+ *
+ * The operation name is read BEFORE model and tokens because an agent or
+ * workflow span routinely carries the token total of every model call beneath
+ * it. Reading that span as an LLM call counts the same tokens twice. A real
+ * agent-runtime export measured 3.00x its provider-reported tokens that way
+ * (README, "GenAI operation mapping").
  *
  * Inference is deliberately conservative: everything unrecognised is `UNKNOWN`,
  * never a guessed `LLM`, because a wrongly-typed span silently changes token and
@@ -20,6 +24,7 @@ import {
   firstStringAttr,
   INPUT_TOKEN_ATTR_KEYS,
   MODEL_ATTR_KEYS,
+  OPERATION_NAME_ATTR,
   OUTPUT_TOKEN_ATTR_KEYS,
   readProperty,
   SPAN_KIND_ATTR_KEYS,
@@ -34,6 +39,72 @@ const KIND_BY_NAME = new Map<string, SpanKind>(
 const TOOL_NAME_PATTERN = /^(?:function|tool)[.:/]/i;
 const LLM_NAME_PATTERN =
   /(?:^|[.:/_-])(?:chat[._-]?completions?|llm)(?:$|[.:/_-])/i;
+
+/**
+ * The OpenTelemetry GenAI semantic-conventions release the operation mapping is
+ * pinned to. v1.41.0 is the last release that carried the GenAI registry; v1.42.0
+ * moved it to `open-telemetry/semantic-conventions-genai`, which has no release
+ * yet. An operation name added after this pin maps to `UNKNOWN` with loss
+ * `unsupported` until the pin moves.
+ */
+export const GEN_AI_SEMCONV_VERSION = "1.41.0";
+
+/**
+ * What mapping an operation onto a contract kind loses.
+ *
+ * - `none` — the kind says everything the operation said.
+ * - `kind-degraded` — the contract has no kind for the operation, so the span
+ *   reads as the nearest kind and `lost` says what that costs.
+ * - `unsupported` — the operation is not in the pinned semconv release.
+ */
+export type MappingLoss = "none" | "kind-degraded" | "unsupported";
+
+/** One row of the published operation mapping. */
+export interface GenAiOperationMapping {
+  operation: string;
+  kind: SpanKind;
+  loss: MappingLoss;
+  /** What a reader of the contract kind can no longer tell. Present unless `loss` is `none`. */
+  lost?: string;
+}
+
+/**
+ * Every `gen_ai.operation.name` value in semconv {@link GEN_AI_SEMCONV_VERSION}
+ * and the contract kind it maps to. The README renders this table.
+ */
+export const GEN_AI_OPERATION_MAPPINGS: readonly GenAiOperationMapping[] =
+  Object.freeze(
+    [
+      { operation: "chat", kind: "LLM", loss: "none" },
+      { operation: "generate_content", kind: "LLM", loss: "none" },
+      { operation: "text_completion", kind: "LLM", loss: "none" },
+      { operation: "execute_tool", kind: "TOOL", loss: "none" },
+      { operation: "invoke_agent", kind: "AGENT", loss: "none" },
+      {
+        operation: "create_agent",
+        kind: "AGENT",
+        loss: "kind-degraded",
+        lost: "creating an agent reads as running one",
+      },
+      {
+        operation: "invoke_workflow",
+        kind: "CHAIN",
+        loss: "kind-degraded",
+        lost: "the contract has no workflow kind, so the workflow reads as one CHAIN step",
+      },
+      { operation: "retrieval", kind: "RETRIEVER", loss: "none" },
+      {
+        operation: "embeddings",
+        kind: "UNKNOWN",
+        loss: "kind-degraded",
+        lost: "the contract has no embedding kind, so its tokens stay out of LLM totals",
+      },
+    ].map((row) => Object.freeze(row as GenAiOperationMapping)),
+  );
+
+const MAPPING_BY_OPERATION = new Map(
+  GEN_AI_OPERATION_MAPPINGS.map((row) => [row.operation, row]),
+);
 
 /** What a producer DECLARED, and whether the contract recognises it. */
 export interface DeclaredSpanKind {
@@ -60,14 +131,25 @@ export function declaredSpanKind(span: unknown): DeclaredSpanKind {
   return { raw: declared, kind: KIND_BY_NAME.get(declared.toUpperCase()) ?? null };
 }
 
+/** A span's kind, plus what the operation mapping lost when one decided it. */
+export interface SpanClassification {
+  kind: SpanKind;
+  /**
+   * Set when an undeclared span's kind came from a `gen_ai.operation.name` that
+   * maps with loss. A declared kind never carries one: the producer chose it.
+   */
+  operationLoss?: GenAiOperationMapping;
+}
+
 /**
- * The kind to analyse a span as: declared if recognised, else inferred from its
- * attributes and name, else `UNKNOWN`. Never throws, on any input.
+ * Classify a span: declared if recognised, else inferred, else `UNKNOWN`, with
+ * the operation-mapping loss when the operation name decided it. Never throws,
+ * on any input.
  */
-export function resolveSpanKind(span: unknown): SpanKind {
-  if (span === null || typeof span !== "object") return "UNKNOWN";
+export function classifySpan(span: unknown): SpanClassification {
+  if (span === null || typeof span !== "object") return { kind: "UNKNOWN" };
   const declared = declaredSpanKind(span);
-  if (declared.kind !== null) return declared.kind;
+  if (declared.kind !== null) return { kind: declared.kind };
 
   const attributes = attributeBag(readProperty(span, "attributes"));
   const rawName = readProperty(span, "name");
@@ -77,18 +159,38 @@ export function resolveSpanKind(span: unknown): SpanKind {
     firstStringAttr(attributes, TOOL_NAME_ATTR_KEYS) !== undefined ||
     TOOL_NAME_PATTERN.test(name)
   ) {
-    return "TOOL";
+    return { kind: "TOOL" };
+  }
+
+  const operation = firstStringAttr(attributes, [OPERATION_NAME_ATTR]);
+  if (operation !== undefined) {
+    const mapping = MAPPING_BY_OPERATION.get(operation) ?? {
+      operation,
+      kind: "UNKNOWN",
+      loss: "unsupported",
+      lost: `semconv ${GEN_AI_SEMCONV_VERSION} does not define this operation`,
+    };
+    return mapping.loss === "none"
+      ? { kind: mapping.kind }
+      : { kind: mapping.kind, operationLoss: mapping };
   }
 
   if (
     firstStringAttr(attributes, MODEL_ATTR_KEYS) !== undefined ||
     firstNumberAttr(attributes, INPUT_TOKEN_ATTR_KEYS) !== undefined ||
     firstNumberAttr(attributes, OUTPUT_TOKEN_ATTR_KEYS) !== undefined ||
-    typeof readProperty(attributes, "gen_ai.operation.name") === "string" ||
     LLM_NAME_PATTERN.test(name)
   ) {
-    return "LLM";
+    return { kind: "LLM" };
   }
 
-  return "UNKNOWN";
+  return { kind: "UNKNOWN" };
+}
+
+/**
+ * The kind to analyse a span as. The same answer as {@link classifySpan}
+ * without the loss detail. Never throws, on any input.
+ */
+export function resolveSpanKind(span: unknown): SpanKind {
+  return classifySpan(span).kind;
 }

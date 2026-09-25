@@ -61,10 +61,17 @@ import {
   LINK_KIND_ATTR,
   MODEL_ATTR_KEYS,
   OUTPUT_TOKEN_ATTR_KEYS,
+  PARENT_CONFIDENCES,
+  type ParentConfidence,
   readProperty,
   TOOL_NAME_ATTR_KEYS,
 } from "./attributes.js";
-import { declaredSpanKind, resolveSpanKind } from "./classify.js";
+import {
+  classifySpan,
+  declaredSpanKind,
+  GEN_AI_SEMCONV_VERSION,
+  type GenAiOperationMapping,
+} from "./classify.js";
 import {
   isW3CSpanId,
   isW3CTraceId,
@@ -116,6 +123,8 @@ export type FindingCode =
   | "negative-duration"
   | "invalid-status"
   | "unknown-span-kind"
+  | "gen-ai-operation-loss"
+  | "heuristic-parent"
   | "missing-model"
   | "no-usage"
   | "missing-tool-name"
@@ -160,6 +169,16 @@ export interface Capability {
   reason?: string;
 }
 
+/**
+ * How every parent edge in the trace was chosen, by {@link ATTR.parentConfidence}.
+ * Counts spans with a `parent_span_id`. `undeclared` edges carry no confidence
+ * attribute; `unrecognized` edges carry a value outside {@link PARENT_CONFIDENCES}.
+ */
+export type ParentLinkBreakdown = Record<
+  ParentConfidence | "undeclared" | "unrecognized",
+  number
+>;
+
 export interface TraceValidation {
   /**
    * True when the input is a trace: at least one span was readable, so an
@@ -171,6 +190,7 @@ export interface TraceValidation {
   ok: boolean;
   findings: ConformanceFinding[];
   capabilities: Capability[];
+  parentLinks: ParentLinkBreakdown;
 }
 
 /** A capability plus the findings that explain it, when it is unavailable. */
@@ -197,6 +217,7 @@ interface SpanView {
   parentSpanId: string | null;
   name: string | null;
   kind: SpanKind;
+  operationLoss: GenAiOperationMapping | undefined;
   declaredRaw: string | null;
   declaredKnown: boolean;
   startTime: string | null;
@@ -271,6 +292,7 @@ export function validateTraceSpans(
         "invalid-input",
       ]),
       false,
+      parentLinkBreakdown([]),
     );
   }
   // Even the array is read defensively: `Array.isArray` is true for a Proxy over
@@ -291,6 +313,7 @@ export function validateTraceSpans(
       ],
       unavailableCapabilities("the export contains no spans", ["no-spans"]),
       false,
+      parentLinkBreakdown([]),
     );
   }
 
@@ -353,6 +376,7 @@ export function validateTraceSpans(
         "invalid-span",
       ]),
       false,
+      parentLinkBreakdown([]),
     );
   }
 
@@ -578,6 +602,38 @@ export function validateTraceSpans(
     );
   }
 
+  const lossyViews = views.filter((view) => view.operationLoss !== undefined);
+  if (lossyViews.length > 0) {
+    const mappings = [
+      ...new Set(
+        lossyViews.map((view) => {
+          const loss = view.operationLoss as GenAiOperationMapping;
+          return `${loss.operation} -> ${loss.kind}`;
+        }),
+      ),
+    ];
+    findings.push(
+      finding(
+        "gen-ai-operation-loss",
+        "info",
+        `${lossyViews.length} spans carry a gen_ai.operation.name that maps onto the contract with loss under OTel GenAI semconv ${GEN_AI_SEMCONV_VERSION} (${sample(mappings)}), so an analysis by span kind reads them as the kind shown and loses what the operation meant`,
+        lossyViews.map((view) => view.spanId),
+      ),
+    );
+  }
+
+  const parentLinks = parentLinkBreakdown(views);
+  if (parentLinks.heuristic > 0) {
+    findings.push(
+      finding(
+        "heuristic-parent",
+        "info",
+        `${parentLinks.heuristic} parent edges were inferred by heuristic (${ATTR.parentConfidence} = heuristic), so tree walks and cost roll-ups through them are probable, not recorded`,
+        idsOf(views, (view) => view.parentSpanId !== null && parentConfidenceOf(view) === "heuristic"),
+      ),
+    );
+  }
+
   const llmViews = views.filter((view) => view.kind === "LLM");
   const toolViews = views.filter((view) => view.kind === "TOOL");
 
@@ -682,7 +738,30 @@ export function validateTraceSpans(
     linkCount,
     resolvedLinkCount,
   });
-  return assemble(findings, capabilities, views.length > 0);
+  return assemble(findings, capabilities, views.length > 0, parentLinks);
+}
+
+function parentConfidenceOf(view: SpanView): ParentConfidence | "undeclared" | "unrecognized" {
+  const value = readProperty(view.attributes, ATTR.parentConfidence);
+  if (value === undefined) return "undeclared";
+  return PARENT_CONFIDENCES.includes(value as ParentConfidence)
+    ? (value as ParentConfidence)
+    : "unrecognized";
+}
+
+function parentLinkBreakdown(views: readonly SpanView[]): ParentLinkBreakdown {
+  const breakdown: ParentLinkBreakdown = {
+    explicit: 0,
+    correlated: 0,
+    heuristic: 0,
+    unknown: 0,
+    undeclared: 0,
+    unrecognized: 0,
+  };
+  for (const view of views) {
+    if (view.parentSpanId !== null) breakdown[parentConfidenceOf(view)] += 1;
+  }
+  return breakdown;
 }
 
 interface CapabilityInput {
@@ -1002,6 +1081,7 @@ function assemble(
   findings: ConformanceFinding[],
   assessments: CapabilityAssessment[],
   analysable: boolean,
+  parentLinks: ParentLinkBreakdown,
 ): TraceValidation {
   // Invert cause -> capability into finding -> blocks. A capability lost for a
   // reason no finding describes simply blames nobody.
@@ -1031,6 +1111,7 @@ function assemble(
     ok: analysable && findings.every((entry) => entry.severity !== "error"),
     findings,
     capabilities: assessments.map((assessment) => assessment.capability),
+    parentLinks,
   };
 }
 
@@ -1046,6 +1127,7 @@ function readSpan(raw: unknown): SpanView | null {
   if (spanId === null) return null;
 
   const declared = declaredSpanKind(raw);
+  const classification = classifySpan(raw);
   const startTime = readProperty(raw, "start_time");
   const endTime = readProperty(raw, "end_time");
   const statusCode = statusCodeOf(readProperty(raw, "status"));
@@ -1055,7 +1137,8 @@ function readSpan(raw: unknown): SpanView | null {
     traceId: nonEmptyString(readProperty(raw, "trace_id")),
     parentSpanId: nonEmptyString(readProperty(raw, "parent_span_id")),
     name: nonEmptyString(readProperty(raw, "name")),
-    kind: resolveSpanKind(raw),
+    kind: classification.kind,
+    operationLoss: classification.operationLoss,
     declaredRaw: declared.raw,
     declaredKnown: declared.kind !== null,
     startTime: nonEmptyString(startTime),

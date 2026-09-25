@@ -58,12 +58,21 @@ The rule for every one of them: **use the standard name wherever a standard exis
 | `agent.branch.arm` | `ATTR.branchArm` | tree arm | Readable name, e.g. `with-search` |
 | `agent.outcome` | `ATTR.outcome` | graded span | `pass` · `fail` · `error` |
 | `agent.outcome.score` | `ATTR.score` | graded span | Numeric grade |
+| `agent.parent.confidence` | `ATTR.parentConfidence` | child span | How `parent_span_id` was chosen: `explicit` · `correlated` · `heuristic` · `unknown` |
+| `agent.operation.id` | `ATTR.operationId` | retried work | One logical operation, shared by every attempt |
+| `agent.operation.attempt_id` | `ATTR.attemptId` | retried work | This attempt |
+| `agent.operation.idempotency_key` | `ATTR.idempotencyKey` | retried work | The key the target deduplicates on |
+| `agent.operation.side_effect` | `ATTR.sideEffect` | retried work | `read` (a retry is safe) · `write` (a retry needs the idempotency key) |
 | `agent.link.kind` | `LINK_KIND_ATTR` | **link** | `steered_by` · `graded_by` · `retry_of` |
 
 An attribute is **absent**, never a placeholder.
 A synthesized `0` token count or `""` model reads downstream as "this call was free" rather than "this was not measured", and no consumer can tell the difference after the fact.
 
-Readers should use the candidate lists — `MODEL_ATTR_KEYS`, `INPUT_TOKEN_ATTR_KEYS`, `OUTPUT_TOKEN_ATTR_KEYS`, `COST_ATTR_KEYS`, `TOOL_NAME_ATTR_KEYS`, `SPAN_KIND_ATTR_KEYS` — which also accept the spellings OpenInference, Langfuse and older producers use for the same field, so a foreign trace still yields numbers.
+Readers should use the candidate lists — `MODEL_ATTR_KEYS`, `INPUT_TOKEN_ATTR_KEYS`, `OUTPUT_TOKEN_ATTR_KEYS`, `CACHE_READ_TOKEN_ATTR_KEYS`, `CACHE_WRITE_TOKEN_ATTR_KEYS`, `REASONING_TOKEN_ATTR_KEYS`, `COST_ATTR_KEYS`, `TOOL_NAME_ATTR_KEYS`, `SPAN_KIND_ATTR_KEYS` — which also accept the spellings OpenInference, Langfuse and older producers use for the same field, so a foreign trace still yields numbers.
+This package owns these names; `@tangle-network/agent-core/telemetry` and `@tangle-network/agent-eval` import them instead of keeping their own lists.
+
+A producer that attaches a child by timing or order, not by a recorded id, sets `agent.parent.confidence: heuristic`.
+The validator then reports the edge as `heuristic-parent`, and `parentLinks` counts every parent edge by confidence.
 
 ## Ids
 
@@ -142,7 +151,7 @@ Each span is already the OTLP JSON encoding, so it can go straight to a collecto
 ## Find out what a trace can answer
 
 ```ts
-const { ok, findings, capabilities } = validateTraceSpans(spans)
+const { ok, findings, capabilities, parentLinks } = validateTraceSpans(spans)
 ```
 
 `validateTraceSpans` **never throws**, on any input.
@@ -223,6 +232,8 @@ Severity says what the finding means for the INPUT, not how bad it is: `error` i
 | `missing-tool-name` | warn | The tool breakdown cannot say which tool ran |
 | `dangling-link` | warn | The steering chain breaks; causality cannot be followed past it |
 | `unknown-span-kind` | info | Analysed as `UNKNOWN`, left out of LLM and tool breakdowns |
+| `gen-ai-operation-loss` | info | The span's `gen_ai.operation.name` maps onto a contract kind with loss (see the mapping table) |
+| `heuristic-parent` | info | Parent edges inferred from timing or order; tree walks and roll-ups through them are probable, not recorded |
 | `redeclared-span` | info | An id was declared twice, identically; the copies were merged and counted once |
 
 A finding's `blocks` lists capability names, and it is **derived, not guessed**: each unavailable capability names the findings that caused it, and `blocks` is that map inverted.
@@ -251,8 +262,35 @@ Copies that report the SAME tokens leave the token total exactly right however e
 
 **`resolveSpanKind(span)` is THE classifier. Call it; do not write a second one.**
 
-It answers "what is this span" for any span: a declared kind wins, otherwise the kind is inferred from tool-name, model and token attributes and from operation-name conventions, otherwise `UNKNOWN`.
+It answers "what is this span" for any span: a declared kind wins; otherwise a tool-name attribute means `TOOL`; otherwise `gen_ai.operation.name` decides through the mapping below; otherwise model and token attributes or an LLM-looking name mean `LLM`; otherwise `UNKNOWN`.
 Inference is deliberately conservative — a wrongly-typed span silently changes token and cost breakdowns while looking perfectly healthy.
+`classifySpan(span)` returns the same kind plus `operationLoss` when the operation mapping lost meaning.
+
+### GenAI operation mapping
+
+The operation name is read before model and tokens, because an agent or workflow span carries the token total of the model calls beneath it.
+Before this rule, every span with any `gen_ai.operation.name` read as `LLM`.
+A real agent-runtime export (two real model calls through the Tangle router, 46 input tokens) then summed to 138 LLM input tokens: 3.00x.
+The two `invoke_agent` iteration spans added one full extra copy; the undeclared run span added the other.
+
+The mapping is pinned to OpenTelemetry GenAI semantic conventions `GEN_AI_SEMCONV_VERSION` = **1.41.0**, the last release that carried the GenAI registry (v1.42.0 moved it to `open-telemetry/semantic-conventions-genai`, which has no release yet).
+`GEN_AI_OPERATION_MAPPINGS` is this table as data.
+
+| `gen_ai.operation.name` | Kind | Loss | What the kind cannot say |
+| --- | --- | --- | --- |
+| `chat` | `LLM` | none | |
+| `generate_content` | `LLM` | none | |
+| `text_completion` | `LLM` | none | |
+| `execute_tool` | `TOOL` | none | |
+| `invoke_agent` | `AGENT` | none | |
+| `create_agent` | `AGENT` | kind-degraded | Creating an agent reads as running one |
+| `invoke_workflow` | `CHAIN` | kind-degraded | No workflow kind; the workflow reads as one CHAIN step |
+| `retrieval` | `RETRIEVER` | none | |
+| `embeddings` | `UNKNOWN` | kind-degraded | No embedding kind; its tokens stay out of LLM totals |
+| anything else | `UNKNOWN` | unsupported | Not defined in the pinned release |
+
+Every lossy mapping is reported as a `gen-ai-operation-loss` finding.
+A declared `openinference.span.kind` always wins, so a producer avoids the loss by declaring the kind.
 
 A second classifier that disagrees is not a duplication smell, it is a data-losing bug: two tools then report a different tool count, a different token total and a different cost for the same file, and both numbers look healthy.
 Its behaviour is load-bearing for every consumer in this stack, which is why it is exported first and why `@tangle-network/agent-eval` reads the same candidate key sets.
@@ -265,7 +303,7 @@ A producer emitting protobuf `startTimeUnixNano` should convert before validatin
 
 ## Versioning
 
-`TRACE_CONTRACT_VERSION` equals the npm version of this package, and a test asserts the equality against `package.json`, so bumping one without the other fails the suite.
+`TRACE_CONTRACT_VERSION` equals the npm version of this package: `pnpm changeset:version` rewrites it from `package.json`, and `pnpm check:control-artifacts` fails CI when the two differ.
 Stamp it into an export and a consumer reading that export later can look up the exact release whose span shape, attribute vocabulary and validator verdict it was written against.
 A second version number moving on its own rules would name no published artifact, which is worse than none, because a reader trusts it.
 
