@@ -3,7 +3,7 @@
 "@tangle-network/agent-core": minor
 ---
 
-Classify spans by `gen_ai.operation.name` before model and token attributes, pinned to OTel GenAI semconv 1.41.0: `invoke_agent` is AGENT, `invoke_workflow` is CHAIN, `execute_tool` is TOOL, `retrieval` is RETRIEVER, and only `chat`, `generate_content` and `text_completion` are LLM. An agent or workflow span no longer counts its children's tokens a second time. `classifySpan` and `GEN_AI_OPERATION_MAPPINGS` publish what each mapping loses, and the validator reports it as `gen-ai-operation-loss`.
+Classify spans by `gen_ai.operation.name` before model and token attributes, pinned to OTel GenAI semconv 1.41.0: `invoke_agent` is AGENT, `invoke_workflow` is CHAIN, `execute_tool` is TOOL, `retrieval` is RETRIEVER, and only `chat`, `generate_content` and `text_completion` are LLM. Token counts alone no longer make an undeclared span `LLM`; it needs a model attribute or an LLM-looking name. An agent or workflow span no longer counts its children's tokens a second time. `classifySpan` and `GEN_AI_OPERATION_MAPPINGS` publish what each mapping loses, and the validator reports it as `gen-ai-operation-loss`.
 
 `SpanKind` is now the full OpenInference vocabulary (adds `EMBEDDING`, `RERANKER`, `GUARDRAIL`, `PROMPT`), so `embeddings` maps without loss and a declared OpenInference kind is never reported as unknown. An OTLP span kind in a row's `kind` field (`SPAN_KIND_INTERNAL`) no longer hides its `openinference.span.kind` attribute.
 
