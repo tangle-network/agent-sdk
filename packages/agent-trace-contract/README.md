@@ -11,6 +11,39 @@ It is the `api` half of the api/sdk split OpenTelemetry itself makes.
 npm install @tangle-network/agent-trace-contract
 ```
 
+## Where this fits
+
+This package holds only the **contract**: span shape, attribute names, the classifier, and the validator. It has no opinion on how a trace is produced or judged.
+
+- [`@tangle-network/agent-runtime`](https://github.com/tangle-network/agent-runtime) runs agents and emits spans against this contract.
+- [`@tangle-network/agent-eval`](https://github.com/tangle-network/agent-eval) owns evaluation, scoring, and the shared trace-analysis core, built on top of this contract's classifier and attribute keys.
+- [`@tangle-network/traces`](https://github.com/tangle-network/traces) is the CLI and agent-facing surface: `traces check`, `traces diff`, `traces facts`, and an MCP server, all reading traces through this contract.
+- This package (`agent-trace-contract`) is upstream of all three and depends on none of them — zero runtime dependencies is what keeps that direction one-way.
+
+## For agents working in this package
+
+**Entry points**, in the order a new consumer needs them:
+
+1. `resolveSpanKind(span)` to classify any span — never write a second classifier (see [Reading traces you did not write](#reading-traces-you-did-not-write)).
+2. `llmSpan` / `toolSpan` / `loopSpan` / `branchSpan` / `contractSpan` to emit conforming spans, plus `deriveHexId` for ids.
+3. `validateTraceSpans(spans)` to check what a trace export can answer before trusting it.
+4. The `ATTR` map and the `*_ATTR_KEYS` candidate lists (`MODEL_ATTR_KEYS`, `INPUT_TOKEN_ATTR_KEYS`, …) to read attributes — never hardcode a key string.
+
+**Invariants a change here must preserve:**
+
+- Zero runtime dependencies. A dependency here becomes a dependency for every emitter and every reader in the org.
+- Builders are pure: no `Date.now()`, no randomness, no I/O. A builder that called the clock could not replay a recorded trace against the exact timestamps the producer already measured.
+- An attribute is absent, never a placeholder. A synthesized `0` or `""` reads downstream as "measured and free/empty," which a real consumer cannot distinguish from "not measured."
+- `validateTraceSpans` never throws, on any input. A tool that crashes on a foreign or malformed trace is useless for reading arbitrary AI systems.
+- `TRACE_CONTRACT_VERSION` tracks `package.json`'s version exactly; `pnpm check:control-artifacts` fails CI when they differ.
+
+**What not to do:**
+
+- Do not write a second span classifier, or duplicate the operation-name → kind mapping. Import `resolveSpanKind` / `classifySpan` / `GEN_AI_OPERATION_MAPPINGS` instead — see the [GenAI operation mapping](#genai-operation-mapping) table for why a second classifier silently corrupts token and cost totals.
+- Do not add a new `agent.*` attribute when a standard OpenTelemetry GenAI or OpenInference name already exists for the concept; namespace under `agent.*` only when no standard name does.
+- Do not bump `GEN_AI_SEMCONV_VERSION` without updating the mapping table and its `Loss` column together — the pin and the table are one artifact.
+- Do not add a runtime dependency to make an emitter or a reader more convenient; put that logic in the consuming package instead.
+
 ## The shape of an agent trace
 
 An agent run is a tree with two different kinds of edge, and conflating them is the single most common way a trace becomes unreadable.
