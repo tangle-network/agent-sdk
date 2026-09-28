@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 1.1.1
+
+### Patch Changes
+
+- 8c66bb7: Update runtime dependencies to their latest releases: zod 4.6.5 and undici 8.11.2. The Daytona provider's optional `@daytonaio/sdk` peer range now admits every 0.x release from 0.192.0, including the current 0.218.0.
+- Updated dependencies [8c66bb7]
+  - @tangle-network/agent-interface@2.13.1
+
 ## 1.1.0
 
 ### Minor Changes
