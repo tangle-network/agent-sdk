@@ -7,6 +7,7 @@ import type {
   AgentCandidateGitHubResource,
   AgentCandidateInlineResource,
   AgentCandidateIpfsLocator,
+  AgentCandidatePrivateCasLocator,
   AgentCandidateResourceRef,
   AgentCandidateResources,
   AgentCandidateS3Locator,
@@ -28,6 +29,7 @@ const base64Alphabet =
 const s3BucketPattern = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const awsRegionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
 const ipfsCidPattern = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
+const privateCasNamespacePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function decodedBase64ByteLength(value: string): number {
   if (value.length === 0) return 0;
@@ -102,9 +104,17 @@ export const agentCandidateIpfsLocatorSchema = z
   })
   .strict() satisfies z.ZodType<AgentCandidateIpfsLocator>;
 
+export const agentCandidatePrivateCasLocatorSchema = z
+  .object({
+    kind: z.literal("private-cas"),
+    namespace: z.string().regex(privateCasNamespacePattern).refine((value) => value !== "." && value !== ".."),
+    digest: sha256DigestSchema,
+  })
+  .strict() satisfies z.ZodType<AgentCandidatePrivateCasLocator>;
+
 export const agentCandidateArtifactLocatorSchema = z.discriminatedUnion(
   "kind",
-  [agentCandidateS3LocatorSchema, agentCandidateIpfsLocatorSchema],
+  [agentCandidateS3LocatorSchema, agentCandidateIpfsLocatorSchema, agentCandidatePrivateCasLocatorSchema],
 );
 
 export const agentCandidateArtifactRefSchema = z
@@ -113,7 +123,16 @@ export const agentCandidateArtifactRefSchema = z
     sha256: sha256DigestSchema,
     byteLength: z.number().int().nonnegative(),
   })
-  .strict() satisfies z.ZodType<AgentCandidateArtifactRef>;
+  .strict()
+  .superRefine((artifact, ctx) => {
+    if (artifact.locator.kind === "private-cas" && artifact.locator.digest !== artifact.sha256) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["locator", "digest"],
+        message: "private CAS locator digest must match artifact hash",
+      });
+    }
+  }) satisfies z.ZodType<AgentCandidateArtifactRef>;
 
 export const agentCandidateEmbeddedArtifactSchema = z
   .object({

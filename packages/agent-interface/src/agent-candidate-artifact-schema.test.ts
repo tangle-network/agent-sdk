@@ -51,6 +51,25 @@ describe("candidate artifact schemas", () => {
     }
   });
 
+  it("binds private trace locators to a fixed namespace and the artifact digest", () => {
+    expect(() => agentCandidateArtifactRefSchema.parse({
+      locator: { kind: "private-cas", namespace: "run-123", digest: candidateSha("1") },
+      sha256: candidateSha("1"),
+      byteLength: 42,
+    })).not.toThrow();
+    for (const locator of [
+      { kind: "private-cas", namespace: "../../etc", digest: candidateSha("1") },
+      { kind: "private-cas", namespace: "run-123", digest: candidateSha("2") },
+      { kind: "private-cas", namespace: "run-123", digest: "file:///etc/passwd" },
+    ]) {
+      expect(() => agentCandidateArtifactRefSchema.parse({
+        locator,
+        sha256: candidateSha("1"),
+        byteLength: 42,
+      })).toThrow();
+    }
+  });
+
   it("rejects traversal-shaped artifact keys and reserved roots", () => {
     for (const key of [
       "../secret",
