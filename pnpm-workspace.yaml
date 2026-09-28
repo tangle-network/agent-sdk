@@ -18,3 +18,7 @@ overrides:
 # tracks their newest versions as soon as they publish.
 minimumReleaseAgeExclude:
   - "@tangle-network/*"
+# protobufjs (via the Daytona SDK's OpenTelemetry exporters) runs a postinstall
+# that only checks its optional CLI's dependencies; nothing here uses that CLI.
+allowBuilds:
+  protobufjs: false
