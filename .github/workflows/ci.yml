@@ -19,6 +19,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Release runs the artifact checks with this exact npm. Run them with the
+      # same npm here so a pull request cannot pass CI and then fail at release.
+      - run: |
+          npm install -g npm@12.1.0
+          test "$(npm --version)" = "12.1.0"
       - run: pnpm -r build
       - run: pnpm -r check-types
       - run: pnpm -r test

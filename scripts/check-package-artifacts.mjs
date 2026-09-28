@@ -518,7 +518,9 @@ try {
       ],
       { cwd: consumerDirectory, env: npmEnvironment },
     );
-    const result = Array.isArray(packed) ? packed[0] : packed;
+    // npm 10 and 11 print an array of pack results; npm 12 prints an object
+    // keyed by package name.
+    const result = Array.isArray(packed) ? packed[0] : packed?.[manifest.name];
     if (!result || !existsSync(join(repackedTarballs, result.filename))) {
       throw new Error(`failed to repack ${entry.manifest.name}`);
     }
