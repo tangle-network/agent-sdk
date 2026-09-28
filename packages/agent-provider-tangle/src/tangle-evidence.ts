@@ -22,7 +22,7 @@ export interface TangleEnvironmentEvidence {
     environmentId: string;
     workspaceRoot: ".";
     capturedAt: string;
-    excludedPaths: Array<{ path: string; reason: "credential-path" | "symlink" }>;
+    excludedPaths: Array<{ path: string; reason: "credential-path" | "symlink" | "runtime-owned"; type: "file" | "directory" | "symlink"; sizeBytes: number; mode: number }>;
     workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: true };
     sessions: Array<{ id: string; executionId: string; transportEvents: "complete" | "unavailable"; eventCount: number; messageCount: number; messageScope: "session"; nativeRollout: "unavailable" }>;
     missing: string[];
@@ -78,11 +78,14 @@ export async function captureTangleEnvironmentEvidence(
       if (expectedParent !== directory || entry.name !== path.split("/").at(-1)) throw new Error("Tangle workspace list returned a path outside its parent");
       if (!Number.isSafeInteger(entry.size) || entry.size < 0) throw new Error("Tangle workspace entry has invalid size");
       if (path.split("/").includes(".sidecar")) {
-        excludedPaths.push({ path, reason: "credential-path" });
+        excludedPaths.push({ path, reason: "runtime-owned", type: entry.isDir ? "directory" : entry.isSymlink ? "symlink" : "file", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
         continue;
       }
       if (entry.isDir && !entry.isSymlink) {
         scannedDirectories++;
+        if (path.split("/").some((part) => blockedNames.has(part))) {
+          excludedPaths.push({ path, reason: "credential-path", type: "directory", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
+        }
         stack.push(path);
         continue;
       }
@@ -90,11 +93,11 @@ export async function captureTangleEnvironmentEvidence(
       scannedFiles++;
       scannedSize += entry.size;
       if (entry.isSymlink) {
-        excludedPaths.push({ path, reason: "symlink" });
+        excludedPaths.push({ path, reason: "symlink", type: "symlink", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
         continue;
       }
       if (path.split("/").some((part) => blockedNames.has(part) || /^\.env\./.test(part))) {
-        excludedPaths.push({ path, reason: "credential-path" });
+        excludedPaths.push({ path, reason: "credential-path", type: "file", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
         continue;
       }
       const result = await fs.readBatch([path], { encoding: "base64" });
