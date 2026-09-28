@@ -40,7 +40,7 @@ export interface TangleEnvironmentEvidence {
     entries: WorkspaceEntryMetadata[];
     excludedPaths: Array<WorkspaceEntryMetadata & { reason: "credential-path" | "symlink" | "runtime-owned" }>;
     workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: true };
-    sessions: Array<{ id: string; executionId: string; transportEvents: "complete" | "unavailable"; eventCount: number; messageCount: number; messageScope: "session"; nativeRollout: "unavailable" }>;
+    sessions: Array<{ id: string; executionId: string; transportEvents: "complete" | "unavailable"; eventCount: number; messageCount: number; messageScope: "session"; nativeRollout: "complete" | "unavailable"; nativeSessionId: string | null; nativeReason: string | null; nativeSha256: string | null; nativeBytes: number | null }>;
     missing: string[];
   };
 }
@@ -189,9 +189,42 @@ export async function captureTangleEnvironmentEvidence(
     if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
     capturedBytes = files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength;
     files.push({ path: `__retention__/sessions/${id}.json`, bytes, mode: 0o600 });
-    sessions.push({ id, executionId: options.executionId, transportEvents: events.length ? "complete" : "unavailable", eventCount: events.length, messageCount: messages.length, messageScope: "session", nativeRollout: "unavailable" });
+    const rollout = await session.nativeRollout?.();
+    let nativeRollout: "complete" | "unavailable" = "unavailable";
+    let nativeSessionId: string | null = null;
+    let nativeReason: string | null = "native-export-capability-absent";
+    let nativeSha256: string | null = null;
+    let nativeBytes: number | null = null;
+    if (rollout !== undefined) {
+      if (rollout.sessionId !== id) throw new Error("Tangle native rollout returned an unrelated session");
+      if (rollout.status === "captured") {
+        if (rollout.backendType !== "opencode" || rollout.format !== "opencode-session-export-json" || !safeIdentifier(rollout.nativeSessionId)) {
+          throw new Error("Tangle native rollout identity or format is invalid");
+        }
+        const native = Buffer.from(rollout.contentBase64, "base64");
+        const digest = `sha256:${createHash("sha256").update(native).digest("hex")}`;
+        if (native.byteLength !== rollout.sizeBytes || native.toString("base64") !== rollout.contentBase64 || digest !== rollout.sha256) {
+          throw new Error("Tangle native rollout bytes do not match the server receipt");
+        }
+        const decoded: unknown = JSON.parse(native.toString("utf8"));
+        if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("Tangle native rollout is not a JSON object");
+        if (capturedBytes + native.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
+        files.push({ path: `__retention__/sessions/${id}.native.json`, bytes: native, mode: 0o600 });
+        capturedBytes += native.byteLength;
+        nativeRollout = "complete";
+        nativeSessionId = rollout.nativeSessionId;
+        nativeReason = null;
+        nativeSha256 = digest;
+        nativeBytes = native.byteLength;
+      } else {
+        if (!safeIdentifier(rollout.reason)) throw new Error("Tangle native rollout unavailability reason is invalid");
+        nativeSessionId = rollout.nativeSessionId ?? null;
+        nativeReason = rollout.reason;
+      }
+    }
+    sessions.push({ id, executionId: options.executionId, transportEvents: events.length ? "complete" : "unavailable", eventCount: events.length, messageCount: messages.length, messageScope: "session", nativeRollout, nativeSessionId, nativeReason, nativeSha256, nativeBytes });
     if (!events.length) missing.push(`Sandbox session ${id} returned no events for execution ${options.executionId}`);
-    missing.push(`Native harness rollout for Sandbox session ${id} has no verified export path`);
+    if (nativeRollout !== "complete") missing.push(`Native harness rollout for Sandbox session ${id} is unavailable: ${nativeReason}`);
   }
   const provenance: TangleEnvironmentEvidence["provenance"] = {
     provider: environment.provider,

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike } from "./tangle-types.js";
 import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, noteTangleSession } from "./tangle-evidence.js";
 
-function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean } = {}) {
+function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const filePath = overrides.filePath ?? "notes/.finding.json";
   const content = Buffer.from([0, 1, 255]);
@@ -28,6 +29,19 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
         async status() { return { id, status: "completed" }; },
         async *events() { yield { id: "1", type: "execution.completed", data: { executionId: "exec-1" } }; },
         async messages() { return [{ id: "message-1" }]; },
+        ...(overrides.native ? { async nativeRollout() {
+          const bytes = Buffer.from('{"session":"native-1"}');
+          return {
+            status: "captured" as const,
+            sessionId: id,
+            backendType: "opencode" as const,
+            nativeSessionId: "native-1",
+            format: "opencode-session-export-json" as const,
+            sizeBytes: bytes.byteLength,
+            sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+            contentBase64: bytes.toString("base64"),
+          };
+        } } : {}),
       };
     },
   } as unknown as SandboxInstanceLike;
@@ -43,12 +57,19 @@ describe("Tangle evidence capture", () => {
     expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1.json");
     expect(evidence.provenance.workspace.complete).toBe(true);
     expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", eventCount: 1, messageCount: 1, nativeRollout: "unavailable" });
-    expect(evidence.provenance.missing).toContain("Native harness rollout for Sandbox session session-1 has no verified export path");
+    expect(evidence.provenance.missing).toContain("Native harness rollout for Sandbox session session-1 is unavailable: native-export-capability-absent");
   });
 
   it("refuses an incomplete inventory or a failed binary read", async () => {
     await expect(captureTangleEnvironmentEvidence(fixture({ complete: false }), { executionId: "exec-1", maxBytes: 100_000 })).rejects.toThrow(/incomplete/);
     await expect(captureTangleEnvironmentEvidence(fixture({ readError: true }), { executionId: "exec-1", maxBytes: 100_000 })).rejects.toThrow(/could not read/);
+  });
+
+  it("verifies and retains the exact native OpenCode export", async () => {
+    const evidence = await captureTangleEnvironmentEvidence(fixture({ native: true }), { executionId: "exec-1", maxBytes: 100_000 });
+    expect(evidence.provenance.sessions[0]).toMatchObject({ nativeRollout: "complete", nativeSessionId: "native-1" });
+    expect(evidence.provenance.missing).toEqual([]);
+    expect(evidence.files.some((file) => file.path === "__retention__/sessions/session-1.native.json")).toBe(true);
   });
 
   it("refuses a path outside the listed workspace parent", async () => {

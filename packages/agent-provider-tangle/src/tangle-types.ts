@@ -613,6 +613,25 @@ export interface SandboxInstanceLike {
 export interface SandboxSessionLike {
   readonly id: string;
   messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
+  nativeRollout?(): Promise<
+    | {
+        status: "captured";
+        sessionId: string;
+        backendType: "opencode";
+        nativeSessionId: string;
+        format: "opencode-session-export-json";
+        sizeBytes: number;
+        sha256: string;
+        contentBase64: string;
+      }
+    | {
+        status: "unavailable";
+        sessionId: string;
+        backendType: string;
+        nativeSessionId?: string;
+        reason: string;
+      }
+  >;
   /** Exact native coding-agent TUI bound to this session id. */
   interactive?(options?: {
     ref?: AgentInteractiveSessionRef;
