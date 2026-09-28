@@ -41,7 +41,7 @@ export function noteTangleSession(environment: AgentEnvironment, sessionId: stri
   state.sessions.set(sessionId, executions);
 }
 
-/** Export the complete readable customer workspace and exact attributed transport replay. */
+/** Export a reconciled customer workspace inventory and exact attributed transport replay. */
 export async function captureTangleEnvironmentEvidence(
   environment: AgentEnvironment,
   options: TangleEnvironmentEvidenceOptions,
@@ -122,6 +122,7 @@ export async function captureTangleEnvironmentEvidence(
   if (options.nativeSessionId) sessionIds.add(options.nativeSessionId);
   const sessions: TangleEnvironmentEvidence["provenance"]["sessions"] = [];
   const missing: string[] = [];
+  if (excludedPaths.length) missing.push(`Workspace omitted ${excludedPaths.length} credential paths or symlinks; inspect excludedPaths`);
   if (sessionIds.size === 0) missing.push("No exact Sandbox session id was attributed to this execution");
   for (const id of [...sessionIds].sort()) {
     const session = box.session?.(id);
