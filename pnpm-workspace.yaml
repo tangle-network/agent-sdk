@@ -2,15 +2,19 @@ packages:
   - "packages/*"
 linkWorkspacePackages: true
 catalog:
-  "@types/node": 26.4.1
-  tsdown: 0.22.14
+  "@types/node": 26.6.3
+  tsdown: 0.23.0
   typescript: 7.0.2
-  undici: 8.10.1
-  zod: 4.5.4
-  vitest: 4.1.11
+  undici: 8.11.2
+  zod: 4.6.5
+  vitest: 5.0.2
 
 # Packages whose public API contains AgentProfile must compile and test against
 # this workspace's one canonical schema, even when an external dev dependency
 # was published against an older exact agent-interface version.
 overrides:
   "@tangle-network/agent-interface": workspace:*
+# First-party releases skip the default minimum release age; this workspace
+# tracks their newest versions as soon as they publish.
+minimumReleaseAgeExclude:
+  - "@tangle-network/*"
