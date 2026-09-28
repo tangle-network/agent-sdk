@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike } from "./tangle-types.js";
-import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, noteTangleSession } from "./tangle-evidence.js";
+import { assertTangleEvidenceCapability, bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, noteTangleSession } from "./tangle-evidence.js";
 
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
@@ -51,6 +51,16 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
 }
 
 describe("Tangle evidence capture", () => {
+  it("rejects unsupported harnesses and unknown deployment capability before create", async () => {
+    const client = { async evidenceCapabilities() { return {
+      workspaceCaptureV1: true,
+      nativeRolloutExportV1: { opencode: true },
+      sidecarImageDigest: `sha256:${"a".repeat(64)}`,
+    }; } } as unknown as Parameters<typeof assertTangleEvidenceCapability>[0];
+    await expect(assertTangleEvidenceCapability(client, { harness: "opencode" })).resolves.toBeUndefined();
+    await expect(assertTangleEvidenceCapability(client, { harness: "claude-code" })).rejects.toThrow(/requires OpenCode/);
+    await expect(assertTangleEvidenceCapability({} as Parameters<typeof assertTangleEvidenceCapability>[0], { harness: "opencode" })).rejects.toThrow(/no pre-create/);
+  });
   it("captures hidden binary workspace files and attributed replay with explicit native gap", async () => {
     const evidence = await captureTangleEnvironmentEvidence(fixture(), { executionId: "exec-1", maxBytes: 100_000 });
     expect([...evidence.files.find((file) => file.path === "notes/.finding.json")!.bytes]).toEqual([0, 1, 255]);

@@ -1,11 +1,23 @@
 import { createHash } from "node:crypto";
+import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxInstanceLike } from "./tangle-types.js";
+import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
+
+/** Refuse unsupported or unproven native trace retention before Sandbox create. */
+export async function assertTangleEvidenceCapability(client: SandboxClientLike, profile: AgentProfile): Promise<void> {
+  if (profile.harness !== "opencode") throw new Error("Tangle complete native trace retention currently requires OpenCode");
+  if (typeof client.evidenceCapabilities !== "function") throw new Error("Tangle deployment has no pre-create evidence capability query");
+  const document = await client.evidenceCapabilities();
+  if (document?.workspaceCaptureV1 !== true || document.nativeRolloutExportV1?.opencode !== true ||
+      !/^sha256:[0-9a-f]{64}$/.test(document.sidecarImageDigest ?? "")) {
+    throw new Error("Tangle deployment has not proven complete workspace and native rollout export for OpenCode");
+  }
+}
 
 interface WorkspaceEntryMetadata {
   path: string;

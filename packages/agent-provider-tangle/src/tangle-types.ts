@@ -51,6 +51,12 @@ export interface TangleExactProcessOptions {
 }
 
 export interface SandboxClientLike {
+  /** Deployment-scoped evidence guarantees for a new sandbox on this client. */
+  evidenceCapabilities?(): Promise<{
+    nativeRolloutExportV1?: { opencode?: boolean; pi?: boolean; codex?: boolean; claudeCode?: boolean };
+    workspaceCaptureV1?: boolean;
+    sidecarImageDigest?: string;
+  }>;
   create(
     options?: CreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
