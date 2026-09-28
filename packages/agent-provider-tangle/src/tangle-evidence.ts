@@ -20,6 +20,8 @@ export interface TangleEnvironmentEvidence {
   provenance: {
     provider: string;
     environmentId: string;
+    executionId: string;
+    workspaceScope: "environment";
     workspaceRoot: ".";
     capturedAt: string;
     excludedPaths: Array<{ path: string; reason: "credential-path" | "symlink" | "runtime-owned"; type: "file" | "directory" | "symlink"; sizeBytes: number; mode: number }>;
@@ -142,6 +144,12 @@ export async function captureTangleEnvironmentEvidence(
     for await (const event of session.events({ since: "0", executionId: options.executionId, signal: options.signal })) {
       options.signal?.throwIfAborted();
       if (events.length >= MAX_EVENTS) throw new Error("Tangle event replay limit exceeded");
+      if (typeof event.data?.executionId === "string" && event.data.executionId !== options.executionId) {
+        throw new Error("Tangle event replay returned an unrelated execution");
+      }
+      if (typeof event.data?.runtimeSessionId === "string" && event.data.runtimeSessionId !== id) {
+        throw new Error("Tangle event replay returned an unrelated session");
+      }
       capturedBytes += Buffer.byteLength(JSON.stringify(event));
       if (capturedBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
       events.push(event);
@@ -168,6 +176,8 @@ export async function captureTangleEnvironmentEvidence(
   const provenance: TangleEnvironmentEvidence["provenance"] = {
     provider: environment.provider,
     environmentId: environment.id,
+    executionId: options.executionId,
+    workspaceScope: "environment",
     workspaceRoot: ".",
     capturedAt: new Date().toISOString(),
     excludedPaths,
