@@ -7,6 +7,19 @@ const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
 
+interface WorkspaceEntryMetadata {
+  path: string;
+  type: "file" | "directory" | "symlink";
+  sizeBytes: number;
+  mode: number;
+  owner: string | null;
+  group: string | null;
+  modifiedAt: string | null;
+  accessedAt: string | null;
+  /** The Sandbox file listing does not disclose a symbolic link target. */
+  symlinkTarget: null;
+}
+
 export interface TangleEnvironmentEvidenceOptions {
   executionId: string;
   /** An exact expected session when the execution was reattached after provider restart. */
@@ -24,7 +37,8 @@ export interface TangleEnvironmentEvidence {
     workspaceScope: "environment";
     workspaceRoot: ".";
     capturedAt: string;
-    excludedPaths: Array<{ path: string; reason: "credential-path" | "symlink" | "runtime-owned"; type: "file" | "directory" | "symlink"; sizeBytes: number; mode: number }>;
+    entries: WorkspaceEntryMetadata[];
+    excludedPaths: Array<WorkspaceEntryMetadata & { reason: "credential-path" | "symlink" | "runtime-owned" }>;
     workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: true };
     sessions: Array<{ id: string; executionId: string; transportEvents: "complete" | "unavailable"; eventCount: number; messageCount: number; messageScope: "session"; nativeRollout: "unavailable" }>;
     missing: string[];
@@ -61,6 +75,8 @@ export async function captureTangleEnvironmentEvidence(
   if (!usage.complete || usage.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
   if (usage.sizeBytes > options.maxBytes) throw new Error("Tangle workspace exceeds evidence byte limit");
   const files: TangleEnvironmentEvidence["files"] = [];
+  const metadata: WorkspaceEntryMetadata[] = [];
+  const seenPaths = new Set<string>();
   const excludedPaths: TangleEnvironmentEvidence["provenance"]["excludedPaths"] = [];
   const stack = ["."];
   let scannedFiles = 0;
@@ -76,17 +92,21 @@ export async function captureTangleEnvironmentEvidence(
     for (const entry of entries) {
       if (++scannedEntries > MAX_ENTRIES) throw new Error("Tangle workspace entry limit exceeded");
       const path = canonicalEntryPath(entry.path);
+      if (seenPaths.has(path)) throw new Error("Tangle workspace inventory repeats a path");
+      seenPaths.add(path);
       const expectedParent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
       if (expectedParent !== directory || entry.name !== path.split("/").at(-1)) throw new Error("Tangle workspace list returned a path outside its parent");
       if (!Number.isSafeInteger(entry.size) || entry.size < 0) throw new Error("Tangle workspace entry has invalid size");
+      const item = entryMetadata(path, entry);
+      metadata.push(item);
       if (path.split("/").includes(".sidecar")) {
-        excludedPaths.push({ path, reason: "runtime-owned", type: entry.isDir ? "directory" : entry.isSymlink ? "symlink" : "file", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
+        excludedPaths.push({ ...item, reason: "runtime-owned" });
         continue;
       }
       if (entry.isDir && !entry.isSymlink) {
         scannedDirectories++;
         if (path.split("/").some((part) => blockedNames.has(part))) {
-          excludedPaths.push({ path, reason: "credential-path", type: "directory", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
+          excludedPaths.push({ ...item, reason: "credential-path" });
         }
         stack.push(path);
         continue;
@@ -95,11 +115,11 @@ export async function captureTangleEnvironmentEvidence(
       scannedFiles++;
       scannedSize += entry.size;
       if (entry.isSymlink) {
-        excludedPaths.push({ path, reason: "symlink", type: "symlink", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
+        excludedPaths.push({ ...item, reason: "symlink" });
         continue;
       }
       if (path.split("/").some((part) => blockedNames.has(part) || /^\.env\./.test(part))) {
-        excludedPaths.push({ path, reason: "credential-path", type: "file", sizeBytes: entry.size, mode: entry.permissions & 0o777 });
+        excludedPaths.push({ ...item, reason: "credential-path" });
         continue;
       }
       const result = await fs.readBatch([path], { encoding: "base64" });
@@ -180,6 +200,7 @@ export async function captureTangleEnvironmentEvidence(
     workspaceScope: "environment",
     workspaceRoot: ".",
     capturedAt: new Date().toISOString(),
+    entries: metadata.sort((a, b) => a.path.localeCompare(b.path)),
     excludedPaths,
     workspace: { scannedFiles, scannedDirectories, reportedFiles: usage.fileCount, reportedDirectories: usage.directoryCount, complete: true },
     sessions,
@@ -201,4 +222,38 @@ function canonicalEntryPath(value: string): string {
   if (parts.some((part) => !part || part === "." || part === "..")) throw new Error("Tangle workspace entry path is not canonical");
   if (parts[0] === "__retention__") throw new Error("Tangle workspace conflicts with reserved retention path");
   return value;
+}
+
+function entryMetadata(path: string, entry: {
+  size: number;
+  isDir: boolean;
+  isFile: boolean;
+  isSymlink: boolean;
+  permissions: number;
+  owner?: string;
+  group?: string;
+  modTime?: Date | string;
+  accessTime?: Date | string;
+}): WorkspaceEntryMetadata {
+  if (!Number.isInteger(entry.permissions) || entry.permissions < 0) throw new Error("Tangle workspace entry has invalid mode");
+  const type = entry.isSymlink ? "symlink" : entry.isDir ? "directory" : entry.isFile ? "file" : undefined;
+  if (!type) throw new Error("Tangle workspace entry has unknown type");
+  return {
+    path,
+    type,
+    sizeBytes: entry.size,
+    mode: entry.permissions & 0o777,
+    owner: entry.owner ?? null,
+    group: entry.group ?? null,
+    modifiedAt: isoTime(entry.modTime),
+    accessedAt: isoTime(entry.accessTime),
+    symlinkTarget: null,
+  };
+}
+
+function isoTime(value: Date | string | undefined): string | null {
+  if (value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error("Tangle workspace entry has invalid timestamp");
+  return date.toISOString();
 }

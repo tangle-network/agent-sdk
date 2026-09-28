@@ -508,6 +508,10 @@ export interface SandboxInstanceLike {
       isFile: boolean;
       isSymlink: boolean;
       permissions: number;
+      owner?: string;
+      group?: string;
+      modTime?: Date | string;
+      accessTime?: Date | string;
     }>>;
     usage?(path: string): Promise<{
       sizeBytes: number;
