@@ -138,6 +138,11 @@ describe("producer/consumer bound seam", () => {
       // drained frame by frame through the 1 MiB per-event content bound rather than as one value.
       "MAX_RETAINED_TERMINAL_BYTES",
       "MAX_RETAINED_TERMINAL_FRAMES",
+      // Attempt counts: how many times `HostedInstance.ensure` re-reads the instance record, and how
+      // many 503 credential refusals a request retries. Each bounds a loop inside the SDK; no value
+      // with that size is handed to this provider.
+      "MAX_PASSES",
+      "MAX_CREDENTIAL_REFUSAL_RETRIES",
     ]);
     const unpaired = [...shipped].filter((name) => !declared.has(name) && !internal.has(name));
     expect(

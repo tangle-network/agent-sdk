@@ -71,7 +71,7 @@ describe("testkit split leaf modules", () => {
     expect(bytesEqual(Uint8Array.of(1, 2), Uint8Array.of(1, 2))).toBe(true);
     expect(terminationEqual({ kind: "exit", exitCode: 0 }, { kind: "exit", exitCode: 0 })).toBe(true);
     expect(isTerminalEvent({ type: "status", data: { status: "completed" } })).toBe(true);
-    expect(collect((async function* () { yield "event"; })())).resolves.toEqual(["event"]);
+    await expect(collect((async function* () { yield "event"; })())).resolves.toEqual(["event"]);
     expect(() => assert(false, "bounded failure", checked)).toThrow(ProviderConformanceError);
     expect(checked).toEqual([]);
     expect(() => assertNoContextEffects(

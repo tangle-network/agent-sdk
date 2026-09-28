@@ -25,17 +25,17 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      # npm 12.0.0 provenance publishing fails with MODULE_NOT_FOUND for
-      # sigstore. Pin the exact known-good release; OIDC trusted publishing
-      # requires npm >= 11.5.1.
+      # npm 12.0.0 failed provenance publishing with MODULE_NOT_FOUND for
+      # sigstore; 12.1.0 loads it. Pin the exact release so an untested npm
+      # cannot reach the publish step. OIDC trusted publishing needs >= 11.5.1.
       - run: |
-          npm install -g npm@11.18.0
-          test "$(npm --version)" = "11.18.0"
+          npm install -g npm@12.1.0
+          test "$(npm --version)" = "12.1.0"
       - run: pnpm -r build
       - run: pnpm check:package-artifacts
       - run: pnpm check:control-artifacts
       - id: changesets
-        uses: changesets/action@v2.1.1
+        uses: changesets/action@v2.1.2
         with:
           version-script: pnpm changeset:version
           publish-script: pnpm changeset:publish
