@@ -452,3 +452,18 @@ const environment = await provider.exactProcess!.create({
 ```
 
 The adapter rejects ordinary sandboxes during create, recovery, and list operations.
+
+## Private session evidence
+
+Call `readTangleEvidenceCapabilities(client)` before creating a sandbox when complete evidence is required.
+It accepts only a deployment that attests workspace capture, generic native session capture, and the next-create sidecar image digest.
+Apply `assertTangleEvidenceProfileCapability(proof, profile)` to the exact profile in each create hook.
+An unavailable or unproven capability fails before the sandbox spends resources.
+
+Call `captureTangleEnvironmentEvidence(environment, options)` before destroying a provider environment.
+For a Runtime-owned box, call `captureTangleSandboxEvidence(box, options)` with exact session and execution IDs.
+Set `workspaceRoot` to a canonical relative worker directory when the box is shared.
+Both functions return private binary files and provenance for the workspace, native session roots, process streams, and transport replay.
+The caller must store those bytes in private durable custody before deleting the box.
+Credential exclusions remain listed with path, type, mode, size, and reason.
+An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.

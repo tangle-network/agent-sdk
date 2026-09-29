@@ -53,7 +53,7 @@ export interface TangleExactProcessOptions {
 export interface SandboxClientLike {
   /** Deployment-scoped evidence guarantees for a new sandbox on this client. */
   evidenceCapabilities?(): Promise<{
-    nativeRolloutExportV1?: { opencode?: boolean; pi?: boolean; codex?: boolean; claudeCode?: boolean };
+    nativeSessionCaptureV1?: boolean;
     workspaceCaptureV1?: boolean;
     sidecarImageDigest?: string;
   }>;
@@ -530,13 +530,13 @@ export interface SandboxInstanceLike {
       paths: string[],
       options?: { encoding?: "utf8" | "base64" }
     ): Promise<{
-        files: Array<{
-          path: string;
-          content: string;
-          encoding: "utf8" | "base64";
-          size: number;
-          hash?: string;
-        }>;
+      files: Array<{
+        path: string;
+        content: string;
+        encoding: "utf8" | "base64";
+        size: number;
+        hash?: string;
+      }>;
       errors: Array<{ path: string; error: string; code?: string }>;
     }>;
     write(
@@ -619,16 +619,50 @@ export interface SandboxInstanceLike {
 export interface SandboxSessionLike {
   readonly id: string;
   messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
-  nativeRollout?(): Promise<
+  rawEvidence?(): Promise<
     | {
         status: "captured";
         sessionId: string;
-        backendType: "opencode";
-        nativeSessionId: string;
-        format: "opencode-session-export-json";
-        sizeBytes: number;
-        sha256: string;
-        contentBase64: string;
+        backendType: string;
+        nativeSessionId?: string;
+        nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
+        inventory: {
+          scannedFiles: number;
+          reportedFiles: number;
+          scannedDirectories: number;
+          reportedDirectories: number;
+          scannedSymlinks: number;
+          reportedSymlinks: number;
+          skippedEntries: 0;
+        };
+        files: Array<{
+          rootScope: "session-home" | "workspace-session";
+          path: string;
+          kind: "file" | "directory" | "symlink";
+          mode: number;
+          sizeBytes: number;
+          sha256?: string;
+          contentBase64?: string;
+          linkTarget?: string;
+        }>;
+        processIo: Array<{
+          sequence: number;
+          at: string;
+          stream: "stdin" | "stdout" | "stderr" | "protocol";
+          sizeBytes: number;
+          sha256: string;
+          contentBase64: string;
+        }>;
+        events: unknown[];
+        excluded: Array<{
+          rootScope: "session-home" | "workspace-session";
+          path: string;
+          kind: "file" | "directory" | "symlink";
+          mode: number;
+          sizeBytes: number;
+          reason: "credential";
+        }>;
+        completeness: { nativeStore: true; processIo: true; events: true };
       }
     | {
         status: "unavailable";
