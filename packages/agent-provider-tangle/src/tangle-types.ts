@@ -712,6 +712,7 @@ export type TangleRawEvidenceLike =
           reason: "credential";
         }>;
         attempts: TangleEvidenceAttemptLike[];
+        skipped?: Array<{ rootScope: "session-home" | "workspace-session"; path: string; reason: string }>;
         completeness: { nativeStore: boolean; processIo: boolean; events: boolean };
         coverageComplete: boolean;
         missingReasons: string[];

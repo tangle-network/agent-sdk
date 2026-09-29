@@ -360,6 +360,8 @@ export async function captureTangleSandboxEvidence(
     let sidecarBundleRevision: string | null = null;
     let nativeReason: string | null = "raw-session-capture-capability-absent";
     if (native !== undefined) {
+      let manifestSource: object = native;
+      const contentRefs: Array<{ jsonPointer: string; path: string }> = [];
       if (native.sessionId !== id || native.backendType !== options.harness) {
         throw new Error("Tangle raw evidence returned an unrelated session or profile backend");
       }
@@ -431,7 +433,7 @@ export async function captureTangleSandboxEvidence(
         const nativePaths = new Set<string>();
         const included = { file: 0, directory: 0, symlink: 0 };
         const excluded = { file: 0, directory: 0, symlink: 0 };
-        for (const entry of native.files) {
+        for (const [index, entry] of native.files.entries()) {
           options.signal?.throwIfAborted();
           const path = canonicalEntryPath(entry.path);
           if (!roots.has(entry.rootScope)) throw new Error("Tangle raw session entry has no native root");
@@ -443,7 +445,9 @@ export async function captureTangleSandboxEvidence(
             const content = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256,
               options.maxBytes - capturedBytes);
             if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-            files.push({ path: "__retention__/sessions/" + id + "/native/" + entry.rootScope + "/" + path, bytes: content, mode: entry.mode & 0o777 });
+            const contentPath = "__retention__/sessions/" + id + "/native/" + entry.rootScope + "/" + path;
+            files.push({ path: contentPath, bytes: content, mode: entry.mode & 0o777 });
+            contentRefs.push({ jsonPointer: `/files/${index}/contentBase64`, path: contentPath });
             capturedBytes += content.byteLength;
           } else if (entry.kind === "directory" || entry.kind === "symlink") {
             if (entry.contentBase64 !== undefined || entry.sha256 !== undefined ||
@@ -511,9 +515,18 @@ export async function captureTangleSandboxEvidence(
           excludedSymlinks: inventory.excludedSymlinks,
           skippedEntries: inventory.skippedEntries,
         };
+        if (native.skipped !== undefined) {
+          if (!Array.isArray(native.skipped) || native.skipped.length !== inventory.skippedEntries ||
+              native.skipped.some((entry) => !roots.has(entry.rootScope) || !safeIdentifier(entry.reason))) {
+            throw new Error("Tangle raw session skipped inventory does not reconcile");
+          }
+          for (const entry of native.skipped) {
+            if (entry.path !== ".") canonicalEntryPath(entry.path);
+          }
+        }
         const ioSequences = new Map<string, Set<number>>();
         const frameMetadata: Array<Record<string, unknown>> = [];
-        for (const frame of native.processIo) {
+        for (const [index, frame] of native.processIo.entries()) {
           options.signal?.throwIfAborted();
           if (!safeIdentifier(frame.processId) || !Number.isSafeInteger(frame.sequence) ||
               frame.sequence < 0 || !Number.isFinite(Date.parse(frame.at)) ||
@@ -531,14 +544,11 @@ export async function captureTangleSandboxEvidence(
             options.maxBytes - capturedBytes);
           if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
           const label = String(frame.sequence).padStart(16, "0");
-          files.push({ path: "__retention__/sessions/" + id + "/io/" + frame.processId + "/" + label +
-            "-" + frame.stream + ".bin", bytes: content, mode: 0o600 });
-          frameMetadata.push({
-            processId: frame.processId, sequence: frame.sequence, at: frame.at, stream: frame.stream,
-            executionId: frame.executionId ?? null, ordinal: frame.ordinal ?? null, providerSessionId: frame.providerSessionId ?? null,
-            sizeBytes: frame.sizeBytes, sha256: frame.sha256,
-            ...(frame.metadata === undefined ? {} : { metadata: frame.metadata }),
-          });
+          const contentPath = "__retention__/sessions/" + id + "/io/" + frame.processId + "/" + label +
+            "-" + frame.stream + ".bin";
+          files.push({ path: contentPath, bytes: content, mode: 0o600 });
+          contentRefs.push({ jsonPointer: `/processIo/${index}/contentBase64`, path: contentPath });
+          frameMetadata.push(withoutNativeContent(frame));
           capturedBytes += content.byteLength;
           const counter = (frame.stream + "Bytes") as "stdinBytes" | "stdoutBytes" | "stderrBytes" | "protocolBytes";
           processStreams[counter] += content.byteLength;
@@ -589,23 +599,14 @@ export async function captureTangleSandboxEvidence(
           files.push({ path: sourcePath, bytes: source, mode: 0o600 });
           capturedBytes += source.byteLength;
           processStreams.source = { path: sourcePath, sizeBytes: source.byteLength, sha256: native.processSource.sha256 };
+          contentRefs.push({ jsonPointer: "/processSource/contentBase64", path: sourcePath });
         }
-        const processManifest = Buffer.from(JSON.stringify({
-          kind: "tangle-native-process-streams.v1", sessionId: id,
-          frames: frameMetadata, terminals: native.processTerminals,
-          ...(processStreams.source ? { source: processStreams.source } : {}),
-        }));
-        if (capturedBytes + processManifest.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-        files.push({ path: "__retention__/sessions/" + id + "/process-manifest.json",
-          bytes: processManifest, mode: 0o600 });
-        capturedBytes += processManifest.byteLength;
-        const nativeEventBytes = Buffer.from(JSON.stringify({
-          kind: "tangle-native-session-events.v1", sessionId: id, backendType: native.backendType,
-          nativeSessionId, scope: "execution", events: native.events,
-        }));
-        if (capturedBytes + nativeEventBytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-        files.push({ path: "__retention__/sessions/" + id + "/native-events.json", bytes: nativeEventBytes, mode: 0o600 });
-        capturedBytes += nativeEventBytes.byteLength;
+        manifestSource = {
+          ...native,
+          files: native.files.map((entry) => entry.kind === "file" ? withoutNativeContent(entry) : entry),
+          processIo: frameMetadata,
+          ...(native.processSource === undefined ? {} : { processSource: withoutNativeContent(native.processSource) }),
+        };
         nativeStore.complete = native.completeness.nativeStore && inventory.skippedEntries === 0 &&
           inventory.scannedFiles === inventory.reportedFiles + inventory.excludedFiles &&
           inventory.scannedDirectories === inventory.reportedDirectories + inventory.excludedDirectories &&
@@ -625,6 +626,12 @@ export async function captureTangleSandboxEvidence(
       } else {
         throw new Error("Tangle raw session capture status is invalid");
       }
+      const manifest = Buffer.from(JSON.stringify({
+        kind: "tangle-native-session-evidence.v1", source: manifestSource, contentEncoding: "base64", contentRefs,
+      }));
+      if (capturedBytes + manifest.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
+      files.push({ path: "__retention__/sessions/" + id + "/raw-manifest.json", bytes: manifest, mode: 0o600 });
+      capturedBytes += manifest.byteLength;
     }
     sessions.push({
       id, executionId: options.executionId, executionIds: [...executionIds], eventCountsByExecutionId,
@@ -661,6 +668,13 @@ export async function captureTangleSandboxEvidence(
   if (capturedBytes + provenanceBytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
   files.push({ path: "__retention__/provenance.json", bytes: provenanceBytes, mode: 0o600 });
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)), provenance };
+}
+
+/** Keep every source field; store validated binary content once in the archive. */
+function withoutNativeContent(source: object): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { ...source };
+  delete metadata.contentBase64;
+  return metadata;
 }
 
 function safeIdentifier(value: string): boolean {
