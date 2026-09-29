@@ -198,3 +198,15 @@ describe("Sandbox stream event content", () => {
     ).toThrow(/JSON bound/);
   });
 });
+
+
+describe("public session updates and private native observations", () => {
+  it("keeps an ACP caller resume key without asserting native identity", () => {
+    const event = environmentEventFromSandboxEvent({ type: "session.updated", data: { sessionId: "caller-acp", executionId: "execution-1" } }, { ...bound, streamBound: true });
+    expect(event.normalized).toEqual({ type: "session.updated", sessionId: "caller-acp" });
+    expect(event).not.toHaveProperty("nativeSessionId");
+  });
+  it("refuses a private identity event on the public transport", () => {
+    expect(() => environmentEventFromSandboxEvent({ type: "native.session.observed", data: { provider: "claude-code", nativeSessionId: "provider-conversation", executionId: "execution-1", sessionId: "session-1" } }, bound)).toThrow(/private native identity/);
+  });
+});
