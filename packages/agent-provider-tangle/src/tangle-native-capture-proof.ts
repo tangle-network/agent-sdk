@@ -1,3 +1,4 @@
+import { harnessTypeSchema, type HarnessType } from "@tangle-network/agent-interface";
 import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 const imageId = /^sha256:[0-9a-f]{64}$/;
@@ -29,10 +30,30 @@ export function requireNativeCaptureProof(box: SandboxInstanceLike, create = fal
   return proof;
 }
 
-/** Refuse an unsupported deployment before creating a billable sandbox. */
-export async function requireNativeCaptureCapability(client: SandboxClientLike): Promise<void> {
-  if (!client.evidenceCapabilities ||
-      (await client.evidenceCapabilities()).nativeSessionCaptureV1 !== true) {
+/** Parse the deployment's explicit per-harness admission without inferring from a global flag. */
+export function nativeCaptureHarnesses(raw: unknown): readonly HarnessType[] {
+  const parsed = harnessTypeSchema.array().max(harnessTypeSchema.options.length).safeParse(raw);
+  if (!parsed.success || new Set(parsed.data).size !== parsed.data.length) {
+    throw new Error("Tangle deployment has not proven native session capture with a valid harness list");
+  }
+  return Object.freeze(parsed.data);
+}
+
+/** Refuse an unsupported deployment before creating a billable sandbox.
+ * Unprofiled exact-process and checkpoint restores retain the stricter universal guarantee. */
+export async function requireNativeCaptureCapability(client: SandboxClientLike, harness?: string): Promise<void> {
+  if (!client.evidenceCapabilities) {
     throw new Error("Tangle deployment has not proven native session capture for next-create placement");
+  }
+  const document = await client.evidenceCapabilities();
+  if (harness === undefined) {
+    if (document.nativeSessionCaptureV1 !== true) {
+      throw new Error("Tangle deployment has not proven native session capture for unprofiled next-create placement");
+    }
+    return;
+  }
+  const selected = harnessTypeSchema.safeParse(harness);
+  if (!selected.success || !nativeCaptureHarnesses(document.nativeSessionCaptureHarnesses).includes(selected.data)) {
+    throw new Error(`Tangle deployment has not proven native session capture for harness ${JSON.stringify(harness)}`);
   }
 }
