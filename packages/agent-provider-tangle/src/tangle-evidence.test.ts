@@ -7,7 +7,7 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
-  badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean } = {}) {
+  badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean; liveCountRace?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
   const filePath = overrides.filePath ?? (root === "." ? "notes/.finding.json" : root + "/notes/.finding.json");
@@ -38,15 +38,19 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
         ...(overrides.native ? { async rawEvidence() {
           const native = Buffer.from('{"session":"native-1"}');
           const stdout = Buffer.from("native output\n");
+          const damagedSpool = Buffer.from('{"unfinished":');
           return {
-            status: "captured" as const,
+            status: overrides.partial ? "partial" as const : "captured" as const,
             sessionId: id,
             backendType: overrides.wrongBackend ? "codex" : "opencode",
             ...(overrides.proof ? { proofStatus: "verified" as const, containerId: overrides.wrongProof ? "e".repeat(64) : proof.containerId, sidecarBundleChecksum: proof.bundleChecksum } : {}),
             sidecarImageDigest: "sha256:" + "a".repeat(64),
             sidecarBundleRevision: overrides.missingBundleRevision ? "" : "b".repeat(40),
             nativeSessionId: "native-1",
-            nativeRoots: [{ rootScope: "session-home" as const, path: "." }],
+            attempts: [{ executionId: overrides.wrongAttempt ? "unrelated-exec" : "exec-1", ordinal: 1,
+              providerSessionId: "provider-1", nativeSessionIds: ["native-1"], processIds: overrides.noProcess ? [] : ["process-1"],
+              outcome: "succeeded" as const, missingReasons: [] }],
+            nativeRoots: [{ rootScope: "session-home" as const, path: "/home/agent/session-home" }],
             inventory: {
               scannedFiles: overrides.excludedCredential ? 2 : 1,
               reportedFiles: overrides.badInventory ? 2 : 1,
@@ -57,21 +61,24 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             files: [{ rootScope: "session-home" as const, path: ".local/share/session.json", kind: "file" as const, mode: 0o600,
               uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: native.byteLength, sha256: "sha256:" + (overrides.wrongDigest ? "0".repeat(64) : createHash("sha256").update(native).digest("hex")),
               contentBase64: native.toString("base64") }],
-            processIo: [{ processId: "process-1", sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
+            processIo: overrides.noProcess ? [] : [{ processId: "process-1", executionId: "exec-1", ordinal: overrides.wrongProcessAttempt ? 2 : 1, providerSessionId: "provider-1", sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
               sizeBytes: stdout.byteLength, sha256: "sha256:" + createHash("sha256").update(stdout).digest("hex"),
               contentBase64: stdout.toString("base64") }],
-            processTerminals: overrides.missingTerminal ? [] : [{
-              processId: "process-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
+            ...(overrides.partial ? { processSource: { contentBase64: damagedSpool.toString("base64"), sizeBytes: damagedSpool.byteLength,
+              sha256: "sha256:" + createHash("sha256").update(damagedSpool).digest("hex") } } : {}),
+            processTerminals: overrides.missingTerminal || overrides.noProcess ? [] : [{
+              processId: "process-1", executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
               result: { code: 0, signal: null, timedOut: false, timeoutReason: null, captureError: null },
             }],
-            events: [{ type: "native.done", sessionId: id }],
+            events: [{ metadata: { executionId: "exec-1", sessionId: id, eventCount: overrides.liveCountRace ? 0 : 1 }, frames: [{ type: "native.done", sessionId: id }] }],
             excluded: overrides.excludedCredential ? [{
               rootScope: "session-home" as const, path: ".config/auth.json",
               kind: "file" as const, mode: 0o600, uid: 1000, gid: 1000,
               mtimeMs: 1, ctimeMs: 1, sizeBytes: 42, reason: "credential" as const,
             }] : [],
-            completeness: { nativeStore: !overrides.incomplete as true, processIo: true as const, events: true as const },
-            coverageComplete: true as const,
+            completeness: { nativeStore: !overrides.incomplete, processIo: !overrides.partial, events: true },
+            coverageComplete: !overrides.partial,
+            missingReasons: overrides.partial ? ["process_io_incomplete"] : [],
           };
         } } : {}),
       };
@@ -133,9 +140,50 @@ describe("Tangle evidence capture", () => {
       executionId: "exec-1", harness: "opencode", sandboxSessionIds: ["session-1"], maxBytes: 100_000,
     });
     expect(evidence.provenance.environmentId).toBe("box-1");
+    expect(evidence.provenance.attempts).toEqual([{ executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1",
+      nativeSessionIds: ["native-1"], processIds: ["process-1"], outcome: "succeeded", missingReasons: [] }]);
     expect(evidence.provenance.sessions).toHaveLength(1);
+    expect(evidence.provenance.sessions[0]?.nativeStore.roots).toEqual([{ scope: "session-home", path: "/home/agent/session-home" }]);
     expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", backendType: "opencode", sidecarBundleRevision: "b".repeat(40), nativeStore: { complete: true } });
     expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
+  });
+
+  it("retains native files and process frames when a terminal receipt is missing", async () => {
+    const environment = fixture({ native: true, partial: true, missingTerminal: true });
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/io/process-1/0000000000000000-stdout.bin");
+    expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
+    expect(evidence.provenance.attempts).toHaveLength(1);
+    expect(Buffer.from(evidence.files.find((file) => file.path.endsWith("/process-source.jsonl"))!.bytes).toString()).toBe('{"unfinished":');
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 declared partial raw capture");
+  });
+
+  it("rejects attempts from another execution before retaining an archive", async () => {
+    const environment = fixture({ native: true, wrongAttempt: true });
+    await expect(captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
+      .rejects.toThrow(/unrelated execution/);
+  });
+
+  it("rejects a process frame tagged to a different retry", async () => {
+    const environment = fixture({ native: true, wrongProcessAttempt: true });
+    await expect(captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
+      .rejects.toThrow(/conflicting attempt attribution/);
+  });
+
+  it("retains a valid attempt that started no process", async () => {
+    const environment = fixture({ native: true, noProcess: true });
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(evidence.provenance.attempts[0]?.processIds).toEqual([]);
+    expect(evidence.provenance.missing).toEqual([]);
+  });
+
+  it("retains a live partial buffer when its reported count races the observed frames", async () => {
+    const environment = fixture({ native: true, partial: true, liveCountRace: true });
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(evidence.provenance.sessions[0]?.nativeEvents.complete).toBe(false);
+    const events = evidence.files.find((file) => file.path.endsWith("/native-events.json"));
+    expect(JSON.parse(Buffer.from(events!.bytes).toString()).events[0].metadata.eventCount).toBe(0);
   });
 
   it("binds native bytes to the verified create container", async () => {

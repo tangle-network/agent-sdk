@@ -629,12 +629,23 @@ export interface SandboxInstanceLike {
   }): Promise<SandboxTeeAttestationResponseLike>;
 }
 
+/** Exact observed attempts within one Sidecar execution. */
+export interface TangleEvidenceAttemptLike {
+  executionId: string;
+  ordinal: number;
+  providerSessionId: string;
+  nativeSessionIds: string[];
+  processIds: string[];
+  outcome: "succeeded" | "failed" | "cancelled" | "unknown";
+  missingReasons: string[];
+}
+
 export type TangleRawEvidenceLike =
     | {
-        status: "captured";
+        status: "captured" | "partial";
         sessionId: string;
         backendType: string;
-        nativeSessionId?: string;
+        nativeSessionId?: string | null;
         proofStatus?: "verified" | "unverified";
         containerId?: string;
         sidecarImageDigest: string;
@@ -658,6 +669,9 @@ export type TangleRawEvidenceLike =
         }>;
         processIo: Array<{
           processId: string;
+          executionId?: string;
+          ordinal?: number;
+          providerSessionId?: string;
           sequence: number;
           at: string;
           stream: "stdin" | "stdout" | "stderr" | "protocol";
@@ -666,8 +680,13 @@ export type TangleRawEvidenceLike =
           contentBase64: string;
           metadata?: unknown;
         }>;
+        /** Original readable spool when parsing found incomplete or malformed records. */
+        processSource?: { contentBase64: string; sizeBytes: number; sha256: string };
         processTerminals: Array<{
           processId: string;
+          executionId?: string;
+          ordinal?: number;
+          providerSessionId?: string;
           sequence: number;
           at: string;
           result: {
@@ -675,7 +694,7 @@ export type TangleRawEvidenceLike =
             signal: string | null;
             timedOut: boolean;
             timeoutReason: string | null;
-            captureError: null;
+            captureError: string | null;
             spawnError?: string;
           };
         }>;
@@ -692,8 +711,10 @@ export type TangleRawEvidenceLike =
           sizeBytes: number;
           reason: "credential";
         }>;
-        completeness: { nativeStore: true; processIo: true; events: true };
-        coverageComplete: true;
+        attempts: TangleEvidenceAttemptLike[];
+        completeness: { nativeStore: boolean; processIo: boolean; events: boolean };
+        coverageComplete: boolean;
+        missingReasons: string[];
       }
     | {
         status: "unavailable";
