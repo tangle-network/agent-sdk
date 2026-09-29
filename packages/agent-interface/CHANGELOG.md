@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.14.0
+
+### Minor Changes
+
+- a5c29d0: Add private content-addressed artifact locators and bounded, attributed Tangle workspace evidence export.
+
 ## 2.13.1
 
 ### Patch Changes
