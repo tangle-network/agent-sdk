@@ -59,8 +59,8 @@ interface WorkspaceEntryMetadata {
 
 export interface TangleEnvironmentEvidenceOptions {
   executionId: string;
-  /** An exact expected session when the execution was reattached after provider restart. */
-  nativeSessionId?: string | null;
+  /** Exact Sandbox session id when execution was reattached after provider restart. */
+  sandboxSessionId?: string | null;
   maxBytes: number;
   signal?: AbortSignal;
 }
@@ -102,7 +102,7 @@ export async function captureTangleEnvironmentEvidence(
   const state = handles.get(environment);
   if (!state || state.box.id !== environment.id) throw new Error("Tangle evidence requires a live provider environment handle");
   if (!safeIdentifier(options.executionId)) throw new Error("Tangle evidence requires an exact execution id");
-  if (options.nativeSessionId != null && !safeIdentifier(options.nativeSessionId)) throw new Error("Tangle evidence native session id is invalid");
+  if (options.sandboxSessionId != null && !safeIdentifier(options.sandboxSessionId)) throw new Error("Tangle evidence Sandbox session id is invalid");
   if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1) throw new Error("Tangle evidence maxBytes must be positive");
   const { box } = state;
   const fs = box.fs;
@@ -181,7 +181,7 @@ export async function captureTangleEnvironmentEvidence(
   const sessionIds = new Set<string>([...state.sessions.entries()]
     .filter(([, executions]) => executions.has(options.executionId))
     .map(([id]) => id));
-  if (options.nativeSessionId) sessionIds.add(options.nativeSessionId);
+  if (options.sandboxSessionId) sessionIds.add(options.sandboxSessionId);
   const sessions: TangleEnvironmentEvidence["provenance"]["sessions"] = [];
   const missing: string[] = [];
   if (excludedPaths.length) missing.push(`Workspace omitted ${excludedPaths.length} credential paths or symlinks; inspect excludedPaths`);
@@ -238,6 +238,9 @@ export async function captureTangleEnvironmentEvidence(
         if (rollout.backendType !== "opencode" || rollout.format !== "opencode-session-export-json" || !safeIdentifier(rollout.nativeSessionId)) {
           throw new Error("Tangle native rollout identity or format is invalid");
         }
+        if (!Number.isSafeInteger(rollout.sizeBytes) || rollout.sizeBytes < 1 || rollout.sizeBytes > options.maxBytes - capturedBytes) {
+          throw new Error("Tangle native rollout size exceeds evidence bound");
+        }
         const native = Buffer.from(rollout.contentBase64, "base64");
         const digest = `sha256:${createHash("sha256").update(native).digest("hex")}`;
         if (native.byteLength !== rollout.sizeBytes || native.toString("base64") !== rollout.contentBase64 || digest !== rollout.sha256) {
@@ -255,6 +258,7 @@ export async function captureTangleEnvironmentEvidence(
         nativeBytes = native.byteLength;
       } else {
         if (!safeIdentifier(rollout.reason)) throw new Error("Tangle native rollout unavailability reason is invalid");
+        if (rollout.nativeSessionId !== undefined && !safeIdentifier(rollout.nativeSessionId)) throw new Error("Tangle native rollout id is invalid");
         nativeSessionId = rollout.nativeSessionId ?? null;
         nativeReason = rollout.reason;
       }
