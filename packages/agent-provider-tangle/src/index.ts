@@ -8,8 +8,8 @@ export {
 export type { JsonBoundRule, JsonBoundViolation } from "./tangle-contract-safety.js";
 export * from "./tangle-types.js";
 export { createTangleProvider } from "./tangle-provider.js";
-export { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, readTangleEvidenceCapabilities, captureTangleEnvironmentEvidence } from "./tangle-evidence.js";
-export type { TangleEvidenceCapabilities, TangleEnvironmentEvidence, TangleEnvironmentEvidenceOptions } from "./tangle-evidence.js";
+export { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, readTangleEvidenceCapabilities, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence } from "./tangle-evidence.js";
+export type { TangleEvidenceCapabilities, TangleEnvironmentEvidence, TangleEnvironmentEvidenceOptions, TangleSandboxEvidenceOptions } from "./tangle-evidence.js";
 export { DEFAULT_TANGLE_READY_TIMEOUT_MS } from "./tangle-readiness.js";
 export { defaultTangleSandboxCapabilities } from "./tangle-capabilities.js";
 export {
