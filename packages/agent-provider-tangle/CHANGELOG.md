@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.8.1
+
+### Patch Changes
+
+- a2ceb39: Require the served Sidecar bundle revision in attributed native session evidence.
+
 ## 1.8.0
 
 ### Minor Changes
