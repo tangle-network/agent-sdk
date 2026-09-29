@@ -40,7 +40,7 @@ function capturingProvider(requireNativeSessionCapture = false) {
   const provider = createTangleProvider({
     requireNativeSessionCapture,
     client: {
-      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
+      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
         return box;
@@ -66,7 +66,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => ({ backend: { type: "opencode" } }),
       client: {
-        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
+        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
         create: async (options) => {
           creates.push(options ?? {});
           return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined,
@@ -90,11 +90,45 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(created).toBe(false);
   });
 
+  it.each([
+    { label: "unlisted exact harness", profile: { name: "worker", harness: "claude-code" as const }, backend: "claude-code" as const, listed: ["opencode" as const] },
+    { label: "mapper changed the profile harness", profile: { name: "worker", harness: "claude-code" as const }, backend: "opencode" as const, listed: ["opencode" as const] },
+    { label: "missing explicit backend", profile: { name: "worker" }, backend: undefined, listed: ["opencode" as const] },
+  ])("refuses $label before create despite the global flag", async ({ profile, backend, listed }) => {
+    let creates = 0;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      mapCreateInput: () => backend === undefined ? {} : { backend: { type: backend } },
+      client: {
+        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureHarnesses: listed }),
+        create: async () => { creates++; throw new Error("unexpected create"); },
+      },
+    });
+    await expect(provider.create({ profile })).rejects.toThrow(/harness|explicit selected backend/);
+    expect(creates).toBe(0);
+  });
+
+  it.each([undefined, [], ["opencode", "opencode"], ["future-unregistered"]])("refuses an invalid or empty admission list %j before create", async (listed) => {
+    let creates = 0;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: {
+        evidenceCapabilities: async () => ({
+          nativeSessionCaptureV1: true,
+          nativeSessionCaptureHarnesses: listed as never,
+        }),
+        create: async () => { creates++; throw new Error("unexpected create"); },
+      },
+    });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/has not proven native session capture/);
+    expect(creates).toBe(0);
+  });
+
   it("cleans up a created box when the current capture proof is missing", async () => {
     let deleted = false;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
+      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
         create: async () => ({ id: "sbx-unproved", status: "running",
         async *streamPrompt() {}, delete: async () => { deleted = true; } }) },
     });

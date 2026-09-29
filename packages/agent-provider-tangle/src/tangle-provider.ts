@@ -187,7 +187,15 @@ export function createTangleProvider(
       }
     }
     input.signal?.throwIfAborted();
-    if (options.requireNativeSessionCapture) await requireNativeCaptureCapability(options.client);
+    if (options.requireNativeSessionCapture) {
+      if (createOptions.backend?.type === undefined) {
+        throw new Error("Tangle complete native session capture requires an explicit selected backend before create");
+      }
+      if (typeof input.profile !== "string" && input.profile.harness !== undefined && input.profile.harness !== createOptions.backend.type) {
+        throw new Error("Tangle native capture selected backend differs from the exact profile harness");
+      }
+      await requireNativeCaptureCapability(options.client, createOptions.backend.type);
+    }
     const createPromise = options.client.create(
       createOptions,
       input.signal ? { signal: input.signal } : undefined,

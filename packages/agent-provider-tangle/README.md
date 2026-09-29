@@ -456,7 +456,9 @@ The adapter rejects ordinary sandboxes during create, recovery, and list operati
 ## Private session evidence
 
 Call `readTangleEvidenceCapabilities(client)` before creating a sandbox when complete evidence is required.
-It accepts only a deployment that attests workspace capture, generic native session capture, and the next-create sidecar image digest.
+It requires workspace capture, an explicit native capture harness list, and the next-create sidecar image digest.
+A global capture flag cannot admit a profile whose harness is absent from that list.
+Unprofiled exact-process and checkpoint restores retain the stricter global guarantee.
 Apply `assertTangleEvidenceProfileCapability(proof, profile)` to the exact profile in each create hook.
 An unavailable or unproven capability fails before the sandbox spends resources.
 

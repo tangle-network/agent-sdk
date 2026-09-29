@@ -84,10 +84,11 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
 }
 
 describe("Tangle evidence capture", () => {
-  it("requires generic native capture attestation and an exact profile harness before create", async () => {
+  it("requires explicit native capture admission for the exact profile harness before create", async () => {
     const client = { async evidenceCapabilities() { return {
       workspaceCaptureV1: true,
-      nativeSessionCaptureV1: true,
+      nativeSessionCaptureV1: false,
+      nativeSessionCaptureHarnesses: ["opencode", "pi", "codex", "claude-code", "kimi-code", "hermes"],
       sidecarImageDigest: "sha256:" + "a".repeat(64),
     }; } } as unknown as Parameters<typeof assertTangleEvidenceCapability>[0];
     const proof = await readTangleEvidenceCapabilities(client);
@@ -103,6 +104,29 @@ describe("Tangle evidence capture", () => {
     const unproven = { async evidenceCapabilities() { return { workspaceCaptureV1: true, nativeSessionCaptureV1: false, sidecarImageDigest: "sha256:" + "a".repeat(64) }; } };
     await expect(readTangleEvidenceCapabilities(unproven as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0])).rejects.toThrow(/has not proven/);
   });
+  it("does not widen a selected-harness admission from the generic flag or later source mutation", async () => {
+    const listed = ["opencode"];
+    const client = { async evidenceCapabilities() { return {
+      workspaceCaptureV1: true, nativeSessionCaptureV1: true,
+      nativeSessionCaptureHarnesses: listed,
+      sidecarImageDigest: "sha256:" + "a".repeat(64),
+    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
+    const proof = await readTangleEvidenceCapabilities(client);
+    listed.push("claude-code");
+    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "opencode" })).not.toThrow();
+    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "claude-code" })).toThrow(/has not proven/);
+    expect(Object.isFrozen(proof.nativeSessionCaptureHarnesses)).toBe(true);
+  });
+
+  it.each([undefined, ["opencode", "opencode"], ["future-unregistered"]])("refuses malformed deployment harness list %j", async (listed) => {
+    const client = { async evidenceCapabilities() { return {
+      workspaceCaptureV1: true, nativeSessionCaptureV1: true,
+      nativeSessionCaptureHarnesses: listed,
+      sidecarImageDigest: "sha256:" + "a".repeat(64),
+    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
+    await expect(readTangleEvidenceCapabilities(client)).rejects.toThrow(/valid harness list/);
+  });
+
   it("captures the same attributed evidence directly from a Sandbox box", async () => {
     const environment = fixture({ native: true });
     const evidence = await captureTangleSandboxEvidence(fixtureBoxes.get(environment)!, {
