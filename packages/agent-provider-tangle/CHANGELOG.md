@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.9.2
+
+### Patch Changes
+
+- 05bb15b: Require the selected profile harness in the deployment native-capture admission list before creating a sandbox.
+  Keep unprofiled exact-process and checkpoint paths behind the universal capture guarantee.
+
 ## 1.9.1
 
 ### Patch Changes
