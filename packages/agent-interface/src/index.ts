@@ -139,3 +139,5 @@ export {
 } from "./contract-limits.js";
 
 export { AgentEnvironmentEgressPolicySchema } from "./environment-requests.js";
+
+export * from "./native-session-event.js";

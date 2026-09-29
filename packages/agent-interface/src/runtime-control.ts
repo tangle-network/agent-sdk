@@ -1,3 +1,4 @@
+import { NativeSessionObservedEventSchema } from "./native-session-event.js";
 import { z } from "zod";
 import type { StreamEvent } from "./stream-events.js";
 import {
@@ -519,6 +520,7 @@ const CanonicalStreamEventUnionSchema = z.discriminatedUnion("type", [
       backend: stableIdSchema,
       event: boundedEventContentJsonSchema,
     }),
+    NativeSessionObservedEventSchema,
     z.strictObject({
       type: z.literal("session.updated"),
       sessionId: stableIdSchema,

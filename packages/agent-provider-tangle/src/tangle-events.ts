@@ -29,9 +29,8 @@ export function isSandboxConnectionMarker(event: SandboxEvent): boolean {
  * The session ids a Sandbox event carries, kept separate by field position.
  *
  * `runFrameSessionId` is `data.sessionId`/`data.sessionID`. The run/stream lane
- * copies that value straight from the backend adapter, so on `session.updated`
- * it is the harness-native session id (Claude, Codex, OpenCode) rather than the
- * runtime session id.
+ * copies the public resume key from the adapter on `session.updated`.
+ * That key can differ from the Runtime session and is not native identity evidence.
  *
  * `envelopeSessionId` is the `properties` and `properties.info` position of an
  * /agents/events frame, plus `properties.part` on a frame type that publishes a
@@ -223,19 +222,17 @@ export function environmentEventFromSandboxEvent(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
     );
   }
-  // A stream-bound iterator is the response body of the run this call started
-  // or the replay of one named execution, so the transport itself excludes
-  // another session's frames. On such a stream the run-frame position of
-  // `session.updated` carries the harness-native session id (for example an
-  // OpenCode session) rather than the runtime session id, so that one position
-  // on that one frame type is content. Every other position of that frame, and
-  // every position of every other frame type, names the runtime session and is
-  // compared to the expected id.
+  // A bound public stream can carry the adapter's resume key in session.updated.
+  // It is content, not evidence of provider-native identity or Runtime ownership.
+  // Envelope identities still bind the frame to the expected Runtime session.
+  if (record.type === "native.session.observed") {
+    throw new Error("Tangle public stream exposed a private native identity event");
+  }
   const identity = sandboxEventIdentity(event);
-  const runFrameCarriesNativeSessionId =
+  const runFrameCarriesPublicResumeKey =
     expected.streamBound === true && record.type === "session.updated";
   const identityBearingSessionIds = carriedSessionIds(
-    runFrameCarriesNativeSessionId
+    runFrameCarriesPublicResumeKey
       ? { envelopeSessionId: identity.envelopeSessionId }
       : identity,
   );
@@ -276,8 +273,7 @@ export function environmentEventFromSandboxEvent(
   // Other event names do not prove whether their usage is incremental.
   const usageMode = declaredModes[0] as AgentEnvironmentEvent["usageMode"] ??
     (record.type === "result" || record.type === "done" ? "cumulative" : undefined);
-  // The session id reaches the normalized event whichever position carried it,
-  // including the native id an execution-bound stream just accepted as content.
+  // Preserve the public resume key without promoting it to native attribution.
   const normalized = normalizeSandboxEvent(record.type, data, identity);
   return {
     type: record.type,
@@ -313,8 +309,8 @@ function normalizeSandboxEvent(
     // of the frame's own positions carries and introduces none of its own. Each
     // position it can repeat is already bound: the check above compared every
     // position that names the runtime session, and the run-frame position of a
-    // stream-bound `session.updated` holds the native id the computed block
-    // carries too. A frame that carries no session id can supply none either.
+    // stream-bound `session.updated` holds the public resume key the computed
+    // block carries too. A frame that carries no session id can supply none either.
     if (parsed.data.type === "session.updated") {
       if (!carriedSessionIds(identity).includes(parsed.data.sessionId)) {
         throw new Error(

@@ -269,3 +269,11 @@ Repeated cumulative totals do not add spend.
 An absent mode means the aggregation semantics are unknown.
 Materialization receipts cover all three model token ceilings at their exact requested paths.
 A strict profile rejects unsupported ceilings instead of silently accepting them.
+
+
+### Native session observations
+
+Adapters emit `native.session.observed` with `provider` and `nativeSessionId` after observing the provider conversation identity.
+The execution owner binds the observation to its execution and keeps it private.
+Public `session.updated` events retain their resume-key semantics and do not establish native identity.
+Native identity does not establish artifact capture completeness.

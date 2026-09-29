@@ -1,3 +1,4 @@
+import type { NativeSessionObservedEvent } from "./native-session-event.js";
 import type { TokenUsage } from "./execution-types.js";
 import type { InteractionRequest } from "./interaction.js";
 import type { DurablePlan } from "./plan.js";
@@ -77,6 +78,7 @@ export type ChildTaskEvent = {
 };
 
 export type StreamEvent =
+  | NativeSessionObservedEvent
   | MessagePartUpdatedEvent
   | {
       type: "tool-heartbeat";
