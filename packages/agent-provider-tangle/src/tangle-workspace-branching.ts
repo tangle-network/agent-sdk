@@ -113,6 +113,7 @@ export interface TangleWorkspaceBranchingOptions {
   client: SandboxClientLike;
   provider: string;
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+  requireNativeSessionCapture?: boolean;
 }
 
 /**
@@ -607,6 +608,7 @@ export function createTangleWorkspaceBranching(
             fromSandboxId: box.id,
             idempotencyKey: request.idempotencyKey,
             metadata,
+            ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
             ...(request.name === undefined ? {} : { name: request.name }),
           },
           operation?.signal === undefined

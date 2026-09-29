@@ -348,6 +348,7 @@ describe("Tangle workspace branching", () => {
       box,
       client,
       provider,
+      requireNativeSessionCapture: true,
     });
     const checkpoint = await operations!.checkpoint(checkpointRequest());
     if (checkpoint.status !== "created")
@@ -361,6 +362,7 @@ describe("Tangle workspace branching", () => {
       fromSandboxId: sourceEnvironmentId,
       idempotencyKey: request.idempotencyKey,
       name: request.name,
+      requireNativeSessionCapture: true,
     });
     expect(observedCreate?.metadata).toMatchObject({ lane: "analysis" });
     expect(forkCalls).toBe(0);

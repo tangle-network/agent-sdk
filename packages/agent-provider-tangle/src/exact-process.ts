@@ -57,6 +57,7 @@ export function createTangleExactProcessProvider(input: {
   providerName: string;
   /** How long create() waits for the new sandbox to reach `running`. */
   readyTimeoutMs: number;
+  requireNativeSessionCapture?: boolean;
 }): AgentExactProcessProvider {
   const { client, options, providerName, readyTimeoutMs } = input;
   boundedIdentifier(providerName, "Tangle exact process provider");
@@ -75,7 +76,10 @@ export function createTangleExactProcessProvider(input: {
       assertUnreservedMetadata(createInput.metadata);
       const identityDigest = exactProcessRequestDigest(createInput, providerName, options);
       createInput.signal?.throwIfAborted();
-      const createPromise = client.create(exactSandboxOptions(createInput, options, providerName, identityDigest), {
+      const createPromise = client.create({
+        ...exactSandboxOptions(createInput, options, providerName, identityDigest),
+        ...(input.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
+      }, {
         ...(createInput.signal ? { signal: createInput.signal } : {}),
         ...(createInput.provisionTimeoutMs === undefined
           ? {}

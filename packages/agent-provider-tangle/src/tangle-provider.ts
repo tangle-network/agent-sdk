@@ -73,6 +73,7 @@ export function createTangleProvider(
         options: options.exactProcess,
         providerName,
         readyTimeoutMs,
+        ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
       })
     : undefined;
   const resolveDeclaredCapabilities = async (
@@ -278,6 +279,7 @@ export function createTangleProvider(
               box,
               client: options.client,
               provider: providerName,
+              ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
               ...confidentialVerifierOption(
                 options.confidentialAttestationVerifier,
               ),

@@ -1296,8 +1296,10 @@ describe("Tangle split leaf modules", () => {
       },
     };
     const listCalls: Array<{ offset?: number; limit?: number }> = [];
+    let exactCreateOptions: Parameters<SandboxClientLike["create"]>[0];
     const client: SandboxClientLike = {
       async create(options) {
+        exactCreateOptions = options;
         exactBox.metadata = { ...(options?.metadata ?? {}), runtimeMode: "control" };
         return exactBox;
       },
@@ -1308,8 +1310,9 @@ describe("Tangle split leaf modules", () => {
         return [];
       },
     };
-    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox", readyTimeoutMs: 1_000 });
+    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox", readyTimeoutMs: 1_000, requireNativeSessionCapture: true });
     const environment = await provider.create(exactInput);
+    expect(exactCreateOptions).toMatchObject({ requireNativeSessionCapture: true });
     expect(environment.id).toBe(exactBox.id);
     expect(sandboxInstanceAsExactProcessEnvironment(exactBox, "tangle-sandbox").id).toBe(exactBox.id);
     expect((await provider.get("requested-but-unrelated"))).toBeNull();
