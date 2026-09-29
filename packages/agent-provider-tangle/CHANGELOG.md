@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.9.0
+
+### Minor Changes
+
+- 76d3f82: Allow a provider to require native session capture on every Sandbox create, including custom create mappings.
+
 ## 1.8.1
 
 ### Patch Changes
