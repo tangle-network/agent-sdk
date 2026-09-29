@@ -7,16 +7,41 @@ const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessio
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
+const verifiedCapabilities = new WeakSet<object>();
 
-/** Refuse unsupported or unproven native trace retention before Sandbox create. */
-export async function assertTangleEvidenceCapability(client: SandboxClientLike, profile: AgentProfile): Promise<void> {
-  if (profile.harness !== "opencode") throw new Error("Tangle complete native trace retention currently requires OpenCode");
+export interface TangleEvidenceCapabilities {
+  readonly workspaceCaptureV1: true;
+  readonly nativeRolloutExportV1: { readonly opencode: true };
+  readonly sidecarImageDigest: `sha256:${string}`;
+}
+
+/** Read a deployment guarantee once, before Runtime starts creating environments. */
+export async function readTangleEvidenceCapabilities(client: SandboxClientLike): Promise<TangleEvidenceCapabilities> {
   if (typeof client.evidenceCapabilities !== "function") throw new Error("Tangle deployment has no pre-create evidence capability query");
   const document = await client.evidenceCapabilities();
   if (document?.workspaceCaptureV1 !== true || document.nativeRolloutExportV1?.opencode !== true ||
       !/^sha256:[0-9a-f]{64}$/.test(document.sidecarImageDigest ?? "")) {
     throw new Error("Tangle deployment has not proven complete workspace and native rollout export for OpenCode");
   }
+  const verified = Object.freeze({
+    workspaceCaptureV1: true as const,
+    nativeRolloutExportV1: Object.freeze({ opencode: true as const }),
+    sidecarImageDigest: document.sidecarImageDigest as `sha256:${string}`,
+  });
+  verifiedCapabilities.add(verified);
+  return verified;
+}
+
+/** Apply the pre-read guarantee to each exact profile in a synchronous create hook. */
+export function assertTangleEvidenceProfileCapability(document: TangleEvidenceCapabilities, profile: AgentProfile): void {
+  if (!verifiedCapabilities.has(document)) throw new Error("Tangle evidence capability was not read from the deployment");
+  if (profile.harness !== "opencode") throw new Error("Tangle complete native trace retention currently requires OpenCode");
+}
+
+/** Refuse unsupported or unproven native trace retention before Sandbox create. */
+export async function assertTangleEvidenceCapability(client: SandboxClientLike, profile: AgentProfile): Promise<void> {
+  const document = await readTangleEvidenceCapabilities(client);
+  assertTangleEvidenceProfileCapability(document, profile);
 }
 
 interface WorkspaceEntryMetadata {
