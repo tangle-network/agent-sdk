@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.9.1
+
+### Patch Changes
+
+- 36101d1: Separate private provider-native identity observations from public session resume updates.
+  The Sandbox provider rejects private identity events on its public event stream.
+- Updated dependencies [36101d1]
+  - @tangle-network/agent-interface@2.15.0
+
 ## 1.9.0
 
 ### Minor Changes
