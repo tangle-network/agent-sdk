@@ -641,7 +641,7 @@ export interface SandboxSessionLike {
         sidecarImageDigest: string;
         sidecarBundleRevision: string;
         sidecarBundleChecksum?: string;
-        nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
+        nativeRoots: Array<{ rootScope: "session-home" | "workspace-session"; path: string }>;
         inventory: {
           scannedFiles: number;
           reportedFiles: number;

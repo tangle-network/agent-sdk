@@ -46,7 +46,7 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             sidecarImageDigest: "sha256:" + "a".repeat(64),
             sidecarBundleRevision: overrides.missingBundleRevision ? "" : "b".repeat(40),
             nativeSessionId: "native-1",
-            nativeRoots: [{ scope: "session-home" as const, path: "." }],
+            nativeRoots: [{ rootScope: "session-home" as const, path: "." }],
             inventory: {
               scannedFiles: overrides.excludedCredential ? 2 : 1,
               reportedFiles: overrides.badInventory ? 2 : 1,

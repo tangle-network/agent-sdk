@@ -386,12 +386,12 @@ export async function captureTangleSandboxEvidence(
         }
         const roots = new Set<string>();
         for (const root of native.nativeRoots) {
-          if (!["session-home", "workspace-session"].includes(root.scope) || roots.has(root.scope) ||
+          if (!["session-home", "workspace-session"].includes(root.rootScope) || roots.has(root.rootScope) ||
               (root.path !== "." && canonicalEntryPath(root.path) !== root.path)) {
             throw new Error("Tangle raw session native root is invalid");
           }
-          roots.add(root.scope);
-          nativeStore.roots.push(root);
+          roots.add(root.rootScope);
+          nativeStore.roots.push({ scope: root.rootScope, path: root.path });
         }
         if (!roots.size) throw new Error("Tangle raw session has no native root");
         const nativePaths = new Set<string>();
