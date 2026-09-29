@@ -332,6 +332,7 @@ describe("Tangle workspace branching", () => {
 
   it("restores each fork from its exact checkpoint snapshot", async () => {
     const { box, client } = createFakeSandbox();
+    client.evidenceCapabilities = async () => ({ nativeSessionCaptureV1: true });
     let observedCreate: Parameters<SandboxClientLike["create"]>[0];
     let forkCalls = 0;
     const originalFork = box.fork!;
@@ -342,7 +343,12 @@ describe("Tangle workspace branching", () => {
     const create = client.create;
     client.create = async (options, requestOptions) => {
       observedCreate = options;
-      return create(options, requestOptions);
+      const child = await create(options, requestOptions);
+      const proof = { hostId: "host-1", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
+      const receipt = child.createReceipt?.();
+      child.captureProof = () => proof;
+      child.createReceipt = () => ({ ...receipt, outcome: "created", idempotencyKeyApplied: true, captureProof: proof });
+      return child;
     };
     const operations = createTangleWorkspaceBranching({
       box,

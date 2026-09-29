@@ -27,6 +27,7 @@ import {
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
+import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
   awaitSandboxRunning,
   DEFAULT_TANGLE_READY_TIMEOUT_MS,
@@ -186,6 +187,7 @@ export function createTangleProvider(
       }
     }
     input.signal?.throwIfAborted();
+    if (options.requireNativeSessionCapture) await requireNativeCaptureCapability(options.client);
     const createPromise = options.client.create(
       createOptions,
       input.signal ? { signal: input.signal } : undefined,
@@ -213,6 +215,7 @@ export function createTangleProvider(
     }
     try {
       input.signal?.throwIfAborted();
+      if (options.requireNativeSessionCapture) requireNativeCaptureProof(box, true);
       // The environment this call returns must accept a turn, and composing it
       // reads a deployment document that a starting sandbox cannot answer.
       // Both facts wait here, once, so no caller repeats the wait.
@@ -221,6 +224,7 @@ export function createTangleProvider(
         ...(input.signal ? { signal: input.signal } : {}),
       });
       input.signal?.throwIfAborted();
+      if (options.requireNativeSessionCapture) requireNativeCaptureProof(box, true);
       const requestedResources = requestedResourceProfile(input.resources);
       const environment = await sandboxInstanceAsEnvironment(
         box,
@@ -274,6 +278,7 @@ export function createTangleProvider(
           operation?.signal?.throwIfAborted();
           if (!box || box.id !== environmentId) return null;
           boundedIdentifier(box.id, "Tangle workspace branching environment id");
+          if (options.requireNativeSessionCapture) requireNativeCaptureProof(box);
           return (
             createTangleWorkspaceBranching({
               box,
@@ -325,6 +330,7 @@ export function createTangleProvider(
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
+            if (options.requireNativeSessionCapture) requireNativeCaptureProof(box);
             let backendType: string | undefined;
             if (box.status === "running" && box.backend) {
               try {

@@ -19,6 +19,14 @@ import {
   type SandboxInstanceLike,
 } from "./index.js";
 
+const CAPTURE_PROOF = {
+  hostId: "host-1",
+  containerId: "a".repeat(64),
+  imageId: `sha256:${"b".repeat(64)}`,
+  bundleRevision: "c".repeat(40),
+  bundleChecksum: `sha256:${"d".repeat(64)}`,
+};
+
 function capturingProvider(requireNativeSessionCapture = false) {
   const creates: CreateSandboxOptions[] = [];
   const box: SandboxInstanceLike = {
@@ -26,10 +34,13 @@ function capturingProvider(requireNativeSessionCapture = false) {
     status: "running",
     async *streamPrompt() {},
     delete: async () => undefined,
+    captureProof: () => CAPTURE_PROOF,
+    createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: CAPTURE_PROOF }),
   };
   const provider = createTangleProvider({
     requireNativeSessionCapture,
     client: {
+      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
         return box;
@@ -55,14 +66,51 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => ({ backend: { type: "opencode" } }),
       client: {
+        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
         create: async (options) => {
           creates.push(options ?? {});
-          return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined };
+          return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined,
+            captureProof: () => CAPTURE_PROOF,
+            createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: CAPTURE_PROOF }) };
         },
       },
     });
     await provider.create({ profile: { name: "worker" } });
     expect(creates[0]).toMatchObject({ requireNativeSessionCapture: true });
+  });
+
+  it("refuses an unproved deployment before Sandbox.create", async () => {
+    let created = false;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false }),
+        create: async () => { created = true; throw new Error("unexpected create"); } },
+    });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/has not proven native session capture/);
+    expect(created).toBe(false);
+  });
+
+  it("cleans up a created box when the current capture proof is missing", async () => {
+    let deleted = false;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
+        create: async () => ({ id: "sbx-unproved", status: "running",
+        async *streamPrompt() {}, delete: async () => { deleted = true; } }) },
+    });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/no verified current container proof/);
+    expect(deleted).toBe(true);
+  });
+
+  it("rejects resume of an existing box with no current capture proof", async () => {
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: {
+        create: async () => { throw new Error("not called"); },
+        get: async () => ({ id: "sbx-unproved", status: "running", async *streamPrompt() {} }),
+      },
+    });
+    await expect(provider.get?.("sbx-unproved")).rejects.toThrow(/no verified current container proof/);
   });
 
   it("does not require native capture for ordinary creates", async () => {

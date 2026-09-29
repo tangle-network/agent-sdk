@@ -41,9 +41,18 @@ import type {
  * earlier call with the same idempotency key allocated it; `unknown` means the
  * platform cannot prove either outcome.
  */
+export interface NativeCaptureProofLike {
+  hostId: string;
+  containerId: string;
+  imageId: string;
+  bundleRevision: string;
+  bundleChecksum: string;
+}
+
 export interface SandboxCreateReceiptLike {
   outcome: "created" | "idempotent_replay" | "unknown";
   idempotencyKeyApplied: boolean;
+  captureProof?: NativeCaptureProofLike;
 }
 
 export interface TangleExactProcessOptions {
@@ -569,6 +578,8 @@ export interface SandboxInstanceLike {
    * by id or when the platform reported no receipt.
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
+  /** Fresh server proof for this container incarnation. */
+  captureProof?(): NativeCaptureProofLike | null;
   /**
    * Hold until this sandbox reaches a lifecycle status, refreshing this
    * instance in place. Preferred over the client-side wait because the created
@@ -625,8 +636,11 @@ export interface SandboxSessionLike {
         sessionId: string;
         backendType: string;
         nativeSessionId?: string;
+        proofStatus?: "verified" | "unverified";
+        containerId?: string;
         sidecarImageDigest: string;
         sidecarBundleRevision: string;
+        sidecarBundleChecksum?: string;
         nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
         inventory: {
           scannedFiles: number;
