@@ -625,14 +625,18 @@ export interface SandboxSessionLike {
         sessionId: string;
         backendType: string;
         nativeSessionId?: string;
+        sidecarImageDigest: string;
         nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
         inventory: {
           scannedFiles: number;
           reportedFiles: number;
+          excludedFiles: number;
           scannedDirectories: number;
           reportedDirectories: number;
+          excludedDirectories: number;
           scannedSymlinks: number;
           reportedSymlinks: number;
+          excludedSymlinks: number;
           skippedEntries: 0;
         };
         files: Array<{
@@ -640,18 +644,37 @@ export interface SandboxSessionLike {
           path: string;
           kind: "file" | "directory" | "symlink";
           mode: number;
+          uid: number;
+          gid: number;
+          mtimeMs: number;
+          ctimeMs: number;
           sizeBytes: number;
           sha256?: string;
           contentBase64?: string;
           linkTarget?: string;
         }>;
         processIo: Array<{
+          processId: string;
           sequence: number;
           at: string;
           stream: "stdin" | "stdout" | "stderr" | "protocol";
           sizeBytes: number;
           sha256: string;
           contentBase64: string;
+          metadata?: unknown;
+        }>;
+        processTerminals: Array<{
+          processId: string;
+          sequence: number;
+          at: string;
+          result: {
+            code: number | null;
+            signal: string | null;
+            timedOut: boolean;
+            timeoutReason: string | null;
+            captureError: null;
+            spawnError?: string;
+          };
         }>;
         events: unknown[];
         excluded: Array<{
@@ -659,10 +682,15 @@ export interface SandboxSessionLike {
           path: string;
           kind: "file" | "directory" | "symlink";
           mode: number;
+          uid: number;
+          gid: number;
+          mtimeMs: number;
+          ctimeMs: number;
           sizeBytes: number;
           reason: "credential";
         }>;
         completeness: { nativeStore: true; processIo: true; events: true };
+        coverageComplete: true;
       }
     | {
         status: "unavailable";

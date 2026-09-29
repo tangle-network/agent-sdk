@@ -465,5 +465,7 @@ For a Runtime-owned box, call `captureTangleSandboxEvidence(box, options)` with 
 Set `workspaceRoot` to a canonical relative worker directory when the box is shared.
 Both functions return private binary files and provenance for the workspace, native session roots, process streams, and transport replay.
 The caller must store those bytes in private durable custody before deleting the box.
-Credential exclusions remain listed with path, type, mode, size, and reason.
+Credential exclusions remain listed with path, type, owner IDs, timestamps, mode, size, and reason.
+Each process stream has exact frame order and a terminal receipt.
+The capture records the running sidecar image digest and can compare it with the pre-create proof.
 An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.

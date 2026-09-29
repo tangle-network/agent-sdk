@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseBackendType } from "@tangle-network/sandbox";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
@@ -36,6 +37,7 @@ export async function readTangleEvidenceCapabilities(client: SandboxClientLike):
 export function assertTangleEvidenceProfileCapability(document: TangleEvidenceCapabilities, profile: AgentProfile): void {
   if (!verifiedCapabilities.has(document)) throw new Error("Tangle evidence capability was not read from the deployment");
   if (!profile.harness) throw new Error("Tangle complete native session capture requires an exact profile harness");
+  parseBackendType(profile.harness);
 }
 
 /** Refuse unsupported or unproven native trace retention before Sandbox create. */
@@ -60,6 +62,8 @@ interface WorkspaceEntryMetadata {
 export interface TangleEnvironmentEvidenceOptions {
   executionId: string;
   harness: NonNullable<AgentProfile["harness"]>;
+  /** Optional next-create proof to compare with the running sidecar image. */
+  expectedSidecarImageDigest?: string;
   /** Exact Sandbox session id when execution was reattached after provider restart. */
   sandboxSessionId?: string | null;
   maxBytes: number;
@@ -92,6 +96,7 @@ export interface TangleEnvironmentEvidence {
       executionIds: string[];
       eventCountsByExecutionId: Record<string, number>;
       backendType: string;
+      sidecarImageDigest: string | null;
       transportEvents: "complete" | "unavailable";
       eventCount: number;
       messageCount: number;
@@ -101,12 +106,32 @@ export interface TangleEnvironmentEvidence {
       nativeStore: {
         scope: "session";
         roots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
-        inventory: { scannedFiles: number; reportedFiles: number; scannedDirectories: number; reportedDirectories: number; scannedSymlinks: number; reportedSymlinks: number; skippedEntries: 0 } | null;
+        inventory: {
+          scannedFiles: number; reportedFiles: number; excludedFiles: number;
+          scannedDirectories: number; reportedDirectories: number; excludedDirectories: number;
+          scannedSymlinks: number; reportedSymlinks: number; excludedSymlinks: number;
+          skippedEntries: 0;
+        } | null;
         complete: boolean;
-        entries: Array<{ rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink"; mode: number; sizeBytes: number; sha256: string | null; linkTarget: string | null }>;
-        excludedPaths: Array<{ rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink"; mode: number; sizeBytes: number; reason: "credential" }>;
+        entries: Array<{
+          rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
+          mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
+          sha256: string | null; linkTarget: string | null;
+        }>;
+        excludedPaths: Array<{
+          rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
+          mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
+          reason: "credential";
+        }>;
       };
-      processStreams: { complete: boolean; streamCount: number; stdinBytes: number; stdoutBytes: number; stderrBytes: number; protocolBytes: number };
+      processStreams: {
+        complete: boolean; streamCount: number; processCount: number; terminalCount: number;
+        stdinBytes: number; stdoutBytes: number; stderrBytes: number; protocolBytes: number;
+        terminals: Array<{ processId: string; sequence: number; at: string; result: {
+          code: number | null; signal: string | null; timedOut: boolean; timeoutReason: string | null;
+          captureError: null; spawnError?: string;
+        } }>;
+      };
       nativeEvents: { complete: boolean; count: number };
     }>;
     missing: string[];
@@ -139,6 +164,7 @@ export async function captureTangleEnvironmentEvidence(
   return captureTangleSandboxEvidence(state.box, {
     executionId: options.executionId,
     harness: options.harness,
+    expectedSidecarImageDigest: options.expectedSidecarImageDigest,
     sandboxSessionIds: [...sessionIds],
     sessionExecutionIds: Object.fromEntries([...sessionIds].filter((id) => state.sessions.has(id))
       .map((id) => [id, [...state.sessions.get(id)!]])),
@@ -154,6 +180,10 @@ export async function captureTangleSandboxEvidence(
 ): Promise<TangleEnvironmentEvidence> {
   if (!safeIdentifier(box.id) || !safeIdentifier(options.executionId)) throw new Error("Tangle evidence requires exact box and execution ids");
   if (!safeIdentifier(options.harness)) throw new Error("Tangle evidence requires an exact profile harness");
+  if (options.expectedSidecarImageDigest !== undefined &&
+      !/^sha256:[0-9a-f]{64}$/.test(options.expectedSidecarImageDigest)) {
+    throw new Error("Tangle evidence expected sidecar digest is invalid");
+  }
   if (!Array.isArray(options.sandboxSessionIds) || options.sandboxSessionIds.some((id) => !safeIdentifier(id))) {
     throw new Error("Tangle evidence Sandbox session ids are invalid");
   }
@@ -300,12 +330,14 @@ export async function captureTangleSandboxEvidence(
       scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
     };
     const processStreams: TangleEnvironmentEvidence["provenance"]["sessions"][number]["processStreams"] = {
-      complete: false, streamCount: 0, stdinBytes: 0, stdoutBytes: 0, stderrBytes: 0, protocolBytes: 0,
+      complete: false, streamCount: 0, processCount: 0, terminalCount: 0,
+      stdinBytes: 0, stdoutBytes: 0, stderrBytes: 0, protocolBytes: 0, terminals: [],
     };
     const nativeEvents: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeEvents"] = {
       complete: false, count: 0,
     };
     let nativeSessionId: string | null = null;
+    let sidecarImageDigest: string | null = null;
     let nativeReason: string | null = "raw-session-capture-capability-absent";
     if (native !== undefined) {
       if (native.sessionId !== id || native.backendType !== options.harness) {
@@ -316,13 +348,21 @@ export async function captureTangleSandboxEvidence(
       }
       nativeSessionId = native.nativeSessionId ?? null;
       if (native.status === "captured") {
+        if (!/^sha256:[0-9a-f]{64}$/.test(native.sidecarImageDigest) ||
+            (options.expectedSidecarImageDigest !== undefined &&
+             native.sidecarImageDigest !== options.expectedSidecarImageDigest)) {
+          throw new Error("Tangle raw session image digest is missing or differs from deployment proof");
+        }
+        sidecarImageDigest = native.sidecarImageDigest;
         if (native.completeness?.nativeStore !== true || native.completeness.processIo !== true ||
             native.completeness.events !== true || !Array.isArray(native.files) ||
             !Array.isArray(native.processIo) || !Array.isArray(native.events) ||
-            !Array.isArray(native.excluded) || !Array.isArray(native.nativeRoots) || !native.inventory) {
+            !Array.isArray(native.excluded) || !Array.isArray(native.nativeRoots) || !native.inventory ||
+            !Array.isArray(native.processTerminals) || native.coverageComplete !== true) {
           throw new Error("Tangle raw session capture is incomplete");
         }
-        if (native.files.length + native.processIo.length + native.events.length > MAX_ENTRIES) {
+        if (native.files.length + native.processIo.length + native.processTerminals.length +
+            native.events.length > MAX_ENTRIES) {
           throw new Error("Tangle raw session capture exceeds entry limit");
         }
         const roots = new Set<string>();
@@ -345,9 +385,7 @@ export async function captureTangleSandboxEvidence(
           const identity = entry.rootScope + "/" + path;
           if (nativePaths.has(identity)) throw new Error("Tangle raw session repeats a native path");
           nativePaths.add(identity);
-          if (!Number.isInteger(entry.mode) || entry.mode < 0 || !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0) {
-            throw new Error("Tangle raw session entry metadata is invalid");
-          }
+          if (!nativeStatMetadata(entry)) throw new Error("Tangle raw session entry metadata is invalid");
           if (entry.kind === "file") {
             const content = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256,
               options.maxBytes - capturedBytes);
@@ -364,61 +402,110 @@ export async function captureTangleSandboxEvidence(
           }
           included[entry.kind] += 1;
           nativeStore.entries.push({
-            rootScope: entry.rootScope, path, kind: entry.kind, mode: entry.mode, sizeBytes: entry.sizeBytes,
-            sha256: entry.sha256 ?? null, linkTarget: entry.linkTarget ?? null,
+            rootScope: entry.rootScope, path, kind: entry.kind, mode: entry.mode,
+            uid: entry.uid, gid: entry.gid, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs,
+            sizeBytes: entry.sizeBytes, sha256: entry.sha256 ?? null, linkTarget: entry.linkTarget ?? null,
           });
         }
         for (const exclusion of native.excluded) {
           const path = canonicalEntryPath(exclusion.path);
           const identity = exclusion.rootScope + "/" + path;
           if (!roots.has(exclusion.rootScope) || nativePaths.has(identity) ||
-              exclusion.reason !== "credential" || !["file", "symlink"].includes(exclusion.kind) ||
-              !Number.isInteger(exclusion.mode) || exclusion.mode < 0 ||
-              !Number.isSafeInteger(exclusion.sizeBytes) || exclusion.sizeBytes < 0) {
+              exclusion.reason !== "credential" || !["file", "directory", "symlink"].includes(exclusion.kind) ||
+              !nativeStatMetadata(exclusion)) {
             throw new Error("Tangle raw session exclusion is invalid");
           }
           nativePaths.add(identity);
           excluded[exclusion.kind] += 1;
           nativeStore.excludedPaths.push({
             rootScope: exclusion.rootScope, path, kind: exclusion.kind, mode: exclusion.mode,
+            uid: exclusion.uid, gid: exclusion.gid, mtimeMs: exclusion.mtimeMs, ctimeMs: exclusion.ctimeMs,
             sizeBytes: exclusion.sizeBytes, reason: exclusion.reason,
           });
         }
         const inventory = native.inventory;
         const counts = [
-          inventory.reportedFiles, inventory.scannedFiles, inventory.reportedDirectories,
-          inventory.scannedDirectories, inventory.reportedSymlinks, inventory.scannedSymlinks,
+          inventory.reportedFiles, inventory.scannedFiles, inventory.excludedFiles,
+          inventory.reportedDirectories, inventory.scannedDirectories, inventory.excludedDirectories,
+          inventory.reportedSymlinks, inventory.scannedSymlinks, inventory.excludedSymlinks,
         ];
         if (counts.some((value) => !Number.isSafeInteger(value) || value < 0) ||
             inventory.skippedEntries !== 0 ||
             inventory.reportedFiles !== included.file ||
             inventory.reportedDirectories !== included.directory ||
             inventory.reportedSymlinks !== included.symlink ||
-            inventory.scannedFiles !== included.file + excluded.file ||
-            inventory.scannedDirectories !== included.directory ||
-            inventory.scannedSymlinks !== included.symlink + excluded.symlink) {
+            inventory.excludedFiles !== excluded.file ||
+            inventory.excludedDirectories !== excluded.directory ||
+            inventory.excludedSymlinks !== excluded.symlink ||
+            inventory.scannedFiles !== inventory.reportedFiles + inventory.excludedFiles ||
+            inventory.scannedDirectories !== inventory.reportedDirectories + inventory.excludedDirectories ||
+            inventory.scannedSymlinks !== inventory.reportedSymlinks + inventory.excludedSymlinks) {
           throw new Error("Tangle raw session inventory does not reconcile");
         }
         nativeStore.inventory = inventory;
-        const ioSequences = new Set<number>();
+        const ioSequences = new Map<string, Set<number>>();
+        const frameMetadata: Array<Record<string, unknown>> = [];
         for (const frame of native.processIo) {
           options.signal?.throwIfAborted();
-          if (!Number.isSafeInteger(frame.sequence) || frame.sequence < 0 || ioSequences.has(frame.sequence) ||
-              !Number.isFinite(Date.parse(frame.at)) ||
+          if (!safeIdentifier(frame.processId) || !Number.isSafeInteger(frame.sequence) ||
+              frame.sequence < 0 || !Number.isFinite(Date.parse(frame.at)) ||
               !["stdin", "stdout", "stderr", "protocol"].includes(frame.stream)) {
             throw new Error("Tangle raw session process stream metadata is invalid");
           }
-          ioSequences.add(frame.sequence);
+          const sequences = ioSequences.get(frame.processId) ?? new Set<number>();
+          if (sequences.has(frame.sequence)) throw new Error("Tangle raw session repeats a process frame");
+          sequences.add(frame.sequence);
+          ioSequences.set(frame.processId, sequences);
           const content = exactNativeBytes(frame.contentBase64, frame.sizeBytes, frame.sha256,
             options.maxBytes - capturedBytes);
           if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
           const label = String(frame.sequence).padStart(16, "0");
-          files.push({ path: "__retention__/sessions/" + id + "/io/" + label + "-" + frame.stream + ".bin", bytes: content, mode: 0o600 });
+          files.push({ path: "__retention__/sessions/" + id + "/io/" + frame.processId + "/" + label +
+            "-" + frame.stream + ".bin", bytes: content, mode: 0o600 });
+          frameMetadata.push({
+            processId: frame.processId, sequence: frame.sequence, at: frame.at, stream: frame.stream,
+            sizeBytes: frame.sizeBytes, sha256: frame.sha256,
+            ...(frame.metadata === undefined ? {} : { metadata: frame.metadata }),
+          });
           capturedBytes += content.byteLength;
           const counter = (frame.stream + "Bytes") as "stdinBytes" | "stdoutBytes" | "stderrBytes" | "protocolBytes";
           processStreams[counter] += content.byteLength;
           processStreams.streamCount += 1;
         }
+        const terminals = new Set<string>();
+        for (const terminal of native.processTerminals) {
+          if (!safeIdentifier(terminal.processId) || terminals.has(terminal.processId) ||
+              !Number.isSafeInteger(terminal.sequence) || terminal.sequence < 0 ||
+              !Number.isFinite(Date.parse(terminal.at)) ||
+              terminal.result?.captureError !== null ||
+              !(terminal.result.code === null || Number.isSafeInteger(terminal.result.code)) ||
+              !(terminal.result.signal === null || typeof terminal.result.signal === "string") ||
+              typeof terminal.result.timedOut !== "boolean" ||
+              !(terminal.result.timeoutReason === null || typeof terminal.result.timeoutReason === "string") ||
+              (terminal.result.spawnError !== undefined && typeof terminal.result.spawnError !== "string")) {
+            throw new Error("Tangle raw session process terminal metadata is invalid");
+          }
+          const sequences = ioSequences.get(terminal.processId) ?? new Set<number>();
+          if (terminal.sequence !== sequences.size ||
+              [...sequences].some((sequence) => sequence < 0 || sequence >= terminal.sequence)) {
+            throw new Error("Tangle raw session process sequence is incomplete");
+          }
+          terminals.add(terminal.processId);
+          processStreams.terminals.push(terminal);
+        }
+        if ([...ioSequences.keys()].some((processId) => !terminals.has(processId))) {
+          throw new Error("Tangle raw session has a process without a terminal receipt");
+        }
+        processStreams.processCount = terminals.size;
+        processStreams.terminalCount = terminals.size;
+        const processManifest = Buffer.from(JSON.stringify({
+          kind: "tangle-native-process-streams.v1", sessionId: id,
+          frames: frameMetadata, terminals: native.processTerminals,
+        }));
+        if (capturedBytes + processManifest.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
+        files.push({ path: "__retention__/sessions/" + id + "/process-manifest.json",
+          bytes: processManifest, mode: 0o600 });
+        capturedBytes += processManifest.byteLength;
         const nativeEventBytes = Buffer.from(JSON.stringify({
           kind: "tangle-native-session-events.v1", sessionId: id, backendType: native.backendType,
           nativeSessionId, events: native.events,
@@ -438,7 +525,7 @@ export async function captureTangleSandboxEvidence(
     }
     sessions.push({
       id, executionId: options.executionId, executionIds: [...executionIds], eventCountsByExecutionId,
-      backendType: options.harness,
+      backendType: options.harness, sidecarImageDigest,
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
       eventCount: events.length, messageCount: messages.length, messageScope: "session",
       nativeSessionId, nativeReason, nativeStore, processStreams, nativeEvents,
@@ -530,4 +617,16 @@ function exactNativeBytes(contentBase64: string | undefined, sizeBytes: number, 
     throw new Error("Tangle raw session bytes do not match the server receipt");
   }
   return bytes;
+}
+
+
+function nativeStatMetadata(entry: {
+  mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
+}): boolean {
+  return Number.isSafeInteger(entry.mode) && entry.mode >= 0 &&
+    Number.isSafeInteger(entry.uid) && entry.uid >= 0 &&
+    Number.isSafeInteger(entry.gid) && entry.gid >= 0 &&
+    Number.isFinite(entry.mtimeMs) && entry.mtimeMs >= 0 &&
+    Number.isFinite(entry.ctimeMs) && entry.ctimeMs >= 0 &&
+    Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0;
 }

@@ -6,7 +6,8 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 
-function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; incomplete?: boolean; workerRoot?: string } = {}) {
+function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
+  badInventory?: boolean; excludedCredential?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
   const filePath = overrides.filePath ?? (root === "." ? "notes/.finding.json" : root + "/notes/.finding.json");
@@ -39,18 +40,34 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             status: "captured" as const,
             sessionId: id,
             backendType: overrides.wrongBackend ? "codex" : "opencode",
+            sidecarImageDigest: "sha256:" + "a".repeat(64),
             nativeSessionId: "native-1",
             nativeRoots: [{ scope: "session-home" as const, path: "." }],
-            inventory: { scannedFiles: 1, reportedFiles: 1, scannedDirectories: 0, reportedDirectories: 0, scannedSymlinks: 0, reportedSymlinks: 0, skippedEntries: 0 as const },
+            inventory: {
+              scannedFiles: overrides.excludedCredential ? 2 : 1,
+              reportedFiles: overrides.badInventory ? 2 : 1,
+              excludedFiles: overrides.excludedCredential ? 1 : 0,
+              scannedDirectories: 0, reportedDirectories: 0, excludedDirectories: 0,
+              scannedSymlinks: 0, reportedSymlinks: 0, excludedSymlinks: 0, skippedEntries: 0 as const,
+            },
             files: [{ rootScope: "session-home" as const, path: ".local/share/session.json", kind: "file" as const, mode: 0o600,
-              sizeBytes: native.byteLength, sha256: "sha256:" + (overrides.wrongDigest ? "0".repeat(64) : createHash("sha256").update(native).digest("hex")),
+              uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: native.byteLength, sha256: "sha256:" + (overrides.wrongDigest ? "0".repeat(64) : createHash("sha256").update(native).digest("hex")),
               contentBase64: native.toString("base64") }],
-            processIo: [{ sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
+            processIo: [{ processId: "process-1", sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
               sizeBytes: stdout.byteLength, sha256: "sha256:" + createHash("sha256").update(stdout).digest("hex"),
               contentBase64: stdout.toString("base64") }],
+            processTerminals: overrides.missingTerminal ? [] : [{
+              processId: "process-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
+              result: { code: 0, signal: null, timedOut: false, timeoutReason: null, captureError: null },
+            }],
             events: [{ type: "native.done", sessionId: id }],
-            excluded: [],
+            excluded: overrides.excludedCredential ? [{
+              rootScope: "session-home" as const, path: ".config/auth.json",
+              kind: "file" as const, mode: 0o600, uid: 1000, gid: 1000,
+              mtimeMs: 1, ctimeMs: 1, sizeBytes: 42, reason: "credential" as const,
+            }] : [],
             completeness: { nativeStore: !overrides.incomplete as true, processIo: true as const, events: true as const },
+            coverageComplete: true as const,
           };
         } } : {}),
       };
@@ -75,6 +92,8 @@ describe("Tangle evidence capture", () => {
       expect(() => assertTangleEvidenceProfileCapability(proof, { harness })).not.toThrow();
     }
     expect(() => assertTangleEvidenceProfileCapability(proof, {})).toThrow(/exact profile harness/);
+    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "future-unregistered" as never }))
+      .toThrow();
     expect(() => assertTangleEvidenceProfileCapability({ ...proof }, { harness: "opencode" })).toThrow(/not read from the deployment/);
     await expect(assertTangleEvidenceCapability({} as Parameters<typeof assertTangleEvidenceCapability>[0], { harness: "opencode" })).rejects.toThrow(/no pre-create/);
     const unproven = { async evidenceCapabilities() { return { workspaceCaptureV1: true, nativeSessionCaptureV1: false, sidecarImageDigest: "sha256:" + "a".repeat(64) }; } };
@@ -128,6 +147,24 @@ describe("Tangle evidence capture", () => {
     await expect(captureTangleEnvironmentEvidence(fixture({ native: true, wrongDigest: true }), options)).rejects.toThrow(/do not match/);
     await expect(captureTangleEnvironmentEvidence(fixture({ native: true, wrongBackend: true }), options)).rejects.toThrow(/unrelated/);
     await expect(captureTangleEnvironmentEvidence(fixture({ native: true, incomplete: true }), options)).rejects.toThrow(/incomplete/);
+  });
+
+  it("reconciles declared credential metadata and process terminal boundaries", async () => {
+    const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: 100_000 };
+    const evidence = await captureTangleEnvironmentEvidence(fixture({ native: true, excludedCredential: true }), options);
+    expect(evidence.provenance.missing).toEqual([]);
+    expect(evidence.provenance.sessions[0]?.nativeStore.excludedPaths).toEqual([expect.objectContaining({
+      path: ".config/auth.json", kind: "file", mode: 0o600, sizeBytes: 42, reason: "credential",
+    })]);
+    expect(evidence.provenance.sessions[0]?.processStreams).toMatchObject({
+      complete: true, processCount: 1, terminalCount: 1,
+    });
+    await expect(captureTangleEnvironmentEvidence(fixture({ native: true, missingTerminal: true }), options))
+      .rejects.toThrow(/without a terminal/);
+    await expect(captureTangleEnvironmentEvidence(fixture({ native: true, badSequence: true }), options))
+      .rejects.toThrow(/sequence is incomplete/);
+    await expect(captureTangleEnvironmentEvidence(fixture({ native: true, badInventory: true }), options))
+      .rejects.toThrow(/inventory does not reconcile/);
   });
 
   it("refuses a path outside the listed workspace parent", async () => {
