@@ -1,5 +1,18 @@
 # @tangle-network/agent-provider-tangle
 
+## 1.8.0
+
+### Minor Changes
+
+- d7d677d: Capture attributed raw session roots and process streams through a generic Sandbox contract, with a pre-create evidence gate and a direct box export for shared workers.
+- a5c29d0: Add private content-addressed artifact locators and bounded, attributed Tangle workspace evidence export.
+
+### Patch Changes
+
+- f09e4cb: Preserve native file ownership and timestamps, reconcile process terminal receipts, and bind captured bytes to the running sidecar image digest.
+- Updated dependencies [a5c29d0]
+  - @tangle-network/agent-interface@2.14.0
+
 ## 1.7.0
 
 ### Minor Changes
