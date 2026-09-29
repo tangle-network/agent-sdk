@@ -731,6 +731,7 @@ function processAttemptMatches(
 
 function nativeEventsMatch(events: readonly unknown[], sessionId: string, executionIds: readonly string[], partial: boolean): boolean {
   const seen = new Set<string>();
+  let countsComplete = true;
   for (const event of events) {
     if (event === null || typeof event !== "object") throw new Error("Tangle raw session event buffer is malformed");
     const entry = event as Record<string, unknown>;
@@ -742,13 +743,13 @@ function nativeEventsMatch(events: readonly unknown[], sessionId: string, execut
         !executionIds.includes(metadata.executionId) || seen.has(metadata.executionId)) {
       throw new Error("Tangle raw session event buffer has unrelated or duplicate execution identity");
     }
-    if (!Number.isSafeInteger(metadata.eventCount) || Number(metadata.eventCount) < entry.frames.length ||
-        (!partial && metadata.eventCount !== entry.frames.length)) {
-      throw new Error("Tangle raw session event buffer count is inconsistent");
+    if (!Number.isSafeInteger(metadata.eventCount) || Number(metadata.eventCount) < 0 || metadata.eventCount !== entry.frames.length) {
+      if (!partial) throw new Error("Tangle raw session event buffer count is inconsistent");
+      countsComplete = false;
     }
     seen.add(metadata.executionId);
   }
-  const complete = executionIds.every((executionId) => seen.has(executionId));
+  const complete = countsComplete && executionIds.every((executionId) => seen.has(executionId));
   if (!complete && !partial) throw new Error("Tangle raw session event buffers do not cover every execution");
   return complete;
 }

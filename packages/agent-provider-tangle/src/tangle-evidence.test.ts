@@ -7,7 +7,7 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
-  badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean } = {}) {
+  badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean; liveCountRace?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
   const filePath = overrides.filePath ?? (root === "." ? "notes/.finding.json" : root + "/notes/.finding.json");
@@ -70,7 +70,7 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
               processId: "process-1", executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
               result: { code: 0, signal: null, timedOut: false, timeoutReason: null, captureError: null },
             }],
-            events: [{ metadata: { executionId: "exec-1", sessionId: id, eventCount: 1 }, frames: [{ type: "native.done", sessionId: id }] }],
+            events: [{ metadata: { executionId: "exec-1", sessionId: id, eventCount: overrides.liveCountRace ? 0 : 1 }, frames: [{ type: "native.done", sessionId: id }] }],
             excluded: overrides.excludedCredential ? [{
               rootScope: "session-home" as const, path: ".config/auth.json",
               kind: "file" as const, mode: 0o600, uid: 1000, gid: 1000,
@@ -176,6 +176,14 @@ describe("Tangle evidence capture", () => {
     const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
     expect(evidence.provenance.attempts[0]?.processIds).toEqual([]);
     expect(evidence.provenance.missing).toEqual([]);
+  });
+
+  it("retains a live partial buffer when its reported count races the observed frames", async () => {
+    const environment = fixture({ native: true, partial: true, liveCountRace: true });
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(evidence.provenance.sessions[0]?.nativeEvents.complete).toBe(false);
+    const events = evidence.files.find((file) => file.path.endsWith("/native-events.json"));
+    expect(JSON.parse(Buffer.from(events!.bytes).toString()).events[0].metadata.eventCount).toBe(0);
   });
 
   it("binds native bytes to the verified create container", async () => {
