@@ -579,7 +579,7 @@ export interface SandboxInstanceLike {
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
   /** Fresh server proof for this container incarnation. */
-  captureProof?(): NativeCaptureProofLike | null;
+  captureProof?(): NativeCaptureProofLike | null | undefined;
   /**
    * Hold until this sandbox reaches a lifecycle status, refreshing this
    * instance in place. Preferred over the client-side wait because the created
@@ -627,10 +627,7 @@ export interface SandboxInstanceLike {
   }): Promise<SandboxTeeAttestationResponseLike>;
 }
 
-export interface SandboxSessionLike {
-  readonly id: string;
-  messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
-  rawEvidence?(): Promise<
+export type TangleRawEvidenceLike =
     | {
         status: "captured";
         sessionId: string;
@@ -642,18 +639,7 @@ export interface SandboxSessionLike {
         sidecarBundleRevision: string;
         sidecarBundleChecksum?: string;
         nativeRoots: Array<{ rootScope: "session-home" | "workspace-session"; path: string }>;
-        inventory: {
-          scannedFiles: number;
-          reportedFiles: number;
-          excludedFiles: number;
-          scannedDirectories: number;
-          reportedDirectories: number;
-          excludedDirectories: number;
-          scannedSymlinks: number;
-          reportedSymlinks: number;
-          excludedSymlinks: number;
-          skippedEntries: 0;
-        };
+        inventory: Record<string, number>;
         files: Array<{
           rootScope: "session-home" | "workspace-session";
           path: string;
@@ -713,8 +699,13 @@ export interface SandboxSessionLike {
         backendType: string;
         nativeSessionId?: string;
         reason: string;
-      }
-  >;
+      };
+
+export interface SandboxSessionLike {
+  readonly id: string;
+  messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
+  /** The SDK returns generic records. Validate their shape before retaining any bytes. */
+  rawEvidence?(): Promise<unknown>;
   /** Exact native coding-agent TUI bound to this session id. */
   interactive?(options?: {
     ref?: AgentInteractiveSessionRef;

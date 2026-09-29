@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { parseBackendType } from "@tangle-network/sandbox";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
@@ -332,7 +332,11 @@ export async function captureTangleSandboxEvidence(
     if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
     capturedBytes = files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength;
     files.push({ path: `__retention__/sessions/${id}.json`, bytes, mode: 0o600 });
-    const native = await session.rawEvidence?.();
+    const rawNative = await session.rawEvidence?.();
+    if (rawNative !== undefined && (rawNative === null || typeof rawNative !== "object")) {
+      throw new Error("Tangle raw evidence is malformed");
+    }
+    const native = rawNative as TangleRawEvidenceLike | undefined;
     const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
       scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
     };
@@ -461,7 +465,18 @@ export async function captureTangleSandboxEvidence(
             inventory.scannedSymlinks !== inventory.reportedSymlinks + inventory.excludedSymlinks) {
           throw new Error("Tangle raw session inventory does not reconcile");
         }
-        nativeStore.inventory = inventory;
+        nativeStore.inventory = {
+          scannedFiles: inventory.scannedFiles,
+          reportedFiles: inventory.reportedFiles,
+          excludedFiles: inventory.excludedFiles,
+          scannedDirectories: inventory.scannedDirectories,
+          reportedDirectories: inventory.reportedDirectories,
+          excludedDirectories: inventory.excludedDirectories,
+          scannedSymlinks: inventory.scannedSymlinks,
+          reportedSymlinks: inventory.reportedSymlinks,
+          excludedSymlinks: inventory.excludedSymlinks,
+          skippedEntries: 0,
+        };
         const ioSequences = new Map<string, Set<number>>();
         const frameMetadata: Array<Record<string, unknown>> = [];
         for (const frame of native.processIo) {
