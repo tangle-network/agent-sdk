@@ -51,6 +51,12 @@ export interface TangleExactProcessOptions {
 }
 
 export interface SandboxClientLike {
+  /** Deployment-scoped evidence guarantees for a new sandbox on this client. */
+  evidenceCapabilities?(): Promise<{
+    nativeRolloutExportV1?: { opencode?: boolean; pi?: boolean; codex?: boolean; claudeCode?: boolean };
+    workspaceCaptureV1?: boolean;
+    sidecarImageDigest?: string;
+  }>;
   create(
     options?: CreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
@@ -500,16 +506,37 @@ export interface SandboxInstanceLike {
   fs?: {
     supportsWriteMode?: true;
     stat(path: string): Promise<{ size: number; isFile: boolean }>;
+    list?(path: string, options?: { all?: boolean; long?: boolean }): Promise<Array<{
+      name: string;
+      path: string;
+      size: number;
+      isDir: boolean;
+      isFile: boolean;
+      isSymlink: boolean;
+      permissions: number;
+      owner?: string;
+      group?: string;
+      modTime?: Date | string;
+      accessTime?: Date | string;
+    }>>;
+    usage?(path: string): Promise<{
+      sizeBytes: number;
+      fileCount: number;
+      directoryCount: number;
+      complete: boolean;
+      skippedEntries: number;
+    }>;
     readBatch(
       paths: string[],
       options?: { encoding?: "utf8" | "base64" }
     ): Promise<{
-      files: Array<{
-        path: string;
-        content: string;
-        encoding: "utf8" | "base64";
-        size: number;
-      }>;
+        files: Array<{
+          path: string;
+          content: string;
+          encoding: "utf8" | "base64";
+          size: number;
+          hash?: string;
+        }>;
       errors: Array<{ path: string; error: string; code?: string }>;
     }>;
     write(
@@ -591,6 +618,26 @@ export interface SandboxInstanceLike {
 
 export interface SandboxSessionLike {
   readonly id: string;
+  messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
+  nativeRollout?(): Promise<
+    | {
+        status: "captured";
+        sessionId: string;
+        backendType: "opencode";
+        nativeSessionId: string;
+        format: "opencode-session-export-json";
+        sizeBytes: number;
+        sha256: string;
+        contentBase64: string;
+      }
+    | {
+        status: "unavailable";
+        sessionId: string;
+        backendType: string;
+        nativeSessionId?: string;
+        reason: string;
+      }
+  >;
   /** Exact native coding-agent TUI bound to this session id. */
   interactive?(options?: {
     ref?: AgentInteractiveSessionRef;

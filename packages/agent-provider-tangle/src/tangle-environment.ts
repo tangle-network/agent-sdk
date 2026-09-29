@@ -74,6 +74,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
+import { bindTangleEvidenceEnvironment, noteTangleSession } from "./tangle-evidence.js";
 
 /**
  * Compose one concrete sandbox into an environment.
@@ -180,7 +181,7 @@ export async function sandboxInstanceAsEnvironment(
       ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
     });
   const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
-  return {
+  const environment: AgentEnvironment = {
     id: environmentId,
     provider: providerName,
     ...(creation === undefined ? {} : { creation }),
@@ -200,6 +201,7 @@ export async function sandboxInstanceAsEnvironment(
       input.signal?.throwIfAborted();
       const expectedExecutionId = executionIdFromTurnInput(input);
       const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
+      if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
       // A turn resumed after a cursor starts past its first steps, so it cannot
       // report the execution's running total.
       const stepUsage =
@@ -220,6 +222,9 @@ export async function sandboxInstanceAsEnvironment(
             break;
           }
           input.signal?.throwIfAborted();
+          if (typeof next.value.data?.runtimeSessionId === "string") {
+            noteTangleSession(environment, next.value.data.runtimeSessionId, expectedExecutionId);
+          }
           const converted = environmentEventFromSandboxEvent(next.value, {
             executionId: expectedExecutionId,
             sessionId: expectedSessionId,
@@ -253,12 +258,17 @@ export async function sandboxInstanceAsEnvironment(
       }
       input.signal?.throwIfAborted();
     },
-    ...(dispatch ? { dispatch } : {}),
+    ...(dispatch ? { async dispatch(input: AgentTurnInput) {
+      const ref = await dispatch(input);
+      noteTangleSession(environment, ref.id, input.executionId ?? input.controlRef?.executionId ?? ref.controlRef?.executionId);
+      return ref;
+    } } : {}),
     ...((capabilities.sessions.continue || capabilities.streaming.replay || capabilities.streaming.detach) &&
     box.session
       ? {
           session(id: string, options?: { controlRef?: AgentRunControlRef; signal?: AbortSignal }): AgentSession {
             boundedIdentifier(id, "Tangle session id");
+            noteTangleSession(environment, id);
             assertOptionKeys(options, ["controlRef", "signal"], "Tangle session");
             options?.signal?.throwIfAborted();
             const session = box.session?.(
@@ -482,6 +492,8 @@ export async function sandboxInstanceAsEnvironment(
         }
       : {}),
   };
+  bindTangleEvidenceEnvironment(environment, box);
+  return environment;
 }
 
 function snapshotMetadata(

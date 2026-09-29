@@ -45,10 +45,19 @@ export interface AgentCandidateIpfsLocator {
   path?: string;
 }
 
+/** Private content-addressed storage configured by the artifact resolver. */
+export interface AgentCandidatePrivateCasLocator {
+  kind: "private-cas";
+  /** Exact run id; the resolver must authorize it against the current run. */
+  namespace: string;
+  digest: Sha256Digest;
+}
+
 /** Closed locator set whose resolvers cannot choose arbitrary URL schemes. */
 export type AgentCandidateArtifactLocator =
   | AgentCandidateS3Locator
-  | AgentCandidateIpfsLocator;
+  | AgentCandidateIpfsLocator
+  | AgentCandidatePrivateCasLocator;
 
 /** Content-addressed artifact stored outside the candidate manifest. */
 export interface AgentCandidateArtifactRef {
