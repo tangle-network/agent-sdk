@@ -59,6 +59,8 @@
     "dist/tangle-environment.js",
     "dist/tangle-evidence.d.ts",
     "dist/tangle-evidence.js",
+    "dist/tangle-native-capture-proof.d.ts",
+    "dist/tangle-native-capture-proof.js",
     "dist/tangle-environment-dispatch.d.ts",
     "dist/tangle-environment-dispatch.js",
     "dist/tangle-environment-session.d.ts",
