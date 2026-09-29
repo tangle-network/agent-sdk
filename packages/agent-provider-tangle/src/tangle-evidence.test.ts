@@ -7,13 +7,15 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
-  badInventory?: boolean; excludedCredential?: boolean } = {}) {
+  badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
   const filePath = overrides.filePath ?? (root === "." ? "notes/.finding.json" : root + "/notes/.finding.json");
   const content = Buffer.from([0, 1, 255]);
+  const proof = { hostId: "host-1", containerId: "c".repeat(64), imageId: "sha256:" + "a".repeat(64), bundleRevision: "b".repeat(40), bundleChecksum: "sha256:" + "d".repeat(64) };
   const box = {
     id: "box-1",
+    ...(overrides.proof ? { captureProof: () => proof, createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: proof }) } : {}),
     fs: {
       async usage() { return { sizeBytes: 3, fileCount: 1, directoryCount: 1, complete: overrides.complete ?? true, skippedEntries: 0 }; },
       async list(path: string) {
@@ -40,10 +42,11 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             status: "captured" as const,
             sessionId: id,
             backendType: overrides.wrongBackend ? "codex" : "opencode",
+            ...(overrides.proof ? { proofStatus: "verified" as const, containerId: overrides.wrongProof ? "e".repeat(64) : proof.containerId, sidecarBundleChecksum: proof.bundleChecksum } : {}),
             sidecarImageDigest: "sha256:" + "a".repeat(64),
             sidecarBundleRevision: overrides.missingBundleRevision ? "" : "b".repeat(40),
             nativeSessionId: "native-1",
-            nativeRoots: [{ scope: "session-home" as const, path: "." }],
+            nativeRoots: [{ rootScope: "session-home" as const, path: "." }],
             inventory: {
               scannedFiles: overrides.excludedCredential ? 2 : 1,
               reportedFiles: overrides.badInventory ? 2 : 1,
@@ -109,6 +112,18 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.sessions).toHaveLength(1);
     expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", backendType: "opencode", sidecarBundleRevision: "b".repeat(40), nativeStore: { complete: true } });
     expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
+  });
+
+  it("binds native bytes to the verified create container", async () => {
+    const environment = fixture({ native: true, proof: true });
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000, requireNativeSessionCapture: true,
+    });
+    expect(evidence.provenance.captureProof).toMatchObject({ containerId: "c".repeat(64) });
+    const wrong = fixture({ native: true, proof: true, wrongProof: true });
+    await expect(captureTangleEnvironmentEvidence(wrong, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000, requireNativeSessionCapture: true,
+    })).rejects.toThrow(/identity differs from verified create proof/);
   });
 
   it("rejects native capture without a canonical served sidecar bundle revision", async () => {

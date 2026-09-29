@@ -41,9 +41,18 @@ import type {
  * earlier call with the same idempotency key allocated it; `unknown` means the
  * platform cannot prove either outcome.
  */
+export interface NativeCaptureProofLike {
+  hostId: string;
+  containerId: string;
+  imageId: string;
+  bundleRevision: string;
+  bundleChecksum: string;
+}
+
 export interface SandboxCreateReceiptLike {
   outcome: "created" | "idempotent_replay" | "unknown";
   idempotencyKeyApplied: boolean;
+  captureProof?: NativeCaptureProofLike;
 }
 
 export interface TangleExactProcessOptions {
@@ -569,6 +578,8 @@ export interface SandboxInstanceLike {
    * by id or when the platform reported no receipt.
    */
   createReceipt?(): SandboxCreateReceiptLike | null;
+  /** Fresh server proof for this container incarnation. */
+  captureProof?(): NativeCaptureProofLike | null | undefined;
   /**
    * Hold until this sandbox reaches a lifecycle status, refreshing this
    * instance in place. Preferred over the client-side wait because the created
@@ -616,30 +627,19 @@ export interface SandboxInstanceLike {
   }): Promise<SandboxTeeAttestationResponseLike>;
 }
 
-export interface SandboxSessionLike {
-  readonly id: string;
-  messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
-  rawEvidence?(): Promise<
+export type TangleRawEvidenceLike =
     | {
         status: "captured";
         sessionId: string;
         backendType: string;
         nativeSessionId?: string;
+        proofStatus?: "verified" | "unverified";
+        containerId?: string;
         sidecarImageDigest: string;
         sidecarBundleRevision: string;
-        nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
-        inventory: {
-          scannedFiles: number;
-          reportedFiles: number;
-          excludedFiles: number;
-          scannedDirectories: number;
-          reportedDirectories: number;
-          excludedDirectories: number;
-          scannedSymlinks: number;
-          reportedSymlinks: number;
-          excludedSymlinks: number;
-          skippedEntries: 0;
-        };
+        sidecarBundleChecksum?: string;
+        nativeRoots: Array<{ rootScope: "session-home" | "workspace-session"; path: string }>;
+        inventory: Record<string, number>;
         files: Array<{
           rootScope: "session-home" | "workspace-session";
           path: string;
@@ -699,8 +699,13 @@ export interface SandboxSessionLike {
         backendType: string;
         nativeSessionId?: string;
         reason: string;
-      }
-  >;
+      };
+
+export interface SandboxSessionLike {
+  readonly id: string;
+  messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
+  /** The SDK returns generic records. Validate their shape before retaining any bytes. */
+  rawEvidence?(): Promise<unknown>;
   /** Exact native coding-agent TUI bound to this session id. */
   interactive?(options?: {
     ref?: AgentInteractiveSessionRef;
@@ -775,6 +780,8 @@ export interface TangleProviderOptions {
   name?: string;
   /** Overrides an inline profile's harness when create() names no backend. */
   defaultBackend?: BackendType;
+  /** Require the selected Sandbox host to prove native session capture for every create. */
+  requireNativeSessionCapture?: boolean;
   /**
    * Stored model credential and endpoint used by the default create mapping.
    * Each create must explicitly list apiKeyEnv in its secrets.

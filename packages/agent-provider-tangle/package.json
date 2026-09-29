@@ -59,6 +59,8 @@
     "dist/tangle-environment.js",
     "dist/tangle-evidence.d.ts",
     "dist/tangle-evidence.js",
+    "dist/tangle-native-capture-proof.d.ts",
+    "dist/tangle-native-capture-proof.js",
     "dist/tangle-environment-dispatch.d.ts",
     "dist/tangle-environment-dispatch.js",
     "dist/tangle-environment-session.d.ts",
@@ -119,7 +121,7 @@
     "@tangle-network/agent-interface": "^2.14.0"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.39.0 <1.0.0"
+    "@tangle-network/sandbox": ">=0.58.0 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -129,7 +131,7 @@
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.282.2",
-    "@tangle-network/sandbox": "0.55.3",
+    "@tangle-network/sandbox": "0.58.0",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"

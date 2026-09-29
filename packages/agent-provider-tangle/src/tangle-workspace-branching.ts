@@ -1,3 +1,4 @@
+import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import type {
   AgentWorkspaceBranching,
   ConfidentialAttestation,
@@ -113,6 +114,7 @@ export interface TangleWorkspaceBranchingOptions {
   client: SandboxClientLike;
   provider: string;
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+  requireNativeSessionCapture?: boolean;
 }
 
 /**
@@ -595,6 +597,7 @@ export function createTangleWorkspaceBranching(
     }
 
     const metadata = forkMarkerMetadata(request);
+    if (options.requireNativeSessionCapture) await requireNativeCaptureCapability(client);
     let returnedChild: SandboxInstanceLike;
     let outcome: "created" | "replayed";
     try {
@@ -607,6 +610,7 @@ export function createTangleWorkspaceBranching(
             fromSandboxId: box.id,
             idempotencyKey: request.idempotencyKey,
             metadata,
+            ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
             ...(request.name === undefined ? {} : { name: request.name }),
           },
           operation?.signal === undefined
@@ -615,6 +619,7 @@ export function createTangleWorkspaceBranching(
         ),
         operation?.signal
       );
+      if (options.requireNativeSessionCapture) requireNativeCaptureProof(returnedChild, true);
       const receipt = returnedChild.createReceipt?.();
       if (
         !receipt ||

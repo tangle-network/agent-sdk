@@ -22,6 +22,7 @@ import {
 } from "./tangle-contract-safety.js";
 import { sandboxInstanceAsExactProcessEnvironment } from "./tangle-exact-process-environment.js";
 import { awaitSandboxRunning } from "./tangle-readiness.js";
+import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
   assertExactProcessSandbox,
   assertSupportedProviderOptions,
@@ -57,6 +58,7 @@ export function createTangleExactProcessProvider(input: {
   providerName: string;
   /** How long create() waits for the new sandbox to reach `running`. */
   readyTimeoutMs: number;
+  requireNativeSessionCapture?: boolean;
 }): AgentExactProcessProvider {
   const { client, options, providerName, readyTimeoutMs } = input;
   boundedIdentifier(providerName, "Tangle exact process provider");
@@ -75,7 +77,11 @@ export function createTangleExactProcessProvider(input: {
       assertUnreservedMetadata(createInput.metadata);
       const identityDigest = exactProcessRequestDigest(createInput, providerName, options);
       createInput.signal?.throwIfAborted();
-      const createPromise = client.create(exactSandboxOptions(createInput, options, providerName, identityDigest), {
+      if (input.requireNativeSessionCapture) await requireNativeCaptureCapability(client);
+      const createPromise = client.create({
+        ...exactSandboxOptions(createInput, options, providerName, identityDigest),
+        ...(input.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
+      }, {
         ...(createInput.signal ? { signal: createInput.signal } : {}),
         ...(createInput.provisionTimeoutMs === undefined
           ? {}
@@ -108,6 +114,7 @@ export function createTangleExactProcessProvider(input: {
         // decided before the wait. A foreign sandbox returned under a reused
         // idempotency key is a conflict now, not two minutes from now.
         assertExactProcessSandbox(box, providerName, options.teamId, identityDigest);
+        if (input.requireNativeSessionCapture) requireNativeCaptureProof(box, true);
         // A launch starts a process on this sandbox, so create() returns only
         // after the sandbox can run one. The caller's provisioning budget owns
         // the deadline when it named one.
@@ -116,6 +123,7 @@ export function createTangleExactProcessProvider(input: {
           ...(createInput.signal ? { signal: createInput.signal } : {}),
         });
         createInput.signal?.throwIfAborted();
+        if (input.requireNativeSessionCapture) requireNativeCaptureProof(box, true);
         return sandboxInstanceAsExactProcessEnvironment(box, providerName);
       } catch (error) {
         if (
@@ -167,6 +175,7 @@ export function createTangleExactProcessProvider(input: {
         (box.metadata !== undefined && !isBoundedJson(box.metadata)) ||
         !isExactProcessSandbox(box, providerName, options.teamId)
       ) return null;
+      if (input.requireNativeSessionCapture) requireNativeCaptureProof(box);
       return sandboxInstanceAsExactProcessEnvironment(box, providerName);
     },
     async list(query, operation = {}): Promise<AgentExactProcessEnvironment[]> {

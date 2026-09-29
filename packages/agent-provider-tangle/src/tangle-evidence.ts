@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { parseBackendType } from "@tangle-network/sandbox";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
+import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
@@ -62,8 +63,10 @@ interface WorkspaceEntryMetadata {
 export interface TangleEnvironmentEvidenceOptions {
   executionId: string;
   harness: NonNullable<AgentProfile["harness"]>;
-  /** Optional next-create proof to compare with the running sidecar image. */
+  /** Optional local image ID to compare with the running sidecar image. */
   expectedSidecarImageDigest?: string;
+  /** Require raw session bytes to match this box's current verified create proof. */
+  requireNativeSessionCapture?: boolean;
   /** Exact Sandbox session id when execution was reattached after provider restart. */
   sandboxSessionId?: string | null;
   maxBytes: number;
@@ -84,6 +87,7 @@ export interface TangleEnvironmentEvidence {
     provider: string;
     environmentId: string;
     executionId: string;
+    captureProof?: NativeCaptureProofLike;
     workspaceScope: "environment";
     workspaceRoot: string;
     capturedAt: string;
@@ -166,6 +170,7 @@ export async function captureTangleEnvironmentEvidence(
     executionId: options.executionId,
     harness: options.harness,
     expectedSidecarImageDigest: options.expectedSidecarImageDigest,
+    requireNativeSessionCapture: options.requireNativeSessionCapture,
     sandboxSessionIds: [...sessionIds],
     sessionExecutionIds: Object.fromEntries([...sessionIds].filter((id) => state.sessions.has(id))
       .map((id) => [id, [...state.sessions.get(id)!]])),
@@ -192,6 +197,7 @@ export async function captureTangleSandboxEvidence(
   if (options.sessionExecutionIds && Object.keys(options.sessionExecutionIds).some((id) => !options.sandboxSessionIds.includes(id))) {
     throw new Error("Tangle evidence execution mapping names an unrelated Sandbox session");
   }
+  const captureProof = options.requireNativeSessionCapture ? requireNativeCaptureProof(box) : null;
   const workspaceRoot = options.workspaceRoot ?? ".";
   if (workspaceRoot !== ".") canonicalEntryPath(workspaceRoot);
   const fs = box.fs;
@@ -326,7 +332,11 @@ export async function captureTangleSandboxEvidence(
     if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
     capturedBytes = files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength;
     files.push({ path: `__retention__/sessions/${id}.json`, bytes, mode: 0o600 });
-    const native = await session.rawEvidence?.();
+    const rawNative = await session.rawEvidence?.();
+    if (rawNative !== undefined && (rawNative === null || typeof rawNative !== "object")) {
+      throw new Error("Tangle raw evidence is malformed");
+    }
+    const native = rawNative as TangleRawEvidenceLike | undefined;
     const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
       scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
     };
@@ -350,6 +360,13 @@ export async function captureTangleSandboxEvidence(
       }
       nativeSessionId = native.nativeSessionId ?? null;
       if (native.status === "captured") {
+        if (captureProof && (native.proofStatus !== "verified" ||
+            native.containerId !== captureProof.containerId ||
+            native.sidecarImageDigest !== captureProof.imageId ||
+            native.sidecarBundleRevision !== captureProof.bundleRevision ||
+            native.sidecarBundleChecksum !== captureProof.bundleChecksum)) {
+          throw new Error("Tangle raw session identity differs from verified create proof");
+        }
         if (!/^sha256:[0-9a-f]{64}$/.test(native.sidecarImageDigest) ||
             (options.expectedSidecarImageDigest !== undefined &&
              native.sidecarImageDigest !== options.expectedSidecarImageDigest)) {
@@ -373,12 +390,12 @@ export async function captureTangleSandboxEvidence(
         }
         const roots = new Set<string>();
         for (const root of native.nativeRoots) {
-          if (!["session-home", "workspace-session"].includes(root.scope) || roots.has(root.scope) ||
+          if (!["session-home", "workspace-session"].includes(root.rootScope) || roots.has(root.rootScope) ||
               (root.path !== "." && canonicalEntryPath(root.path) !== root.path)) {
             throw new Error("Tangle raw session native root is invalid");
           }
-          roots.add(root.scope);
-          nativeStore.roots.push(root);
+          roots.add(root.rootScope);
+          nativeStore.roots.push({ scope: root.rootScope, path: root.path });
         }
         if (!roots.size) throw new Error("Tangle raw session has no native root");
         const nativePaths = new Set<string>();
@@ -448,7 +465,18 @@ export async function captureTangleSandboxEvidence(
             inventory.scannedSymlinks !== inventory.reportedSymlinks + inventory.excludedSymlinks) {
           throw new Error("Tangle raw session inventory does not reconcile");
         }
-        nativeStore.inventory = inventory;
+        nativeStore.inventory = {
+          scannedFiles: inventory.scannedFiles,
+          reportedFiles: inventory.reportedFiles,
+          excludedFiles: inventory.excludedFiles,
+          scannedDirectories: inventory.scannedDirectories,
+          reportedDirectories: inventory.reportedDirectories,
+          excludedDirectories: inventory.excludedDirectories,
+          scannedSymlinks: inventory.scannedSymlinks,
+          reportedSymlinks: inventory.reportedSymlinks,
+          excludedSymlinks: inventory.excludedSymlinks,
+          skippedEntries: 0,
+        };
         const ioSequences = new Map<string, Set<number>>();
         const frameMetadata: Array<Record<string, unknown>> = [];
         for (const frame of native.processIo) {
@@ -549,6 +577,7 @@ export async function captureTangleSandboxEvidence(
     provider: "tangle-sandbox",
     environmentId: box.id,
     executionId: options.executionId,
+    ...(captureProof ? { captureProof } : {}),
     workspaceScope: "environment",
     workspaceRoot,
     capturedAt: new Date().toISOString(),

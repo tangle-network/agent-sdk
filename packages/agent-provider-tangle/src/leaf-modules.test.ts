@@ -1267,6 +1267,7 @@ describe("Tangle split leaf modules", () => {
 
   it("proves exact-process identity, pagination, cleanup, file bounds, and process abort", async () => {
     let exactBox!: SandboxInstanceLike;
+    const proof = { hostId: "host-1", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
     const deleted = vi.fn(async () => undefined);
     const processStatus = { pid: 9, running: false, exitCode: 0 };
     const processHandle: SandboxProcessLike = {
@@ -1283,6 +1284,8 @@ describe("Tangle split leaf modules", () => {
       metadata: {},
       async *streamPrompt() {},
       delete: deleted,
+      captureProof: () => proof,
+      createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: proof }),
       fs: {
         supportsWriteMode: true,
         stat: async () => ({ size: 2, isFile: true }),
@@ -1296,8 +1299,11 @@ describe("Tangle split leaf modules", () => {
       },
     };
     const listCalls: Array<{ offset?: number; limit?: number }> = [];
+    let exactCreateOptions: Parameters<SandboxClientLike["create"]>[0];
     const client: SandboxClientLike = {
+      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
       async create(options) {
+        exactCreateOptions = options;
         exactBox.metadata = { ...(options?.metadata ?? {}), runtimeMode: "control" };
         return exactBox;
       },
@@ -1308,8 +1314,9 @@ describe("Tangle split leaf modules", () => {
         return [];
       },
     };
-    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox", readyTimeoutMs: 1_000 });
+    const provider = createTangleExactProcessProvider({ client, options: { teamId: "team-1" }, providerName: "tangle-sandbox", readyTimeoutMs: 1_000, requireNativeSessionCapture: true });
     const environment = await provider.create(exactInput);
+    expect(exactCreateOptions).toMatchObject({ requireNativeSessionCapture: true });
     expect(environment.id).toBe(exactBox.id);
     expect(sandboxInstanceAsExactProcessEnvironment(exactBox, "tangle-sandbox").id).toBe(exactBox.id);
     expect((await provider.get("requested-but-unrelated"))).toBeNull();
