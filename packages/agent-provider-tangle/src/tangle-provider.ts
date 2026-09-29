@@ -51,6 +51,9 @@ export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
   const modelCredentials = captureModelCredentials(options.modelCredentials);
+  if (options.requireNativeSessionCapture !== undefined && typeof options.requireNativeSessionCapture !== "boolean") {
+    throw new Error("Tangle requireNativeSessionCapture must be a boolean");
+  }
   const mapCreateInput = options.mapCreateInput;
   if (modelCredentials !== undefined && mapCreateInput !== undefined) {
     throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
@@ -134,7 +137,10 @@ export function createTangleProvider(
         modelCredentials,
       );
     assertMappedCreateOptions(mappedOptions);
-    const createOptions = deepFreeze(structuredClone(mappedOptions));
+    const createOptions = deepFreeze(structuredClone({
+      ...mappedOptions,
+      ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
+    }));
     if (
       input.idempotencyKey !== undefined &&
       createOptions.idempotencyKey !== input.idempotencyKey

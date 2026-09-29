@@ -19,7 +19,7 @@ import {
   type SandboxInstanceLike,
 } from "./index.js";
 
-function capturingProvider() {
+function capturingProvider(requireNativeSessionCapture = false) {
   const creates: CreateSandboxOptions[] = [];
   const box: SandboxInstanceLike = {
     id: "sbx-create",
@@ -28,6 +28,7 @@ function capturingProvider() {
     delete: async () => undefined,
   };
   const provider = createTangleProvider({
+    requireNativeSessionCapture,
     client: {
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
@@ -39,6 +40,37 @@ function capturingProvider() {
 }
 
 describe("Tangle create input: egress policy and billing owner", () => {
+  it("requires proven native capture on every create when configured", async () => {
+    const { provider, creates } = capturingProvider(true);
+    await provider.create({ profile: { name: "first" } });
+    await provider.create({ profile: { name: "second" } });
+    expect(creates).toHaveLength(2);
+    expect(creates[0]).toMatchObject({ requireNativeSessionCapture: true });
+    expect(creates[1]).toMatchObject({ requireNativeSessionCapture: true });
+  });
+
+  it("keeps the requirement when a custom mapper selects the create options", async () => {
+    const creates: CreateSandboxOptions[] = [];
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      mapCreateInput: () => ({ backend: { type: "opencode" } }),
+      client: {
+        create: async (options) => {
+          creates.push(options ?? {});
+          return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined };
+        },
+      },
+    });
+    await provider.create({ profile: { name: "worker" } });
+    expect(creates[0]).toMatchObject({ requireNativeSessionCapture: true });
+  });
+
+  it("does not require native capture for ordinary creates", async () => {
+    const { provider, creates } = capturingProvider();
+    await provider.create({ profile: { name: "worker" } });
+    expect(creates[0]).not.toHaveProperty("requireNativeSessionCapture");
+  });
+
   it("carries both fields to Sandbox.create with no mapper and no client wrapper", async () => {
     const { provider, creates } = capturingProvider();
 

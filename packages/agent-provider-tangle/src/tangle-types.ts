@@ -775,6 +775,8 @@ export interface TangleProviderOptions {
   name?: string;
   /** Overrides an inline profile's harness when create() names no backend. */
   defaultBackend?: BackendType;
+  /** Require the selected Sandbox host to prove native session capture for every create. */
+  requireNativeSessionCapture?: boolean;
   /**
    * Stored model credential and endpoint used by the default create mapping.
    * Each create must explicitly list apiKeyEnv in its secrets.
