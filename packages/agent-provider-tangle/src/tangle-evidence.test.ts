@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxInstanceLike } from "./tangle-types.js";
+import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, noteTangleSession, readTangleEvidenceCapabilities } from "./tangle-evidence.js";
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
+const fixtureRawResponses = new WeakMap<AgentEnvironment, TangleRawEvidenceLike>();
 
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
   badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean; liveCountRace?: boolean } = {}) {
@@ -39,7 +40,7 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
           const native = Buffer.from('{"session":"native-1"}');
           const stdout = Buffer.from("native output\n");
           const damagedSpool = Buffer.from('{"unfinished":');
-          return {
+          const response: TangleRawEvidenceLike = {
             status: overrides.partial ? "partial" as const : "captured" as const,
             sessionId: id,
             backendType: overrides.wrongBackend ? "codex" : "opencode",
@@ -80,6 +81,8 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             coverageComplete: !overrides.partial,
             missingReasons: overrides.partial ? ["process_io_incomplete"] : [],
           };
+          fixtureRawResponses.set(environment, response);
+          return response;
         } } : {}),
       };
     },
@@ -88,6 +91,16 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
   fixtureBoxes.set(environment, box);
   noteTangleSession(environment, "session-1", "exec-1");
   return environment;
+}
+
+async function readFixtureSource(environment: AgentEnvironment) {
+  const box = fixtureBoxes.get(environment);
+  if (!box?.session) throw new Error("fixture has no session");
+  const originalSession = box.session.bind(box);
+  await originalSession("session-1").rawEvidence?.();
+  const source = fixtureRawResponses.get(environment);
+  if (!source || source.status === "unavailable") throw new Error("fixture has no raw source");
+  return { box, originalSession, source };
 }
 
 describe("Tangle evidence capture", () => {
@@ -182,8 +195,62 @@ describe("Tangle evidence capture", () => {
     const environment = fixture({ native: true, partial: true, liveCountRace: true });
     const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
     expect(evidence.provenance.sessions[0]?.nativeEvents.complete).toBe(false);
-    const events = evidence.files.find((file) => file.path.endsWith("/native-events.json"));
-    expect(JSON.parse(Buffer.from(events!.bytes).toString()).events[0].metadata.eventCount).toBe(0);
+    const manifest = evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"));
+    expect(JSON.parse(Buffer.from(manifest!.bytes).toString()).source.events[0].metadata.eventCount).toBe(0);
+  });
+
+  it("reconstructs the complete raw response with every metadata field and exact source byte", async () => {
+    const environment = fixture({ native: true, partial: true });
+    const { box, originalSession, source } = await readFixtureSource(environment);
+    Object.assign(source, { producer: { revision: "source-revision", cost: null, hidden: false, count: 0 },
+      skipped: [], contentRefs: "producer-owned-field" });
+    Object.assign(source.files[0]!, { futureStat: { birthtimeMs: 2 } });
+    Object.assign(source.processIo[0]!, { futureTransport: "socket", metadata: { nested: [null, 0, false] } });
+    Object.assign(source.processTerminals[0]!.result, { futureUsage: { tokens: null } });
+    Object.assign(source.attempts[0]!, { startedAt: "1970-01-01T00:00:00.000Z" });
+    box.session = (id) => ({ ...originalSession(id), async rawEvidence() { return source; } });
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
+    });
+    const artifact = evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!;
+    const manifest = JSON.parse(Buffer.from(artifact.bytes).toString());
+    expect(manifest.kind).toBe("tangle-native-session-evidence.v1");
+    expect(manifest.contentEncoding).toBe("base64");
+    for (const reference of manifest.contentRefs) {
+      const bytes = evidence.files.find((file) => file.path === reference.path)!.bytes;
+      const path = reference.jsonPointer.slice(1).split("/");
+      const key = path.pop()!;
+      const target = path.reduce((parent: Record<string, unknown>, segment: string) => parent[segment], manifest.source);
+      target[key] = Buffer.from(bytes).toString("base64");
+    }
+    expect(manifest.source).toEqual(JSON.parse(JSON.stringify(source)));
+    expect(evidence.files.filter((file) => /\/(process-manifest|native-events)\.json$/.test(file.path))).toEqual([]);
+  });
+
+  it("refuses a skipped-entry count that differs from the source manifest", async () => {
+    const environment = fixture({ native: true, partial: true });
+    const { box, originalSession, source } = await readFixtureSource(environment);
+    Object.assign(source, { skipped: [{ rootScope: "session-home", path: "missing.json", reason: "entry_unreadable" }] });
+    box.session = (id) => ({ ...originalSession(id), async rawEvidence() { return source; } });
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
+    })).rejects.toThrow(/skipped inventory does not reconcile/);
+  });
+
+  it("preserves the original metadata when native capture is unavailable", async () => {
+    const environment = fixture({ native: true });
+    const { box, originalSession } = await readFixtureSource(environment);
+    const source = { status: "unavailable" as const, sessionId: "session-1", backendType: "opencode",
+      reason: "native_source_unavailable", producer: { attempts: null, checkedAt: "1970-01-01T00:00:00.000Z" } };
+    box.session = (id) => ({ ...originalSession(id), async rawEvidence() { return source; } });
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
+    });
+    const manifest = evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!;
+    expect(JSON.parse(Buffer.from(manifest.bytes).toString())).toEqual({
+      kind: "tangle-native-session-evidence.v1", source, contentEncoding: "base64", contentRefs: [],
+    });
+    expect(evidence.provenance.sessions[0]?.nativeReason).toBe("native_source_unavailable");
   });
 
   it("binds native bytes to the verified create container", async () => {
