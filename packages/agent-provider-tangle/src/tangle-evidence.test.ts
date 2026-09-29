@@ -6,7 +6,7 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 
-function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
+function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
   badInventory?: boolean; excludedCredential?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
@@ -41,6 +41,7 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             sessionId: id,
             backendType: overrides.wrongBackend ? "codex" : "opencode",
             sidecarImageDigest: "sha256:" + "a".repeat(64),
+            sidecarBundleRevision: overrides.missingBundleRevision ? "" : "b".repeat(40),
             nativeSessionId: "native-1",
             nativeRoots: [{ scope: "session-home" as const, path: "." }],
             inventory: {
@@ -106,8 +107,15 @@ describe("Tangle evidence capture", () => {
     });
     expect(evidence.provenance.environmentId).toBe("box-1");
     expect(evidence.provenance.sessions).toHaveLength(1);
-    expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", backendType: "opencode", nativeStore: { complete: true } });
+    expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", backendType: "opencode", sidecarBundleRevision: "b".repeat(40), nativeStore: { complete: true } });
     expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
+  });
+
+  it("rejects native capture without a canonical served sidecar bundle revision", async () => {
+    const environment = fixture({ native: true, missingBundleRevision: true });
+    await expect(captureTangleSandboxEvidence(fixtureBoxes.get(environment)!, {
+      executionId: "exec-1", harness: "opencode", sandboxSessionIds: ["session-1"], maxBytes: 100_000,
+    })).rejects.toThrow(/sidecar bundle revision/);
   });
 
   it("scopes a direct capture to the exact worker directory", async () => {

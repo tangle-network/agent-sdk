@@ -467,5 +467,6 @@ Both functions return private binary files and provenance for the workspace, nat
 The caller must store those bytes in private durable custody before deleting the box.
 Credential exclusions remain listed with path, type, owner IDs, timestamps, mode, size, and reason.
 Each process stream has exact frame order and a terminal receipt.
-The capture records the running sidecar image digest and can compare it with the pre-create proof.
+The capture records the running sidecar image digest and the served Sidecar bundle revision.
+The image digest can be compared with the pre-create proof only when that proof identifies the actual placement image.
 An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.

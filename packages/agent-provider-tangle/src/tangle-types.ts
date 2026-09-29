@@ -626,6 +626,7 @@ export interface SandboxSessionLike {
         backendType: string;
         nativeSessionId?: string;
         sidecarImageDigest: string;
+        sidecarBundleRevision: string;
         nativeRoots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
         inventory: {
           scannedFiles: number;

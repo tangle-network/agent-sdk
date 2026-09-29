@@ -97,6 +97,7 @@ export interface TangleEnvironmentEvidence {
       eventCountsByExecutionId: Record<string, number>;
       backendType: string;
       sidecarImageDigest: string | null;
+      sidecarBundleRevision: string | null;
       transportEvents: "complete" | "unavailable";
       eventCount: number;
       messageCount: number;
@@ -338,6 +339,7 @@ export async function captureTangleSandboxEvidence(
     };
     let nativeSessionId: string | null = null;
     let sidecarImageDigest: string | null = null;
+    let sidecarBundleRevision: string | null = null;
     let nativeReason: string | null = "raw-session-capture-capability-absent";
     if (native !== undefined) {
       if (native.sessionId !== id || native.backendType !== options.harness) {
@@ -353,7 +355,11 @@ export async function captureTangleSandboxEvidence(
              native.sidecarImageDigest !== options.expectedSidecarImageDigest)) {
           throw new Error("Tangle raw session image digest is missing or differs from deployment proof");
         }
+        if (!/^[0-9a-f]{40}$/.test(native.sidecarBundleRevision)) {
+          throw new Error("Tangle raw session sidecar bundle revision is missing or invalid");
+        }
         sidecarImageDigest = native.sidecarImageDigest;
+        sidecarBundleRevision = native.sidecarBundleRevision;
         if (native.completeness?.nativeStore !== true || native.completeness.processIo !== true ||
             native.completeness.events !== true || !Array.isArray(native.files) ||
             !Array.isArray(native.processIo) || !Array.isArray(native.events) ||
@@ -525,7 +531,7 @@ export async function captureTangleSandboxEvidence(
     }
     sessions.push({
       id, executionId: options.executionId, executionIds: [...executionIds], eventCountsByExecutionId,
-      backendType: options.harness, sidecarImageDigest,
+      backendType: options.harness, sidecarImageDigest, sidecarBundleRevision,
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
       eventCount: events.length, messageCount: messages.length, messageScope: "session",
       nativeSessionId, nativeReason, nativeStore, processStreams, nativeEvents,
