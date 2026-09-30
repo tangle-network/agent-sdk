@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
-import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, noteTangleSession, readTangleEvidenceCapabilities } from "./tangle-evidence.js";
+import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, noteTangleSession } from "./tangle-evidence.js";
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 const fixtureRawResponses = new WeakMap<AgentEnvironment, TangleRawEvidenceLike>();
@@ -230,57 +230,6 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
     expect(evidence.provenance.missing).toContain("Sandbox session session-1 attempt exec-1/1 names an unretained attributed process: process-1");
   });
-  it("requires explicit native capture admission for the exact profile harness before create", async () => {
-    const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true,
-      nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2,
-      nativeSessionCaptureHarnesses: ["opencode", "pi", "codex", "claude-code", "kimi-code", "hermes"],
-      sidecarImageDigest: "sha256:" + "a".repeat(64),
-    }; } } as unknown as Parameters<typeof assertTangleEvidenceCapability>[0];
-    const proof = await readTangleEvidenceCapabilities(client);
-    for (const harness of ["opencode", "pi", "codex", "claude-code", "kimi-code", "hermes"] as const) {
-      await expect(assertTangleEvidenceCapability(client, { harness })).resolves.toBeUndefined();
-      expect(() => assertTangleEvidenceProfileCapability(proof, { harness })).not.toThrow();
-    }
-    expect(() => assertTangleEvidenceProfileCapability(proof, {})).toThrow(/exact profile harness/);
-    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "future-unregistered" as never }))
-      .toThrow();
-    expect(() => assertTangleEvidenceProfileCapability({ ...proof }, { harness: "opencode" })).toThrow(/not read from the deployment/);
-    await expect(assertTangleEvidenceCapability({} as Parameters<typeof assertTangleEvidenceCapability>[0], { harness: "opencode" })).rejects.toThrow(/no pre-create/);
-    const unproven = { async evidenceCapabilities() { return { workspaceCaptureV1: true, nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2, sidecarImageDigest: "sha256:" + "a".repeat(64) }; } };
-    await expect(readTangleEvidenceCapabilities(unproven as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0])).rejects.toThrow(/has not proven/);
-  });
-  it.each([undefined, 1, 3])("refuses an unknown or incompatible capture protocol %j", async (version) => {
-    const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: version,
-      nativeSessionCaptureHarnesses: ["opencode"], sidecarImageDigest: "sha256:" + "a".repeat(64),
-    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
-    await expect(readTangleEvidenceCapabilities(client)).rejects.toThrow(/has not proven/);
-  });
-
-  it("does not widen a selected-harness admission from the generic flag or later source mutation", async () => {
-    const listed = ["opencode"];
-    const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2,
-      nativeSessionCaptureHarnesses: listed,
-      sidecarImageDigest: "sha256:" + "a".repeat(64),
-    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
-    const proof = await readTangleEvidenceCapabilities(client);
-    listed.push("claude-code");
-    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "opencode" })).not.toThrow();
-    expect(() => assertTangleEvidenceProfileCapability(proof, { harness: "claude-code" })).toThrow(/has not proven/);
-    expect(Object.isFrozen(proof.nativeSessionCaptureHarnesses)).toBe(true);
-  });
-
-  it.each([undefined, ["opencode", "opencode"], ["future-unregistered"]])("refuses malformed deployment harness list %j", async (listed) => {
-    const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2,
-      nativeSessionCaptureHarnesses: listed,
-      sidecarImageDigest: "sha256:" + "a".repeat(64),
-    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
-    await expect(readTangleEvidenceCapabilities(client)).rejects.toThrow(/valid harness list/);
-  });
-
   it("captures the same attributed evidence directly from a Sandbox box", async () => {
     const environment = fixture({ native: true });
     const evidence = await captureTangleSandboxEvidence(fixtureBoxes.get(environment)!, {

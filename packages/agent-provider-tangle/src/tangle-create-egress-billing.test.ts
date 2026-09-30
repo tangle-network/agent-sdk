@@ -46,7 +46,6 @@ function capturingProvider(requireNativeSessionCapture = false) {
   const provider = createTangleProvider({
     requireNativeSessionCapture,
     client: {
-      evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
         return box;
@@ -72,7 +71,6 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => ({ backend: { type: "opencode" } }),
       client: {
-        evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
         create: async (options) => {
           creates.push(options ?? {});
           return capturedBox();
@@ -94,7 +92,6 @@ describe("Tangle create input: egress policy and billing owner", () => {
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
       client: {
-        evidenceCapabilities: async () => { throw new Error("global fleet unavailable"); },
         create: async (options) => {
           expect(options?.requireNativeSessionCapture).toBe(true);
           expect(hosts.find((host) => host.capture)?.id).toBe(CAPTURE_PROOF.hostId);
@@ -188,7 +185,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     let deleted = false;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
+      client: {
         create: async () => ({ id: "sbx-unproved", status: "running",
         createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true }),
         async *streamPrompt() {}, delete: async () => { deleted = true; } }) },

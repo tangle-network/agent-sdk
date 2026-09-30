@@ -1,60 +1,13 @@
 import { createHash } from "node:crypto";
-import { parseBackendType } from "@tangle-network/sandbox";
-import type { AgentProfile, HarnessType } from "@tangle-network/agent-interface";
+import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike, TangleRawEvidenceLike } from "./tangle-types.js";
-import { nativeCaptureHarnesses, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
+import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike, TangleRawEvidenceLike } from "./tangle-types.js";
+import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
-const verifiedCapabilities = new WeakSet<object>();
-
-export interface TangleEvidenceCapabilities {
-  readonly workspaceCaptureV1: true;
-  readonly nativeSessionCaptureV1: boolean;
-  readonly nativeSessionCaptureVersion: 2;
-  readonly nativeSessionCaptureHarnesses: readonly HarnessType[];
-  readonly sidecarImageDigest: string;
-}
-
-/** Read a deployment guarantee once, before Runtime starts creating environments. */
-export async function readTangleEvidenceCapabilities(client: SandboxClientLike): Promise<TangleEvidenceCapabilities> {
-  if (typeof client.evidenceCapabilities !== "function") throw new Error("Tangle deployment has no pre-create evidence capability query");
-  const document = await client.evidenceCapabilities();
-  if (document?.workspaceCaptureV1 !== true || typeof document.nativeSessionCaptureV1 !== "boolean" ||
-      document.nativeSessionCaptureVersion !== 2 ||
-      !/^sha256:[0-9a-f]{64}$/.test(document.sidecarImageDigest ?? "")) {
-    throw new Error("Tangle deployment has not proven complete workspace and native session capture for next-create placement");
-  }
-  const verified = Object.freeze({
-    workspaceCaptureV1: true as const,
-    nativeSessionCaptureV1: document.nativeSessionCaptureV1,
-    nativeSessionCaptureVersion: 2 as const,
-    nativeSessionCaptureHarnesses: nativeCaptureHarnesses(document.nativeSessionCaptureHarnesses),
-    sidecarImageDigest: document.sidecarImageDigest as string,
-  });
-  verifiedCapabilities.add(verified);
-  return verified;
-}
-
-/** Require the exact profile harness in the deployment's verified admission list. */
-export function assertTangleEvidenceProfileCapability(document: TangleEvidenceCapabilities, profile: AgentProfile): void {
-  if (!verifiedCapabilities.has(document)) throw new Error("Tangle evidence capability was not read from the deployment");
-  if (!profile.harness) throw new Error("Tangle complete native session capture requires an exact profile harness");
-  parseBackendType(profile.harness);
-  if (!document.nativeSessionCaptureHarnesses.includes(profile.harness)) {
-    throw new Error(`Tangle deployment has not proven native session capture for harness ${JSON.stringify(profile.harness)}`);
-  }
-}
-
-/** Refuse unsupported or unproven native trace retention before Sandbox create. */
-export async function assertTangleEvidenceCapability(client: SandboxClientLike, profile: AgentProfile): Promise<void> {
-  const document = await readTangleEvidenceCapabilities(client);
-  assertTangleEvidenceProfileCapability(document, profile);
-}
-
 interface WorkspaceEntryMetadata {
   path: string;
   type: "file" | "directory" | "symlink";

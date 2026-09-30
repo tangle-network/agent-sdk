@@ -25,7 +25,6 @@ import type {
   AgentInteractiveTerminalSession,
   ConfidentialAttestation,
   ConfidentialExecutionEnvironment,
-  HarnessType,
   InputPart,
   InteractionRequest,
   InteractionResponseCommand,
@@ -61,14 +60,6 @@ export interface TangleExactProcessOptions {
 }
 
 export interface SandboxClientLike {
-  /** Deployment-scoped evidence guarantees for a new sandbox on this client. */
-  evidenceCapabilities?(): Promise<{
-    nativeSessionCaptureV1?: boolean;
-    nativeSessionCaptureVersion?: number;
-    nativeSessionCaptureHarnesses?: readonly HarnessType[];
-    workspaceCaptureV1?: boolean;
-    sidecarImageDigest?: string;
-  }>;
   create(
     options?: CreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }

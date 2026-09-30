@@ -1301,7 +1301,6 @@ describe("Tangle split leaf modules", () => {
     const listCalls: Array<{ offset?: number; limit?: number }> = [];
     let exactCreateOptions: Parameters<SandboxClientLike["create"]>[0];
     const client: SandboxClientLike = {
-      evidenceCapabilities: async () => { throw new Error("fleet route must not gate exact process creation"); },
       async create(options) {
         exactCreateOptions = options;
         exactBox.metadata = { ...(options?.metadata ?? {}), runtimeMode: "control" };
