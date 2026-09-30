@@ -99,6 +99,7 @@ export function sandboxSessionAsAgentSession(
   interactionResponses: boolean,
   usageLog?: ExecutionUsageLog,
   nativeContinuation = false,
+  beforePrompt?: (input: AgentTurnInput) => void,
 ): AgentSession {
   const measured = (
     executionId: string | undefined,
@@ -441,6 +442,7 @@ export function sandboxSessionAsAgentSession(
       );
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
+      beforePrompt?.(input);
       AgentTurnInputSchema.parse(input);
       input.signal?.throwIfAborted();
       if (promptInFlight) {

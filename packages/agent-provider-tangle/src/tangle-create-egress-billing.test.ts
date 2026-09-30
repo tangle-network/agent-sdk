@@ -18,6 +18,7 @@ import {
   defaultTangleSandboxCapabilities,
   type SandboxInstanceLike,
 } from "./index.js";
+import type { SandboxRuntimeCapabilityDocument } from "./tangle-types.js";
 
 const CAPTURE_PROOF = {
   hostId: "host-1",
@@ -27,20 +28,25 @@ const CAPTURE_PROOF = {
   bundleChecksum: `sha256:${"d".repeat(64)}`,
 };
 
-function capturingProvider(requireNativeSessionCapture = false) {
-  const creates: CreateSandboxOptions[] = [];
-  const box: SandboxInstanceLike = {
-    id: "sbx-create",
-    status: "running",
-    async *streamPrompt() {},
+function capturedBox(capabilities: SandboxRuntimeCapabilityDocument | null = {
+  schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode"],
+}): SandboxInstanceLike {
+  return {
+    id: "sbx-create", status: "running", async *streamPrompt() {},
     delete: async () => undefined,
+    capabilities: async () => capabilities,
     captureProof: () => CAPTURE_PROOF,
     createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: CAPTURE_PROOF }),
   };
+}
+
+function capturingProvider(requireNativeSessionCapture = false) {
+  const creates: CreateSandboxOptions[] = [];
+  const box = capturedBox();
   const provider = createTangleProvider({
     requireNativeSessionCapture,
     client: {
-      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+      evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
         return box;
@@ -66,12 +72,10 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => ({ backend: { type: "opencode" } }),
       client: {
-        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+        evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
         create: async (options) => {
           creates.push(options ?? {});
-          return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined,
-            captureProof: () => CAPTURE_PROOF,
-            createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: CAPTURE_PROOF }) };
+          return capturedBox();
         },
       },
     });
@@ -79,57 +83,113 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates[0]).toMatchObject({ requireNativeSessionCapture: true });
   });
 
-  it("refuses an unproved deployment before Sandbox.create", async () => {
-    let created = false;
+  it("admits a capable selected host while unrelated fleet members lack capture", async () => {
+    const hosts = [{ id: "old-host", capture: false }, { id: "host-1", capture: true }];
+    let prompts = 0;
+    let capabilityReads = 0;
+    const box = capturedBox();
+    box.streamPrompt = async function* () { prompts++; };
+    const read = box.capabilities!;
+    box.capabilities = async () => { capabilityReads++; return read(); };
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false }),
-        create: async () => { created = true; throw new Error("unexpected create"); } },
+      client: {
+        evidenceCapabilities: async () => { throw new Error("global fleet unavailable"); },
+        create: async (options) => {
+          expect(options?.requireNativeSessionCapture).toBe(true);
+          expect(hosts.find((host) => host.capture)?.id).toBe(CAPTURE_PROOF.hostId);
+          return box;
+        },
+      },
     });
-    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/has not proven native session capture/);
-    expect(created).toBe(false);
+    const environment = await provider.create({ profile: { name: "worker", harness: "opencode" } });
+    const unsupportedTurn = async () => {
+      for await (const _ of environment.stream({ prompt: "work", providerOptions: { backend: { type: "claude-code" } } })) {}
+    };
+    await expect(unsupportedTurn()).rejects.toThrow(/has not proven native session capture for harness/);
+    expect(prompts).toBe(0);
+    for await (const _ of environment.stream({ prompt: "work" })) {}
+    expect(prompts).toBe(1);
+    expect(capabilityReads).toBe(1);
+  });
+
+  it("retains the placement refusal when no host can provide capture", async () => {
+    let created = 0;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: { create: async (options) => {
+        expect(options?.requireNativeSessionCapture).toBe(true);
+        created++;
+        throw new Error("NATIVE_CAPTURE_UNAVAILABLE: no host has fresh capture proof");
+      } },
+    });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/NATIVE_CAPTURE_UNAVAILABLE/);
+    expect(created).toBe(1);
   });
 
   it.each([
-    { label: "unlisted exact harness", profile: { name: "worker", harness: "claude-code" as const }, backend: "claude-code" as const, listed: ["opencode" as const] },
-    { label: "mapper changed the profile harness", profile: { name: "worker", harness: "claude-code" as const }, backend: "opencode" as const, listed: ["opencode" as const] },
-    { label: "missing explicit backend", profile: { name: "worker" }, backend: undefined, listed: ["opencode" as const] },
-  ])("refuses $label before create despite the global flag", async ({ profile, backend, listed }) => {
+    { label: "mapper changed the profile harness", profile: { name: "worker", harness: "claude-code" as const }, backend: "opencode" as const },
+    { label: "missing explicit backend", profile: { name: "worker" }, backend: undefined },
+  ])("refuses $label before create", async ({ profile, backend }) => {
     let creates = 0;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
       mapCreateInput: () => backend === undefined ? {} : { backend: { type: backend } },
-      client: {
-        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureHarnesses: listed }),
-        create: async () => { creates++; throw new Error("unexpected create"); },
-      },
+      client: { create: async () => { creates++; throw new Error("unexpected create"); } },
     });
     await expect(provider.create({ profile })).rejects.toThrow(/harness|explicit selected backend/);
     expect(creates).toBe(0);
   });
 
-  it.each([undefined, [], ["opencode", "opencode"], ["future-unregistered"]])("refuses an invalid or empty admission list %j before create", async (listed) => {
-    let creates = 0;
-    const provider = createTangleProvider({
-      requireNativeSessionCapture: true,
-      client: {
-        evidenceCapabilities: async () => ({
-          nativeSessionCaptureV1: true,
-          nativeSessionCaptureHarnesses: listed as never,
-        }),
-        create: async () => { creates++; throw new Error("unexpected create"); },
-      },
-    });
-    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/has not proven native session capture/);
-    expect(creates).toBe(0);
+  it.each([
+    null,
+    { schema: 1 },
+    { schema: 1, nativeSessionCaptureVersion: 1, nativeSessionCaptureHarnesses: ["opencode"] },
+    { schema: 1, nativeSessionCaptureVersion: 2 },
+    { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: [] },
+    { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode", "opencode"] },
+    { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["future-unregistered"] },
+    { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] },
+  ])("cleans up unsupported selected-box capture %j before any prompt", async (capabilities) => {
+    let prompts = 0;
+    let deleted = 0;
+    const box = capturedBox(capabilities);
+    box.streamPrompt = async function* () { prompts++; };
+    box.delete = async () => { deleted++; };
+    const provider = createTangleProvider({ requireNativeSessionCapture: true, client: { create: async () => box } });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/native session capture/);
+    expect(prompts).toBe(0);
+    expect(deleted).toBe(1);
+  });
+
+  it.each(["idempotent_replay", "missing"] as const)("does not delete an existing or unowned %s box when capture cannot be confirmed", async (receipt) => {
+    let deleted = 0;
+    const box = capturedBox(null);
+    box.delete = async () => { deleted++; };
+    box.createReceipt = () => receipt === "missing" ? null : ({ outcome: "idempotent_replay", idempotencyKeyApplied: true, captureProof: CAPTURE_PROOF });
+    const provider = createTangleProvider({ requireNativeSessionCapture: true, client: { create: async () => box } });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/native session capture/);
+    expect(deleted).toBe(0);
+  });
+
+  it("reconnects only when the actual restored backend has selected-box capture", async () => {
+    const box = capturedBox();
+    box.backend = { status: async () => ({ type: "opencode" }) };
+    const provider = createTangleProvider({ requireNativeSessionCapture: true, client: {
+      create: async () => { throw new Error("not called"); }, get: async () => box,
+    } });
+    await expect(provider.get!(box.id)).resolves.toMatchObject({ id: box.id });
+    box.backend = { status: async () => ({ type: "claude-code" }) };
+    await expect(provider.get!(box.id)).rejects.toThrow(/has not proven native session capture for harness/);
   });
 
   it("cleans up a created box when the current capture proof is missing", async () => {
     let deleted = false;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+      client: { evidenceCapabilities: async () => { throw new Error("fleet route must not be queried"); },
         create: async () => ({ id: "sbx-unproved", status: "running",
+        createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true }),
         async *streamPrompt() {}, delete: async () => { deleted = true; } }) },
     });
     await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/no verified current container proof/);

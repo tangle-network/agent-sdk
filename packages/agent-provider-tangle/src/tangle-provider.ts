@@ -187,14 +187,14 @@ export function createTangleProvider(
       }
     }
     input.signal?.throwIfAborted();
+    const captureHarness = options.requireNativeSessionCapture ? createOptions.backend?.type : undefined;
     if (options.requireNativeSessionCapture) {
-      if (createOptions.backend?.type === undefined) {
+      if (captureHarness === undefined) {
         throw new Error("Tangle complete native session capture requires an explicit selected backend before create");
       }
       if (typeof input.profile !== "string" && input.profile.harness !== undefined && input.profile.harness !== createOptions.backend.type) {
         throw new Error("Tangle native capture selected backend differs from the exact profile harness");
       }
-      await requireNativeCaptureCapability(options.client, createOptions.backend.type);
     }
     const createPromise = options.client.create(
       createOptions,
@@ -207,7 +207,7 @@ export function createTangleProvider(
       if (input.signal?.aborted) {
         void createPromise
           .then(async (lateBox) => {
-            if (!lateBox.delete) {
+            if (lateBox.createReceipt?.()?.outcome !== "created" || !lateBox.delete) {
               attachCleanupHandle(error, lateBox);
               return;
             }
@@ -233,6 +233,8 @@ export function createTangleProvider(
       });
       input.signal?.throwIfAborted();
       if (options.requireNativeSessionCapture) requireNativeCaptureProof(box, true);
+      const captureCapabilities = captureHarness === undefined ? undefined
+        : await awaitWithSignal(requireNativeCaptureCapability(box, captureHarness), input.signal);
       const requestedResources = requestedResourceProfile(input.resources);
       const environment = await sandboxInstanceAsEnvironment(
         box,
@@ -244,12 +246,19 @@ export function createTangleProvider(
           ...(requestedResources === undefined
             ? {}
             : { resources: requestedResources }),
+          ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
+          ...(captureCapabilities === undefined ? {} : { captureCapabilities }),
+          ...(captureHarness === undefined ? {} : { captureHarness }),
           ...confidentialVerifierOption(options.confidentialAttestationVerifier),
         },
       );
       input.signal?.throwIfAborted();
       return environment;
     } catch (error) {
+      if (box.createReceipt?.()?.outcome !== "created") {
+        attachCleanupHandle(error, box);
+        throw error;
+      }
       if (!box.delete) {
         const baseError = error instanceof Error ? error : new Error(String(error));
         throw Object.assign(baseError, { cleanupHandle: box });
@@ -348,6 +357,11 @@ export function createTangleProvider(
                 operation?.signal?.throwIfAborted();
               }
             }
+            let captureCapabilities;
+            if (options.requireNativeSessionCapture) {
+              if (backendType === undefined) throw new Error("Tangle native capture requires the current selected backend before reconnect");
+              captureCapabilities = await awaitWithSignal(requireNativeCaptureCapability(box, backendType), operation?.signal);
+            }
             const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
             return await sandboxInstanceAsEnvironment(
               box,
@@ -355,9 +369,12 @@ export function createTangleProvider(
               options.client,
               declaredCapabilities,
               operation?.signal ? { signal: operation.signal } : undefined,
-              confidentialVerifierOption(
-                options.confidentialAttestationVerifier,
-              ),
+              {
+                ...confidentialVerifierOption(options.confidentialAttestationVerifier),
+                ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
+                ...(captureCapabilities === undefined ? {} : { captureCapabilities }),
+                ...(backendType === undefined ? {} : { captureHarness: backendType }),
+              },
             );
           },
         }

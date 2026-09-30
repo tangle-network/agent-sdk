@@ -152,6 +152,8 @@ export interface SandboxSubscriptionLike {
  */
 export interface SandboxRuntimeCapabilityDocument {
   schema?: number;
+  nativeSessionCaptureVersion?: number;
+  nativeSessionCaptureHarnesses?: readonly string[];
   agentInterface?: string;
   sidecarVersion?: string;
   image?: string;
@@ -833,3 +835,4 @@ export interface TangleProviderOptions {
   /** External provider-key and measurement verifier for confidential forks. */
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
 }
+

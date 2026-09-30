@@ -28,6 +28,7 @@ import type {
 import type {
   SandboxClientLike,
   SandboxInstanceLike,
+  SandboxRuntimeCapabilityDocument,
 } from "./tangle-types.js";
 import { environmentEventFromSandboxEvent } from "./tangle-events.js";
 import {
@@ -47,7 +48,7 @@ import {
   frozenCapabilityDocument,
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
-import { readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
+import { deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
   assertBoundedJson,
@@ -75,6 +76,7 @@ import {
 } from "./tangle-workspace-branching.js";
 import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
 import { bindTangleEvidenceEnvironment, noteTangleSession } from "./tangle-evidence.js";
+import { assertNativeCaptureHarness } from "./tangle-native-capture-proof.js";
 
 /**
  * Compose one concrete sandbox into an environment.
@@ -108,6 +110,9 @@ export async function sandboxInstanceAsEnvironment(
   request?: {
     resources?: ResourceProfile;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
+    requireNativeSessionCapture?: boolean;
+    captureCapabilities?: SandboxRuntimeCapabilityDocument;
+    captureHarness?: string;
   },
 ): Promise<AgentEnvironment> {
   const environmentId = boundedIdentifier(box.id, "Tangle environment id");
@@ -119,7 +124,9 @@ export async function sandboxInstanceAsEnvironment(
     assertBoundedJson(box.metadata, "Tangle environment metadata");
   }
   const support = sandboxCapabilitySupport(box, client, request?.resources);
-  const deployment = await readDeploymentCapabilitySupport(box, operation);
+  const deployment = request?.captureCapabilities === undefined
+    ? await readDeploymentCapabilitySupport(box, operation)
+    : deploymentCapabilitySupport(request.captureCapabilities);
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
       capabilitiesForSandbox(
@@ -140,6 +147,7 @@ export async function sandboxInstanceAsEnvironment(
           client,
           provider: providerName,
           ...confidentialVerifierOption(request?.confidentialAttestationVerifier),
+          ...(request?.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
         })
       : undefined;
   // The published document is the single source for what this environment
@@ -149,6 +157,16 @@ export async function sandboxInstanceAsEnvironment(
   // Usage is measured per execution, so the log collects what runs through
   // this handle and the observation reports the newest record it holds.
   const usageLog = createExecutionUsageLog();
+  const assertCaptureInput = (input: AgentTurnInput): void => {
+    if (!request?.requireNativeSessionCapture) return;
+    if (!request.captureCapabilities) throw new Error("Tangle native capture has no measured container capability document");
+    const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    const profileHarness = typeof backend?.profile === "object" ? backend.profile.harness : undefined;
+    if (backend?.type !== undefined && profileHarness !== undefined && backend.type !== profileHarness) {
+      throw new Error("Tangle native capture turn backend differs from its exact profile harness");
+    }
+    assertNativeCaptureHarness(request.captureCapabilities, backend?.type ?? profileHarness ?? request.captureHarness);
+  };
   // The single destroy this handle performs, once it has been asked for.
   let destruction: Promise<void> | undefined;
   const terminals =
@@ -160,10 +178,14 @@ export async function sandboxInstanceAsEnvironment(
     capabilities.interactiveAgent.control === true
       ? createTangleInteractiveAgentRegistry(box, providerName, environmentId)
       : undefined;
-  const dispatch =
+  const dispatchRun =
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
       : undefined;
+  const dispatch = dispatchRun === undefined ? undefined : async (input: AgentTurnInput) => {
+    assertCaptureInput(input);
+    return dispatchRun(input);
+  };
   const exactExecutionEvents = (options: {
     sessionId: string;
     executionId: string;
@@ -199,6 +221,7 @@ export async function sandboxInstanceAsEnvironment(
     async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
       AgentTurnInputSchema.parse(input);
       input.signal?.throwIfAborted();
+      assertCaptureInput(input);
       const expectedExecutionId = executionIdFromTurnInput(input);
       const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
       if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
@@ -292,6 +315,7 @@ export async function sandboxInstanceAsEnvironment(
               interactionResponses,
               usageLog,
               capabilities.nativeContinuation !== undefined,
+              assertCaptureInput,
             );
             // sessions.continue was granted from the probe session and the
             // deployment document together; this backstop holds every
