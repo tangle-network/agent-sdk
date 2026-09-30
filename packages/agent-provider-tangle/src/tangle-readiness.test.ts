@@ -51,6 +51,7 @@ function startingBox(
 ): SandboxInstanceLike {
   const box: SandboxInstanceLike = {
     id: "sbx-starting",
+    createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }),
     status: "provisioning",
     async waitFor() {
       box.status = "running";
@@ -224,6 +225,7 @@ describe("Tangle create readiness", () => {
     const calls: string[] = [];
     const box: SandboxInstanceLike = {
       id: "sbx-starting",
+    createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }),
       status: "provisioning",
       refresh: vi.fn(async () => {
         calls.push("refresh");

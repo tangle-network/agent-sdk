@@ -303,6 +303,36 @@ function forkRequest(checkpoint: WorkspaceCheckpointRef): WorkspaceForkRequest {
 }
 
 describe("Tangle workspace branching", () => {
+  it("preserves required capture through an environment's checkpoint operations and cleans up an unproved restored child", async () => {
+    const { box, client } = createFakeSandbox();
+    const proof = { hostId: "host-1", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
+    box.captureProof = () => proof;
+    box.backend = { status: async () => ({ type: "opencode" }) };
+    box.capabilities = async () => ({ schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode"] });
+    let restored = 0;
+    let deleted = 0;
+    const create = client.create;
+    client.create = async (options, requestOptions) => {
+      expect(options?.requireNativeSessionCapture).toBe(true);
+      restored++;
+      const child = await create(options, requestOptions);
+      const destroy = child.delete!;
+      child.delete = async () => { deleted++; return destroy(); };
+      return child;
+    };
+    const adapter = createTangleProvider({ client, requireNativeSessionCapture: true });
+    const environment = await adapter.get!(box.id);
+    expect(environment?.workspaceBranching).toBeDefined();
+    const operations = environment!.workspaceBranching!;
+    const checkpoint = await operations.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created") throw new Error("checkpoint setup failed");
+    const result = await operations.fork(forkRequest(checkpoint.checkpoint));
+    expect(result.status).toBe("unknown");
+    expect(JSON.stringify(result)).toContain("capture proof failed");
+    expect(restored).toBe(1);
+    expect(deleted).toBe(1);
+  });
+
   it("requires the complete managed operation surface", () => {
     const { box, client } = createFakeSandbox();
     expect(supportsWorkspaceBranching(box, client)).toBe(true);
@@ -332,7 +362,7 @@ describe("Tangle workspace branching", () => {
 
   it("restores each fork from its exact checkpoint snapshot", async () => {
     const { box, client } = createFakeSandbox();
-    client.evidenceCapabilities = async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2 });
+    client.evidenceCapabilities = async () => { throw new Error("fleet route must not gate checkpoint restore"); };
     let observedCreate: Parameters<SandboxClientLike["create"]>[0];
     let forkCalls = 0;
     const originalFork = box.fork!;

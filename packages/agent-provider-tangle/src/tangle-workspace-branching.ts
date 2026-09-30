@@ -1,4 +1,4 @@
-import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
+import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import type {
   AgentWorkspaceBranching,
   ConfidentialAttestation,
@@ -597,7 +597,6 @@ export function createTangleWorkspaceBranching(
     }
 
     const metadata = forkMarkerMetadata(request);
-    if (options.requireNativeSessionCapture) await requireNativeCaptureCapability(client);
     let returnedChild: SandboxInstanceLike;
     let outcome: "created" | "replayed";
     try {
@@ -619,7 +618,6 @@ export function createTangleWorkspaceBranching(
         ),
         operation?.signal
       );
-      if (options.requireNativeSessionCapture) requireNativeCaptureProof(returnedChild, true);
       const receipt = returnedChild.createReceipt?.();
       if (
         !receipt ||
@@ -644,6 +642,15 @@ export function createTangleWorkspaceBranching(
       }
       outcome =
         receipt.outcome === "idempotent_replay" ? "replayed" : "created";
+      if (options.requireNativeSessionCapture) {
+        try {
+          requireNativeCaptureProof(returnedChild, true);
+        } catch (error) {
+          const compensation = await compensateCreatedForkChild(returnedChild, outcome, operation?.signal);
+          const removed = compensation === "destroyed" || compensation === "already_absent";
+          return forkUnknown(request, `Sandbox snapshot restore capture proof failed: ${safeError(error)}; cleanup ${compensation}`, !removed);
+        }
+      }
     } catch (error) {
       operation?.signal?.throwIfAborted();
       const conflict = await forkConflictFromRemote(

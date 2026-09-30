@@ -455,12 +455,19 @@ The adapter rejects ordinary sandboxes during create, recovery, and list operati
 
 ## Private session evidence
 
-Call `readTangleEvidenceCapabilities(client)` before creating a sandbox when complete evidence is required.
-It requires workspace capture, an explicit native capture harness list, and the next-create sidecar image digest.
-A global capture flag cannot admit a profile whose harness is absent from that list.
-Unprofiled exact-process and checkpoint restores retain the stricter global guarantee.
-Apply `assertTangleEvidenceProfileCapability(proof, profile)` to the exact profile in each create hook.
-An unavailable or unproven capability fails before the sandbox spends resources.
+Set `requireNativeSessionCapture: true` when the provider must retain complete native evidence.
+Sandbox selects a host with fresh capture proof and returns proof for the created container.
+The provider matches that proof to the create receipt before returning the environment.
+Agent creation and reconnect check the selected container's capture protocol and exact backend through `box.capabilities()`.
+Unsupported agent capture refuses before a model turn.
+A newly created container is cleaned up when its required proof is missing.
+An unrelated host or pending fleet update does not determine this container's admission.
+
+Exact-process creation retains its container proof and existing managed-process output and terminal contracts.
+Checkpoint restoration requires its container proof and exact source/checkpoint identity.
+A restored agent environment verifies its actual backend when reconnected.
+The capture requirement also reaches checkpoint operations exposed by an environment.
+Fleet capability summaries are diagnostic observations, not placement admission.
 
 Call `captureTangleEnvironmentEvidence(environment, options)` before destroying a provider environment.
 For a Runtime-owned box, call `captureTangleSandboxEvidence(box, options)` with exact session and execution IDs.

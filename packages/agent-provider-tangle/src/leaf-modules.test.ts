@@ -1301,7 +1301,7 @@ describe("Tangle split leaf modules", () => {
     const listCalls: Array<{ offset?: number; limit?: number }> = [];
     let exactCreateOptions: Parameters<SandboxClientLike["create"]>[0];
     const client: SandboxClientLike = {
-      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2 }),
+      evidenceCapabilities: async () => { throw new Error("fleet route must not gate exact process creation"); },
       async create(options) {
         exactCreateOptions = options;
         exactBox.metadata = { ...(options?.metadata ?? {}), runtimeMode: "control" };
@@ -1388,6 +1388,10 @@ describe("Tangle split leaf modules", () => {
     preAbort.abort();
     await expect(provider.create({ ...exactInput, signal: preAbort.signal })).rejects.toThrow();
     expect(MAX_LIST_RESULTS).toBeGreaterThan(1);
+    const deletedBeforeMissingProof = deleted.mock.calls.length;
+    exactBox.captureProof = () => null;
+    await expect(provider.create(exactInput)).rejects.toThrow(/no verified current container proof/);
+    expect(deleted.mock.calls.length).toBe(deletedBeforeMissingProof + 1);
   });
 
   it("does not delete the original exact process on a changed idempotent request", async () => {
@@ -1487,7 +1491,7 @@ describe("Tangle split leaf modules", () => {
 
   it("cleans failed provider creation and rejects unrelated provider options", async () => {
     const deleted = vi.fn(async () => undefined);
-    const invalidBox: SandboxInstanceLike = { id: "", async *streamPrompt() {}, delete: deleted };
+    const invalidBox: SandboxInstanceLike = { id: "", async *streamPrompt() {}, delete: deleted, createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }) };
     const provider = createTangleProvider({ client: { create: async () => invalidBox } });
     await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow();
     expect(deleted).toHaveBeenCalledOnce();

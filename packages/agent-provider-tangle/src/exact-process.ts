@@ -22,7 +22,7 @@ import {
 } from "./tangle-contract-safety.js";
 import { sandboxInstanceAsExactProcessEnvironment } from "./tangle-exact-process-environment.js";
 import { awaitSandboxRunning } from "./tangle-readiness.js";
-import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
+import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
   assertExactProcessSandbox,
   assertSupportedProviderOptions,
@@ -77,7 +77,6 @@ export function createTangleExactProcessProvider(input: {
       assertUnreservedMetadata(createInput.metadata);
       const identityDigest = exactProcessRequestDigest(createInput, providerName, options);
       createInput.signal?.throwIfAborted();
-      if (input.requireNativeSessionCapture) await requireNativeCaptureCapability(client);
       const createPromise = client.create({
         ...exactSandboxOptions(createInput, options, providerName, identityDigest),
         ...(input.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
@@ -94,7 +93,7 @@ export function createTangleExactProcessProvider(input: {
         if (createInput.signal?.aborted) {
           void createPromise
             .then(async (lateBox) => {
-              if (!lateBox.delete) {
+              if (lateBox.createReceipt?.()?.outcome !== "created" || !lateBox.delete) {
                 attachCleanupHandle(error, lateBox);
                 return;
               }
@@ -139,6 +138,10 @@ export function createTangleExactProcessProvider(input: {
             "Tangle exact process idempotency key conflicts with an existing request",
             { cause: error },
           );
+        }
+        if (box.createReceipt?.()?.outcome !== "created") {
+          attachCleanupHandle(error, box);
+          throw error;
         }
         if (!box.delete) {
           const baseError = error instanceof Error ? error : new Error(String(error));

@@ -1,5 +1,5 @@
 import { harnessTypeSchema, type HarnessType } from "@tangle-network/agent-interface";
-import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+import type { NativeCaptureProofLike, SandboxInstanceLike, SandboxRuntimeCapabilityDocument } from "./tangle-types.js";
 
 const imageId = /^sha256:[0-9a-f]{64}$/;
 const containerId = /^[0-9a-f]{64}$/;
@@ -39,24 +39,24 @@ export function nativeCaptureHarnesses(raw: unknown): readonly HarnessType[] {
   return Object.freeze(parsed.data);
 }
 
-/** Refuse an unsupported deployment before creating a billable sandbox.
- * Unprofiled exact-process and checkpoint restores retain the stricter universal guarantee. */
-export async function requireNativeCaptureCapability(client: SandboxClientLike, harness?: string): Promise<void> {
-  if (!client.evidenceCapabilities) {
-    throw new Error("Tangle deployment has not proven native session capture for next-create placement");
+/** Require the selected container's native protocol and exact agent backend before dispatch. */
+export async function requireNativeCaptureCapability(box: SandboxInstanceLike, harness: string): Promise<SandboxRuntimeCapabilityDocument> {
+  requireNativeCaptureProof(box);
+  if (!box.capabilities) {
+    throw new Error("Tangle selected container has no native capture capability document");
   }
-  const document = await client.evidenceCapabilities();
-  if (document.nativeSessionCaptureVersion !== 2) {
-    throw new Error("Tangle deployment has not proven native session capture protocol 2 for next-create placement");
+  const document = await box.capabilities();
+  if (document?.schema !== 1 || document.nativeSessionCaptureVersion !== 2) {
+    throw new Error("Tangle selected container has not proven native session capture protocol 2");
   }
-  if (harness === undefined) {
-    if (document.nativeSessionCaptureV1 !== true) {
-      throw new Error("Tangle deployment has not proven native session capture for unprofiled next-create placement");
-    }
-    return;
-  }
+  assertNativeCaptureHarness(document, harness);
+  return document;
+}
+
+/** Validate each newly dispatched backend against this container's measured document. */
+export function assertNativeCaptureHarness(document: SandboxRuntimeCapabilityDocument, harness: string | undefined): void {
   const selected = harnessTypeSchema.safeParse(harness);
   if (!selected.success || !nativeCaptureHarnesses(document.nativeSessionCaptureHarnesses).includes(selected.data)) {
-    throw new Error(`Tangle deployment has not proven native session capture for harness ${JSON.stringify(harness)}`);
+    throw new Error(`Tangle selected container has not proven native session capture for harness ${JSON.stringify(harness)}`);
   }
 }

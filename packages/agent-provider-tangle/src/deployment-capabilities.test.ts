@@ -83,6 +83,7 @@ function deployedProvider(options: {
   const deleted = vi.fn(async () => undefined);
   const box: SandboxInstanceLike = {
     id: "sbx-deployment",
+    createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }),
     status: options.status ?? "running",
     async *streamPrompt() {},
     dispatchPrompt: async (_message, promptOptions) => ({
