@@ -1,5 +1,22 @@
 # @tangle-network/agent-provider-tangle
 
+## 2.0.0
+
+### Major Changes
+
+- 27b51d3: Retain every original source, attempt, and metadata field across account rotation and reconnect.
+  Namespace native files and process streams by source.
+  Require Sandbox 0.58.4 for this capture contract.
+  Replace the optional scalar process source with the complete source array.
+
+### Patch Changes
+
+- 052e725: Retain the exact Sidecar execution and retry inventory with native session evidence.
+  Preserve readable files, process frames, and events from partial captures while reporting incomplete coverage.
+  Reject unrelated attempts and unattributed processes before certifying complete evidence.
+- 228607c: Preserve the complete raw evidence response in one private manifest, with verified references to binary content.
+  Retain unknown metadata and skipped native paths without duplicate source bytes.
+
 ## 1.9.2
 
 ### Patch Changes
