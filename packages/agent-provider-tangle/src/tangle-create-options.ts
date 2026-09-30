@@ -73,7 +73,7 @@ export function sandboxOptionsFromCreateInput(
   defaultBackend?: BackendType,
   parsedWorkspace?: WorkspaceRequest,
   modelCredentials?: TangleModelCredentials,
-  grantSelectedCredential = false,
+  subscriptionSelection = false,
 ): CreateSandboxOptions {
   const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
   const profile = inlineAgentProfile(input.profile);
@@ -88,7 +88,7 @@ export function sandboxOptionsFromCreateInput(
   if (modelCredentials !== undefined && selectedSecret === undefined) {
     throw new Error("Tangle modelCredentials must select a stored secret");
   }
-  if ((nativeCredentials || grantSelectedCredential) &&
+  if ((nativeCredentials || subscriptionSelection) &&
     (profile.harness === undefined || profile.harness !== backend)) {
     throw new Error("Tangle selected modelCredentials must use the exact profile harness");
   }
@@ -101,18 +101,14 @@ export function sandboxOptionsFromCreateInput(
   if (selectedSecret !== undefined && Object.hasOwn(input.env ?? {}, selectedSecret)) {
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
-  if (selectedSecret !== undefined && !nativeCredentials && !grantSelectedCredential &&
-    (!Array.isArray(input.secrets) || !input.secrets.includes(selectedSecret))) {
-    throw new Error("Tangle modelCredentials apiKeyEnv must be explicitly listed in create secrets");
-  }
   const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
-  const secrets = selectedSecret !== undefined && (nativeCredentials || grantSelectedCredential)
+  const secrets = selectedSecret !== undefined
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
     : requestedSecrets;
   if (secrets !== undefined && secrets.length > MAX_ARRAY_LENGTH) {
     throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
   }
-  const recordsCredential = nativeCredentials || grantSelectedCredential;
+  const recordsCredential = nativeCredentials || subscriptionSelection;
   if (recordsCredential && Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
     throw new Error("Tangle credential selection owns metadata.modelCredentials");
   }

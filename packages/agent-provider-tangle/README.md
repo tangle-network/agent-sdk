@@ -35,7 +35,7 @@ Set `TANGLE_SANDBOX_URL` to use another deployment.
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
 The provider does not create, copy, or renew stored secrets.
-Managed creates using a static API reference must list its named secret explicitly.
+The Provider grants the selected reference per create, alongside unrelated caller-requested secrets.
 
 ```ts
 const provider = createTangleProvider({
@@ -47,7 +47,6 @@ const provider = createTangleProvider({
 });
 const environment = await provider.create({
   profile: researchProfile,
-  secrets: ["RESEARCH_ROUTER_KEY"],
 });
 ```
 
@@ -115,7 +114,7 @@ A missing or unreadable capability refuses creation or dispatch before inference
 A selector grants its one selected stored secret automatically, alongside unrelated secrets requested by the caller.
 Keep pool-wide account credentials out of the create input's `secrets` list.
 Static native references grant their selected secret only for subscription profiles.
-Static API references preserve explicit grants for unmarked legacy profiles and grant their selected secret for subscription profiles.
+Static API references grant their selected secret for unmarked legacy profiles and subscription profiles.
 Inline environment values cannot shadow the selected stored secret.
 Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
 Subscription failures never fall back to managed Router access.

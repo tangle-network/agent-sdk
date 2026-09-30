@@ -828,7 +828,7 @@ export interface TangleProviderOptions {
   /**
    * Available stored credentials selected through exact profile credential intent.
    * Managed profiles skip selectors and native references; explicit managed intent skips all references.
-   * Unmarked legacy profiles retain their static API reference and explicit secret grant.
+   * Unmarked legacy profiles retain their static API reference and grant only its selected secret.
    * Subscription selections grant only their selected secret and record its public reference.
    * Cannot be combined with mapCreateInput; never accepts credential values or model overrides.
    */
