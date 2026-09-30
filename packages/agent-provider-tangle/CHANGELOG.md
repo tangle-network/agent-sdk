@@ -1,5 +1,17 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.0.0
+
+### Major Changes
+
+- af3a89b: Remove deployment-wide evidence capability helpers and their client contract. Capture admission uses the selected container proof and exact harness capabilities. Raw evidence and managed process capture remain available.
+
+### Patch Changes
+
+- 812ec45: Qualify required native capture against the selected container instead of fleet-wide inventory.
+  Reuse its measured harness capabilities before agent dispatch and reconnect.
+  Preserve exact-process and checkpoint receipts, forward capture requirements through environment branching, and retain ambiguous resources for recovery.
+
 ## 2.0.0
 
 ### Major Changes
