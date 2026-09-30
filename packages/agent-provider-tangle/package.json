@@ -123,7 +123,11 @@
     "dist/command-model-credentials.js",
     "dist/command-model-credentials.d.ts",
     "dist/model-credential-source.js",
-    "dist/model-credential-source.d.ts"
+    "dist/model-credential-source.d.ts",
+    "dist/http-model-credentials.js",
+    "dist/http-model-credentials.d.ts",
+    "dist/model-credential-request.js",
+    "dist/model-credential-request.d.ts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
