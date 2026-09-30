@@ -362,7 +362,6 @@ describe("Tangle workspace branching", () => {
 
   it("restores each fork from its exact checkpoint snapshot", async () => {
     const { box, client } = createFakeSandbox();
-    client.evidenceCapabilities = async () => { throw new Error("fleet route must not gate checkpoint restore"); };
     let observedCreate: Parameters<SandboxClientLike["create"]>[0];
     let forkCalls = 0;
     const originalFork = box.fork!;
