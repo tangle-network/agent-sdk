@@ -29,7 +29,7 @@ describe.each(["agent", "process"] as const)("%s create cancellation ownership",
           image: `sha256:${"a".repeat(64)}`, egress: { mode: "blocked" },
           maxLifetimeMs: 10_000, provisionTimeoutMs: 2_000,
           resources: { cpu: 1, memoryMb: 512, diskMb: 1_024 },
-          idempotencyKey: "late-create", signal: controller.signal,
+          metadata: {}, idempotencyKey: "late-create", signal: controller.signal,
         });
     await admission;
     const reason = new Error("cancel the caller");

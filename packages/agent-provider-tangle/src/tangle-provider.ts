@@ -192,7 +192,7 @@ export function createTangleProvider(
       if (captureHarness === undefined) {
         throw new Error("Tangle complete native session capture requires an explicit selected backend before create");
       }
-      if (typeof input.profile !== "string" && input.profile.harness !== undefined && input.profile.harness !== createOptions.backend.type) {
+      if (typeof input.profile !== "string" && input.profile.harness !== undefined && input.profile.harness !== captureHarness) {
         throw new Error("Tangle native capture selected backend differs from the exact profile harness");
       }
     }
