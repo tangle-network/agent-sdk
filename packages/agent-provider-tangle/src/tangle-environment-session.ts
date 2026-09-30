@@ -99,6 +99,7 @@ export function sandboxSessionAsAgentSession(
   interactionResponses: boolean,
   usageLog?: ExecutionUsageLog,
   nativeContinuation = false,
+  onExecution?: (executionId: string) => void,
 ): AgentSession {
   const measured = (
     executionId: string | undefined,
@@ -107,9 +108,10 @@ export function sandboxSessionAsAgentSession(
     usageLog?.record(executionId, result.usage);
     return result;
   };
-  let activeControlRef: AgentExactRunControlRef | undefined = controlRef
-    ? resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId)
-    : undefined;
+  let activeControlRef: AgentExactRunControlRef | undefined = controlRef === undefined
+    ? undefined
+    : resolveRetainedSessionControlRef(controlRef, session.id, provider, environmentId);
+  if (activeControlRef !== undefined) onExecution?.(activeControlRef.executionId);
   let promptInFlight = false;
   const respondToInteraction =
     interactionResponses && typeof session.respondToInteraction === "function"
@@ -500,6 +502,7 @@ export function sandboxSessionAsAgentSession(
           // The admission receipt is the durability boundary. Store it before
           // waiting for the result so an aborted caller can reconnect later.
           activeControlRef = nextControlRef;
+          onExecution?.(nextControlRef.executionId);
           const result = await awaitWithSignal(
             session.result({
               executionId: nextControlRef.executionId,
@@ -616,16 +619,16 @@ export function sandboxSessionAsAgentSession(
               executionId,
               controlRef: targetControlRef,
             };
+        const prompt = promptFromTurnInput(input);
+        const promptOptions = promptOptionsFromTurnInput(promptInput, {
+          provider,
+          environmentId,
+          sessionId: session.id,
+        });
+        onExecution?.(executionId);
         try {
           const result = await awaitWithSignal(
-            session.prompt(
-              promptFromTurnInput(input),
-              promptOptionsFromTurnInput(promptInput, {
-                provider,
-                environmentId,
-                sessionId: session.id,
-              }),
-            ),
+            session.prompt(prompt, promptOptions),
             input.signal,
           );
           input.signal?.throwIfAborted();

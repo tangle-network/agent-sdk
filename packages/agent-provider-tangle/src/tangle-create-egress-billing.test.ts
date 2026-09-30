@@ -40,7 +40,7 @@ function capturingProvider(requireNativeSessionCapture = false) {
   const provider = createTangleProvider({
     requireNativeSessionCapture,
     client: {
-      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode"] }),
       create: async (options?: CreateSandboxOptions) => {
         creates.push(options ?? {});
         return box;
@@ -66,7 +66,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => ({ backend: { type: "opencode" } }),
       client: {
-        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode"] }),
         create: async (options) => {
           creates.push(options ?? {});
           return { id: "sbx-mapped", status: "running", async *streamPrompt() {}, delete: async () => undefined,
@@ -83,7 +83,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     let created = false;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false }),
+      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2 }),
         create: async () => { created = true; throw new Error("unexpected create"); } },
     });
     await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/has not proven native session capture/);
@@ -100,7 +100,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       mapCreateInput: () => backend === undefined ? {} : { backend: { type: backend } },
       client: {
-        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureHarnesses: listed }),
+        evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: listed }),
         create: async () => { creates++; throw new Error("unexpected create"); },
       },
     });
@@ -114,7 +114,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
       requireNativeSessionCapture: true,
       client: {
         evidenceCapabilities: async () => ({
-          nativeSessionCaptureV1: true,
+          nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2,
           nativeSessionCaptureHarnesses: listed as never,
         }),
         create: async () => { creates++; throw new Error("unexpected create"); },
@@ -124,11 +124,27 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates).toBe(0);
   });
 
+  it.each([undefined, 1, 3])("refuses incompatible capture protocol %j before creating a sandbox", async (version) => {
+    let creates = 0;
+    const provider = createTangleProvider({
+      requireNativeSessionCapture: true,
+      client: {
+        evidenceCapabilities: async () => ({
+          nativeSessionCaptureV1: true, nativeSessionCaptureVersion: version,
+          nativeSessionCaptureHarnesses: ["opencode"],
+        }),
+        create: async () => { creates++; throw new Error("unexpected create"); },
+      },
+    });
+    await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow(/protocol 2/);
+    expect(creates).toBe(0);
+  });
+
   it("cleans up a created box when the current capture proof is missing", async () => {
     let deleted = false;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureHarnesses: ["opencode"] }),
+      client: { evidenceCapabilities: async () => ({ nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode"] }),
         create: async () => ({ id: "sbx-unproved", status: "running",
         async *streamPrompt() {}, delete: async () => { deleted = true; } }) },
     });

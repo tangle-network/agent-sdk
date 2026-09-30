@@ -46,6 +46,9 @@ export async function requireNativeCaptureCapability(client: SandboxClientLike, 
     throw new Error("Tangle deployment has not proven native session capture for next-create placement");
   }
   const document = await client.evidenceCapabilities();
+  if (document.nativeSessionCaptureVersion !== 2) {
+    throw new Error("Tangle deployment has not proven native session capture protocol 2 for next-create placement");
+  }
   if (harness === undefined) {
     if (document.nativeSessionCaptureV1 !== true) {
       throw new Error("Tangle deployment has not proven native session capture for unprofiled next-create placement");

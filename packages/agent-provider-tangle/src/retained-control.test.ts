@@ -14,6 +14,7 @@ import {
 } from "@tangle-network/agent-interface";
 import {
   createTangleProvider,
+  captureTangleEnvironmentEvidence,
   type SandboxClientLike,
   type SandboxInstanceLike,
   type SandboxSessionLike,
@@ -1597,5 +1598,124 @@ describe("Tangle retained control", () => {
       sessionId: sandboxSession.id,
       checked: expect.arrayContaining(["stable-event-ids", "reconnected-replay"]),
     });
+  });
+});
+
+describe("Tangle retained evidence attribution", () => {
+  async function retainedEvidenceFixture(failPrompt = false) {
+    const sessionId = "session-evidence-reconnect";
+    const promptExecutionIds: string[] = [];
+    const dispatchedExecutionIds: string[] = [];
+    const box: SandboxInstanceLike = retainedDeployment({
+      id: "sbx-evidence-reconnect",
+      async *streamPrompt() {},
+      fs: {
+        stat: async () => { throw new Error("unused workspace stat"); },
+        write: async () => { throw new Error("unused workspace write"); },
+        usage: async () => ({ sizeBytes: 0, fileCount: 0, directoryCount: 0, complete: true, skippedEntries: 0 }),
+        list: async () => [],
+        readBatch: async () => ({ files: [], errors: [] }),
+      },
+      dispatchPrompt: async (_message, options) => {
+        if (options?.executionId === undefined) throw new Error("execution identity missing");
+        dispatchedExecutionIds.push(options.executionId);
+        return {
+          sessionId: options.sessionId,
+          executionId: options.executionId,
+          runControlRef: options.runControlRef,
+          status: "running",
+          alreadyExisted: false,
+          dispatched: true,
+        };
+      },
+      session: (id) => ({
+        ...retainedSessionHandle(id),
+        async *events(options) {
+          yield { type: "execution.completed", data: { executionId: options?.executionId, runtimeSessionId: id } };
+        },
+        messages: async () => [],
+        prompt: async (_message, options) => {
+          if (options?.executionId === undefined) throw new Error("execution identity missing");
+          promptExecutionIds.push(options.executionId);
+          if (failPrompt) throw new Error("native process failed after dispatch");
+          return { success: true, status: "success", executionId: options.executionId, durationMs: 1 };
+        },
+      }),
+    });
+    const provider = createTangleProvider({
+      client: sdkShapedClient({
+        create: async () => box,
+        get: async (id) => id === box.id ? box : null,
+      }),
+    });
+    const original = await provider.create({ profile: { name: "worker" } });
+    const dispatched = await original.dispatch!({
+      prompt: "original retained turn",
+      sessionId,
+      executionId: "persisted-transport-execution",
+      turnId: "original-turn",
+    });
+    if (dispatched.controlRef === undefined) throw new Error("control reference missing");
+    const environment = await provider.get!(box.id);
+    if (environment === null) throw new Error("retained environment missing");
+    const session = environment.session!(sessionId, { controlRef: dispatched.controlRef });
+    const capture = () => captureTangleEnvironmentEvidence(environment, {
+      executionId: "logical-runtime-execution",
+      sandboxSessionId: sessionId,
+      harness: "claude-code",
+      maxBytes: 1_000_000,
+    });
+    return { environment, session, capture, promptExecutionIds, dispatchedExecutionIds };
+  }
+
+  it("uses the durable transport identity after provider reconstruction", async () => {
+    const { capture } = await retainedEvidenceFixture();
+    const evidence = await capture();
+    expect(evidence.provenance.executionId).toBe("logical-runtime-execution");
+    expect(evidence.provenance.sessions[0]?.executionIds).toEqual(["persisted-transport-execution"]);
+    expect(evidence.provenance.sessions[0]?.eventCountsByExecutionId).toEqual({
+      "persisted-transport-execution": 1,
+    });
+  });
+
+  it("attributes every synchronous continuation to its derived execution", async () => {
+    const { session, capture, promptExecutionIds } = await retainedEvidenceFixture();
+    await session.prompt({ prompt: "continue native context", turnId: "next-turn" });
+    const evidence = await capture();
+    expect(promptExecutionIds).toHaveLength(1);
+    expect(evidence.provenance.sessions[0]?.executionIds).toEqual([
+      "persisted-transport-execution", ...promptExecutionIds,
+    ]);
+    expect(session.controlRef?.executionId).toBe(promptExecutionIds[0]);
+  });
+
+  it("attributes accepted detached continuations before reading their result", async () => {
+    const { session, capture, dispatchedExecutionIds } = await retainedEvidenceFixture();
+    await session.prompt({ prompt: "continue detached", turnId: "detached-turn", detach: true });
+    expect(dispatchedExecutionIds).toHaveLength(2);
+    expect((await capture()).provenance.sessions[0]?.executionIds).toEqual(dispatchedExecutionIds);
+  });
+
+  it("retains an attempted execution when its native prompt fails", async () => {
+    const { session, capture, promptExecutionIds } = await retainedEvidenceFixture(true);
+    await expect(session.prompt({ prompt: "failed continuation", turnId: "failed-turn" }))
+      .rejects.toThrow("native process failed after dispatch");
+    expect(promptExecutionIds).toHaveLength(1);
+    expect((await capture()).provenance.sessions[0]?.executionIds).toEqual([
+      "persisted-transport-execution", ...promptExecutionIds,
+    ]);
+  });
+
+  it("does not add an execution from a rejected control reference", async () => {
+    const { environment, session, capture } = await retainedEvidenceFixture();
+    const controlRef = session.controlRef;
+    if (controlRef === undefined) throw new Error("control reference missing");
+    expect(() => environment.session!(session.id, {
+      controlRef: { ...controlRef, environmentId: "unrelated-environment", executionId: "unrelated-execution" },
+    })).toThrow("does not match this session");
+    for (const invalid of [null, false, 0, ""]) {
+      expect(() => Reflect.apply(environment.session!, environment, [session.id, { controlRef: invalid }])).toThrow();
+    }
+    expect((await capture()).provenance.sessions[0]?.executionIds).toEqual(["persisted-transport-execution"]);
   });
 });

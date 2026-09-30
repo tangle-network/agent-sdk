@@ -7,6 +7,12 @@ import { assertTangleEvidenceCapability, assertTangleEvidenceProfileCapability, 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 const fixtureRawResponses = new WeakMap<AgentEnvironment, TangleRawEvidenceLike>();
 
+function spoolSource(sourceId: string, records: readonly unknown[]) {
+  const bytes = Buffer.from(records.map((record) => JSON.stringify(record) + "\n").join(""));
+  return { sourceId, contentBase64: bytes.toString("base64"), sizeBytes: bytes.byteLength,
+    sha256: "sha256:" + createHash("sha256").update(bytes).digest("hex") };
+}
+
 function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
   badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean; liveCountRace?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
@@ -48,10 +54,12 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             sidecarImageDigest: "sha256:" + "a".repeat(64),
             sidecarBundleRevision: overrides.missingBundleRevision ? "" : "b".repeat(40),
             nativeSessionId: "native-1",
+            evidenceSources: [{ executionId: "exec-1", sourceId: "source-1", backendType: "opencode",
+              runtimeHome: "/home/agent/session-home", credentialPaths: [".config/auth.json"] }],
             attempts: [{ executionId: overrides.wrongAttempt ? "unrelated-exec" : "exec-1", ordinal: 1,
               providerSessionId: "provider-1", nativeSessionIds: ["native-1"], processIds: overrides.noProcess ? [] : ["process-1"],
               outcome: "succeeded" as const, missingReasons: [] }],
-            nativeRoots: [{ rootScope: "session-home" as const, path: "/home/agent/session-home" }],
+            nativeRoots: [{ sourceId: "source-1", rootScope: "session-home" as const, path: "/home/agent/session-home" }],
             inventory: {
               scannedFiles: overrides.excludedCredential ? 2 : 1,
               reportedFiles: overrides.badInventory ? 2 : 1,
@@ -59,21 +67,21 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
               scannedDirectories: 0, reportedDirectories: 0, excludedDirectories: 0,
               scannedSymlinks: 0, reportedSymlinks: 0, excludedSymlinks: 0, skippedEntries: 0 as const,
             },
-            files: [{ rootScope: "session-home" as const, path: ".local/share/session.json", kind: "file" as const, mode: 0o600,
+            files: [{ sourceId: "source-1", rootScope: "session-home" as const, path: ".local/share/session.json", kind: "file" as const, mode: 0o600,
               uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: native.byteLength, sha256: "sha256:" + (overrides.wrongDigest ? "0".repeat(64) : createHash("sha256").update(native).digest("hex")),
               contentBase64: native.toString("base64") }],
-            processIo: overrides.noProcess ? [] : [{ processId: "process-1", executionId: "exec-1", ordinal: overrides.wrongProcessAttempt ? 2 : 1, providerSessionId: "provider-1", sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
+            processIo: overrides.noProcess ? [] : [{ sourceId: "source-1", processId: "process-1", executionId: "exec-1", ordinal: overrides.wrongProcessAttempt ? 2 : 1, providerSessionId: "provider-1", sequence: 0, at: new Date(0).toISOString(), stream: "stdout" as const,
               sizeBytes: stdout.byteLength, sha256: "sha256:" + createHash("sha256").update(stdout).digest("hex"),
               contentBase64: stdout.toString("base64") }],
-            ...(overrides.partial ? { processSource: { contentBase64: damagedSpool.toString("base64"), sizeBytes: damagedSpool.byteLength,
-              sha256: "sha256:" + createHash("sha256").update(damagedSpool).digest("hex") } } : {}),
+            processSources: overrides.partial ? [{ sourceId: "source-1", contentBase64: damagedSpool.toString("base64"), sizeBytes: damagedSpool.byteLength,
+              sha256: "sha256:" + createHash("sha256").update(damagedSpool).digest("hex") }] : [],
             processTerminals: overrides.missingTerminal || overrides.noProcess ? [] : [{
-              processId: "process-1", executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
+              sourceId: "source-1", processId: "process-1", executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1", sequence: overrides.badSequence ? 2 : 1, at: new Date(0).toISOString(),
               result: { code: 0, signal: null, timedOut: false, timeoutReason: null, captureError: null },
             }],
             events: [{ metadata: { executionId: "exec-1", sessionId: id, eventCount: overrides.liveCountRace ? 0 : 1 }, frames: [{ type: "native.done", sessionId: id }] }],
             excluded: overrides.excludedCredential ? [{
-              rootScope: "session-home" as const, path: ".config/auth.json",
+              sourceId: "source-1", rootScope: "session-home" as const, path: ".config/auth.json",
               kind: "file" as const, mode: 0o600, uid: 1000, gid: 1000,
               mtimeMs: 1, ctimeMs: 1, sizeBytes: 42, reason: "credential" as const,
             }] : [],
@@ -81,6 +89,7 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
             coverageComplete: !overrides.partial,
             missingReasons: overrides.partial ? ["process_io_incomplete"] : [],
           };
+          if (!overrides.partial) response.processSources = [spoolSource("source-1", [...response.processIo, ...response.processTerminals])];
           fixtureRawResponses.set(environment, response);
           return response;
         } } : {}),
@@ -103,11 +112,128 @@ async function readFixtureSource(environment: AgentEnvironment) {
   return { box, originalSession, source };
 }
 
+async function rotatedFixture(partial = false) {
+  const environment = fixture({ native: true, partial });
+  const { box, originalSession, source } = await readFixtureSource(environment);
+  source.nativeSessionId = null;
+  source.evidenceSources.push({ ...source.evidenceSources[0]!, executionId: "exec-2", sourceId: "source-2",
+    runtimeHome: "/home/agent/second-home" });
+  source.nativeRoots.push({ sourceId: "source-2", rootScope: "session-home", path: "/home/agent/second-home" });
+  source.attempts.push({ ...source.attempts[0]!, executionId: "exec-2", nativeSessionIds: ["native-2"],
+    processIds: ["process-2"] });
+  const content = Buffer.from("second native source");
+  source.files.push({ ...source.files[0]!, sourceId: "source-2", contentBase64: content.toString("base64"),
+    sizeBytes: content.byteLength, sha256: "sha256:" + createHash("sha256").update(content).digest("hex") });
+  source.inventory.scannedFiles = 2;
+  source.inventory.reportedFiles = 2;
+  source.processIo.push({ ...source.processIo[0]!, sourceId: "source-2", executionId: "exec-2", processId: "process-2" });
+  source.processTerminals.push({ ...source.processTerminals[0]!, sourceId: "source-2", executionId: "exec-2", processId: "process-2" });
+  source.processSources.push(spoolSource("source-2", [source.processIo[1], source.processTerminals[1]]));
+  source.events.push({ metadata: { executionId: "exec-2", sessionId: "session-1", eventCount: 1 },
+    frames: [{ type: "native.done", sessionId: "session-1" }] });
+  box.session = (id) => ({ ...originalSession(id),
+    async *events(options) { yield { id: "1", type: "execution.completed", data: { executionId: options?.executionId } }; },
+    async rawEvidence() { return source; },
+  });
+  noteTangleSession(environment, "session-1", "exec-2");
+  return { environment, source };
+}
+
 describe("Tangle evidence capture", () => {
+  it("retains every rotated HOME under a distinct source namespace", async () => {
+    const { environment, source } = await rotatedFixture();
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    });
+    const paths = evidence.files.filter((file) => file.path.endsWith("/.local/share/session.json"));
+    expect(paths.map((file) => file.path)).toEqual([
+      "__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json",
+      "__retention__/sessions/session-1/native/source-2/session-home/.local/share/session.json",
+    ]);
+    expect(Buffer.from(paths[0]!.bytes).toString()).toBe('{"session":"native-1"}');
+    expect(Buffer.from(paths[1]!.bytes).toString()).toBe("second native source");
+    expect(evidence.provenance.sessions[0]?.evidenceSources).toEqual(source.evidenceSources);
+    expect(evidence.provenance.sessions[0]?.nativeSessionId).toBeNull();
+    expect(evidence.provenance.sessions[0]?.processStreams.processCount).toBe(2);
+    expect(evidence.provenance.attempts.map((attempt) => [attempt.executionId, attempt.ordinal])).toEqual([
+      ["exec-1", 1], ["exec-2", 1],
+    ]);
+    expect(evidence.provenance.missing).toEqual([]);
+  });
+
+  it("retains conflicting process bytes from separate sources without trusting their attribution", async () => {
+    const { environment, source } = await rotatedFixture(true);
+    source.attempts.forEach((attempt) => { attempt.processIds = []; });
+    source.processIo[1]!.processId = "process-1";
+    source.processTerminals[1]!.processId = "process-1";
+    source.missingReasons.push("process_source_identity_conflict", "native_source_unavailable:source-1");
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    });
+    expect(evidence.files.filter((file) => file.path.endsWith("/process-1/0000000000000000-stdout.bin")))
+      .toHaveLength(2);
+    expect(evidence.provenance.sessions[0]?.processStreams.sources.map((entry) => entry.sourceId))
+      .toEqual(["source-1", "source-2"]);
+    expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1: native_source_unavailable:source-1");
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 process process-1 has no exact attempt attribution");
+  });
+
+  it("attributes a reused process ID to its exact source and execution", async () => {
+    const { environment, source } = await rotatedFixture();
+    source.attempts[1]!.processIds = ["process-1"];
+    source.processIo[1]!.processId = "process-1";
+    source.processTerminals[1]!.processId = "process-1";
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    });
+    expect(evidence.provenance.missing).toEqual([]);
+    expect(evidence.provenance.sessions[0]?.processStreams).toMatchObject({ complete: true, processCount: 2, terminalCount: 2 });
+  });
+
+  it("refuses a complete capture that omits an earlier source root", async () => {
+    const { environment, source } = await rotatedFixture();
+    source.nativeRoots.shift();
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    })).rejects.toThrow(/unretained native source root/);
+  });
+
+  it("refuses a complete capture that omits an earlier original process log", async () => {
+    const { environment, source } = await rotatedFixture();
+    source.processSources.shift();
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    })).rejects.toThrow(/omits an original process source/);
+  });
+
+  it("keeps readable bytes when an earlier original process log is unavailable", async () => {
+    const { environment, source } = await rotatedFixture(true);
+    source.processSources.shift();
+    source.completeness.processIo = true;
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    });
+    expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
+    expect(evidence.provenance.sessions[0]?.processStreams.sources.map((entry) => entry.sourceId)).toEqual(["source-2"]);
+    expect(evidence.files.filter((file) => file.path.endsWith("-stdout.bin"))).toHaveLength(2);
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 has no original process source: source-1");
+  });
+
+  it("keeps a missing process explicit when another source reuses its ID", async () => {
+    const { environment, source } = await rotatedFixture(true);
+    source.processIo[0]!.sourceId = "source-2";
+    source.processTerminals[0]!.sourceId = "source-2";
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-2", harness: "opencode", maxBytes: 100_000,
+    });
+    expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 attempt exec-1/1 names an unretained attributed process: process-1");
+  });
   it("requires explicit native capture admission for the exact profile harness before create", async () => {
     const client = { async evidenceCapabilities() { return {
       workspaceCaptureV1: true,
-      nativeSessionCaptureV1: false,
+      nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2,
       nativeSessionCaptureHarnesses: ["opencode", "pi", "codex", "claude-code", "kimi-code", "hermes"],
       sidecarImageDigest: "sha256:" + "a".repeat(64),
     }; } } as unknown as Parameters<typeof assertTangleEvidenceCapability>[0];
@@ -121,13 +247,21 @@ describe("Tangle evidence capture", () => {
       .toThrow();
     expect(() => assertTangleEvidenceProfileCapability({ ...proof }, { harness: "opencode" })).toThrow(/not read from the deployment/);
     await expect(assertTangleEvidenceCapability({} as Parameters<typeof assertTangleEvidenceCapability>[0], { harness: "opencode" })).rejects.toThrow(/no pre-create/);
-    const unproven = { async evidenceCapabilities() { return { workspaceCaptureV1: true, nativeSessionCaptureV1: false, sidecarImageDigest: "sha256:" + "a".repeat(64) }; } };
+    const unproven = { async evidenceCapabilities() { return { workspaceCaptureV1: true, nativeSessionCaptureV1: false, nativeSessionCaptureVersion: 2, sidecarImageDigest: "sha256:" + "a".repeat(64) }; } };
     await expect(readTangleEvidenceCapabilities(unproven as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0])).rejects.toThrow(/has not proven/);
   });
+  it.each([undefined, 1, 3])("refuses an unknown or incompatible capture protocol %j", async (version) => {
+    const client = { async evidenceCapabilities() { return {
+      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: version,
+      nativeSessionCaptureHarnesses: ["opencode"], sidecarImageDigest: "sha256:" + "a".repeat(64),
+    }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
+    await expect(readTangleEvidenceCapabilities(client)).rejects.toThrow(/has not proven/);
+  });
+
   it("does not widen a selected-harness admission from the generic flag or later source mutation", async () => {
     const listed = ["opencode"];
     const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true, nativeSessionCaptureV1: true,
+      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2,
       nativeSessionCaptureHarnesses: listed,
       sidecarImageDigest: "sha256:" + "a".repeat(64),
     }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
@@ -140,7 +274,7 @@ describe("Tangle evidence capture", () => {
 
   it.each([undefined, ["opencode", "opencode"], ["future-unregistered"]])("refuses malformed deployment harness list %j", async (listed) => {
     const client = { async evidenceCapabilities() { return {
-      workspaceCaptureV1: true, nativeSessionCaptureV1: true,
+      workspaceCaptureV1: true, nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2,
       nativeSessionCaptureHarnesses: listed,
       sidecarImageDigest: "sha256:" + "a".repeat(64),
     }; } } as unknown as Parameters<typeof readTangleEvidenceCapabilities>[0];
@@ -156,26 +290,46 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.attempts).toEqual([{ executionId: "exec-1", ordinal: 1, providerSessionId: "provider-1",
       nativeSessionIds: ["native-1"], processIds: ["process-1"], outcome: "succeeded", missingReasons: [] }]);
     expect(evidence.provenance.sessions).toHaveLength(1);
-    expect(evidence.provenance.sessions[0]?.nativeStore.roots).toEqual([{ scope: "session-home", path: "/home/agent/session-home" }]);
+    expect(evidence.provenance.sessions[0]?.nativeStore.roots).toEqual([{ scope: "session-home", path: "/home/agent/session-home", sourceId: "source-1" }]);
     expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", backendType: "opencode", sidecarBundleRevision: "b".repeat(40), nativeStore: { complete: true } });
-    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json");
   });
 
   it("retains native files and process frames when a terminal receipt is missing", async () => {
     const environment = fixture({ native: true, partial: true, missingTerminal: true });
     const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
-    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/session-home/.local/share/session.json");
-    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/io/process-1/0000000000000000-stdout.bin");
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json");
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/io/source-1/process-1/0000000000000000-stdout.bin");
     expect(evidence.provenance.sessions[0]?.processStreams.complete).toBe(false);
     expect(evidence.provenance.attempts).toHaveLength(1);
-    expect(Buffer.from(evidence.files.find((file) => file.path.endsWith("/process-source.jsonl"))!.bytes).toString()).toBe('{"unfinished":');
+    expect(Buffer.from(evidence.files.find((file) => file.path.endsWith("/process-sources/source-1.jsonl"))!.bytes).toString()).toBe('{"unfinished":');
     expect(evidence.provenance.missing).toContain("Sandbox session session-1 declared partial raw capture");
   });
 
-  it("rejects attempts from another execution before retaining an archive", async () => {
+  it("retains raw bytes without attributing an unknown execution to the caller", async () => {
     const environment = fixture({ native: true, wrongAttempt: true });
-    await expect(captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
-      .rejects.toThrow(/unrelated execution/);
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(evidence.provenance.attempts).toEqual([]);
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 has an execution without retained caller attribution: unrelated-exec");
+    const manifest = evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!;
+    expect(JSON.parse(Buffer.from(manifest.bytes).toString()).source.attempts[0].executionId).toBe("unrelated-exec");
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json");
+  });
+
+  it("keeps earlier session history after reconnect while marking missing caller attribution", async () => {
+    const { environment } = await rotatedFixture();
+    const evidence = await captureTangleSandboxEvidence(fixtureBoxes.get(environment)!, {
+      executionId: "logical-node", harness: "opencode", sandboxSessionIds: ["session-1"],
+      sessionExecutionIds: { "session-1": ["exec-2"] }, maxBytes: 100_000,
+    });
+    expect(evidence.provenance.attempts.map((attempt) => attempt.executionId)).toEqual(["exec-2"]);
+    expect(evidence.provenance.sessions[0]?.nativeStore.complete).toBe(false);
+    expect(evidence.provenance.sessions[0]?.nativeEvents.complete).toBe(false);
+    expect(evidence.provenance.missing).toContain("Sandbox session session-1 has an execution without retained caller attribution: exec-1");
+    expect(evidence.files.filter((file) => file.path.endsWith("/.local/share/session.json"))).toHaveLength(2);
+    const manifest = evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!;
+    expect(JSON.parse(Buffer.from(manifest.bytes).toString()).source.attempts.map((attempt: { executionId: string }) => attempt.executionId))
+      .toEqual(["exec-1", "exec-2"]);
   });
 
   it("rejects a process frame tagged to a different retry", async () => {
@@ -230,7 +384,7 @@ describe("Tangle evidence capture", () => {
   it("refuses a skipped-entry count that differs from the source manifest", async () => {
     const environment = fixture({ native: true, partial: true });
     const { box, originalSession, source } = await readFixtureSource(environment);
-    Object.assign(source, { skipped: [{ rootScope: "session-home", path: "missing.json", reason: "entry_unreadable" }] });
+    Object.assign(source, { skipped: [{ sourceId: "source-1", rootScope: "session-home", path: "missing.json", reason: "entry_unreadable" }] });
     box.session = (id) => ({ ...originalSession(id), async rawEvidence() { return source; } });
     await expect(captureTangleEnvironmentEvidence(environment, {
       executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
@@ -301,7 +455,7 @@ describe("Tangle evidence capture", () => {
     const evidence = await captureTangleEnvironmentEvidence(fixture({ native: true }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
     expect(evidence.provenance.sessions[0]).toMatchObject({ nativeStore: { complete: true }, processStreams: { complete: true, stdoutBytes: 14 }, nativeEvents: { complete: true }, nativeSessionId: "native-1" });
     expect(evidence.provenance.missing).toEqual([]);
-    expect(evidence.files.some((file) => file.path === "__retention__/sessions/session-1/native/session-home/.local/share/session.json")).toBe(true);
+    expect(evidence.files.some((file) => file.path === "__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json")).toBe(true);
   });
 
   it("rejects false raw bytes, unrelated backends, and incomplete native stores", async () => {

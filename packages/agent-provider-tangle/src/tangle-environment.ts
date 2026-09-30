@@ -35,7 +35,6 @@ import {
   promptFromTurnInput,
   promptOptionsFromTurnInput,
 } from "./tangle-prompt.js";
-import { resolveRetainedSessionControlRef } from "./tangle-session-control.js";
 import {
   creationFromSandboxCreateReceipt,
   placementInfoFromLoopPlacement,
@@ -268,7 +267,6 @@ export async function sandboxInstanceAsEnvironment(
       ? {
           session(id: string, options?: { controlRef?: AgentRunControlRef; signal?: AbortSignal }): AgentSession {
             boundedIdentifier(id, "Tangle session id");
-            noteTangleSession(environment, id);
             assertOptionKeys(options, ["controlRef", "signal"], "Tangle session");
             options?.signal?.throwIfAborted();
             const session = box.session?.(
@@ -283,7 +281,7 @@ export async function sandboxInstanceAsEnvironment(
             }
             const agentSession = sandboxSessionAsAgentSession(
               session,
-              resolveRetainedSessionControlRef(options?.controlRef, id, providerName, environmentId),
+              options?.controlRef,
               providerName,
               environmentId,
               dispatch,
@@ -292,6 +290,7 @@ export async function sandboxInstanceAsEnvironment(
               interactionResponses,
               usageLog,
               capabilities.nativeContinuation !== undefined,
+              (executionId) => noteTangleSession(environment, id, executionId),
             );
             // sessions.continue was granted from the probe session and the
             // deployment document together; this backstop holds every
