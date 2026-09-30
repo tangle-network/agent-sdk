@@ -1491,7 +1491,7 @@ describe("Tangle split leaf modules", () => {
 
   it("cleans failed provider creation and rejects unrelated provider options", async () => {
     const deleted = vi.fn(async () => undefined);
-    const invalidBox: SandboxInstanceLike = { id: "", async *streamPrompt() {}, delete: deleted };
+    const invalidBox: SandboxInstanceLike = { id: "", async *streamPrompt() {}, delete: deleted, createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }) };
     const provider = createTangleProvider({ client: { create: async () => invalidBox } });
     await expect(provider.create({ profile: { name: "worker" } })).rejects.toThrow();
     expect(deleted).toHaveBeenCalledOnce();

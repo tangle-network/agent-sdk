@@ -34,10 +34,12 @@ describe.each(["agent", "process"] as const)("%s create cancellation ownership",
     await admission;
     const reason = new Error("cancel the caller");
     controller.abort(reason);
-    await expect(pending).rejects.toBe(reason);
+    const failure = await pending.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DOMException);
+    expect(failure).toHaveProperty("name", "AbortError");
     resolveBox(box);
     await setImmediate();
     expect(deleted).toHaveBeenCalledTimes(outcome === "created" ? 1 : 0);
-    if (outcome !== "created") expect(reason).toHaveProperty("cleanupHandle", box);
+    if (outcome !== "created") expect(failure).toHaveProperty("cleanupHandle", box);
   });
 });
