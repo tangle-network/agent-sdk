@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.1.0
+
+### Minor Changes
+
+- 66aab07: Honor explicit AgentProfile subscription intent when selecting stored native or API credentials for each exact create identity.
+  Grant only the selected stored secret for static and dynamic references, retain its public reference in environment metadata, and reject unsupported native channels before provisioning.
+  Keep managed profiles on their managed path, preserve exact profiles and runtime attachments, and refuse credential-source changes on retained environments.
+
 ## 3.0.0
 
 ### Major Changes
