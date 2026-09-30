@@ -1843,6 +1843,7 @@ describe("createTangleProvider", () => {
     const deleted = vi.fn(async () => undefined);
     const box: SandboxInstanceLike = {
       id: "unproven",
+      createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: false }),
       metadata: { "tangle.exactProcess": true },
       async *streamPrompt(): AsyncIterable<SandboxEvent> {},
       delete: deleted,

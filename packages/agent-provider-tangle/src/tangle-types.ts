@@ -64,6 +64,7 @@ export interface SandboxClientLike {
   /** Deployment-scoped evidence guarantees for a new sandbox on this client. */
   evidenceCapabilities?(): Promise<{
     nativeSessionCaptureV1?: boolean;
+    nativeSessionCaptureVersion?: number;
     nativeSessionCaptureHarnesses?: readonly HarnessType[];
     workspaceCaptureV1?: boolean;
     sidecarImageDigest?: string;
@@ -642,6 +643,14 @@ export interface TangleEvidenceAttemptLike {
   missingReasons: string[];
 }
 
+export interface TangleEvidenceSourceLike {
+  executionId: string;
+  sourceId: string;
+  backendType: string;
+  runtimeHome: string;
+  credentialPaths: string[];
+}
+
 export type TangleRawEvidenceLike =
     | {
         status: "captured" | "partial";
@@ -653,9 +662,11 @@ export type TangleRawEvidenceLike =
         sidecarImageDigest: string;
         sidecarBundleRevision: string;
         sidecarBundleChecksum?: string;
-        nativeRoots: Array<{ rootScope: "session-home" | "workspace-session"; path: string }>;
+        evidenceSources: TangleEvidenceSourceLike[];
+        nativeRoots: Array<{ rootScope: "session-home" | "workspace-session"; path: string; sourceId?: string }>;
         inventory: Record<string, number>;
         files: Array<{
+          sourceId?: string;
           rootScope: "session-home" | "workspace-session";
           path: string;
           kind: "file" | "directory" | "symlink";
@@ -670,6 +681,7 @@ export type TangleRawEvidenceLike =
           linkTarget?: string;
         }>;
         processIo: Array<{
+          sourceId?: string;
           processId: string;
           executionId?: string;
           ordinal?: number;
@@ -682,9 +694,10 @@ export type TangleRawEvidenceLike =
           contentBase64: string;
           metadata?: unknown;
         }>;
-        /** Original readable spool when parsing found incomplete or malformed records. */
-        processSource?: { contentBase64: string; sizeBytes: number; sha256: string };
+        /** Exact original spool for every readable source. */
+        processSources: Array<{ sourceId: string; contentBase64: string; sizeBytes: number; sha256: string }>;
         processTerminals: Array<{
+          sourceId?: string;
           processId: string;
           executionId?: string;
           ordinal?: number;
@@ -702,6 +715,7 @@ export type TangleRawEvidenceLike =
         }>;
         events: unknown[];
         excluded: Array<{
+          sourceId?: string;
           rootScope: "session-home" | "workspace-session";
           path: string;
           kind: "file" | "directory" | "symlink";
@@ -714,7 +728,7 @@ export type TangleRawEvidenceLike =
           reason: "credential";
         }>;
         attempts: TangleEvidenceAttemptLike[];
-        skipped?: Array<{ rootScope: "session-home" | "workspace-session"; path: string; reason: string }>;
+        skipped?: Array<{ rootScope: "session-home" | "workspace-session"; path: string; reason: string; sourceId?: string }>;
         completeness: { nativeStore: boolean; processIo: boolean; events: boolean };
         coverageComplete: boolean;
         missingReasons: string[];

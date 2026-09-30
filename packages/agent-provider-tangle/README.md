@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The peer range is `>=0.39.0 <1.0.0`, and this package is developed and tested against 0.39.0.
+The Sandbox peer range is `>=0.58.4 <1.0.0`.
 The floor includes runtime MCP attachment transport and preservation across per-turn model credential overrides.
 
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
@@ -478,6 +478,10 @@ Credential exclusions remain listed with path, type, owner IDs, timestamps, mode
 Each process stream has exact frame order and a terminal receipt.
 The attempt inventory binds each Sidecar execution and retry to provider sessions, observed native sessions, and recorded processes.
 Each session has one `raw-manifest.json` in its private archive.
+Each execution binds to its original HOME through `evidenceSources`.
+Native files and process streams use that source ID in their archive paths.
+Rotations keep earlier HOMEs until durable capture permits session deletion.
+Every readable process spool keeps its exact original bytes in `processSources`.
 It preserves all response metadata, including unknown fields, attempts, event buffers, terminal results, exclusions, and skipped paths.
 Known `contentBase64` fields become JSON pointers in `contentRefs`.
 Each pointer names the archive file whose verified bytes reconstruct that field.
@@ -487,6 +491,9 @@ Sidecar execution IDs join `sessions[].executionIds`; the outer execution ID nam
 Partial capture retains the readable native files, process frames, and events in the same archive.
 Its missing reasons prevent a complete receipt and keep the source available for recovery.
 An unknown attempt outcome or native session identity remains explicit.
+Reconnecting uses the execution ID from the validated durable control reference.
+Earlier executions without retained caller attribution stay in the raw manifest with explicit gaps.
+The caller's attempt projection includes only its known execution IDs.
 The capture records the running sidecar image digest and the served Sidecar bundle revision.
 The image digest can be compared with the pre-create proof only when that proof identifies the actual placement image.
 An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.

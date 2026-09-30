@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { parseBackendType } from "@tangle-network/sandbox";
 import type { AgentProfile, HarnessType } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleRawEvidenceLike } from "./tangle-types.js";
+import type { NativeCaptureProofLike, SandboxClientLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { nativeCaptureHarnesses, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
@@ -14,6 +14,7 @@ const verifiedCapabilities = new WeakSet<object>();
 export interface TangleEvidenceCapabilities {
   readonly workspaceCaptureV1: true;
   readonly nativeSessionCaptureV1: boolean;
+  readonly nativeSessionCaptureVersion: 2;
   readonly nativeSessionCaptureHarnesses: readonly HarnessType[];
   readonly sidecarImageDigest: string;
 }
@@ -23,12 +24,14 @@ export async function readTangleEvidenceCapabilities(client: SandboxClientLike):
   if (typeof client.evidenceCapabilities !== "function") throw new Error("Tangle deployment has no pre-create evidence capability query");
   const document = await client.evidenceCapabilities();
   if (document?.workspaceCaptureV1 !== true || typeof document.nativeSessionCaptureV1 !== "boolean" ||
+      document.nativeSessionCaptureVersion !== 2 ||
       !/^sha256:[0-9a-f]{64}$/.test(document.sidecarImageDigest ?? "")) {
     throw new Error("Tangle deployment has not proven complete workspace and native session capture for next-create placement");
   }
   const verified = Object.freeze({
     workspaceCaptureV1: true as const,
     nativeSessionCaptureV1: document.nativeSessionCaptureV1,
+    nativeSessionCaptureVersion: 2 as const,
     nativeSessionCaptureHarnesses: nativeCaptureHarnesses(document.nativeSessionCaptureHarnesses),
     sidecarImageDigest: document.sidecarImageDigest as string,
   });
@@ -114,9 +117,10 @@ export interface TangleEnvironmentEvidence {
       messageScope: "session";
       nativeSessionId: string | null;
       nativeReason: string | null;
+      evidenceSources: TangleEvidenceSourceLike[];
       nativeStore: {
         scope: "session";
-        roots: Array<{ scope: "session-home" | "workspace-session"; path: string }>;
+        roots: Array<{ scope: "session-home" | "workspace-session"; path: string; sourceId?: string }>;
         inventory: {
           scannedFiles: number; reportedFiles: number; excludedFiles: number;
           scannedDirectories: number; reportedDirectories: number; excludedDirectories: number;
@@ -125,11 +129,13 @@ export interface TangleEnvironmentEvidence {
         } | null;
         complete: boolean;
         entries: Array<{
+          sourceId?: string;
           rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
           mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
           sha256: string | null; linkTarget: string | null;
         }>;
         excludedPaths: Array<{
+          sourceId?: string;
           rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
           mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
           reason: "credential";
@@ -138,7 +144,7 @@ export interface TangleEnvironmentEvidence {
       processStreams: {
         complete: boolean; streamCount: number; processCount: number; terminalCount: number;
         stdinBytes: number; stdoutBytes: number; stderrBytes: number; protocolBytes: number;
-        source?: { path: string; sizeBytes: number; sha256: string };
+        sources: Array<{ sourceId: string; path: string; sizeBytes: number; sha256: string }>;
         terminals: Array<{ processId: string; executionId?: string; ordinal?: number; providerSessionId?: string; sequence: number; at: string; result: {
           code: number | null; signal: string | null; timedOut: boolean; timeoutReason: string | null;
           captureError: string | null; spawnError?: string;
@@ -351,6 +357,7 @@ export async function captureTangleSandboxEvidence(
     const processStreams: TangleEnvironmentEvidence["provenance"]["sessions"][number]["processStreams"] = {
       complete: false, streamCount: 0, processCount: 0, terminalCount: 0,
       stdinBytes: 0, stdoutBytes: 0, stderrBytes: 0, protocolBytes: 0, terminals: [],
+      sources: [],
     };
     const nativeEvents: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeEvents"] = {
       scope: "execution", complete: false, count: 0,
@@ -359,6 +366,7 @@ export async function captureTangleSandboxEvidence(
     let sidecarImageDigest: string | null = null;
     let sidecarBundleRevision: string | null = null;
     let nativeReason: string | null = "raw-session-capture-capability-absent";
+    let evidenceSources: TangleEvidenceSourceLike[] = [];
     if (native !== undefined) {
       let manifestSource: object = native;
       const contentRefs: Array<{ jsonPointer: string; path: string }> = [];
@@ -370,7 +378,8 @@ export async function captureTangleSandboxEvidence(
       }
       nativeSessionId = native.nativeSessionId ?? null;
       if (native.status === "captured" || native.status === "partial") {
-        const partial = native.status === "partial";
+        const declaredPartial = native.status === "partial";
+        let partial = declaredPartial;
         if (captureProof && (native.proofStatus !== "verified" ||
             native.containerId !== captureProof.containerId ||
             native.sidecarImageDigest !== captureProof.imageId ||
@@ -391,19 +400,52 @@ export async function captureTangleSandboxEvidence(
         if (typeof native.completeness?.nativeStore !== "boolean" || typeof native.completeness.processIo !== "boolean" ||
             typeof native.completeness.events !== "boolean" || !Array.isArray(native.files) ||
             !Array.isArray(native.processIo) || !Array.isArray(native.events) ||
+            !Array.isArray(native.processSources) || !Array.isArray(native.evidenceSources) ||
             !Array.isArray(native.excluded) || !Array.isArray(native.nativeRoots) || !native.inventory ||
             !Array.isArray(native.processTerminals) || typeof native.coverageComplete !== "boolean" ||
-            !Array.isArray(native.missingReasons) || native.missingReasons.some((reason) => !safeIdentifier(reason))) {
+            !Array.isArray(native.missingReasons) || native.missingReasons.some((reason) => !safeReason(reason))) {
           throw new Error("Tangle raw session capture is malformed");
         }
-        if ((!partial && (native.completeness.nativeStore !== true || native.completeness.processIo !== true ||
+        if ((!declaredPartial && (native.completeness.nativeStore !== true || native.completeness.processIo !== true ||
             native.completeness.events !== true || native.coverageComplete !== true || native.missingReasons.length > 0)) ||
-            (partial && native.coverageComplete !== false)) {
+            (declaredPartial && native.coverageComplete !== false)) {
           throw new Error("Tangle raw session capture is incomplete");
         }
+        if (!Array.isArray(native.attempts) || native.attempts.length > MAX_ENTRIES) {
+          throw new Error("Tangle raw session attempt inventory is missing or invalid");
+        }
+        const unattributedExecutions = [...new Set(native.attempts.filter(isEvidenceAttempt)
+          .map((attempt) => attempt.executionId).filter((executionId) => !executionIds.includes(executionId)))];
+        if (unattributedExecutions.length) {
+          partial = true;
+          for (const executionId of unattributedExecutions) {
+            missing.push(`Sandbox session ${id} has an execution without retained caller attribution: ${executionId}`);
+          }
+        }
         const sessionAttempts = readNativeAttempts(native.attempts, executionIds, partial);
+        const sourceBindings = new Map<string, TangleEvidenceSourceLike>();
+        const sourceHomes = new Map<string, string>();
+        for (const source of native.evidenceSources) {
+          if (!source || !safeIdentifier(source.executionId) || !safeIdentifier(source.sourceId) ||
+              source.backendType !== options.harness || !canonicalNativeRoot(source.runtimeHome) ||
+              !Array.isArray(source.credentialPaths) || sourceBindings.has(source.executionId) ||
+              (sourceHomes.has(source.sourceId) && sourceHomes.get(source.sourceId) !== source.runtimeHome)) {
+            throw new Error("Tangle raw session evidence source identity is invalid");
+          }
+          for (const path of source.credentialPaths) canonicalEntryPath(path);
+          sourceBindings.set(source.executionId, source);
+          sourceHomes.set(source.sourceId, source.runtimeHome);
+        }
+        const sourceCoverage = executionIds.every((executionId) => sourceBindings.has(executionId)) &&
+          native.evidenceSources.every((source) => executionIds.includes(source.executionId));
+        if (!sourceCoverage) {
+          if (!partial) throw new Error("Tangle raw session sources do not cover the exact executions");
+          missing.push(`Sandbox session ${id} evidence sources do not cover the exact executions`);
+        }
+        evidenceSources = native.evidenceSources;
+        let processAttributionComplete = sourceCoverage;
         const nativeEventCoverage = nativeEventsMatch(native.events, id, executionIds, partial);
-        attempts.push(...sessionAttempts);
+        attempts.push(...sessionAttempts.filter((attempt) => executionIds.includes(attempt.executionId)));
         if (partial) missing.push(`Sandbox session ${id} declared partial raw capture`);
         for (const reason of native.missingReasons) missing.push(`Sandbox session ${id}: ${reason}`);
         for (const attempt of sessionAttempts) {
@@ -422,22 +464,30 @@ export async function captureTangleSandboxEvidence(
         }
         const roots = new Set<string>();
         for (const root of native.nativeRoots) {
-          if (!["session-home", "workspace-session"].includes(root.rootScope) || roots.has(root.rootScope) ||
-              !canonicalNativeRoot(root.path)) {
+          if (!["session-home", "workspace-session"].includes(root.rootScope) || roots.has(nativeRootKey(root)) ||
+              !canonicalNativeRoot(root.path) ||
+              (root.sourceId !== undefined && (!safeIdentifier(root.sourceId) || !sourceHomes.has(root.sourceId) ||
+                (root.rootScope === "session-home" && sourceHomes.get(root.sourceId) !== root.path)))) {
             throw new Error("Tangle raw session native root is invalid");
           }
-          roots.add(root.rootScope);
-          nativeStore.roots.push({ scope: root.rootScope, path: root.path });
+          roots.add(nativeRootKey(root));
+          nativeStore.roots.push({ scope: root.rootScope, path: root.path,
+            ...(root.sourceId === undefined ? {} : { sourceId: root.sourceId }) });
         }
         if (!roots.size && (!partial || native.completeness.nativeStore)) throw new Error("Tangle raw session has no native root");
+        const nativeRootCoverage = [...sourceHomes.keys()].every((sourceId) => roots.has(sourceId + "/session-home"));
+        if (!nativeRootCoverage) {
+          if (!partial) throw new Error("Tangle raw session has an unretained native source root");
+          missing.push(`Sandbox session ${id} has an unretained native source root`);
+        }
         const nativePaths = new Set<string>();
         const included = { file: 0, directory: 0, symlink: 0 };
         const excluded = { file: 0, directory: 0, symlink: 0 };
         for (const [index, entry] of native.files.entries()) {
           options.signal?.throwIfAborted();
           const path = canonicalEntryPath(entry.path);
-          if (!roots.has(entry.rootScope)) throw new Error("Tangle raw session entry has no native root");
-          const identity = entry.rootScope + "/" + path;
+          if (!roots.has(nativeRootKey(entry))) throw new Error("Tangle raw session entry has no native root");
+          const identity = nativeRootKey(entry) + "/" + path;
           if (nativePaths.has(identity)) throw new Error("Tangle raw session repeats a native path");
           nativePaths.add(identity);
           if (!nativeStatMetadata(entry)) throw new Error("Tangle raw session entry metadata is invalid");
@@ -445,7 +495,8 @@ export async function captureTangleSandboxEvidence(
             const content = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256,
               options.maxBytes - capturedBytes);
             if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-            const contentPath = "__retention__/sessions/" + id + "/native/" + entry.rootScope + "/" + path;
+            const contentPath = "__retention__/sessions/" + id + "/native/" +
+              (entry.sourceId === undefined ? "" : entry.sourceId + "/") + entry.rootScope + "/" + path;
             files.push({ path: contentPath, bytes: content, mode: entry.mode & 0o777 });
             contentRefs.push({ jsonPointer: `/files/${index}/contentBase64`, path: contentPath });
             capturedBytes += content.byteLength;
@@ -459,6 +510,7 @@ export async function captureTangleSandboxEvidence(
           }
           included[entry.kind] += 1;
           nativeStore.entries.push({
+            ...(entry.sourceId === undefined ? {} : { sourceId: entry.sourceId }),
             rootScope: entry.rootScope, path, kind: entry.kind, mode: entry.mode,
             uid: entry.uid, gid: entry.gid, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs,
             sizeBytes: entry.sizeBytes, sha256: entry.sha256 ?? null, linkTarget: entry.linkTarget ?? null,
@@ -466,8 +518,8 @@ export async function captureTangleSandboxEvidence(
         }
         for (const exclusion of native.excluded) {
           const path = canonicalEntryPath(exclusion.path);
-          const identity = exclusion.rootScope + "/" + path;
-          if (!roots.has(exclusion.rootScope) || nativePaths.has(identity) ||
+          const identity = nativeRootKey(exclusion) + "/" + path;
+          if (!roots.has(nativeRootKey(exclusion)) || nativePaths.has(identity) ||
               exclusion.reason !== "credential" || !["file", "directory", "symlink"].includes(exclusion.kind) ||
               !nativeStatMetadata(exclusion)) {
             throw new Error("Tangle raw session exclusion is invalid");
@@ -475,6 +527,7 @@ export async function captureTangleSandboxEvidence(
           nativePaths.add(identity);
           excluded[exclusion.kind] += 1;
           nativeStore.excludedPaths.push({
+            ...(exclusion.sourceId === undefined ? {} : { sourceId: exclusion.sourceId }),
             rootScope: exclusion.rootScope, path, kind: exclusion.kind, mode: exclusion.mode,
             uid: exclusion.uid, gid: exclusion.gid, mtimeMs: exclusion.mtimeMs, ctimeMs: exclusion.ctimeMs,
             sizeBytes: exclusion.sizeBytes, reason: exclusion.reason,
@@ -517,7 +570,7 @@ export async function captureTangleSandboxEvidence(
         };
         if (native.skipped !== undefined) {
           if (!Array.isArray(native.skipped) || native.skipped.length !== inventory.skippedEntries ||
-              native.skipped.some((entry) => !roots.has(entry.rootScope) || !safeIdentifier(entry.reason))) {
+              native.skipped.some((entry) => !roots.has(nativeRootKey(entry)) || !safeReason(entry.reason))) {
             throw new Error("Tangle raw session skipped inventory does not reconcile");
           }
           for (const entry of native.skipped) {
@@ -528,23 +581,32 @@ export async function captureTangleSandboxEvidence(
         const frameMetadata: Array<Record<string, unknown>> = [];
         for (const [index, frame] of native.processIo.entries()) {
           options.signal?.throwIfAborted();
-          if (!safeIdentifier(frame.processId) || !Number.isSafeInteger(frame.sequence) ||
+          if (!safeIdentifier(frame.processId) || (frame.sourceId !== undefined && !safeIdentifier(frame.sourceId)) ||
+              !Number.isSafeInteger(frame.sequence) ||
               frame.sequence < 0 || !Number.isFinite(Date.parse(frame.at)) ||
               !["stdin", "stdout", "stderr", "protocol"].includes(frame.stream)) {
             throw new Error("Tangle raw session process stream metadata is invalid");
           }
-          const sequences = ioSequences.get(frame.processId) ?? new Set<number>();
+          const processKey = sourceProcessKey(frame);
+          const sequences = ioSequences.get(processKey) ?? new Set<number>();
           if (sequences.has(frame.sequence)) throw new Error("Tangle raw session repeats a process frame");
           sequences.add(frame.sequence);
-          ioSequences.set(frame.processId, sequences);
+          ioSequences.set(processKey, sequences);
           if (!processAttemptMatches(frame, sessionAttempts, partial)) {
+            processAttributionComplete = false;
             missing.push(`Sandbox session ${id} process ${frame.processId} has no exact attempt attribution`);
+          }
+          if (frame.sourceId === undefined || sourceBindings.get(frame.executionId ?? "")?.sourceId !== frame.sourceId) {
+            if (!partial) throw new Error("Tangle raw session process has conflicting source attribution");
+            processAttributionComplete = false;
+            missing.push(`Sandbox session ${id} process ${frame.processId} has no exact source attribution`);
           }
           const content = exactNativeBytes(frame.contentBase64, frame.sizeBytes, frame.sha256,
             options.maxBytes - capturedBytes);
           if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
           const label = String(frame.sequence).padStart(16, "0");
-          const contentPath = "__retention__/sessions/" + id + "/io/" + frame.processId + "/" + label +
+          const contentPath = "__retention__/sessions/" + id + "/io/" +
+            (frame.sourceId === undefined ? "" : frame.sourceId + "/") + frame.processId + "/" + label +
             "-" + frame.stream + ".bin";
           files.push({ path: contentPath, bytes: content, mode: 0o600 });
           contentRefs.push({ jsonPointer: `/processIo/${index}/contentBase64`, path: contentPath });
@@ -556,7 +618,9 @@ export async function captureTangleSandboxEvidence(
         }
         const terminals = new Set<string>();
         for (const terminal of native.processTerminals) {
-          if (!safeIdentifier(terminal.processId) || terminals.has(terminal.processId) ||
+          const processKey = sourceProcessKey(terminal);
+          if (!safeIdentifier(terminal.processId) || (terminal.sourceId !== undefined && !safeIdentifier(terminal.sourceId)) ||
+              terminals.has(processKey) ||
               !Number.isSafeInteger(terminal.sequence) || terminal.sequence < 0 ||
               !Number.isFinite(Date.parse(terminal.at)) ||
               !(terminal.result?.captureError === null || (partial && typeof terminal.result?.captureError === "string")) ||
@@ -567,61 +631,81 @@ export async function captureTangleSandboxEvidence(
               (terminal.result.spawnError !== undefined && typeof terminal.result.spawnError !== "string")) {
             throw new Error("Tangle raw session process terminal metadata is invalid");
           }
-          const sequences = ioSequences.get(terminal.processId) ?? new Set<number>();
+          const sequences = ioSequences.get(processKey) ?? new Set<number>();
           if (!processAttemptMatches(terminal, sessionAttempts, partial)) {
+            processAttributionComplete = false;
             missing.push(`Sandbox session ${id} terminal ${terminal.processId} has no exact attempt attribution`);
+          }
+          if (terminal.sourceId === undefined || sourceBindings.get(terminal.executionId ?? "")?.sourceId !== terminal.sourceId) {
+            if (!partial) throw new Error("Tangle raw session terminal has conflicting source attribution");
+            processAttributionComplete = false;
+            missing.push(`Sandbox session ${id} terminal ${terminal.processId} has no exact source attribution`);
           }
           if (!partial && (terminal.sequence !== sequences.size ||
               [...sequences].some((sequence) => sequence < 0 || sequence >= terminal.sequence))) {
             throw new Error("Tangle raw session process sequence is incomplete");
           }
-          terminals.add(terminal.processId);
+          terminals.add(processKey);
           processStreams.terminals.push(terminal);
         }
         if (!partial && [...ioSequences.keys()].some((processId) => !terminals.has(processId))) {
           throw new Error("Tangle raw session has a process without a terminal receipt");
         }
-        const observedProcessIds = new Set([...ioSequences.keys(), ...terminals]);
-        if (sessionAttempts.some((attempt) => attempt.processIds.some((processId) => !observedProcessIds.has(processId)))) {
-          if (!partial) throw new Error("Tangle raw session attempt names an unretained process");
-          missing.push(`Sandbox session ${id} attempt inventory names an unretained process`);
+        const observedProcesses = [...native.processIo, ...native.processTerminals];
+        const observedAttemptProcesses = new Set(observedProcesses.map(attemptProcessKey));
+        for (const attempt of sessionAttempts) {
+          for (const processId of attempt.processIds) {
+            const key = attemptProcessKey({ ...attempt, processId,
+              sourceId: sourceBindings.get(attempt.executionId)?.sourceId });
+            if (observedAttemptProcesses.has(key)) continue;
+            if (!partial) throw new Error("Tangle raw session attempt names an unretained attributed process");
+            processAttributionComplete = false;
+            missing.push(`Sandbox session ${id} attempt ${attempt.executionId}/${attempt.ordinal} names an unretained attributed process: ${processId}`);
+          }
         }
-        if (!partial && [...observedProcessIds].some((processId) =>
-            !sessionAttempts.some((attempt) => attempt.processIds.includes(processId)))) {
-          throw new Error("Tangle raw session process has no attempt attribution");
-        }
-        processStreams.processCount = observedProcessIds.size;
+        processStreams.processCount = new Set([...ioSequences.keys(), ...terminals]).size;
         processStreams.terminalCount = terminals.size;
-        if (native.processSource !== undefined) {
-          const source = exactNativeBytes(native.processSource.contentBase64, native.processSource.sizeBytes,
-            native.processSource.sha256, options.maxBytes - capturedBytes);
-          const sourcePath = "__retention__/sessions/" + id + "/process-source.jsonl";
+        const spoolSources = new Set<string>();
+        for (const [index, processSource] of native.processSources.entries()) {
+          if (!safeIdentifier(processSource.sourceId) || !sourceHomes.has(processSource.sourceId) ||
+              spoolSources.has(processSource.sourceId)) throw new Error("Tangle raw session process source identity is invalid");
+          spoolSources.add(processSource.sourceId);
+          const source = exactNativeBytes(processSource.contentBase64, processSource.sizeBytes,
+            processSource.sha256, options.maxBytes - capturedBytes);
+          const sourcePath = "__retention__/sessions/" + id + "/process-sources/" + processSource.sourceId + ".jsonl";
           files.push({ path: sourcePath, bytes: source, mode: 0o600 });
           capturedBytes += source.byteLength;
-          processStreams.source = { path: sourcePath, sizeBytes: source.byteLength, sha256: native.processSource.sha256 };
-          contentRefs.push({ jsonPointer: "/processSource/contentBase64", path: sourcePath });
+          processStreams.sources.push({ sourceId: processSource.sourceId, path: sourcePath, sizeBytes: source.byteLength, sha256: processSource.sha256 });
+          contentRefs.push({ jsonPointer: `/processSources/${index}/contentBase64`, path: sourcePath });
+        }
+        const missingSpoolSources = [...sourceHomes.keys()].filter((sourceId) => !spoolSources.has(sourceId));
+        if (!partial && missingSpoolSources.length > 0) {
+          throw new Error("Tangle raw session omits an original process source");
+        }
+        for (const sourceId of missingSpoolSources) {
+          missing.push(`Sandbox session ${id} has no original process source: ${sourceId}`);
         }
         manifestSource = {
           ...native,
           files: native.files.map((entry) => entry.kind === "file" ? withoutNativeContent(entry) : entry),
           processIo: frameMetadata,
-          ...(native.processSource === undefined ? {} : { processSource: withoutNativeContent(native.processSource) }),
+          processSources: native.processSources.map(withoutNativeContent),
         };
-        nativeStore.complete = native.completeness.nativeStore && inventory.skippedEntries === 0 &&
+        nativeStore.complete = sourceCoverage && nativeRootCoverage && native.completeness.nativeStore && inventory.skippedEntries === 0 &&
           inventory.scannedFiles === inventory.reportedFiles + inventory.excludedFiles &&
           inventory.scannedDirectories === inventory.reportedDirectories + inventory.excludedDirectories &&
           inventory.scannedSymlinks === inventory.reportedSymlinks + inventory.excludedSymlinks;
-        processStreams.complete = native.completeness.processIo && [...ioSequences.keys()].every((processId) => terminals.has(processId)) &&
+        processStreams.complete = missingSpoolSources.length === 0 && processAttributionComplete && native.completeness.processIo && [...ioSequences.keys()].every((processId) => terminals.has(processId)) &&
           native.processTerminals.every((terminal) => {
-            const sequences = ioSequences.get(terminal.processId) ?? new Set<number>();
+            const sequences = ioSequences.get(sourceProcessKey(terminal)) ?? new Set<number>();
             return terminal.result.captureError === null && terminal.sequence === sequences.size &&
               [...sequences].every((sequence) => sequence >= 0 && sequence < terminal.sequence);
           });
-        nativeEvents.complete = native.completeness.events && nativeEventCoverage;
+        nativeEvents.complete = sourceCoverage && unattributedExecutions.length === 0 && native.completeness.events && nativeEventCoverage;
         nativeEvents.count = native.events.length;
-        nativeReason = partial ? (native.missingReasons.join("; ") || "partial-capture") : null;
+        nativeReason = partial ? (native.missingReasons.join("; ") || "incomplete-execution-attribution") : null;
       } else if (native.status === "unavailable") {
-        if (!safeIdentifier(native.reason)) throw new Error("Tangle raw session unavailability reason is invalid");
+        if (!safeReason(native.reason)) throw new Error("Tangle raw session unavailability reason is invalid");
         nativeReason = native.reason;
       } else {
         throw new Error("Tangle raw session capture status is invalid");
@@ -639,6 +723,7 @@ export async function captureTangleSandboxEvidence(
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
       eventCount: events.length, messageCount: messages.length, messageScope: "session",
       nativeSessionId, nativeReason, nativeStore, processStreams, nativeEvents,
+      evidenceSources,
     });
     for (const executionId of executionIds) {
       if (!eventCountsByExecutionId[executionId]) {
@@ -678,7 +763,23 @@ function withoutNativeContent(source: object): Record<string, unknown> {
 }
 
 function safeIdentifier(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function safeReason(value: string): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function nativeRootKey(value: { rootScope: string; sourceId?: string }): string {
+  return `${value.sourceId ?? ""}/${value.rootScope}`;
+}
+
+function sourceProcessKey(value: { processId: string; sourceId?: string }): string {
+  return `${value.sourceId ?? ""}/${value.processId}`;
+}
+
+function attemptProcessKey(value: { processId: string; sourceId?: string; executionId?: string; ordinal?: number; providerSessionId?: string }): string {
+  return `${sourceProcessKey(value)}/${value.executionId ?? ""}/${value.ordinal ?? ""}/${value.providerSessionId ?? ""}`;
 }
 
 /** Source roots are metadata; archive entry paths remain relative. */
@@ -696,7 +797,7 @@ function readNativeAttempts(value: unknown, executionIds: readonly string[], par
   const ordinals = new Map<string, Set<number>>();
   const attempts: TangleEvidenceAttemptLike[] = [];
   for (const entry of value) {
-    if (!isEvidenceAttempt(entry) || !executionIds.includes(entry.executionId)) {
+    if (!isEvidenceAttempt(entry) || (!partial && !executionIds.includes(entry.executionId))) {
       throw new Error("Tangle raw session attempt has invalid identity or an unrelated execution");
     }
     const seen = ordinals.get(entry.executionId) ?? new Set<number>();
@@ -736,9 +837,10 @@ function processAttemptMatches(
   attempts: readonly TangleEvidenceAttemptLike[],
   partial: boolean,
 ): boolean {
-  const owners = attempts.filter((attempt) => attempt.processIds.includes(value.processId));
-  const exact = owners.length === 1 && owners[0]?.executionId === value.executionId &&
-    owners[0]?.ordinal === value.ordinal && owners[0]?.providerSessionId === value.providerSessionId;
+  const owners = attempts.filter((attempt) => attempt.processIds.includes(value.processId) &&
+    attempt.executionId === value.executionId && attempt.ordinal === value.ordinal &&
+    attempt.providerSessionId === value.providerSessionId);
+  const exact = owners.length === 1;
   if (!exact && !partial) throw new Error("Tangle raw session process has missing or conflicting attempt attribution");
   return exact;
 }
@@ -754,7 +856,7 @@ function nativeEventsMatch(events: readonly unknown[], sessionId: string, execut
     }
     const metadata = entry.metadata as Record<string, unknown>;
     if (metadata.sessionId !== sessionId || typeof metadata.executionId !== "string" ||
-        !executionIds.includes(metadata.executionId) || seen.has(metadata.executionId)) {
+        !safeIdentifier(metadata.executionId) || (!partial && !executionIds.includes(metadata.executionId)) || seen.has(metadata.executionId)) {
       throw new Error("Tangle raw session event buffer has unrelated or duplicate execution identity");
     }
     if (!Number.isSafeInteger(metadata.eventCount) || Number(metadata.eventCount) < 0 || metadata.eventCount !== entry.frames.length) {

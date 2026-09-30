@@ -145,6 +145,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     null,
     { schema: 1 },
     { schema: 1, nativeSessionCaptureVersion: 1, nativeSessionCaptureHarnesses: ["opencode"] },
+    { schema: 1, nativeSessionCaptureVersion: 3, nativeSessionCaptureHarnesses: ["opencode"] },
     { schema: 1, nativeSessionCaptureVersion: 2 },
     { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: [] },
     { schema: 1, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["opencode", "opencode"] },
