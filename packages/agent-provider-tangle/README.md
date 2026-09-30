@@ -1,8 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.58.4 <1.0.0`.
-The floor includes runtime MCP attachment transport and preservation across per-turn model credential overrides.
+The Sandbox peer range is `>=0.58.7 <1.0.0`.
+The floor includes native credential reference validation, per-container capability parsing, and runtime MCP transport.
 
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
 They remain separate from the authored profile and its digest.
@@ -34,8 +34,8 @@ Set `TANGLE_SANDBOX_URL` to use another deployment.
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
-The provider does not create, grant, copy, or renew secrets.
-Each create must list the named secret explicitly.
+The provider does not create, copy, or renew stored secrets.
+The Provider grants the selected reference per create, alongside unrelated caller-requested secrets.
 
 ```ts
 const provider = createTangleProvider({
@@ -47,7 +47,6 @@ const provider = createTangleProvider({
 });
 const environment = await provider.create({
   profile: researchProfile,
-  secrets: ["RESEARCH_ROUTER_KEY"],
 });
 ```
 
@@ -60,6 +59,103 @@ The endpoint must use HTTP or HTTPS without credentials, query parameters, or fr
 Credential-only turns retain the created SDK handle's endpoint and attachments.
 Reconstructed handles leave omitted model settings to Sandbox's durable backend configuration.
 Keep the stored secret available and valid throughout execution and recovery.
+
+## Per-profile subscription credentials
+
+The exact profile chooses access through `model.metadata.credentialSource`.
+Use `"subscription"` to request an enrolled account.
+Omitting this field or using `"managed"` preserves managed access.
+Unknown or malformed intent fails before provisioning.
+`profileCredentialSource(profile)` exports this strict intent reader.
+
+`modelCredentials` resolves only profiles that request subscription access.
+Managed profiles skip the selector and configured native references.
+Explicit `"managed"` intent also skips configured static API references.
+Unmarked legacy profiles retain their existing static API configuration; mark mixed profiles explicitly or use a selector.
+The same Provider can create a managed parent and subscription child, or a subscription parent and managed child.
+A subscription profile requires a configured reference or successful selector result before Sandbox creation.
+The selector receives a frozen copy of the exact create input, including its profile and idempotency key.
+It returns one public native reference or the API reference described above.
+It cannot change the profile, harness, model, reasoning controls, or runtime attachments.
+
+```ts
+const provider = createTangleProvider({
+  client,
+  modelCredentials: async (input) => accountOwner.resolve(input),
+});
+const environment = await provider.create({
+  profile: {
+    ...researchProfile,
+    model: {
+      ...researchProfile.model,
+      metadata: { ...researchProfile.model?.metadata, credentialSource: "subscription" },
+    },
+  },
+  idempotencyKey: persistedNodeIdentity,
+});
+```
+
+A native result has this shape:
+
+```ts
+{
+  cliAuth: {
+    account: "research-account",
+    secretEnv: "RESEARCH_CLAUDE",
+    format: "token", // Or "bundle" / "files", as supported by the selected harness.
+  },
+}
+```
+
+The Provider validates native channels with the maintained CLI Registry before provisioning.
+Each selector must use the exact profile harness.
+Native execution also requires the selected container to report `cliAuthReferences: true`.
+A missing or unreadable capability refuses creation or dispatch before inference.
+A selector grants its one selected stored secret automatically, alongside unrelated secrets requested by the caller.
+Keep pool-wide account credentials out of the create input's `secrets` list.
+Static native references grant their selected secret only for subscription profiles.
+Static API references grant their selected secret for unmarked legacy profiles and subscription profiles.
+Inline environment values cannot shadow the selected stored secret.
+Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
+Subscription failures never fall back to managed Router access.
+
+Sandbox metadata records the public selection under `modelCredentials`.
+This metadata key is reserved for the Provider selection.
+Account labels are supplied bindings, not verified native principals.
+Token values and native credential files never enter that selection or receipt.
+The same public native reference can travel in a per-turn `backend.model.cliAuth` with an explicit matching backend type.
+A turn carrying a profile must preserve its environment's credential source, including after recovery.
+Changing credential sources requires a separate environment because retained Sandbox defaults cannot safely clear a native binding.
+
+### A command owned by the account system
+
+The Node subpath provides direct process transport for an existing account resolver.
+It executes arguments without a shell and discards subprocess stderr.
+
+```ts
+import { createCommandModelCredentialResolver } from "@tangle-network/agent-provider-tangle/node";
+
+const modelCredentials = createCommandModelCredentialResolver({
+  command: ["acct", "sandbox", "resolve", "--key-env", "TANGLE_SANDBOX_API_KEY"],
+  minimumValidUntil: persistedRunDeadline,
+  timeoutMs: 30_000,
+});
+const provider = createTangleProvider({ client, modelCredentials });
+```
+
+Managed profiles do not start the command or require an account binding.
+For subscription profiles, the command receives JSON `{ input, minimumValidUntil? }` on stdin.
+`input` contains the exact create fields with `signal` omitted.
+The command must return only `{ cliAuth }` or `{ apiKeyEnv, baseUrl }` on stdout.
+It must bind selection durably to `input.idempotencyKey`; quota changes cannot switch an existing assignment during retry.
+The adapter requires this idempotency key before starting the command.
+`minimumValidityMs` can compute one fixed deadline at factory construction; recovery should use the persisted absolute deadline.
+Only a successfully decoded public reference can reach Sandbox creation.
+Timeouts, cancellation, nonzero exit, and malformed or oversized output refuse creation with sanitized errors.
+
+The account owner retains authority over registration, namespace verification, holds, quota, selection, and trusted renewal.
+Updating a stored secret does not refresh credentials already injected into a live Sandbox.
+Creation-time validity and the selected host's native credential lifecycle still bound long-running work.
 
 ## `create()` returns a ready environment
 

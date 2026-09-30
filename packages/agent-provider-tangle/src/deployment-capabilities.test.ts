@@ -668,6 +668,7 @@ describe("Tangle deployment capability discovery", () => {
 
   it("reads every flag as unknown until the document sets it", () => {
     expect(deploymentCapabilitySupport(PUBLISHED_DOCUMENT_AS_READ)).toEqual({
+      cliAuthReferences: false,
       exactDispatch: true,
       canonicalCancellation: true,
       eventReplay: true,

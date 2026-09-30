@@ -91,12 +91,12 @@ describe("Tangle create-time named model credentials", () => {
     expect(creates[0]?.backend?.model).toEqual(modelCredentials);
   });
 
-  it.each([undefined, [], ["OTHER_KEY"]])("refuses a missing explicit grant (%j) before provisioning", async (secrets) => {
+  it.each([undefined, [], ["OTHER_KEY"]])("grants the selected static reference without a pool-wide grant (%j)", async (secrets) => {
     const { client, creates } = capturingClient();
     const provider = createTangleProvider({ client, modelCredentials });
-    await expect(provider.create({ profile: { name: "worker" }, ...(secrets ? { secrets } : {}) }))
-      .rejects.toThrow(/explicitly listed in create secrets/);
-    expect(creates).toHaveLength(0);
+    await provider.create({ profile: { name: "worker" }, ...(secrets ? { secrets } : {}) });
+    expect(creates[0]?.secrets).toEqual([...(secrets ?? []), modelCredentials.apiKeyEnv]);
+    expect(creates[0]?.metadata).toBeUndefined();
   });
 
   it.each(["", "lowercase", "1KEY", "KEY-NAME", "KEY NAME", "A".repeat(129)])(

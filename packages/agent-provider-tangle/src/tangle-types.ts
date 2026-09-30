@@ -1,3 +1,4 @@
+import type { CliAuthReference } from "@tangle-network/sandbox/auth";
 import type {
   BackendRegistryEntry,
   BackendRegistryResponse,
@@ -144,6 +145,8 @@ export interface SandboxSubscriptionLike {
  */
 export interface SandboxRuntimeCapabilityDocument {
   schema?: number;
+  /** The selected runtime resolves stored-secret native authentication references. */
+  cliAuthReferences?: boolean;
   nativeSessionCaptureVersion?: number;
   nativeSessionCaptureHarnesses?: readonly string[];
   agentInterface?: string;
@@ -806,6 +809,15 @@ export interface SandboxInteractionCommandResultLike {
   };
 }
 
+export type TangleModelCredentials =
+  | { apiKeyEnv: string; baseUrl: string }
+  | { cliAuth: CliAuthReference };
+
+/** Select one public stored-secret reference for this exact create identity. */
+export type TangleModelCredentialResolver = (
+  input: Readonly<CreateAgentEnvironmentInput>,
+) => TangleModelCredentials | undefined | Promise<TangleModelCredentials | undefined>;
+
 export interface TangleProviderOptions {
   client: SandboxClientLike;
   name?: string;
@@ -814,14 +826,13 @@ export interface TangleProviderOptions {
   /** Require the selected Sandbox host to prove native session capture for every create. */
   requireNativeSessionCapture?: boolean;
   /**
-   * Stored model credential and endpoint used by the default create mapping.
-   * Each create must explicitly list apiKeyEnv in its secrets.
-   * Cannot be combined with mapCreateInput; never accepts credential values.
+   * Available stored credentials selected through exact profile credential intent.
+   * Managed profiles skip selectors and native references; explicit managed intent skips all references.
+   * Unmarked legacy profiles retain their static API reference and grant only its selected secret.
+   * Subscription selections grant only their selected secret and record its public reference.
+   * Cannot be combined with mapCreateInput; never accepts credential values or model overrides.
    */
-  modelCredentials?: {
-    apiKeyEnv: string;
-    baseUrl: string;
-  };
+  modelCredentials?: TangleModelCredentials | TangleModelCredentialResolver;
   capabilities?:
     | AgentEnvironmentCapabilities
     | (() =>

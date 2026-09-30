@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./src/index.ts"
+    },
+    "./node": {
+      "import": "./dist/node.js",
+      "types": "./src/node.ts"
     }
   },
   "repository": {
@@ -27,6 +31,11 @@
         "import": "./dist/index.js",
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./node": {
+        "import": "./dist/node.js",
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
       }
     }
   },
@@ -108,7 +117,13 @@
     "dist/tangle-workspace-recovery.d.ts",
     "dist/tangle-workspace-recovery.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "dist/node.js",
+    "dist/node.d.ts",
+    "dist/command-model-credentials.js",
+    "dist/command-model-credentials.d.ts",
+    "dist/model-credential-source.js",
+    "dist/model-credential-source.d.ts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -121,7 +136,7 @@
     "@tangle-network/agent-interface": "^2.15.0"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.58.4 <1.0.0"
+    "@tangle-network/sandbox": ">=0.58.7 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -131,7 +146,7 @@
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.286.0",
-    "@tangle-network/sandbox": "0.58.4",
+    "@tangle-network/sandbox": "0.58.7",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"

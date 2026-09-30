@@ -1,3 +1,7 @@
+import {
+  assertCliAuthReferenceSupported,
+  cliAuthReferenceSchema,
+} from "@tangle-network/sandbox/auth";
 import type {
   BackendConfig,
   PromptOptions,
@@ -27,6 +31,7 @@ import {
   boundedString,
   PROFILE_AT_PROFILE,
 } from "./tangle-contract-safety.js";
+import { profileCredentialSource } from "./model-credential-source.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
@@ -145,6 +150,7 @@ const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
   "maxThinkingTokens",
   "mode",
   "apiKeyEnv",
+  "cliAuth",
   "authMode",
   "authFiles",
 ] as const;
@@ -258,6 +264,23 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
+  if (backend.profile?.model?.metadata?.credentialSource === "managed" &&
+    (backend.model?.cliAuth !== undefined || backend.model?.authFiles !== undefined || backend.model?.authMode === "oauth")) {
+    throw new Error("Tangle explicit managed profile cannot receive native subscription credentials");
+  }
+  if (backend.profile !== undefined) profileCredentialSource(backend.profile);
+  if (backend.model?.cliAuth !== undefined) {
+    if (backend.type === undefined) {
+      throw new Error("Tangle prompt cliAuth requires the selected backend type");
+    }
+    if (backend.profile !== undefined && profileCredentialSource(backend.profile) !== "subscription") {
+      throw new Error("Tangle prompt native credentials require subscription intent in the exact profile");
+    }
+    if (backend.profile?.harness !== undefined && backend.profile.harness !== backend.type) {
+      throw new Error("Tangle prompt cliAuth must use the exact profile harness");
+    }
+    assertCliAuthReferenceSupported(backend.type, backend.model as SandboxBackendModel);
+  }
   if (present.runtimeAttachments !== undefined) {
     Object.assign(backend, {
       runtimeAttachments: tangleRuntimeAttachments(present.runtimeAttachments, backend.profile),
@@ -309,6 +332,11 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
   }
   if (present.authFiles !== undefined) {
     model.authFiles = sandboxPromptAuthFiles(present.authFiles);
+  }
+  if (present.cliAuth !== undefined) {
+    const parsed = cliAuthReferenceSchema.safeParse(present.cliAuth);
+    if (!parsed.success) throw new Error("Tangle prompt cliAuth must be a valid stored-secret reference");
+    model.cliAuth = parsed.data;
   }
   return model;
 }

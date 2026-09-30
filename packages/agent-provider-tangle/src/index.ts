@@ -27,3 +27,6 @@ export {
 } from "./tangle-confidential-attestation.js";
 export type { TangleConfidentialAttestationReport } from "./tangle-confidential-attestation.js";
 export { safeEndpointFromConnection } from "./tangle-observation.js";
+
+export { profileCredentialSource } from "./model-credential-source.js";
+export type { ProfileCredentialSource } from "./model-credential-source.js";

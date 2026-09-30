@@ -47,6 +47,7 @@ import {
   frozenCapabilityDocument,
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
+import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
 import { deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
@@ -110,6 +111,8 @@ export async function sandboxInstanceAsEnvironment(
     resources?: ResourceProfile;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
+    requireCliAuthReferences?: boolean;
+    credentialSource?: ProfileCredentialSource;
     captureCapabilities?: SandboxRuntimeCapabilityDocument;
     captureHarness?: string;
   },
@@ -126,6 +129,14 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = request?.captureCapabilities === undefined
     ? await readDeploymentCapabilitySupport(box, operation)
     : deploymentCapabilitySupport(request.captureCapabilities);
+  const recordedCredentials = box.metadata?.modelCredentials;
+  const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
+    Object.hasOwn(recordedCredentials, "cliAuth");
+  if ((request?.requireCliAuthReferences || recordedNativeReference) && !deployment.cliAuthReferences) {
+    throw new Error("Tangle selected sandbox does not prove native credential reference support");
+  }
+  const boundCredentialSource = request?.credentialSource ??
+    (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
       capabilitiesForSandbox(
@@ -157,9 +168,19 @@ export async function sandboxInstanceAsEnvironment(
   // this handle and the observation reports the newest record it holds.
   const usageLog = createExecutionUsageLog();
   const assertCaptureInput = (input: AgentTurnInput): void => {
+    const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    const turnSource = backend?.profile === undefined ? undefined : profileCredentialSource(backend.profile);
+    if (turnSource !== undefined && turnSource !== boundCredentialSource) {
+      throw new Error("Tangle turn credential source differs from its environment; create a separate environment for that profile");
+    }
+    if (backend?.model?.cliAuth !== undefined && boundCredentialSource !== "subscription") {
+      throw new Error("Tangle managed environment cannot inherit native subscription credentials");
+    }
+    if (backend?.model?.cliAuth !== undefined && !deployment.cliAuthReferences) {
+      throw new Error("Tangle selected sandbox does not prove native credential reference support");
+    }
     if (!request?.requireNativeSessionCapture) return;
     if (!request.captureCapabilities) throw new Error("Tangle native capture has no measured container capability document");
-    const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
     const profileHarness = typeof backend?.profile === "object" ? backend.profile.harness : undefined;
     if (backend?.type !== undefined && profileHarness !== undefined && backend.type !== profileHarness) {
       throw new Error("Tangle native capture turn backend differs from its exact profile harness");
