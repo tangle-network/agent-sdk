@@ -332,7 +332,7 @@ describe("Tangle workspace branching", () => {
 
   it("restores each fork from its exact checkpoint snapshot", async () => {
     const { box, client } = createFakeSandbox();
-    client.evidenceCapabilities = async () => ({ nativeSessionCaptureV1: true });
+    client.evidenceCapabilities = async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2 });
     let observedCreate: Parameters<SandboxClientLike["create"]>[0];
     let forkCalls = 0;
     const originalFork = box.fork!;

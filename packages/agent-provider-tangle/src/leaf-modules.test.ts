@@ -1301,7 +1301,7 @@ describe("Tangle split leaf modules", () => {
     const listCalls: Array<{ offset?: number; limit?: number }> = [];
     let exactCreateOptions: Parameters<SandboxClientLike["create"]>[0];
     const client: SandboxClientLike = {
-      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true }),
+      evidenceCapabilities: async () => ({ nativeSessionCaptureV1: true, nativeSessionCaptureVersion: 2 }),
       async create(options) {
         exactCreateOptions = options;
         exactBox.metadata = { ...(options?.metadata ?? {}), runtimeMode: "control" };
