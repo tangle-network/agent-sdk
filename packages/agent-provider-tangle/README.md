@@ -1,8 +1,8 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.58.4 <1.0.0`.
-The floor includes runtime MCP attachment transport and preservation across per-turn model credential overrides.
+The Sandbox peer range is `>=0.58.5 <1.0.0`.
+The floor includes native credential reference validation, per-container capability parsing, and runtime MCP transport.
 
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
 They remain separate from the authored profile and its digest.
@@ -34,8 +34,8 @@ Set `TANGLE_SANDBOX_URL` to use another deployment.
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
-The provider does not create, grant, copy, or renew secrets.
-Each create must list the named secret explicitly.
+The provider does not create, copy, or renew stored secrets.
+Each create using a static API reference must list its named secret explicitly.
 
 ```ts
 const provider = createTangleProvider({
@@ -60,6 +60,78 @@ The endpoint must use HTTP or HTTPS without credentials, query parameters, or fr
 Credential-only turns retain the created SDK handle's endpoint and attachments.
 Reconstructed handles leave omitted model settings to Sandbox's durable backend configuration.
 Keep the stored secret available and valid throughout execution and recovery.
+
+## Per-profile subscription credentials
+
+`modelCredentials` can select a stored credential reference for each environment creation.
+The selector receives a frozen copy of the exact create input, including its profile and idempotency key.
+It returns one public native reference or the API reference described above.
+It cannot change the profile, harness, model, reasoning controls, or runtime attachments.
+
+```ts
+const provider = createTangleProvider({
+  client,
+  modelCredentials: async (input) => accountOwner.resolve(input),
+});
+```
+
+A native result has this shape:
+
+```ts
+{
+  cliAuth: {
+    account: "research-account",
+    secretEnv: "RESEARCH_CLAUDE",
+    format: "token", // Or "bundle" / "files", as supported by the selected harness.
+  },
+}
+```
+
+The Provider validates native channels with the maintained CLI Registry before provisioning.
+Each selector must use the exact profile harness.
+Native execution also requires the selected container to report `cliAuthReferences: true`.
+A missing or unreadable capability refuses creation or dispatch before inference.
+A selector grants its one selected stored secret automatically, alongside unrelated secrets requested by the caller.
+Keep pool-wide account credentials out of the create input's `secrets` list.
+Static native references also grant their selected secret; existing static API references retain the explicit-grant rule.
+Inline environment values cannot shadow the selected stored secret.
+Undefined, malformed, unsupported, or failed selections stop before Sandbox creation.
+There is no API fallback for a configured selector.
+
+Sandbox metadata records the public selection under `modelCredentials`.
+This metadata key is reserved when a selector or native reference is configured.
+Account labels are supplied bindings, not verified native principals.
+Token values and native credential files never enter that selection or receipt.
+The same public native reference can travel in a per-turn `backend.model.cliAuth` with an explicit matching backend type.
+
+### A command owned by the account system
+
+The Node subpath provides direct process transport for an existing account resolver.
+It executes arguments without a shell and discards subprocess stderr.
+
+```ts
+import { createCommandModelCredentialResolver } from "@tangle-network/agent-provider-tangle/node";
+
+const modelCredentials = createCommandModelCredentialResolver({
+  command: ["acct", "sandbox", "resolve", "--key-env", "TANGLE_SANDBOX_API_KEY"],
+  minimumValidUntil: persistedRunDeadline,
+  timeoutMs: 30_000,
+});
+const provider = createTangleProvider({ client, modelCredentials });
+```
+
+The command receives JSON `{ input, minimumValidUntil? }` on stdin.
+`input` contains the exact create fields with `signal` omitted.
+The command must return only `{ cliAuth }` or `{ apiKeyEnv, baseUrl }` on stdout.
+It must bind selection durably to `input.idempotencyKey`; quota changes cannot switch an existing assignment during retry.
+The adapter requires this idempotency key before starting the command.
+`minimumValidityMs` can compute one fixed deadline at factory construction; recovery should use the persisted absolute deadline.
+Only a successfully decoded public reference can reach Sandbox creation.
+Timeouts, cancellation, nonzero exit, and malformed or oversized output refuse creation with sanitized errors.
+
+The account owner retains authority over registration, namespace verification, holds, quota, selection, and trusted renewal.
+Updating a stored secret does not refresh credentials already injected into a live Sandbox.
+Creation-time validity and the selected host's native credential lifecycle still bound long-running work.
 
 ## `create()` returns a ready environment
 

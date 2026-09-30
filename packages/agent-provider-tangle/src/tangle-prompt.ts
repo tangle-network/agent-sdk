@@ -1,3 +1,7 @@
+import {
+  assertCliAuthReferenceSupported,
+  cliAuthReferenceSchema,
+} from "@tangle-network/sandbox/auth";
 import type {
   BackendConfig,
   PromptOptions,
@@ -145,6 +149,7 @@ const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
   "maxThinkingTokens",
   "mode",
   "apiKeyEnv",
+  "cliAuth",
   "authMode",
   "authFiles",
 ] as const;
@@ -258,6 +263,15 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
+  if (backend.model?.cliAuth !== undefined) {
+    if (backend.type === undefined) {
+      throw new Error("Tangle prompt cliAuth requires the selected backend type");
+    }
+    if (backend.profile?.harness !== undefined && backend.profile.harness !== backend.type) {
+      throw new Error("Tangle prompt cliAuth must use the exact profile harness");
+    }
+    assertCliAuthReferenceSupported(backend.type, backend.model as SandboxBackendModel);
+  }
   if (present.runtimeAttachments !== undefined) {
     Object.assign(backend, {
       runtimeAttachments: tangleRuntimeAttachments(present.runtimeAttachments, backend.profile),
@@ -309,6 +323,11 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
   }
   if (present.authFiles !== undefined) {
     model.authFiles = sandboxPromptAuthFiles(present.authFiles);
+  }
+  if (present.cliAuth !== undefined) {
+    const parsed = cliAuthReferenceSchema.safeParse(present.cliAuth);
+    if (!parsed.success) throw new Error("Tangle prompt cliAuth must be a valid stored-secret reference");
+    model.cliAuth = parsed.data;
   }
   return model;
 }

@@ -15,6 +15,8 @@ import { awaitWithSignal } from "./tangle-contract-safety.js";
  * unreadable, or partial document leaves every fact false.
  */
 export interface DeploymentCapabilitySupport {
+  /** The selected runtime explicitly supports named native credential references. */
+  readonly cliAuthReferences: boolean;
   /**
    * Run requests carry the caller's exact `runControlRef`, and admission
    * echoes the executionId. Detached dispatch needs both: it sends the
@@ -47,6 +49,7 @@ export interface DeploymentCapabilitySupport {
  * leaves a required flag unset.
  */
 export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
+  cliAuthReferences: false,
   exactDispatch: false,
   canonicalCancellation: false,
   eventReplay: false,
@@ -71,6 +74,7 @@ export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
  * document to decide whether to start one at all.
  */
 export const ADAPTER_CEILING_DEPLOYMENT: DeploymentCapabilitySupport = {
+  cliAuthReferences: true,
   exactDispatch: true,
   canonicalCancellation: true,
   eventReplay: true,
@@ -88,6 +92,7 @@ export function deploymentCapabilitySupport(
 ): DeploymentCapabilitySupport {
   if (!document || typeof document !== "object") return UNPROVEN_DEPLOYMENT;
   return {
+    cliAuthReferences: document.cliAuthReferences === true,
     exactDispatch:
       document.dispatch?.runControlRef === true &&
       document.dispatch?.executionIdOnAdmission === true,

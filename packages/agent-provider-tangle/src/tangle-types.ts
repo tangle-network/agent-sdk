@@ -1,3 +1,4 @@
+import type { CliAuthReference } from "@tangle-network/sandbox/auth";
 import type {
   BackendRegistryEntry,
   BackendRegistryResponse,
@@ -144,6 +145,8 @@ export interface SandboxSubscriptionLike {
  */
 export interface SandboxRuntimeCapabilityDocument {
   schema?: number;
+  /** The selected runtime resolves stored-secret native authentication references. */
+  cliAuthReferences?: boolean;
   nativeSessionCaptureVersion?: number;
   nativeSessionCaptureHarnesses?: readonly string[];
   agentInterface?: string;
@@ -806,6 +809,15 @@ export interface SandboxInteractionCommandResultLike {
   };
 }
 
+export type TangleModelCredentials =
+  | { apiKeyEnv: string; baseUrl: string }
+  | { cliAuth: CliAuthReference };
+
+/** Select one public stored-secret reference for this exact create identity. */
+export type TangleModelCredentialResolver = (
+  input: Readonly<CreateAgentEnvironmentInput>,
+) => TangleModelCredentials | Promise<TangleModelCredentials>;
+
 export interface TangleProviderOptions {
   client: SandboxClientLike;
   name?: string;
@@ -814,14 +826,12 @@ export interface TangleProviderOptions {
   /** Require the selected Sandbox host to prove native session capture for every create. */
   requireNativeSessionCapture?: boolean;
   /**
-   * Stored model credential and endpoint used by the default create mapping.
-   * Each create must explicitly list apiKeyEnv in its secrets.
-   * Cannot be combined with mapCreateInput; never accepts credential values.
+   * Stored credential reference, or a selector for each exact profile and create identity.
+   * A selector grants only its selected stored secret and records its public reference.
+   * Static API references require an explicit secrets grant; native references grant theirs.
+   * Cannot be combined with mapCreateInput; never accepts credential values or model overrides.
    */
-  modelCredentials?: {
-    apiKeyEnv: string;
-    baseUrl: string;
-  };
+  modelCredentials?: TangleModelCredentials | TangleModelCredentialResolver;
   capabilities?:
     | AgentEnvironmentCapabilities
     | (() =>

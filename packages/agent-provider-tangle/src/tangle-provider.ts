@@ -36,6 +36,7 @@ import { requestedResourceProfile } from "./tangle-resources.js";
 import type {
   SandboxInstanceLike,
   TangleProviderOptions,
+  TangleModelCredentials,
 } from "./tangle-types.js";
 import {
   assertBoundedJson,
@@ -51,12 +52,16 @@ import {
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
-  const modelCredentials = captureModelCredentials(options.modelCredentials);
+  const resolveModelCredentials = typeof options.modelCredentials === "function"
+    ? options.modelCredentials : undefined;
+  const modelCredentials = resolveModelCredentials === undefined
+    ? captureModelCredentials(options.modelCredentials as TangleModelCredentials | undefined)
+    : undefined;
   if (options.requireNativeSessionCapture !== undefined && typeof options.requireNativeSessionCapture !== "boolean") {
     throw new Error("Tangle requireNativeSessionCapture must be a boolean");
   }
   const mapCreateInput = options.mapCreateInput;
-  if (modelCredentials !== undefined && mapCreateInput !== undefined) {
+  if ((modelCredentials !== undefined || resolveModelCredentials !== undefined) && mapCreateInput !== undefined) {
     throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
   }
   const providerName = options.name ?? "tangle-sandbox";
@@ -130,14 +135,34 @@ export function createTangleProvider(
     if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
-    const mappedOptions =
-      mapCreateInput?.(input) ??
-      sandboxOptionsFromCreateInput(
+    // Validate the complete default projection before a selector can access a broker.
+    const defaultOptions = mapCreateInput === undefined
+      ? sandboxOptionsFromCreateInput(input, options.defaultBackend, parsedWorkspace, modelCredentials)
+      : undefined;
+    let selectedCredentials = modelCredentials;
+    if (resolveModelCredentials !== undefined) {
+      const { signal, ...data } = input;
+      const selected = await awaitWithSignal(
+        Promise.resolve(resolveModelCredentials(Object.freeze({
+          ...deepFreeze(structuredClone(data)),
+          ...(signal === undefined ? {} : { signal }),
+        }))),
+        signal,
+      );
+      if (selected === undefined) {
+        throw new Error("Tangle modelCredentials resolver must return a selected stored-secret reference");
+      }
+      selectedCredentials = captureModelCredentials(selected);
+    }
+    input.signal?.throwIfAborted();
+    const mappedOptions = mapCreateInput?.(input) ??
+      (resolveModelCredentials === undefined ? defaultOptions! : sandboxOptionsFromCreateInput(
         input,
         options.defaultBackend,
         parsedWorkspace,
-        modelCredentials,
-      );
+        selectedCredentials,
+        true,
+      ));
     assertMappedCreateOptions(mappedOptions);
     const createOptions = deepFreeze(structuredClone({
       ...mappedOptions,
@@ -246,6 +271,7 @@ export function createTangleProvider(
           ...(requestedResources === undefined
             ? {}
             : { resources: requestedResources }),
+          ...(createOptions.backend?.model?.cliAuth === undefined ? {} : { requireCliAuthReferences: true }),
           ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
           ...(captureCapabilities === undefined ? {} : { captureCapabilities }),
           ...(captureHarness === undefined ? {} : { captureHarness }),

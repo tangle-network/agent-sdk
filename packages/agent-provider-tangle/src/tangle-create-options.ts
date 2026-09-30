@@ -1,4 +1,8 @@
 import {
+  assertCliAuthReferenceSupported,
+  cliAuthReferenceSchema,
+} from "@tangle-network/sandbox/auth";
+import {
   parseBackendType,
   type BackendType,
   type CreateSandboxOptions,
@@ -25,18 +29,26 @@ import {
 } from "./tangle-contract-safety.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
-import type { TangleProviderOptions } from "./tangle-types.js";
+import type { TangleModelCredentials } from "./tangle-types.js";
 
 export function captureModelCredentials(
-  value: TangleProviderOptions["modelCredentials"],
-): TangleProviderOptions["modelCredentials"] {
+  value: TangleModelCredentials | undefined,
+): TangleModelCredentials | undefined {
   if (value === undefined) return undefined;
   assertBoundedJson(value, "Tangle modelCredentials");
+  if (value && typeof value === "object" && !Array.isArray(value) && "cliAuth" in value) {
+    if (Object.keys(value).some((key) => key !== "cliAuth")) {
+      throw new Error("Tangle native modelCredentials accepts only cliAuth");
+    }
+    const parsed = cliAuthReferenceSchema.safeParse(value.cliAuth);
+    if (!parsed.success) throw new Error("Tangle modelCredentials cliAuth must be a valid stored-secret reference");
+    return Object.freeze({ cliAuth: Object.freeze(parsed.data) });
+  }
   if (!value || typeof value !== "object" || Array.isArray(value) ||
     Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl")) {
     throw new Error("Tangle modelCredentials accepts only apiKeyEnv and baseUrl");
   }
-  const { apiKeyEnv, baseUrl } = value;
+  const { apiKeyEnv, baseUrl } = value as { apiKeyEnv: string; baseUrl: string };
   if (typeof apiKeyEnv !== "string" || apiKeyEnv.length > 128 ||
     !/^[A-Z_][A-Z0-9_]*$/.test(apiKeyEnv)) {
     throw new Error("Tangle modelCredentials apiKeyEnv must be a stored secret name");
@@ -59,7 +71,8 @@ export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
   defaultBackend?: BackendType,
   parsedWorkspace?: WorkspaceRequest,
-  modelCredentials?: TangleProviderOptions["modelCredentials"],
+  modelCredentials?: TangleModelCredentials,
+  grantSelectedCredential = false,
 ): CreateSandboxOptions {
   const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
   const profile = inlineAgentProfile(input.profile);
@@ -68,10 +81,38 @@ export function sandboxOptionsFromCreateInput(
       ? parseBackendType(defaultBackend ?? profile.harness ?? "opencode")
       : (input.backend as BackendType);
   assertNoInlineSecretValues(input, workspace);
-  if (modelCredentials !== undefined &&
-    (!Array.isArray(input.secrets) || !input.secrets.includes(modelCredentials.apiKeyEnv))) {
+  const selectedSecret = modelCredentials === undefined ? undefined
+    : "cliAuth" in modelCredentials ? modelCredentials.cliAuth?.secretEnv : modelCredentials.apiKeyEnv;
+  const nativeCredentials = modelCredentials !== undefined && "cliAuth" in modelCredentials;
+  if (modelCredentials !== undefined && selectedSecret === undefined) {
+    throw new Error("Tangle modelCredentials must select a stored secret");
+  }
+  if ((nativeCredentials || grantSelectedCredential) &&
+    (profile.harness === undefined || profile.harness !== backend)) {
+    throw new Error("Tangle selected modelCredentials must use the exact profile harness");
+  }
+  if (nativeCredentials) assertCliAuthReferenceSupported(backend, modelCredentials);
+  if (selectedSecret !== undefined && Object.hasOwn(input.env ?? {}, selectedSecret)) {
+    throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
+  }
+  if (selectedSecret !== undefined && !nativeCredentials && !grantSelectedCredential &&
+    (!Array.isArray(input.secrets) || !input.secrets.includes(selectedSecret))) {
     throw new Error("Tangle modelCredentials apiKeyEnv must be explicitly listed in create secrets");
   }
+  const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
+  const secrets = selectedSecret !== undefined && (nativeCredentials || grantSelectedCredential)
+    ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
+    : requestedSecrets;
+  if (secrets !== undefined && secrets.length > MAX_ARRAY_LENGTH) {
+    throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
+  }
+  const recordsCredential = nativeCredentials || grantSelectedCredential;
+  if (recordsCredential && Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
+    throw new Error("Tangle credential selection owns metadata.modelCredentials");
+  }
+  const metadata = recordsCredential
+    ? { ...input.metadata, modelCredentials }
+    : input.metadata;
   if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
     throw new Error("Tangle create providerOptions are not supported");
   }
@@ -123,17 +164,20 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
-    ...(Array.isArray(input.secrets) ? { secrets: input.secrets } : {}),
+    ...(Array.isArray(secrets) ? { secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
-    ...(input.metadata ? { metadata: input.metadata } : {}),
+    ...(metadata ? { metadata } : {}),
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {
       ...(base.backend ?? {}),
       type: backend,
       profile,
-      ...(modelCredentials === undefined ? {} : { model: modelCredentials }),
+      ...(modelCredentials === undefined ? {} : {
+        model: "cliAuth" in modelCredentials
+          ? { ...modelCredentials, authMode: "oauth" as const } : modelCredentials,
+      }),
       ...(input.runtimeAttachments === undefined ? {} : {
         runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),
       }),
@@ -291,6 +335,22 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
     throw new Error("Tangle mapped create options must be an object");
   }
   assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
+  if (options.backend?.model?.cliAuth !== undefined) {
+    if (options.backend.type === undefined) {
+      throw new Error("Tangle mapped native credentials require the selected backend type");
+    }
+    assertCliAuthReferenceSupported(options.backend.type, options.backend.model);
+    if (options.backend.profile?.harness !== undefined && options.backend.profile.harness !== options.backend.type) {
+      throw new Error("Tangle mapped native credentials must use the exact profile harness");
+    }
+    const selectedSecret = options.backend.model.cliAuth.secretEnv;
+    if (!Array.isArray(options.secrets) || !options.secrets.includes(selectedSecret)) {
+      throw new Error("Tangle mapped native credential must be explicitly listed in create secrets");
+    }
+    if (Object.hasOwn(options.env ?? {}, selectedSecret)) {
+      throw new Error("Tangle mapped native credential cannot shadow a stored secret with inline environment data");
+    }
+  }
   if (options.backend?.runtimeAttachments !== undefined) {
     tangleRuntimeAttachments(options.backend.runtimeAttachments, options.backend.profile);
   }
