@@ -1,8 +1,9 @@
 import { Sandbox, type CreateSandboxOptions } from "@tangle-network/sandbox";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it, vi } from "vitest";
-import { createTangleProvider, type TangleModelCredentials } from "./index.js";
+import { createTangleProvider, profileCredentialSource, type TangleModelCredentials } from "./index.js";
 import { promptOptionsFromTurnInput } from "./tangle-prompt.js";
+import { assertMappedCreateOptions } from "./tangle-create-options.js";
 
 const native: TangleModelCredentials = {
   cliAuth: { account: "claude-research", secretEnv: "CLAUDE_RESEARCH", format: "token" },
@@ -10,7 +11,7 @@ const native: TangleModelCredentials = {
 const api: TangleModelCredentials = { apiKeyEnv: "GLM_PLAN", baseUrl: "https://plan.example/v1" };
 const profile = {
   name: "research-director", harness: "claude-code" as const,
-  model: { provider: "anthropic", default: "fixture-model" },
+  model: { provider: "anthropic", default: "fixture-model", metadata: { credentialSource: "subscription" } },
 };
 function setup() {
   const creates: CreateSandboxOptions[] = [];
@@ -26,6 +27,111 @@ function setup() {
 }
 
 describe("Tangle per-profile subscription creation", () => {
+  it.each(["resolver", "static"] as const)("routes mixed roots and recursive children from each exact profile (%s)", async (configuration) => {
+    const { creates, client } = setup();
+    const managed = { name: "router", harness: "opencode" as const, model: { provider: "router", default: "fixture-router", metadata: { credentialSource: "managed", authored: true } } };
+    const omitted = { ...profile, name: "unmarked", model: { provider: "anthropic", default: "fixture-model" } };
+    const selector = vi.fn(async () => native);
+    const provider = createTangleProvider({ client, modelCredentials: configuration === "resolver" ? selector : native });
+    const nodes = [managed, { ...profile, name: "subscription-child" }, managed, profile, managed, omitted];
+    const keys = ["router-root", "router-root:subscription-child", "router-root:subscription-child:router-grandchild", "subscription-root", "subscription-root:router-child", "subscription-root:unmarked-child"];
+    for (const [index, node] of nodes.entries()) {
+      await provider.create({ profile: node, idempotencyKey: keys[index], secrets: ["TOOL_TOKEN"], metadata: { node: keys[index] } });
+    }
+    expect(selector).toHaveBeenCalledTimes(configuration === "resolver" ? 2 : 0);
+    expect(creates.map((create) => create.backend?.profile)).toEqual(nodes);
+    expect(creates.map((create) => create.secrets)).toEqual(nodes.map((node) =>
+      profileCredentialSource(node) === "subscription" ? ["TOOL_TOKEN", "CLAUDE_RESEARCH"] : ["TOOL_TOKEN"]));
+    expect(creates.map((create) => create.backend?.model)).toEqual(nodes.map((node) =>
+      profileCredentialSource(node) === "subscription" ? { ...native, authMode: "oauth" } : undefined));
+    expect(creates.map((create) => create.metadata)).toEqual(nodes.map((node, index) => ({
+      node: keys[index], ...(profileCredentialSource(node) === "subscription" ? { modelCredentials: native } : {}),
+    })));
+  });
+
+  it("refuses mapped subscription intent and forged selection metadata on a managed input", async () => {
+    const { creates, client } = setup();
+    const managed = { ...profile, model: { ...profile.model, metadata: { credentialSource: "managed" } } };
+    const mapped = createTangleProvider({ client, mapCreateInput: () => ({ secrets: ["CLAUDE_RESEARCH"], backend: { type: "claude-code", profile, model: native } }) });
+    await expect(mapped.create({ profile: managed })).rejects.toThrow(/preserve the exact profile credential source/);
+    await expect(createTangleProvider({ client }).create({ profile: managed, metadata: { modelCredentials: native } }))
+      .rejects.toThrow(/owns metadata/);
+    expect(creates).toEqual([]);
+  });
+
+  it("refuses explicit managed turns carrying native auth files", () => {
+    const managed = { ...profile, model: { ...profile.model, metadata: { credentialSource: "managed" } } };
+    expect(() => promptOptionsFromTurnInput({ prompt: "managed", providerOptions: { backend: {
+      type: "claude-code", profile: managed, model: { authMode: "oauth", authFiles: [{ path: ".credentials.json", content: "private-fixture" }] },
+    } } }, { provider: "tangle-sandbox", environmentId: "box" })).toThrow(/explicit managed profile/);
+  });
+
+  it("refuses subscription intent without available credentials before provisioning", async () => {
+    const { creates, client } = setup();
+    await expect(createTangleProvider({ client }).create({ profile })).rejects.toThrow(/requires configured modelCredentials/);
+    expect(creates).toEqual([]);
+  });
+
+  it("does not inherit a static API plan reference across explicit managed and subscription roots or children", async () => {
+    const { creates, client } = setup();
+    const managed = { name: "router", harness: "opencode" as const, model: { provider: "router", default: "fixture-router", metadata: { credentialSource: "managed" } } };
+    const subscription = { name: "glm", harness: "opencode" as const, model: { provider: "zai", default: "fixture-glm", metadata: { credentialSource: "subscription" } } };
+    const nodes = [managed, subscription, subscription, managed];
+    const provider = createTangleProvider({ client, modelCredentials: api });
+    for (const [index, node] of nodes.entries()) await provider.create({ profile: node, idempotencyKey: `mixed-api:${index}` });
+    expect(creates.map((create) => create.backend?.profile)).toEqual(nodes);
+    expect(creates.map((create) => create.backend?.model)).toEqual([undefined, api, api, undefined]);
+    expect(creates.map((create) => create.secrets)).toEqual([undefined, ["GLM_PLAN"], ["GLM_PLAN"], undefined]);
+  });
+
+  it("uses an explicitly supplied API plan reference only with its exact subscription harness", async () => {
+    const { creates, client } = setup();
+    const node = { ...profile, harness: "opencode" as const, model: { provider: "zai", default: "fixture-glm", metadata: { credentialSource: "subscription" } } };
+    await createTangleProvider({ client, modelCredentials: api }).create({ profile: node });
+    expect(creates[0]?.secrets).toEqual(["GLM_PLAN"]);
+    expect(creates[0]?.metadata).toEqual({ modelCredentials: api });
+    expect(creates[0]?.backend?.profile).toEqual(node);
+  });
+
+  it.each(["unknown", null, 1, false, {}])("refuses malformed credential intent before selection or provisioning (%j)", async (credentialSource) => {
+    const { creates, client } = setup();
+    const selector = vi.fn(async () => native);
+    const provider = createTangleProvider({ client, modelCredentials: selector });
+    await expect(provider.create({ profile: { ...profile, model: { ...profile.model, metadata: { credentialSource } } } }))
+      .rejects.toThrow(/credentialSource/);
+    expect(selector).not.toHaveBeenCalled();
+    expect(creates).toEqual([]);
+  });
+
+  it.each([false, true])("refuses changing a native environment to managed intent before dispatch (recovered=%s)", async (recovered) => {
+    const turns = vi.fn();
+    const managed = { ...profile, model: { ...profile.model, metadata: { credentialSource: "managed" } } };
+    const box = {
+      id: "native-bound", status: "running", metadata: { modelCredentials: native },
+      capabilities: async () => ({ cliAuthReferences: true }), async *streamPrompt() { turns(); },
+    };
+    const provider = createTangleProvider({ client: { async create() { return box; }, async get() { return box; } }, modelCredentials: native });
+    const environment = recovered ? await provider.get?.(box.id) : await provider.create({ profile });
+    if (!environment) throw new Error("Expected environment");
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "managed", providerOptions: { backend: { type: "claude-code", profile: managed } } })) {}
+    })()).rejects.toThrow(/credential source differs/);
+    expect(turns).not.toHaveBeenCalled();
+  });
+
+  it("refuses subscription intent on a managed environment before dispatch", async () => {
+    const turns = vi.fn();
+    const managed = { ...profile, model: { ...profile.model, metadata: { credentialSource: "managed" } } };
+    const provider = createTangleProvider({ client: { async create() { return {
+      id: "managed-bound", status: "running", capabilities: async () => ({ cliAuthReferences: true }), async *streamPrompt() { turns(); },
+    }; } }, modelCredentials: native });
+    const environment = await provider.create({ profile: managed });
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "subscription", providerOptions: { backend: { type: "claude-code", profile, model: native } } })) {}
+    })()).rejects.toThrow(/credential source differs/);
+    expect(turns).not.toHaveBeenCalled();
+  });
+
   it("selects once for an idempotent root and independently for each exact child profile", async () => {
     const { creates, client } = setup();
     const selected: Readonly<CreateAgentEnvironmentInput>[] = [];
@@ -43,9 +149,9 @@ describe("Tangle per-profile subscription creation", () => {
     await provider.create(root);
     const children = [
       { ...profile, name: "claude-child" },
-      { name: "codex-child", harness: "codex" as const, model: { provider: "openai", default: "fixture-codex" } },
-      { name: "kimi-child", harness: "kimi-code" as const, model: { provider: "moonshot", default: "fixture-kimi" } },
-      { name: "glm-child", harness: "opencode" as const, model: { provider: "zai", default: "fixture-glm" } },
+      { name: "codex-child", harness: "codex" as const, model: { provider: "openai", default: "fixture-codex", metadata: { credentialSource: "subscription" } } },
+      { name: "kimi-child", harness: "kimi-code" as const, model: { provider: "moonshot", default: "fixture-kimi", metadata: { credentialSource: "subscription" } } },
+      { name: "glm-child", harness: "opencode" as const, model: { provider: "zai", default: "fixture-glm", metadata: { credentialSource: "subscription" } } },
     ];
     for (const child of children) await provider.create({ profile: child, idempotencyKey: `runtime:${child.name}` });
     expect(resolver).toHaveBeenCalledTimes(5);
@@ -97,7 +203,7 @@ describe("Tangle per-profile subscription creation", () => {
   it("refuses a native channel the exact profile harness cannot honor", async () => {
     const { creates, client } = setup();
     const provider = createTangleProvider({ client, modelCredentials: async () => native });
-    await expect(provider.create({ profile: { name: "codex", harness: "codex" } })).rejects.toThrow(/tokens are unsupported/);
+    await expect(provider.create({ profile: { ...profile, name: "codex", harness: "codex" } })).rejects.toThrow(/tokens are unsupported/);
     await expect(provider.create({ profile, backend: "codex" })).rejects.toThrow(/exact profile harness/);
     expect(creates).toEqual([]);
   });
@@ -105,7 +211,7 @@ describe("Tangle per-profile subscription creation", () => {
   it("refuses a dynamic API selection whose backend overrides the exact profile harness", async () => {
     const { creates, client } = setup();
     const provider = createTangleProvider({ client, defaultBackend: "codex", modelCredentials: async () => api });
-    await expect(provider.create({ profile: { name: "glm", harness: "opencode", model: { provider: "zai", default: "fixture-glm" } } }))
+    await expect(provider.create({ profile: { name: "glm", harness: "opencode", model: { provider: "zai", default: "fixture-glm", metadata: { credentialSource: "subscription" } } } }))
       .rejects.toThrow(/exact profile harness/);
     expect(creates).toEqual([]);
   });
@@ -166,12 +272,10 @@ describe("Tangle per-profile subscription creation", () => {
   });
 
   it("checks native mapped credential grants and mixed authentication before provisioning", async () => {
-    const { creates, client } = setup();
-    const noGrant = createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "claude-code", profile, model: native } }) });
-    await expect(noGrant.create({ profile })).rejects.toThrow(/explicitly listed/);
-    const mixed = createTangleProvider({ client, mapCreateInput: () => ({ secrets: ["CLAUDE_RESEARCH"], backend: { type: "claude-code", profile, model: { ...native, apiKeyEnv: "API_KEY" } } }) });
-    await expect(mixed.create({ profile })).rejects.toThrow(/cannot be combined/);
-    expect(creates).toEqual([]);
+    expect(() => assertMappedCreateOptions({ backend: { type: "claude-code", profile, model: native } }))
+      .toThrow(/explicitly listed/);
+    expect(() => assertMappedCreateOptions({ secrets: ["CLAUDE_RESEARCH"], backend: { type: "claude-code", profile, model: { ...native, apiKeyEnv: "API_KEY" } } }))
+      .toThrow(/cannot be combined/);
   });
 
   it("preserves the chosen native reference through the maintained SDK HTTP create, turn, and recovered handle", async () => {

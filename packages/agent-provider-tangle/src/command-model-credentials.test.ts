@@ -16,10 +16,17 @@ async function command(source: string) {
   await writeFile(script, source);
   return { directory, command: [process.execPath, script] };
 }
-const input = { profile: { name: "researcher", harness: "claude-code" as const }, idempotencyKey: "runtime:root" };
+const input = { profile: { name: "researcher", harness: "claude-code" as const, model: { provider: "anthropic", default: "fixture-model", metadata: { credentialSource: "subscription" } } }, idempotencyKey: "runtime:root" };
 const publicReference = { cliAuth: { account: "research", secretEnv: "CLAUDE_RESEARCH", format: "token" as const } };
 
 describe("account-owned credential command transport", () => {
+  it("skips the command for managed or unmarked profiles without requiring an account binding", async () => {
+    const fixture = await command('process.exit(99);');
+    const resolver = createCommandModelCredentialResolver(fixture);
+    expect(await resolver({ profile: { name: "router" } })).toBeUndefined();
+    expect(await resolver({ profile: { ...input.profile, model: { ...input.profile.model, metadata: { credentialSource: "managed" } } } })).toBeUndefined();
+  });
+
   it("forwards exact create identity and a fixed deadline through JSON stdin without a shell", async () => {
     const fixture = await command(`import { writeFileSync } from "node:fs";
 let data = ""; process.stdin.on("data", chunk => data += chunk);

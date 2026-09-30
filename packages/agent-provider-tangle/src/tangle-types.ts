@@ -816,7 +816,7 @@ export type TangleModelCredentials =
 /** Select one public stored-secret reference for this exact create identity. */
 export type TangleModelCredentialResolver = (
   input: Readonly<CreateAgentEnvironmentInput>,
-) => TangleModelCredentials | Promise<TangleModelCredentials>;
+) => TangleModelCredentials | undefined | Promise<TangleModelCredentials | undefined>;
 
 export interface TangleProviderOptions {
   client: SandboxClientLike;
@@ -826,9 +826,10 @@ export interface TangleProviderOptions {
   /** Require the selected Sandbox host to prove native session capture for every create. */
   requireNativeSessionCapture?: boolean;
   /**
-   * Stored credential reference, or a selector for each exact profile and create identity.
-   * A selector grants only its selected stored secret and records its public reference.
-   * Static API references require an explicit secrets grant; native references grant theirs.
+   * Available stored credentials selected through exact profile credential intent.
+   * Managed profiles skip selectors and native references; explicit managed intent skips all references.
+   * Unmarked legacy profiles retain their static API reference and explicit secret grant.
+   * Subscription selections grant only their selected secret and record its public reference.
    * Cannot be combined with mapCreateInput; never accepts credential values or model overrides.
    */
   modelCredentials?: TangleModelCredentials | TangleModelCredentialResolver;

@@ -31,6 +31,7 @@ import {
   boundedString,
   PROFILE_AT_PROFILE,
 } from "./tangle-contract-safety.js";
+import { profileCredentialSource } from "./model-credential-source.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
@@ -263,9 +264,17 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
+  if (backend.profile?.model?.metadata?.credentialSource === "managed" &&
+    (backend.model?.cliAuth !== undefined || backend.model?.authFiles !== undefined || backend.model?.authMode === "oauth")) {
+    throw new Error("Tangle explicit managed profile cannot receive native subscription credentials");
+  }
+  if (backend.profile !== undefined) profileCredentialSource(backend.profile);
   if (backend.model?.cliAuth !== undefined) {
     if (backend.type === undefined) {
       throw new Error("Tangle prompt cliAuth requires the selected backend type");
+    }
+    if (backend.profile !== undefined && profileCredentialSource(backend.profile) !== "subscription") {
+      throw new Error("Tangle prompt native credentials require subscription intent in the exact profile");
     }
     if (backend.profile?.harness !== undefined && backend.profile.harness !== backend.type) {
       throw new Error("Tangle prompt cliAuth must use the exact profile harness");

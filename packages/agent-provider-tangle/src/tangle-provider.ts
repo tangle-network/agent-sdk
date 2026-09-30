@@ -32,6 +32,7 @@ import {
   awaitSandboxRunning,
   DEFAULT_TANGLE_READY_TIMEOUT_MS,
 } from "./tangle-readiness.js";
+import { profileCredentialSource } from "./model-credential-source.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
 import type {
   SandboxInstanceLike,
@@ -135,35 +136,53 @@ export function createTangleProvider(
     if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
-    // Validate the complete default projection before a selector can access a broker.
+    const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
+    const subscription = credentialSource === "subscription";
+    if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
+      throw new Error("Tangle credential selection owns metadata.modelCredentials");
+    }
+    const explicitCredentialIntent = typeof input.profile !== "string" && input.profile.model?.metadata?.credentialSource !== undefined;
+    const availableStaticCredentials = modelCredentials !== undefined &&
+      (subscription || (!explicitCredentialIntent && !("cliAuth" in modelCredentials))) ? modelCredentials : undefined;
+    if (subscription && availableStaticCredentials === undefined && resolveModelCredentials === undefined) {
+      throw new Error("Tangle subscription profile requires configured modelCredentials before creation");
+    }
+    // Validate placement before contacting the account owner; managed profiles never contact it.
     const defaultOptions = mapCreateInput === undefined
-      ? sandboxOptionsFromCreateInput(input, options.defaultBackend, parsedWorkspace, modelCredentials)
+      ? sandboxOptionsFromCreateInput(input, options.defaultBackend, parsedWorkspace, availableStaticCredentials, subscription)
       : undefined;
-    let selectedCredentials = modelCredentials;
-    if (resolveModelCredentials !== undefined) {
-      const { signal, ...data } = input;
+    let selectedCredentials = availableStaticCredentials;
+    if (subscription && resolveModelCredentials !== undefined) {
       const selected = await awaitWithSignal(
-        Promise.resolve(resolveModelCredentials(Object.freeze({
-          ...deepFreeze(structuredClone(data)),
-          ...(signal === undefined ? {} : { signal }),
-        }))),
-        signal,
+        Promise.resolve(resolveModelCredentials(input)),
+        input.signal,
       );
       if (selected === undefined) {
-        throw new Error("Tangle modelCredentials resolver must return a selected stored-secret reference");
+        throw new Error("Tangle subscription modelCredentials resolver must return a selected stored-secret reference");
       }
       selectedCredentials = captureModelCredentials(selected);
     }
     input.signal?.throwIfAborted();
     const mappedOptions = mapCreateInput?.(input) ??
-      (resolveModelCredentials === undefined ? defaultOptions! : sandboxOptionsFromCreateInput(
+      (subscription && resolveModelCredentials !== undefined ? sandboxOptionsFromCreateInput(
         input,
         options.defaultBackend,
         parsedWorkspace,
         selectedCredentials,
         true,
-      ));
+      ) : defaultOptions!);
     assertMappedCreateOptions(mappedOptions);
+    if (Object.hasOwn(mappedOptions.metadata ?? {}, "modelCredentials") &&
+      (!subscription || selectedCredentials === undefined ||
+        canonicalCandidateDigest(mappedOptions.metadata?.modelCredentials) !== canonicalCandidateDigest(selectedCredentials))) {
+      throw new Error("Tangle mapped metadata.modelCredentials must contain its selected subscription reference");
+    }
+    if (mappedOptions.backend?.profile !== undefined && profileCredentialSource(mappedOptions.backend.profile) !== credentialSource) {
+      throw new Error("Tangle mapped create options must preserve the exact profile credential source");
+    }
+    if (!subscription && mappedOptions.backend?.model?.cliAuth !== undefined) {
+      throw new Error("Tangle managed profile cannot provision native subscription credentials");
+    }
     const createOptions = deepFreeze(structuredClone({
       ...mappedOptions,
       ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
@@ -271,6 +290,7 @@ export function createTangleProvider(
           ...(requestedResources === undefined
             ? {}
             : { resources: requestedResources }),
+          credentialSource,
           ...(createOptions.backend?.model?.cliAuth === undefined ? {} : { requireCliAuthReferences: true }),
           ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
           ...(captureCapabilities === undefined ? {} : { captureCapabilities }),

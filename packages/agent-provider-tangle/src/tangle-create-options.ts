@@ -27,6 +27,7 @@ import {
   PROFILE_AT_BACKEND_PROFILE,
   PROFILE_AT_ROOT,
 } from "./tangle-contract-safety.js";
+import { profileCredentialSource } from "./model-credential-source.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 import type { TangleModelCredentials } from "./tangle-types.js";
@@ -91,7 +92,12 @@ export function sandboxOptionsFromCreateInput(
     (profile.harness === undefined || profile.harness !== backend)) {
     throw new Error("Tangle selected modelCredentials must use the exact profile harness");
   }
-  if (nativeCredentials) assertCliAuthReferenceSupported(backend, modelCredentials);
+  if (nativeCredentials) {
+    if (profileCredentialSource(profile) !== "subscription") {
+      throw new Error("Tangle native credentials require subscription intent in the exact profile");
+    }
+    assertCliAuthReferenceSupported(backend, modelCredentials);
+  }
   if (selectedSecret !== undefined && Object.hasOwn(input.env ?? {}, selectedSecret)) {
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
@@ -340,6 +346,9 @@ export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
       throw new Error("Tangle mapped native credentials require the selected backend type");
     }
     assertCliAuthReferenceSupported(options.backend.type, options.backend.model);
+    if (options.backend.profile === undefined || profileCredentialSource(options.backend.profile) !== "subscription") {
+      throw new Error("Tangle mapped native credentials require subscription intent in the exact profile");
+    }
     if (options.backend.profile?.harness !== undefined && options.backend.profile.harness !== options.backend.type) {
       throw new Error("Tangle mapped native credentials must use the exact profile harness");
     }

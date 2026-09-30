@@ -47,6 +47,7 @@ import {
   frozenCapabilityDocument,
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
+import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
 import { deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
@@ -111,6 +112,7 @@ export async function sandboxInstanceAsEnvironment(
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
     requireCliAuthReferences?: boolean;
+    credentialSource?: ProfileCredentialSource;
     captureCapabilities?: SandboxRuntimeCapabilityDocument;
     captureHarness?: string;
   },
@@ -133,6 +135,8 @@ export async function sandboxInstanceAsEnvironment(
   if ((request?.requireCliAuthReferences || recordedNativeReference) && !deployment.cliAuthReferences) {
     throw new Error("Tangle selected sandbox does not prove native credential reference support");
   }
+  const boundCredentialSource = request?.credentialSource ??
+    (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
       capabilitiesForSandbox(
@@ -165,6 +169,13 @@ export async function sandboxInstanceAsEnvironment(
   const usageLog = createExecutionUsageLog();
   const assertCaptureInput = (input: AgentTurnInput): void => {
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    const turnSource = backend?.profile === undefined ? undefined : profileCredentialSource(backend.profile);
+    if (turnSource !== undefined && turnSource !== boundCredentialSource) {
+      throw new Error("Tangle turn credential source differs from its environment; create a separate environment for that profile");
+    }
+    if (backend?.model?.cliAuth !== undefined && boundCredentialSource !== "subscription") {
+      throw new Error("Tangle managed environment cannot inherit native subscription credentials");
+    }
     if (backend?.model?.cliAuth !== undefined && !deployment.cliAuthReferences) {
       throw new Error("Tangle selected sandbox does not prove native credential reference support");
     }

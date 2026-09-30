@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.58.5 <1.0.0`.
+The Sandbox peer range is `>=0.58.7 <1.0.0`.
 The floor includes native credential reference validation, per-container capability parsing, and runtime MCP transport.
 
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
@@ -35,7 +35,7 @@ Set `TANGLE_SANDBOX_URL` to use another deployment.
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
 The provider does not create, copy, or renew stored secrets.
-Each create using a static API reference must list its named secret explicitly.
+Managed creates using a static API reference must list its named secret explicitly.
 
 ```ts
 const provider = createTangleProvider({
@@ -63,7 +63,18 @@ Keep the stored secret available and valid throughout execution and recovery.
 
 ## Per-profile subscription credentials
 
-`modelCredentials` can select a stored credential reference for each environment creation.
+The exact profile chooses access through `model.metadata.credentialSource`.
+Use `"subscription"` to request an enrolled account.
+Omitting this field or using `"managed"` preserves managed access.
+Unknown or malformed intent fails before provisioning.
+`profileCredentialSource(profile)` exports this strict intent reader.
+
+`modelCredentials` resolves only profiles that request subscription access.
+Managed profiles skip the selector and configured native references.
+Explicit `"managed"` intent also skips configured static API references.
+Unmarked legacy profiles retain their existing static API configuration; mark mixed profiles explicitly or use a selector.
+The same Provider can create a managed parent and subscription child, or a subscription parent and managed child.
+A subscription profile requires a configured reference or successful selector result before Sandbox creation.
 The selector receives a frozen copy of the exact create input, including its profile and idempotency key.
 It returns one public native reference or the API reference described above.
 It cannot change the profile, harness, model, reasoning controls, or runtime attachments.
@@ -72,6 +83,16 @@ It cannot change the profile, harness, model, reasoning controls, or runtime att
 const provider = createTangleProvider({
   client,
   modelCredentials: async (input) => accountOwner.resolve(input),
+});
+const environment = await provider.create({
+  profile: {
+    ...researchProfile,
+    model: {
+      ...researchProfile.model,
+      metadata: { ...researchProfile.model?.metadata, credentialSource: "subscription" },
+    },
+  },
+  idempotencyKey: persistedNodeIdentity,
 });
 ```
 
@@ -93,16 +114,19 @@ Native execution also requires the selected container to report `cliAuthReferenc
 A missing or unreadable capability refuses creation or dispatch before inference.
 A selector grants its one selected stored secret automatically, alongside unrelated secrets requested by the caller.
 Keep pool-wide account credentials out of the create input's `secrets` list.
-Static native references also grant their selected secret; existing static API references retain the explicit-grant rule.
+Static native references grant their selected secret only for subscription profiles.
+Static API references preserve explicit grants for unmarked legacy profiles and grant their selected secret for subscription profiles.
 Inline environment values cannot shadow the selected stored secret.
-Undefined, malformed, unsupported, or failed selections stop before Sandbox creation.
-There is no API fallback for a configured selector.
+Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
+Subscription failures never fall back to managed Router access.
 
 Sandbox metadata records the public selection under `modelCredentials`.
-This metadata key is reserved when a selector or native reference is configured.
+This metadata key is reserved for the Provider selection.
 Account labels are supplied bindings, not verified native principals.
 Token values and native credential files never enter that selection or receipt.
 The same public native reference can travel in a per-turn `backend.model.cliAuth` with an explicit matching backend type.
+A turn carrying a profile must preserve its environment's credential source, including after recovery.
+Changing credential sources requires a separate environment because retained Sandbox defaults cannot safely clear a native binding.
 
 ### A command owned by the account system
 
@@ -120,7 +144,8 @@ const modelCredentials = createCommandModelCredentialResolver({
 const provider = createTangleProvider({ client, modelCredentials });
 ```
 
-The command receives JSON `{ input, minimumValidUntil? }` on stdin.
+Managed profiles do not start the command or require an account binding.
+For subscription profiles, the command receives JSON `{ input, minimumValidUntil? }` on stdin.
 `input` contains the exact create fields with `signal` omitted.
 The command must return only `{ cliAuth }` or `{ apiKeyEnv, baseUrl }` on stdout.
 It must bind selection durably to `input.idempotencyKey`; quota changes cannot switch an existing assignment during retry.

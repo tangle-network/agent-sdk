@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
+import { profileCredentialSource } from "./model-credential-source.js";
 import { captureModelCredentials } from "./tangle-create-options.js";
 import type { TangleModelCredentialResolver, TangleModelCredentials } from "./tangle-types.js";
 
@@ -55,6 +56,8 @@ export function createCommandModelCredentialResolver(
   }
   const environment = { ...process.env, ...options.env };
   return (input: Readonly<CreateAgentEnvironmentInput>) => {
+    if (typeof input.profile === "string") throw new Error("Tangle credential command requires an inline profile");
+    if (profileCredentialSource(input.profile) === "managed") return undefined;
     if (typeof input.idempotencyKey !== "string" || input.idempotencyKey.length === 0) {
       throw new Error("Tangle credential command requires a stable create idempotencyKey");
     }
