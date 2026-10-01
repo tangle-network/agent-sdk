@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.1.2
+
+### Patch Changes
+
+- 09868d9: Refuse explicit credential and harness substitutions on exact execution replay without rewriting the admitted request.
+- 73b1016: Preserve the selected stored native credential reference on new Provider turns, including detached dispatch, recursive child creation, session prompts, and cold reconnect.
+  Refuse account, harness, and credential-channel substitution while keeping admitted replay unchanged.
+
 ## 3.1.1
 
 ### Patch Changes
