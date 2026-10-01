@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.1.4
+
+### Patch Changes
+
+- c0c86e9: Retain large workspace files through the Sandbox SDK bounded binary downloader after an explicit JSON size refusal.
+  Verify its exact size and SHA-256 receipt while preserving archive limits, credential exclusions, and native-session proof.
+
 ## 3.1.3
 
 ### Patch Changes
