@@ -44,6 +44,8 @@ export const AgentInteractiveSessionStartSchema = z.strictObject({
   run: AgentExactRunControlRefSchema,
   profile: agentProfileSchema,
   requestedProfileDigest: sha256DigestSchema,
+  // A provider-owned CLI login choice, never a credential or token.
+  authMode: z.literal("oauth").optional(),
   initialPrompt: boundedStringSchema.optional(),
   cwd: boundedStringSchema.min(1).optional(),
   cols: interactiveDimensionSchema.optional(),
@@ -73,6 +75,9 @@ export function agentInteractiveSessionRequestDigest(
     kind: "agent-interactive-session-start.v1",
     run: exactCoordinates,
     requestedProfileDigest: exactInput.requestedProfileDigest,
+    ...(exactInput.authMode === undefined
+      ? {}
+      : { authMode: exactInput.authMode }),
     ...(exactInput.initialPrompt === undefined
       ? {}
       : { initialPrompt: exactInput.initialPrompt }),
@@ -108,6 +113,12 @@ export function exactAgentInteractiveSessionStart(
   const parsed = AgentInteractiveSessionStartSchema.parse(value);
   if (parsed.profile.harness === undefined) {
     throw new Error("interactive agent sessions require AgentProfile.harness");
+  }
+  if (
+    parsed.authMode === "oauth" &&
+    parsed.profile.harness !== "claude-code"
+  ) {
+    throw new Error("Claude Code OAuth mode requires the claude-code harness");
   }
   const digest = canonicalAgentProfileDigest(parsed.profile as AgentProfile);
   if (digest !== parsed.requestedProfileDigest) {
