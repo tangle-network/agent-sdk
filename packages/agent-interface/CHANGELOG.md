@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.16.0
+
+### Minor Changes
+
+- a82131f: Bind Claude Code OAuth selection into the exact interactive-start request identity.
+
 ## 2.15.0
 
 ### Minor Changes
