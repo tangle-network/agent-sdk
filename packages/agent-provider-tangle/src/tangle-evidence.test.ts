@@ -545,7 +545,11 @@ describe("Tangle evidence capture", () => {
     await expect(captureTangleEnvironmentEvidence(f.environment, {
       executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength + 100_000,
       signal: abort.signal, requireNativeSessionCapture: true,
-    })).rejects.toThrow(/receipt|truncated|hash mismatch|cancelled/);
+    })).rejects.toMatchObject({ message: failure === "receipt"
+      ? "Tangle evidence binary download omitted its exact size or digest receipt"
+      : failure === "size" ? "Tangle evidence workspace file changed or was truncated: notes/.finding.json"
+      : failure === "hash" ? "Tangle evidence workspace file hash mismatch: notes/.finding.json"
+      : "capture cancelled" });
     await expect(stat(f.downloads[0]!.target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -553,10 +557,10 @@ describe("Tangle evidence capture", () => {
     const f = largeWorkspace();
     delete f.box.fs!.supportsBoundedDownload;
     const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: f.bytes.byteLength + 100_000 };
-    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toThrow(/requires bounded binary download/);
+    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toMatchObject({ message: "Tangle evidence requires bounded binary download for workspace file notes/.finding.json" });
     f.box.fs!.supportsBoundedDownload = true;
     f.box.fs!.readBatch = async (paths) => ({ files: [], errors: [{ path: paths[0]!, code: "EIO", error: "unavailable" }] });
-    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toThrow(/could not read/);
+    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toMatchObject({ message: "Tangle evidence could not read workspace file notes/.finding.json" });
     expect(f.downloads).toHaveLength(0);
   });
 
@@ -583,9 +587,26 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.excludedPaths).toContainEqual(expect.objectContaining({ path: ".env", reason: "credential-path" }));
   });
 
+  it.each(["size", "hash"])("includes the exact workspace path in JSON %s failures", async (failure) => {
+    const environment = fixture();
+    const fs = fixtureBoxes.get(environment)!.fs!;
+    const readBatch = fs.readBatch!;
+    fs.readBatch = async (paths, options) => {
+      const result = await readBatch(paths, options);
+      return { ...result, files: result.files.map((file) => ({
+        ...file, ...(failure === "size" ? { content: "AA==" } : { hash: "0".repeat(64) }),
+      })) };
+    };
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
+    })).rejects.toMatchObject({ message: failure === "size"
+      ? "Tangle evidence workspace file changed or was truncated: notes/.finding.json"
+      : "Tangle evidence workspace file hash mismatch: notes/.finding.json" });
+  });
+
   it("refuses an incomplete inventory or a failed binary read", async () => {
     await expect(captureTangleEnvironmentEvidence(fixture({ complete: false }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/incomplete/);
-    await expect(captureTangleEnvironmentEvidence(fixture({ readError: true }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/could not read/);
+    await expect(captureTangleEnvironmentEvidence(fixture({ readError: true }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toMatchObject({ message: "Tangle evidence could not read workspace file notes/.finding.json" });
   });
 
   it("verifies and retains the exact native OpenCode export", async () => {

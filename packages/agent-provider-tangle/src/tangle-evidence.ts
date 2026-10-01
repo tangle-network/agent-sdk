@@ -260,15 +260,15 @@ export async function captureTangleSandboxEvidence(
         bytes = await downloadWorkspaceEvidenceFile(fs, sourcePath, entry.size, remainingBytes, options.signal);
       } else {
         if (result.errors.length || result.files.length !== 1 || result.files[0]?.path !== sourcePath || result.files[0]?.encoding !== "base64") {
-          throw new Error(`Tangle evidence could not read workspace file +variable+`);
+          throw new Error(`Tangle evidence could not read workspace file ${path}`);
         }
         const read = result.files[0];
         bytes = Buffer.from(read.content, "base64");
         if (bytes.byteLength !== entry.size || read.size !== entry.size || bytes.toString("base64") !== read.content) {
-          throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+          throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
         }
         if (read.hash && read.hash.replace(/^sha256:/, "") !== createHash("sha256").update(bytes).digest("hex")) {
-          throw new Error(`Tangle evidence workspace file hash mismatch: +variable+`);
+          throw new Error(`Tangle evidence workspace file hash mismatch: ${path}`);
         }
       }
       files.push({ path, bytes, mode: entry.permissions & 0o777 });
@@ -753,7 +753,7 @@ async function downloadWorkspaceEvidenceFile(
   signal?: AbortSignal,
 ): Promise<Buffer> {
   if (fs.supportsBoundedDownload !== true || !fs.download) {
-    throw new Error(`Tangle evidence requires bounded binary download for workspace file +variable+`);
+    throw new Error(`Tangle evidence requires bounded binary download for workspace file ${sourcePath}`);
   }
   const local = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -769,14 +769,14 @@ async function downloadWorkspaceEvidenceFile(
     }
     const metadata = await local.stat(target);
     if (!metadata.isFile() || metadata.size !== expectedSize || metadata.size > maxBytes) {
-      throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+      throw new Error(`Tangle evidence workspace file changed or was truncated: ${sourcePath}`);
     }
     const bytes = await local.readFile(target, { signal });
     if (bytes.byteLength !== expectedSize || bytes.byteLength > maxBytes) {
-      throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+      throw new Error(`Tangle evidence workspace file changed or was truncated: ${sourcePath}`);
     }
     if (createHash("sha256").update(bytes).digest("hex") !== receipt.sha256.toLowerCase()) {
-      throw new Error(`Tangle evidence workspace file hash mismatch: +variable+`);
+      throw new Error(`Tangle evidence workspace file hash mismatch: ${sourcePath}`);
     }
     return bytes;
   } finally {
