@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { startRetainedRun } from "@tangle-network/agent-runtime/kernel";
 import type { CreateSandboxOptions, PromptOptions } from "@tangle-network/sandbox";
 import type { AgentTurnInput } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider, type SandboxInstanceLike } from "./index.js";
@@ -25,6 +26,7 @@ function setup() {
   const creates: CreateSandboxOptions[] = [];
   const boxes = new Map<string, SandboxInstanceLike>();
   const client = {
+    async fetch(): Promise<Response> { throw new Error("capability probe must not call the network"); },
     async create(options: CreateSandboxOptions = {}) {
       creates.push(options);
       const box = retainedDeployment({
@@ -57,6 +59,24 @@ function setup() {
 }
 
 describe("selected native credential on Provider turns", () => {
+  it("binds the selected reference before Runtime mints the initial retained control reference", async () => {
+    const fixture = setup();
+    const provider = createTangleProvider({ client: fixture.client, modelCredentials: { cliAuth } });
+    const admissions: unknown[] = [];
+    const handle = await startRetainedRun({
+      provider,
+      environment: { profile, idempotencyKey: "runtime:initial-root" },
+      turn: { ...turn(), turnId: "initial-root:turn:0" },
+      onAdmission: async (admission) => { admissions.push(admission); },
+    });
+    expect(fixture.calls).toHaveLength(1);
+    const options = fixture.calls[0]?.options;
+    expect(options?.backend?.model?.cliAuth).toEqual(cliAuth);
+    expect(options?.backend?.model?.authMode).toBe("oauth");
+    expect(options?.runControlRef).toEqual(handle.controlRef);
+    expect(admissions).toHaveLength(3);
+  });
+
   it.each(["stream", "dispatch", "session"] as const)(
     "preserves the create-selected reference through %s with the real H turn shape",
     async (operation) => {
@@ -128,6 +148,28 @@ describe("selected native credential on Provider turns", () => {
     const environment = await createTangleProvider({ client: fixture.client, modelCredentials: { cliAuth } }).create({ profile });
     await expect(environment.dispatch?.({ ...turn(), providerOptions: { backend: { type: "codex" } } })).rejects.toThrow(/harness/);
     expect(fixture.calls).toHaveLength(0);
+  });
+
+  it.each(["exact", "cursor"] as const)("refuses credential substitution on %s replay", async (replay) => {
+    for (const backend of [
+      { type: "claude-code", model: { cliAuth: { ...cliAuth, account: "other-account" } } },
+      { type: "claude-code", model: { authMode: "api-key", apiKey: "fixture-private" } },
+      { type: "codex" },
+    ]) {
+      const fixture = setup();
+      const environment = await createTangleProvider({ client: fixture.client, modelCredentials: { cliAuth } }).create({ profile });
+      const admitted = await environment.dispatch?.(turn());
+      if (!admitted?.controlRef) throw new Error("Expected exact admitted reference");
+      const input = {
+        prompt: "", controlRef: admitted.controlRef,
+        ...(replay === "cursor" ? { lastEventId: "17" } : {}),
+        providerOptions: { backend },
+      };
+      await expect((async () => {
+        for await (const _event of environment.stream(input)) {}
+      })()).rejects.toThrow(/credential|cliAuth|harness/);
+      expect(fixture.calls).toHaveLength(1);
+    }
   });
 
   it("leaves an exact admitted read from event zero unchanged", async () => {

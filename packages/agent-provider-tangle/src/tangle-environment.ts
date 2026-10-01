@@ -205,9 +205,11 @@ export async function sandboxInstanceAsEnvironment(
   };
   const prepareTurn = (input: AgentTurnInput): AgentTurnInput => {
     assertCaptureInput(input);
-    // Replay reads an already admitted execution; it must not change that request's identity.
-    if (nativeReference === undefined || input.lastEventId !== undefined || input.controlRef !== undefined) return input;
+    if (nativeReference === undefined) return input;
+    const replay = input.lastEventId !== undefined || input.controlRef !== undefined;
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    // A plain exact read supplies no backend override and keeps its admitted request unchanged.
+    if (replay && backend === undefined) return input;
     const harness = backend?.type ?? backend?.profile?.harness ?? credentialHarness;
     if (credentialHarness === undefined || harness !== credentialHarness ||
       (backend?.profile?.harness !== undefined && backend.profile.harness !== harness)) {
@@ -220,6 +222,8 @@ export async function sandboxInstanceAsEnvironment(
     }
     const selectedModel = { ...model, cliAuth: nativeReference };
     assertCliAuthReferenceSupported(harness, selectedModel);
+    // Validate explicit substitutions even on replay, without rewriting its admitted digest.
+    if (replay) return input;
     return {
       ...input,
       providerOptions: {
