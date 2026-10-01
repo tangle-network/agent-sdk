@@ -33,6 +33,13 @@ Set `TANGLE_SANDBOX_URL` to use another deployment.
 Exact execution replay preserves the admitted request and its digest.
 An explicit replay override cannot replace the selected account, credential channel, or harness.
 
+## Workspace file reads
+
+`environment.read` accepts file contents up to 4 MiB, measured in UTF-8 bytes.
+Runtime resolves child source files through this reader without copying their contents into tool arguments.
+Paths keep the control-plane limit.
+Live reads require the selected Sandbox workspace capability.
+
 ## Named model credentials at creation
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
