@@ -311,7 +311,7 @@ describe("Tangle per-profile subscription creation", () => {
         cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false },
         runs: { executionScopedStatus: false, eventReplay: false }, interactions: {},
       });
-      if (url.endsWith("/agents/backend/status")) return json({ type: "claude-code" });
+      if (url.endsWith("/backend")) return json({ type: "claude-code" });
       if (url.endsWith("/agents/run/stream")) return new Response('id: event-1\nevent: done\ndata: {"status":"completed"}\n\n', { headers: { "content-type": "text/event-stream" } });
       throw new Error(`Unexpected SDK request: ${url}`);
     });
@@ -334,8 +334,8 @@ describe("Tangle per-profile subscription creation", () => {
       for await (const _event of recovered.stream({ prompt: "continue research" })) {}
       const turns = requests.filter((request) => request.url.endsWith("/agents/run/stream"));
       expect(turns).toHaveLength(2);
-      // The recovered SDK leaves omitted configuration to the persisted native backend.
-      expect(turns[1]?.body.backend).toBeUndefined();
+      // The recovered Provider carries the persisted account on a new turn.
+      expect(turns[1]?.body.backend).toEqual({ type: "claude-code", model: { ...native, authMode: "oauth" } });
     } finally {
       fetch.mockRestore();
     }
