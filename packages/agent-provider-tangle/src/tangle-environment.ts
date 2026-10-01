@@ -57,6 +57,7 @@ import {
   assertBoundedJson,
   boundedIdentifier,
   boundedString,
+  MAX_PAYLOAD_STRING_BYTES,
 } from "./tangle-contract-safety.js";
 import {
   assertExecOptions,
@@ -439,7 +440,13 @@ export async function sandboxInstanceAsEnvironment(
             options?.signal?.throwIfAborted();
             const content = await awaitWithSignal(box.read?.(path, options), options?.signal);
             options?.signal?.throwIfAborted();
-            return boundedString(content, "Tangle file content");
+            if (
+              typeof content !== "string" ||
+              Buffer.byteLength(content, "utf8") > MAX_PAYLOAD_STRING_BYTES
+            ) {
+              throw new Error("Tangle file content exceeds its bound");
+            }
+            return content;
           },
         }
       : {}),
