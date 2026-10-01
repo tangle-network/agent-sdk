@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.1.3
+
+### Patch Changes
+
+- 1c5d4f0: Use the existing UTF-8 resource payload bound for workspace reads so Runtime can resolve source files beyond 16 KiB without model transcription.
+  Keep control-plane paths and oversized file reads bounded.
+
 ## 3.1.2
 
 ### Patch Changes
