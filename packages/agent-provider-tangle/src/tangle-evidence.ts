@@ -251,17 +251,25 @@ export async function captureTangleSandboxEvidence(
         excludedPaths.push({ ...item, reason: "credential-path" });
         continue;
       }
+      const remainingBytes = options.maxBytes - capturedBytes;
+      if (entry.size > remainingBytes) throw new Error("Tangle evidence exceeds byte limit");
       const result = await fs.readBatch([sourcePath], { encoding: "base64" });
-      if (result.errors.length || result.files.length !== 1 || result.files[0]?.path !== sourcePath || result.files[0]?.encoding !== "base64") {
-        throw new Error(`Tangle evidence could not read workspace file ${path}`);
-      }
-      const read = result.files[0];
-      const bytes = Buffer.from(read.content, "base64");
-      if (bytes.byteLength !== entry.size || read.size !== entry.size || bytes.toString("base64") !== read.content) {
-        throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
-      }
-      if (read.hash && read.hash.replace(/^sha256:/, "") !== createHash("sha256").update(bytes).digest("hex")) {
-        throw new Error(`Tangle evidence workspace file hash mismatch: ${path}`);
+      let bytes: Buffer;
+      if (result.files.length === 0 && result.errors.length === 1 &&
+          result.errors[0]?.path === sourcePath && result.errors[0]?.code === "FILE_TOO_LARGE") {
+        bytes = await downloadWorkspaceEvidenceFile(fs, sourcePath, entry.size, remainingBytes, options.signal);
+      } else {
+        if (result.errors.length || result.files.length !== 1 || result.files[0]?.path !== sourcePath || result.files[0]?.encoding !== "base64") {
+          throw new Error(`Tangle evidence could not read workspace file +variable+`);
+        }
+        const read = result.files[0];
+        bytes = Buffer.from(read.content, "base64");
+        if (bytes.byteLength !== entry.size || read.size !== entry.size || bytes.toString("base64") !== read.content) {
+          throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+        }
+        if (read.hash && read.hash.replace(/^sha256:/, "") !== createHash("sha256").update(bytes).digest("hex")) {
+          throw new Error(`Tangle evidence workspace file hash mismatch: +variable+`);
+        }
       }
       files.push({ path, bytes, mode: entry.permissions & 0o777 });
       capturedBytes += bytes.byteLength;
@@ -734,6 +742,46 @@ export async function captureTangleSandboxEvidence(
   if (capturedBytes + provenanceBytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
   files.push({ path: "__retention__/provenance.json", bytes: provenanceBytes, mode: 0o600 });
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)), provenance };
+}
+
+/** The JSON reader has a smaller transport cap than an evidence archive. */
+async function downloadWorkspaceEvidenceFile(
+  fs: NonNullable<SandboxInstanceLike["fs"]>,
+  sourcePath: string,
+  expectedSize: number,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  if (fs.supportsBoundedDownload !== true || !fs.download) {
+    throw new Error(`Tangle evidence requires bounded binary download for workspace file +variable+`);
+  }
+  const local = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  signal?.throwIfAborted();
+  const directory = await local.mkdtemp(join(tmpdir(), "tangle-evidence-"));
+  try {
+    const target = join(directory, "content");
+    const receipt = await fs.download(sourcePath, target, { maxBytes, expectedSize, signal });
+    signal?.throwIfAborted();
+    if (!receipt || receipt.sizeBytes !== expectedSize || !/^[a-f0-9]{64}$/i.test(receipt.sha256)) {
+      throw new Error("Tangle evidence binary download omitted its exact size or digest receipt");
+    }
+    const metadata = await local.stat(target);
+    if (!metadata.isFile() || metadata.size !== expectedSize || metadata.size > maxBytes) {
+      throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+    }
+    const bytes = await local.readFile(target, { signal });
+    if (bytes.byteLength !== expectedSize || bytes.byteLength > maxBytes) {
+      throw new Error(`Tangle evidence workspace file changed or was truncated: +variable+`);
+    }
+    if (createHash("sha256").update(bytes).digest("hex") !== receipt.sha256.toLowerCase()) {
+      throw new Error(`Tangle evidence workspace file hash mismatch: +variable+`);
+    }
+    return bytes;
+  } finally {
+    await local.rm(directory, { recursive: true, force: true });
+  }
 }
 
 /** Keep every source field; store validated binary content once in the archive. */

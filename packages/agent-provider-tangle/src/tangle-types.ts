@@ -513,6 +513,12 @@ export interface SandboxInstanceLike {
   exec?(command: string, options?: unknown): Promise<SandboxExecResult>;
   fs?: {
     supportsWriteMode?: true;
+    supportsBoundedDownload?: true;
+    download?(
+      remotePath: string,
+      localPath: string,
+      options?: { overwrite?: boolean; maxBytes?: number; expectedSize?: number; signal?: AbortSignal }
+    ): Promise<void | { sizeBytes: number; sha256: string }>;
     stat(path: string): Promise<{ size: number; isFile: boolean }>;
     list?(path: string, options?: { all?: boolean; long?: boolean }): Promise<Array<{
       name: string;

@@ -40,6 +40,12 @@ Runtime resolves child source files through this reader without copying their co
 Paths keep the control-plane limit.
 Live reads require the selected Sandbox workspace capability.
 
+Evidence capture retains full workspace files that exceed the Sandbox JSON read limit through bounded binary downloads.
+This requires a Sandbox SDK whose filesystem advertises `supportsBoundedDownload`.
+Capture verifies the downloaded size and SHA-256 receipt before adding bytes to the archive.
+Aggregate limits, credential exclusions, and exact native-session proof remain enforced.
+An unsupported downloader or incomplete transfer fails capture and preserves the source environment.
+
 ## Named model credentials at creation
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.

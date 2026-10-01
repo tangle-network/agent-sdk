@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
@@ -483,6 +484,103 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.workspace.complete).toBe(true);
     expect(evidence.provenance.sessions[0]).toMatchObject({ id: "session-1", eventCount: 1, messageCount: 1, nativeStore: { complete: false } });
     expect(evidence.provenance.missing).toContain("Raw native session capture for Sandbox session session-1 is unavailable: raw-session-capture-capability-absent");
+  });
+
+  function largeWorkspace() {
+    const environment = fixture({ native: true, proof: true });
+    const box = fixtureBoxes.get(environment)!;
+    const fs = box.fs!;
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 0xa5);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const downloads: Array<{ path: string; target: string; options: { maxBytes?: number; expectedSize?: number; signal?: AbortSignal } | undefined }> = [];
+    fs.usage = async () => ({ sizeBytes: bytes.byteLength, fileCount: 1, directoryCount: 1, complete: true, skippedEntries: 0 });
+    const list = fs.list!.bind(fs);
+    fs.list = async (path, options) => (await list(path, options)).map((entry) => ({
+      ...entry, ...(entry.isFile ? { size: bytes.byteLength } : {}),
+    }));
+    fs.readBatch = async (paths) => ({ files: [], errors: [{ path: paths[0]!, code: "FILE_TOO_LARGE", error: "JSON read limit" }] });
+    fs.supportsBoundedDownload = true;
+    fs.download = async (path, target, options) => {
+      downloads.push({ path, target, options });
+      await writeFile(target, bytes);
+      return { sizeBytes: bytes.byteLength, sha256 };
+    };
+    return { environment, box, bytes, sha256, downloads };
+  }
+
+  it("captures files above the JSON cap with exact bytes and complete native proof", async () => {
+    const f = largeWorkspace();
+    const signal = new AbortController().signal;
+    const maxBytes = f.bytes.byteLength + 100_000;
+    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes, signal, requireNativeSessionCapture: true,
+    });
+    const retained = evidence.files.find((file) => file.path === "notes/.finding.json")!;
+    expect(createHash("sha256").update(retained.bytes).digest("hex")).toBe(f.sha256);
+    expect(retained.bytes.byteLength).toBe(f.bytes.byteLength);
+    expect(f.downloads).toHaveLength(1);
+    expect(f.downloads[0]!.options).toEqual({ maxBytes, expectedSize: f.bytes.byteLength, signal });
+    await expect(stat(f.downloads[0]!.target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(evidence.provenance.missing).toEqual([]);
+    expect(evidence.provenance.captureProof).toMatchObject({ containerId: "c".repeat(64) });
+    expect(evidence.provenance.sessions[0]!.nativeStore.complete).toBe(true);
+  });
+
+  it.each(["receipt", "size", "hash", "cancel"])("refuses %s failure on a binary download and removes its private copy", async (failure) => {
+    const f = largeWorkspace();
+    const abort = new AbortController();
+    const download = f.box.fs!.download!;
+    f.box.fs!.download = async (path, target, options) => {
+      const receipt = await download(path, target, options);
+      if (failure === "receipt") return;
+      if (failure === "size") await writeFile(target, "short");
+      if (failure === "hash") {
+        const bytes = await readFile(target);
+        bytes[0] ^= 0xff;
+        await writeFile(target, bytes);
+      }
+      if (failure === "cancel") abort.abort(new Error("capture cancelled"));
+      return receipt;
+    };
+    await expect(captureTangleEnvironmentEvidence(f.environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength + 100_000,
+      signal: abort.signal, requireNativeSessionCapture: true,
+    })).rejects.toThrow(/receipt|truncated|hash mismatch|cancelled/);
+    await expect(stat(f.downloads[0]!.target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("requires the bounded download capability and preserves other read failures", async () => {
+    const f = largeWorkspace();
+    delete f.box.fs!.supportsBoundedDownload;
+    const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: f.bytes.byteLength + 100_000 };
+    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toThrow(/requires bounded binary download/);
+    f.box.fs!.supportsBoundedDownload = true;
+    f.box.fs!.readBatch = async (paths) => ({ files: [], errors: [{ path: paths[0]!, code: "EIO", error: "unavailable" }] });
+    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toThrow(/could not read/);
+    expect(f.downloads).toHaveLength(0);
+  });
+
+  it("enforces the aggregate limit before downloading an oversized file", async () => {
+    const f = largeWorkspace();
+    await expect(captureTangleEnvironmentEvidence(f.environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength - 1,
+    })).rejects.toThrow(/byte limit/);
+    expect(f.downloads).toHaveLength(0);
+  });
+
+  it("excludes credential files before considering binary downloads", async () => {
+    const f = largeWorkspace();
+    f.box.fs!.usage = async () => ({ sizeBytes: f.bytes.byteLength, fileCount: 1, directoryCount: 0, complete: true, skippedEntries: 0 });
+    f.box.fs!.list = async () => [{ path: ".env", name: ".env", size: f.bytes.byteLength,
+      isFile: true, isDir: false, isSymlink: false, permissions: 0o600 }];
+    f.box.fs!.readBatch = async () => { throw new Error("credential read forbidden"); };
+    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength + 100_000,
+      requireNativeSessionCapture: true,
+    });
+    expect(f.downloads).toHaveLength(0);
+    expect(evidence.files.some((file) => file.path === ".env")).toBe(false);
+    expect(evidence.provenance.excludedPaths).toContainEqual(expect.objectContaining({ path: ".env", reason: "credential-path" }));
   });
 
   it("refuses an incomplete inventory or a failed binary read", async () => {
