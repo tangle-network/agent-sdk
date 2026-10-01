@@ -30,6 +30,9 @@ const provider = createTangleProvider({
 `Sandbox` requires an explicit `baseUrl`.
 Set `TANGLE_SANDBOX_URL` to use another deployment.
 
+Exact execution replay preserves the admitted request and its digest.
+An explicit replay override cannot replace the selected account, credential channel, or harness.
+
 ## Named model credentials at creation
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
