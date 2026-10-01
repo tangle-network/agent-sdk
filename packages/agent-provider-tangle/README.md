@@ -123,7 +123,12 @@ Sandbox metadata records the public selection under `modelCredentials`.
 This metadata key is reserved for the Provider selection.
 Account labels are supplied bindings, not verified native principals.
 Token values and native credential files never enter that selection or receipt.
-The same public native reference can travel in a per-turn `backend.model.cliAuth` with an explicit matching backend type.
+The Provider carries the selected native reference in every new stream, detached dispatch, and session prompt.
+Model-only or profile-only turns retain that exact account and harness.
+The bound reference participates in the admitted request digest before dispatch.
+Reconstructed environments recover it from persisted metadata and the observed backend.
+Replacing the account, harness, or credential channel requires a separate environment.
+Exact replay preserves the already admitted request without adding new credential fields.
 A turn carrying a profile must preserve its environment's credential source, including after recovery.
 Changing credential sources requires a separate environment because retained Sandbox defaults cannot safely clear a native binding.
 

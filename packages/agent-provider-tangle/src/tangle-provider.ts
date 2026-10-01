@@ -291,6 +291,9 @@ export function createTangleProvider(
             ? {}
             : { resources: requestedResources }),
           credentialSource,
+          ...(createOptions.backend?.model?.cliAuth === undefined ? {} : {
+            nativeAuth: { harness: createOptions.backend.type!, cliAuth: createOptions.backend.model.cliAuth },
+          }),
           ...(createOptions.backend?.model?.cliAuth === undefined ? {} : { requireCliAuthReferences: true }),
           ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
           ...(captureCapabilities === undefined ? {} : { captureCapabilities }),
@@ -419,7 +422,7 @@ export function createTangleProvider(
                 ...confidentialVerifierOption(options.confidentialAttestationVerifier),
                 ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
                 ...(captureCapabilities === undefined ? {} : { captureCapabilities }),
-                ...(backendType === undefined ? {} : { captureHarness: backendType }),
+                ...(backendType === undefined ? {} : { captureHarness: backendType, credentialHarness: backendType }),
               },
             );
           },

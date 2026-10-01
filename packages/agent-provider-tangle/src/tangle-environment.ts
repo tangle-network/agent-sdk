@@ -1,3 +1,6 @@
+import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
+import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
+import { captureModelCredentials } from "./tangle-create-options.js";
 import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type {
@@ -113,6 +116,8 @@ export async function sandboxInstanceAsEnvironment(
     requireNativeSessionCapture?: boolean;
     requireCliAuthReferences?: boolean;
     credentialSource?: ProfileCredentialSource;
+    credentialHarness?: string;
+    nativeAuth?: { harness: string; cliAuth: CliAuthReference };
     captureCapabilities?: SandboxRuntimeCapabilityDocument;
     captureHarness?: string;
   },
@@ -135,6 +140,17 @@ export async function sandboxInstanceAsEnvironment(
   if ((request?.requireCliAuthReferences || recordedNativeReference) && !deployment.cliAuthReferences) {
     throw new Error("Tangle selected sandbox does not prove native credential reference support");
   }
+  const persistedNative = recordedNativeReference
+    ? captureModelCredentials(recordedCredentials as { cliAuth: CliAuthReference })
+    : undefined;
+  const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
+    ? persistedNative.cliAuth : undefined;
+  if (request?.nativeAuth !== undefined && persistedReference !== undefined &&
+    canonicalCandidateDigest(request.nativeAuth.cliAuth) !== canonicalCandidateDigest(persistedReference)) {
+    throw new Error("Tangle persisted native credential differs from its selected creation reference");
+  }
+  const nativeReference = request?.nativeAuth?.cliAuth ?? persistedReference;
+  const credentialHarness = request?.nativeAuth?.harness ?? request?.credentialHarness;
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(
@@ -187,6 +203,31 @@ export async function sandboxInstanceAsEnvironment(
     }
     assertNativeCaptureHarness(request.captureCapabilities, backend?.type ?? profileHarness ?? request.captureHarness);
   };
+  const prepareTurn = (input: AgentTurnInput): AgentTurnInput => {
+    assertCaptureInput(input);
+    // Replay reads an already admitted execution; it must not change that request's identity.
+    if (nativeReference === undefined || input.lastEventId !== undefined || input.controlRef !== undefined) return input;
+    const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    const harness = backend?.type ?? backend?.profile?.harness ?? credentialHarness;
+    if (credentialHarness === undefined || harness !== credentialHarness ||
+      (backend?.profile?.harness !== undefined && backend.profile.harness !== harness)) {
+      throw new Error("Tangle native credential turn must preserve its selected environment harness");
+    }
+    const model = backend?.model ?? {};
+    if (model.cliAuth !== undefined &&
+      canonicalCandidateDigest(model.cliAuth) !== canonicalCandidateDigest(nativeReference)) {
+      throw new Error("Tangle native credential turn cannot replace its selected account reference");
+    }
+    const selectedModel = { ...model, cliAuth: nativeReference };
+    assertCliAuthReferenceSupported(harness, selectedModel);
+    return {
+      ...input,
+      providerOptions: {
+        ...input.providerOptions,
+        backend: { ...backend, type: harness, model: { ...selectedModel, authMode: "oauth" } },
+      },
+    };
+  };
   // The single destroy this handle performs, once it has been asked for.
   let destruction: Promise<void> | undefined;
   const terminals =
@@ -203,8 +244,7 @@ export async function sandboxInstanceAsEnvironment(
       ? dispatchEnvironmentRun(box, providerName, environmentId)
       : undefined;
   const dispatch = dispatchRun === undefined ? undefined : (input: AgentTurnInput) => {
-    assertCaptureInput(input);
-    return dispatchRun(input);
+    return dispatchRun(prepareTurn(input));
   };
   const exactExecutionEvents = (options: {
     sessionId: string;
@@ -241,7 +281,7 @@ export async function sandboxInstanceAsEnvironment(
     async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
       AgentTurnInputSchema.parse(input);
       input.signal?.throwIfAborted();
-      assertCaptureInput(input);
+      input = prepareTurn(input);
       const expectedExecutionId = executionIdFromTurnInput(input);
       const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
       if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
@@ -334,7 +374,7 @@ export async function sandboxInstanceAsEnvironment(
               interactionResponses,
               usageLog,
               capabilities.nativeContinuation !== undefined,
-              assertCaptureInput,
+              prepareTurn,
               (executionId) => noteTangleSession(environment, id, executionId),
             );
             // sessions.continue was granted from the probe session and the
