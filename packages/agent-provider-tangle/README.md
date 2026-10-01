@@ -593,3 +593,13 @@ The caller's attempt projection includes only its known execution IDs.
 The capture records the running sidecar image digest and the served Sidecar bundle revision.
 The image digest can be compared with the pre-create proof only when that proof identifies the actual placement image.
 An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.
+
+## Exact retained workspace capture
+
+Pass the admitted `controlRef` to `captureTangleEnvironmentEvidence`.
+Keep `executionId` as the Runtime artifact identity.
+The control reference supplies the exact native environment, session, and execution identifiers.
+Capture validates those coordinates before reading files.
+A reconstructed environment does not need the original in-memory session cache.
+The returned provenance retains both identities and reports incomplete native coverage explicitly.
+Missing native session evidence preserves the source under Runtime's complete-provenance policy.

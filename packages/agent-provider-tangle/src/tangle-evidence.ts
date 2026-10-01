@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentProfile } from "@tangle-network/agent-interface";
+import { AgentExactRunControlRefSchema, type AgentExactRunControlRef, type AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
@@ -22,7 +22,10 @@ interface WorkspaceEntryMetadata {
 }
 
 export interface TangleEnvironmentEvidenceOptions {
+  /** Runtime artifact identity when controlRef is supplied; otherwise the native execution id. */
   executionId: string;
+  /** Durable admitted coordinates, including when a reconstructed environment has no session cache. */
+  controlRef?: AgentExactRunControlRef;
   harness: NonNullable<AgentProfile["harness"]>;
   /** Optional local image ID to compare with the running sidecar image. */
   expectedSidecarImageDigest?: string;
@@ -35,6 +38,8 @@ export interface TangleEnvironmentEvidenceOptions {
 }
 
 export interface TangleSandboxEvidenceOptions extends Omit<TangleEnvironmentEvidenceOptions, "sandboxSessionId"> {
+  /** Runtime artifact identity; native executionId remains subject to path-safe validation. */
+  runtimeExecutionId?: string;
   sandboxSessionIds: readonly string[];
   /** Every observed execution on each retained Sandbox session. */
   sessionExecutionIds?: Readonly<Record<string, readonly string[]>>;
@@ -48,6 +53,7 @@ export interface TangleEnvironmentEvidence {
     provider: string;
     environmentId: string;
     executionId: string;
+    controlRef?: AgentExactRunControlRef;
     captureProof?: NativeCaptureProofLike;
     workspaceScope: "environment";
     workspaceRoot: string;
@@ -128,18 +134,29 @@ export async function captureTangleEnvironmentEvidence(
 ): Promise<TangleEnvironmentEvidence> {
   const state = handles.get(environment);
   if (!state || state.box.id !== environment.id) throw new Error("Tangle evidence requires a live provider environment handle");
-  const sessionIds = new Set<string>([...state.sessions.entries()]
-    .filter(([, executions]) => executions.has(options.executionId))
+  const controlRef = options.controlRef === undefined ? undefined : AgentExactRunControlRefSchema.parse(options.controlRef);
+  if (controlRef && (controlRef.environmentId !== environment.id || controlRef.provider !== environment.provider ||
+      (options.sandboxSessionId != null && options.sandboxSessionId !== controlRef.sessionId))) {
+    throw new Error("Tangle evidence control reference names another environment or session");
+  }
+  const executionId = controlRef?.executionId ?? options.executionId;
+  const sessionIds = controlRef ? new Set([controlRef.sessionId]) : new Set<string>([...state.sessions.entries()]
+    .filter(([, executions]) => executions.has(executionId))
     .map(([id]) => id));
   if (options.sandboxSessionId != null) sessionIds.add(options.sandboxSessionId);
+  const sessionExecutionIds = Object.fromEntries([...sessionIds].filter((id) => state.sessions.has(id))
+    .map((id) => [id, [...state.sessions.get(id)!]]));
+  if (controlRef) sessionExecutionIds[controlRef.sessionId] = [...new Set([
+    ...(sessionExecutionIds[controlRef.sessionId] ?? []), controlRef.executionId,
+  ])];
   return captureTangleSandboxEvidence(state.box, {
-    executionId: options.executionId,
+    executionId,
+    ...(controlRef === undefined ? {} : { runtimeExecutionId: options.executionId, controlRef }),
     harness: options.harness,
     expectedSidecarImageDigest: options.expectedSidecarImageDigest,
     requireNativeSessionCapture: options.requireNativeSessionCapture,
     sandboxSessionIds: [...sessionIds],
-    sessionExecutionIds: Object.fromEntries([...sessionIds].filter((id) => state.sessions.has(id))
-      .map((id) => [id, [...state.sessions.get(id)!]])),
+    sessionExecutionIds,
     maxBytes: options.maxBytes,
     signal: options.signal,
   });
@@ -151,6 +168,16 @@ export async function captureTangleSandboxEvidence(
   options: TangleSandboxEvidenceOptions,
 ): Promise<TangleEnvironmentEvidence> {
   if (!safeIdentifier(box.id) || !safeIdentifier(options.executionId)) throw new Error("Tangle evidence requires exact box and execution ids");
+  const controlRef = options.controlRef === undefined ? undefined : AgentExactRunControlRefSchema.parse(options.controlRef);
+  if (controlRef && (controlRef.environmentId !== box.id ||
+      controlRef.executionId !== options.executionId || !options.sandboxSessionIds?.includes(controlRef.sessionId))) {
+    throw new Error("Tangle evidence control reference does not bind the exact native capture");
+  }
+  if (options.runtimeExecutionId !== undefined && (!controlRef || typeof options.runtimeExecutionId !== "string" ||
+      !options.runtimeExecutionId.length || options.runtimeExecutionId.length > 2048 || /[\u0000-\u001f\u007f]/.test(options.runtimeExecutionId))) {
+    throw new Error("Tangle evidence Runtime artifact identity requires an exact admitted control reference");
+  }
+  const artifactExecutionId = options.runtimeExecutionId ?? options.executionId;
   if (!safeIdentifier(options.harness)) throw new Error("Tangle evidence requires an exact profile harness");
   if (options.expectedSidecarImageDigest !== undefined &&
       !/^sha256:[0-9a-f]{64}$/.test(options.expectedSidecarImageDigest)) {
@@ -671,7 +698,7 @@ export async function captureTangleSandboxEvidence(
       capturedBytes += manifest.byteLength;
     }
     sessions.push({
-      id, executionId: options.executionId, executionIds: [...executionIds], eventCountsByExecutionId,
+      id, executionId: artifactExecutionId, executionIds: [...executionIds], eventCountsByExecutionId,
       backendType: options.harness, sidecarImageDigest, sidecarBundleRevision,
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
       eventCount: events.length, messageCount: messages.length, messageScope: "session",
@@ -688,9 +715,10 @@ export async function captureTangleSandboxEvidence(
     }
   }
   const provenance: TangleEnvironmentEvidence["provenance"] = {
-    provider: "tangle-sandbox",
+    provider: controlRef?.provider ?? "tangle-sandbox",
     environmentId: box.id,
-    executionId: options.executionId,
+    executionId: artifactExecutionId,
+    ...(controlRef === undefined ? {} : { controlRef }),
     ...(captureProof ? { captureProof } : {}),
     workspaceScope: "environment",
     workspaceRoot,

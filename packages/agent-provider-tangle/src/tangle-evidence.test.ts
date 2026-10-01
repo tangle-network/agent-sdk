@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, noteTangleSession } from "./tangle-evidence.js";
@@ -140,6 +141,95 @@ async function rotatedFixture(partial = false) {
 }
 
 describe("Tangle evidence capture", () => {
+  it.each([false, true])("captures exact admitted coordinates after cache loss, partial=%s", async (partial) => {
+    const original = fixture({ native: true, partial });
+    const box = fixtureBoxes.get(original)!;
+    const environment = { id: original.id, provider: original.provider } as AgentEnvironment;
+    bindTangleEvidenceEnvironment(environment, box);
+    const controlRef: AgentExactRunControlRef = {
+      runId: "run-1", provider: "tangle-sandbox", environmentId: "box-1",
+      sessionId: "session-1", executionId: "exec-1", requestDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "frontier:input:1", controlRef, harness: "opencode", maxBytes: 100_000,
+    });
+    expect(evidence.provenance.executionId).toBe("frontier:input:1");
+    expect(evidence.provenance.controlRef).toEqual(controlRef);
+    expect(evidence.provenance.sessions[0]).toMatchObject({
+      id: "session-1", executionId: "frontier:input:1", executionIds: ["exec-1"],
+      eventCountsByExecutionId: { "exec-1": 1 },
+    });
+    const archived = evidence.files.find((file) => file.path === "__retention__/provenance.json")!;
+    expect(JSON.parse(Buffer.from(archived.bytes).toString())).toMatchObject({
+      executionId: "frontier:input:1", controlRef,
+    });
+    expect(evidence.provenance.sessions[0]!.processStreams.complete).toBe(!partial);
+    if (partial) expect(evidence.provenance.missing).toContain("Sandbox session session-1: process_io_incomplete");
+    else expect(evidence.provenance.missing).toEqual([]);
+  });
+
+  it.each(["environment", "provider", "session", "native-execution"])("refuses a mismatched %s control reference before reading files", async (mismatch) => {
+    const environment = fixture();
+    const box = fixtureBoxes.get(environment)!;
+    let reads = 0;
+    box.fs!.usage = async () => { reads++; throw new Error("capture should refuse before IO"); };
+    const controlRef: AgentExactRunControlRef = {
+      runId: "run-1", provider: mismatch === "provider" ? "other-provider" : "tangle-sandbox",
+      environmentId: mismatch === "environment" ? "other-box" : "box-1",
+      sessionId: "session-1", executionId: mismatch === "native-execution" ? "unsafe:exec" : "exec-1",
+      requestDigest: `sha256:${"a".repeat(64)}`,
+    };
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "frontier:input:1", controlRef, sandboxSessionId: mismatch === "session" ? "other-session" : "session-1",
+      harness: "opencode", maxBytes: 100_000,
+    })).rejects.toThrow(/control reference|exact box and execution/);
+    expect(reads).toBe(0);
+  });
+
+  it("captures pre-CLI unavailability without inventing native identity", async () => {
+    const original = fixture();
+    const box = fixtureBoxes.get(original)!;
+    const session = box.session!.bind(box);
+    box.session = (id) => ({ ...session(id), async rawEvidence() {
+      return { status: "unavailable", sessionId: id, backendType: "opencode", reason: "harness-never-started" };
+    } });
+    const environment = { id: original.id, provider: original.provider } as AgentEnvironment;
+    bindTangleEvidenceEnvironment(environment, box);
+    const controlRef: AgentExactRunControlRef = {
+      runId: "run-1", provider: "tangle-sandbox", environmentId: "box-1",
+      sessionId: "session-1", executionId: "exec-1", requestDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const result = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "frontier:input:1", controlRef, harness: "opencode", maxBytes: 100_000,
+    });
+    expect(result.provenance.controlRef).toEqual(controlRef);
+    expect(result.provenance.sessions[0]).toMatchObject({ nativeSessionId: null, nativeReason: "harness-never-started" });
+    expect(result.provenance.missing).toContain("Raw native session capture for Sandbox session session-1 is unavailable: harness-never-started");
+    expect(result.files.some((file) => file.path.endsWith("/raw-manifest.json"))).toBe(true);
+  });
+
+  it("preserves a configured provider identity on its admitted capture", async () => {
+    const original = fixture({ native: true });
+    const environment = { id: original.id, provider: "tangle-research" } as AgentEnvironment;
+    bindTangleEvidenceEnvironment(environment, fixtureBoxes.get(original)!);
+    const controlRef: AgentExactRunControlRef = {
+      runId: "run-1", provider: environment.provider, environmentId: "box-1",
+      sessionId: "session-1", executionId: "exec-1", requestDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const result = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "frontier:input:1", controlRef, harness: "opencode", maxBytes: 100_000,
+    });
+    expect(result.provenance.provider).toBe("tangle-research");
+    expect(result.provenance.controlRef).toEqual(controlRef);
+    expect(result.provenance.missing).toEqual([]);
+  });
+
+  it("continues to refuse path-unsafe native IDs without an admitted reference", async () => {
+    await expect(captureTangleEnvironmentEvidence(fixture(), {
+      executionId: "frontier:input:1", harness: "opencode", maxBytes: 100_000,
+    })).rejects.toThrow("exact box and execution ids");
+  });
+
   it("retains every rotated HOME under a distinct source namespace", async () => {
     const { environment, source } = await rotatedFixture();
     const evidence = await captureTangleEnvironmentEvidence(environment, {
