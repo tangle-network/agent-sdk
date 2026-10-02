@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.3.0
+
+### Minor Changes
+
+- f9a7c9b: Resolve exact-profile subscription credentials for each fresh Claude token turn through durable account-owner bindings and authenticated named grants. Preserve exact execution replay, stable retry identity, session locks across selection, and fail closed on unqualified deployments.
+
 ## 3.2.0
 
 ### Minor Changes
