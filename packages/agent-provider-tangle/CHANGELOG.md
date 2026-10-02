@@ -1,5 +1,22 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.2.0
+
+### Minor Changes
+
+- 2b1e430: Add a bounded HTTP resolver for remote subscription account owners.
+  Preserve exact profile intent, immutable create identity, and the fixed validity deadline.
+  Accept only public stored-secret references and keep narrow broker grants separate from Bridge launch credentials.
+  
+  
+  Preserve typed account-capacity metadata across HTTP and command transports. HTTP errors retain only their actual response status, and private diagnostics never enter public errors.
+
+### Patch Changes
+
+- 2faa157: Batch workspace evidence reads with bounded file counts and declared byte sizes.
+  Preserve exact file attribution, binary bytes, modes, size/hash checks, aggregate limits, credential exclusions, and native provenance.
+  Stop further workspace reads when capture is cancelled.
+
 ## 3.1.4
 
 ### Patch Changes
