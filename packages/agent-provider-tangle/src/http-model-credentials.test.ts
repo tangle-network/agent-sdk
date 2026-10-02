@@ -118,3 +118,32 @@ describe("remote account-owner transport", () => {
     expect(parseModelCredentialResolverRequest({ input: mounted })).toEqual({ input: mounted });
   });
 });
+
+it("preserves a genuine account capacity refusal and reset deadline without provisioning", async () => {
+  const url = await broker((_request, response) => {
+    response.writeHead(503);
+    response.end(JSON.stringify({ error: { code: "provider_quota_exhausted", reason: "exhausted", resetAt: "2026-10-03T04:00:00.000Z" } }));
+  });
+  let creates = 0;
+  const provider = createTangleProvider({
+    client: { async create() { creates++; throw new Error("unexpected provisioning"); } },
+    modelCredentials: createHttpModelCredentialResolver({ url, bearer }),
+  });
+  await expect(provider.create({ profile: input.profile, idempotencyKey: input.idempotencyKey, metadata: input.metadata })).rejects.toMatchObject({
+    name: "TangleCredentialCapacityError", status: 503, code: "provider_quota_exhausted",
+    reason: "exhausted", resetAt: "2026-10-03T04:00:00.000Z",
+  });
+  expect(creates).toBe(0);
+});
+
+it("does not classify authentication or malformed quota replies as account capacity", async () => {
+  for (const [status, error] of [
+    [401, { code: "provider_quota_exhausted", reason: "exhausted" }],
+    [503, { code: "provider_quota_exhausted", reason: "exhausted", resetAt: "private-invalid-value" }],
+  ] as const) {
+    const url = await broker((_request, response) => { response.writeHead(status); response.end(JSON.stringify({ error })); });
+    const pending = createHttpModelCredentialResolver({ url, bearer })(input);
+    await expect(pending).rejects.not.toMatchObject({ name: "TangleCredentialCapacityError" });
+    await expect(pending).rejects.not.toThrow(/private-invalid-value/);
+  }
+});

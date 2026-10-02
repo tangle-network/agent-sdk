@@ -652,3 +652,12 @@ Capture validates those coordinates before reading files.
 A reconstructed environment does not need the original in-memory session cache.
 The returned provenance retains both identities and reports incomplete native coverage explicitly.
 Missing native session evidence preserves the source under Runtime's complete-provenance policy.
+
+The remote request is bounded to 8 MiB; public replies are bounded to 64 KiB.
+A genuine HTTP 429 or 503 may return `{ error: { code, reason, resetAt? } }`.
+Supported codes are `provider_quota_exhausted` for exhausted quota and `upstream_unavailable` for unknown, held, or busy capacity.
+The adapter exposes these as `TangleCredentialCapacityError`, preserving the actual HTTP status and known reset timestamp.
+Authentication failures and malformed metadata do not become typed quota refusals.
+The command transport accepts the same public capacity body only with exit code 75.
+Its typed error has no HTTP status.
+The caller's execution owner decides whether and when to retry.

@@ -127,7 +127,9 @@
     "dist/http-model-credentials.js",
     "dist/http-model-credentials.d.ts",
     "dist/model-credential-request.js",
-    "dist/model-credential-request.d.ts"
+    "dist/model-credential-request.d.ts",
+    "dist/model-credential-capacity.js",
+    "dist/model-credential-capacity.d.ts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

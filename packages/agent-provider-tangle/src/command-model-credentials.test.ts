@@ -103,3 +103,13 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
       .toThrow(/one validity deadline/);
   });
 });
+
+it("retains typed account capacity from the command without inventing HTTP status", async () => {
+  const fixture = await command('process.stdout.write(JSON.stringify({error:{code:"provider_quota_exhausted",reason:"exhausted",resetAt:"2026-10-03T04:00:00.000Z"}})); process.exitCode=75;');
+  const pending = createCommandModelCredentialResolver(fixture)(input);
+  await expect(pending).rejects.toMatchObject({
+    name: "TangleCredentialCapacityError", code: "provider_quota_exhausted", reason: "exhausted",
+    resetAt: "2026-10-03T04:00:00.000Z",
+  });
+  await expect(pending).rejects.not.toHaveProperty("status");
+});

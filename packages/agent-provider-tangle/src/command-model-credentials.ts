@@ -1,3 +1,4 @@
+import { parseCredentialCapacity } from "./model-credential-capacity.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import { profileCredentialSource } from "./model-credential-source.js";
@@ -108,6 +109,11 @@ export function createCommandModelCredentialResolver(
       child.on("close", (code, terminationSignal) => {
         if (settled) return;
         if (code !== 0) {
+          if (code === 75) {
+            let capacity;
+            try { capacity = parseCredentialCapacity(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { /* Malformed command output stays a sanitized generic refusal. */ }
+            if (capacity !== undefined) { fail(capacity); return; }
+          }
           fail(Object.assign(new Error(`Tangle credential command failed (${code === null ? `signal ${terminationSignal}` : `exit ${code}`})`), {
             exitCode: code,
             terminationSignal,
