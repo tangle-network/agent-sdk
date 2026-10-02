@@ -278,7 +278,7 @@ describe("Tangle per-profile subscription creation", () => {
       .toThrow(/cannot be combined/);
   });
 
-  it("preserves the chosen native reference through the maintained SDK HTTP create, turn, and recovered handle", async () => {
+  it("preserves a static native reference through the maintained SDK HTTP create, turn, and recovered handle", async () => {
     const requests: { url: string; body: Record<string, unknown> }[] = [];
     let metadata: Record<string, unknown> | undefined;
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
@@ -318,7 +318,7 @@ describe("Tangle per-profile subscription creation", () => {
     try {
       const provider = createTangleProvider({
         client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
-        modelCredentials: async () => native,
+        modelCredentials: native,
       });
       const environment = await provider.create({ profile, idempotencyKey: "runtime:root" });
       for await (const _event of environment.stream({ prompt: "research" })) {}

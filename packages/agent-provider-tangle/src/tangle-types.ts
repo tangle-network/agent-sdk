@@ -147,6 +147,7 @@ export interface SandboxRuntimeCapabilityDocument {
   schema?: number;
   /** The selected runtime resolves stored-secret native authentication references. */
   cliAuthReferences?: boolean;
+  claudeTokenContinuations?: boolean;
   nativeSessionCaptureVersion?: number;
   nativeSessionCaptureHarnesses?: readonly string[];
   agentInterface?: string;
@@ -501,6 +502,11 @@ export interface SandboxInstanceLike {
     options?: PromptOptions
   ): Promise<unknown>;
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
+  /** Owner-authorized named grant; material never crosses this consumer boundary. */
+  grantNativeCredential?(
+    grant: { harness: "claude-code"; cliAuth: CliAuthReference },
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
   read?(
     path: string,
     options?: { sessionId?: string; signal?: AbortSignal }
@@ -819,7 +825,7 @@ export type TangleModelCredentials =
   | { apiKeyEnv: string; baseUrl: string }
   | { cliAuth: CliAuthReference };
 
-/** Select one public stored-secret reference for this exact create identity. */
+/** Select one public stored-secret reference for a stable create or fresh-turn identity. */
 export type TangleModelCredentialResolver = (
   input: Readonly<CreateAgentEnvironmentInput>,
 ) => TangleModelCredentials | undefined | Promise<TangleModelCredentials | undefined>;
@@ -836,6 +842,9 @@ export interface TangleProviderOptions {
    * Managed profiles skip selectors and native references; explicit managed intent skips all references.
    * Unmarked legacy profiles retain their static API reference and grant only its selected secret.
    * Subscription selections grant only their selected secret and record its public reference.
+   * A resolver is called again for each fresh native turn with the exact profile and a stable
+   * environment/session/turn key. Exact execution replay never selects again. Turn selection
+   * requires a runtime proving Claude token continuity and the SDK named-grant method.
    * Cannot be combined with mapCreateInput; never accepts credential values or model overrides.
    */
   modelCredentials?: TangleModelCredentials | TangleModelCredentialResolver;

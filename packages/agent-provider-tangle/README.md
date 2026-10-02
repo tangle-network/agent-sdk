@@ -55,7 +55,7 @@ An unsupported downloader or incomplete transfer fails capture and preserves the
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
 The provider does not create, copy, or renew stored secrets.
-The Provider grants the selected reference per create, alongside unrelated caller-requested secrets.
+The Provider grants the selected reference at create, alongside unrelated caller-requested secrets. Qualified native selectors also grant their selected reference before each fresh turn.
 
 ```ts
 const provider = createTangleProvider({
@@ -94,7 +94,7 @@ Explicit `"managed"` intent also skips configured static API references.
 Unmarked legacy profiles retain their existing static API configuration; mark mixed profiles explicitly or use a selector.
 The same Provider can create a managed parent and subscription child, or a subscription parent and managed child.
 A subscription profile requires a configured reference or successful selector result before Sandbox creation.
-The selector receives a frozen copy of the exact create input, including its profile and idempotency key.
+The selector receives a frozen copy of the exact create input, including its profile and idempotency key. Fresh-turn calls carry the exact profile, stable binding key, and public `metadata.nativeCredentialTurn` coordinates.
 It returns one public native reference or the API reference described above.
 It cannot change the profile, harness, model, reasoning controls, or runtime attachments.
 
@@ -143,14 +143,25 @@ Sandbox metadata records the public selection under `modelCredentials`.
 This metadata key is reserved for the Provider selection.
 Account labels are supplied bindings, not verified native principals.
 Token values and native credential files never enter that selection or receipt.
-The Provider carries the selected native reference in every new stream, detached dispatch, and session prompt.
-Model-only or profile-only turns retain that exact account and harness.
-The bound reference participates in the admitted request digest before dispatch.
-Reconstructed environments recover it from persisted metadata and the observed backend.
-Replacing the account, harness, or credential channel requires a separate environment.
-Exact replay preserves the already admitted request without adding new credential fields.
+A static native reference stays bound to its creation account and harness on every turn.
+Reconstructed environments recover that reference from persisted metadata and the observed backend.
+
+A resolver selects a bootstrap credential at creation and a durable binding for each fresh turn.
+Fresh turns require the exact inline subscription profile and a stable `turnId`.
+Runtime supplies that profile through its maintained provider turn mapping; older Runtime callers can supply it through `taskToTurn`.
+The binding key includes environment, session, and turn identity, so retrying the same operation retains its account after reconnect.
+A deliberate new turn can select another eligible account. The selected reference enters the admitted request digest before dispatch.
+The Provider grants only that named secret through the authenticated Sandbox API before native execution.
+
+This handoff requires the SDK's `grantNativeCredential` operation and a container reporting `claudeTokenContinuations: true`.
+Only Claude token references are qualified. Other harnesses, bundles, and files refuse dynamic handoff before inference.
+The Sidecar retires the idle adapter, preserves its original transcript HOME and native session, and acquires the newly selected credential.
+An active credential lease refuses replacement.
+Exact event/result replay never selects or installs credentials and leaves the admitted request unchanged.
+After a runtime restart, the next fresh turn grants its selected named reference before adapter acquisition.
+The account owner must keep retry bindings and the original validity deadline durable; an unavailable grant never authorizes a paid fallback.
 A turn carrying a profile must preserve its environment's credential source, including after recovery.
-Changing credential sources requires a separate environment because retained Sandbox defaults cannot safely clear a native binding.
+Changing credential sources or harnesses requires a separate environment.
 
 ### A command owned by the account system
 

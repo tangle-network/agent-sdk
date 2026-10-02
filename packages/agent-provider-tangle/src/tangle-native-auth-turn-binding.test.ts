@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { startRetainedRun } from "@tangle-network/agent-runtime/kernel";
 import type { CreateSandboxOptions, PromptOptions } from "@tangle-network/sandbox";
 import type { AgentTurnInput } from "@tangle-network/agent-interface/environment-provider";
@@ -21,7 +21,8 @@ const turn = (): AgentTurnInput => ({
   providerOptions: { backend: { profile, model: { authMode: "oauth" } } },
 });
 
-function setup() {
+function setup(rotation = false) {
+  const grants: Array<{ harness: string; cliAuth: { account: string; secretEnv: string; format: string } }> = [];
   const calls: { operation: string; options: PromptOptions | undefined }[] = [];
   const creates: CreateSandboxOptions[] = [];
   const boxes = new Map<string, SandboxInstanceLike>();
@@ -31,6 +32,7 @@ function setup() {
       creates.push(options);
       const box = retainedDeployment({
         id: `box-${creates.length}`, metadata: options.metadata,
+        async grantNativeCredential(grant) { grants.push(grant); },
         backend: { status: async () => ({ type: options.backend?.type ?? "claude-code" }) },
         async *streamPrompt(_message, options) { calls.push({ operation: "stream", options }); },
         async dispatchPrompt(_message, options) {
@@ -49,13 +51,13 @@ function setup() {
             },
           };
         },
-      }, { ...RETAINED_DEPLOYMENT_DOCUMENT, cliAuthReferences: true });
+      }, { ...RETAINED_DEPLOYMENT_DOCUMENT, cliAuthReferences: true, claudeTokenContinuations: rotation });
       boxes.set(box.id, box);
       return box;
     },
     async get(id: string) { return boxes.get(id) ?? null; },
   };
-  return { client, calls, creates };
+  return { client, calls, creates, grants };
 }
 
 describe("selected native credential on Provider turns", () => {
@@ -203,5 +205,99 @@ describe("selected native credential on Provider turns", () => {
     for await (const _event of environment.stream(input)) {}
     expect(fixture.calls[0]?.options?.backend).toEqual({ profile, model: { authMode: "oauth" } });
     expect(fixture.calls[0]?.options?.lastEventId).toBe("17");
+  });
+});
+
+
+describe("owner-selected native turns", () => {
+  const token = (account: string) => ({ account, secretEnv: `TOKEN_${account}`, format: "token" as const });
+  function owner() {
+    const bindings = new Map<string, ReturnType<typeof token>>();
+    const resolve = vi.fn(async (input: Readonly<import("@tangle-network/agent-interface/environment-provider").CreateAgentEnvironmentInput>) => {
+      const key = input.idempotencyKey!;
+      let binding = bindings.get(key);
+      if (!binding) { binding = token(`ACCOUNT_${bindings.size + 1}`); bindings.set(key, binding); }
+      return { cliAuth: binding };
+    });
+    return { bindings, resolve };
+  }
+
+  it("selects a new turn before digest minting and recovers its same binding after provider replacement", async () => {
+    const f = setup(true);
+    const accountOwner = owner();
+    const provider = createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve });
+    const env = await provider.create({ profile, idempotencyKey: "logical-pursuit" });
+    const firstInput = { ...turn(), sessionId: "native-session" };
+    const first = await env.dispatch!(firstInput);
+    const second = await env.dispatch!({ ...firstInput, turnId: "turn-two" });
+    const restarted = createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve });
+    const recovered = await restarted.get!(env.id);
+    const replay = await recovered!.dispatch!(firstInput);
+    expect(first.controlRef).toEqual(replay.controlRef);
+    expect(second.controlRef?.executionId).not.toBe(first.controlRef?.executionId);
+    expect(f.grants.map(value => value.cliAuth.account)).toEqual(["ACCOUNT_2", "ACCOUNT_3", "ACCOUNT_2"]);
+    expect(f.calls.map(value => value.options?.backend?.model?.cliAuth?.account))
+      .toEqual(["ACCOUNT_2", "ACCOUNT_3", "ACCOUNT_2"]);
+    expect(accountOwner.bindings.size).toBe(3);
+    for (const [input] of accountOwner.resolve.mock.calls) {
+      expect(input.profile).toEqual(profile);
+      expect(Object.isFrozen(input)).toBe(true);
+      expect(Object.isFrozen(input.profile)).toBe(true);
+    }
+    expect(f.creates).toHaveLength(1);
+    expect(firstInput.providerOptions?.backend).not.toHaveProperty("model.cliAuth");
+    const count = accountOwner.resolve.mock.calls.length;
+    for await (const _ of recovered!.stream({ controlRef: first.controlRef, lastEventId: "0" })) {}
+    expect(accountOwner.resolve.mock.calls).toHaveLength(count);
+    expect(f.grants).toHaveLength(3);
+  });
+
+  it("checks deployment and turn identity before contacting the owner or admitting native work", async () => {
+    const f = setup(false); const accountOwner = owner();
+    const env = await createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve }).create({ profile, idempotencyKey: "create" });
+    await expect(env.dispatch!(turn())).rejects.toThrow("proven Claude token");
+    expect(accountOwner.resolve).toHaveBeenCalledTimes(1);
+    expect(f.grants).toHaveLength(0); expect(f.calls).toHaveLength(0);
+    const supported = setup(true); const supportedOwner = owner();
+    const ready = await createTangleProvider({ client: supported.client, modelCredentials: supportedOwner.resolve }).create({ profile, idempotencyKey: "create" });
+    await expect(ready.dispatch!({ ...turn(), turnId: undefined })).rejects.toThrow("turn id");
+    expect(supportedOwner.resolve).toHaveBeenCalledTimes(1);
+    expect(supported.calls).toHaveLength(0);
+  });
+
+  it("holds the session prompt lock across asynchronous credential selection", async () => {
+    const f = setup(true);
+    const selected = token("FIRST");
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    let reached!: () => void;
+    const selecting = new Promise<void>(resolve => { reached = resolve; });
+    const resolve = vi.fn(async (input: Readonly<import("@tangle-network/agent-interface/environment-provider").CreateAgentEnvironmentInput>) => {
+      if (input.metadata?.nativeCredentialTurn) { reached(); await pending; }
+      return { cliAuth: selected };
+    });
+    const env = await createTangleProvider({ client: f.client, modelCredentials: resolve }).create({ profile, idempotencyKey: "create" });
+    const session = env.session!("same-session");
+    const first = session.prompt(turn());
+    await selecting;
+    await expect(session.prompt({ ...turn(), turnId: "concurrent" })).rejects.toThrow("prompt in flight");
+    finish();
+    await first;
+    expect(f.grants).toHaveLength(1);
+    expect(f.calls).toHaveLength(1);
+    expect(resolve.mock.calls[1]?.[0].metadata?.nativeCredentialTurn).toMatchObject({ sessionId: "same-session", turnId: "turn-one" });
+  });
+
+  it("keeps recursive profile content and binding namespaces separate", async () => {
+    const f = setup(true); const accountOwner = owner();
+    const provider = createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve });
+    const child = { ...profile, name: "child", tools: { Read: true }, model: { ...profile.model, default: "fixture-sonnet" } };
+    for (const [index, exactProfile] of [profile, child].entries()) {
+      const env = await provider.create({ profile: exactProfile, idempotencyKey: `create-${index}` });
+      await env.dispatch!({ ...turn(), providerOptions: { backend: { profile: exactProfile } } });
+    }
+    expect(f.calls.map(call => call.options?.backend?.profile)).toEqual([profile, child]);
+    expect(accountOwner.bindings.size).toBe(4);
+    expect(f.grants).toHaveLength(2);
   });
 });

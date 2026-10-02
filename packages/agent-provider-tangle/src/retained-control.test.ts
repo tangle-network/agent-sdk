@@ -847,6 +847,7 @@ describe("Tangle retained control", () => {
 
   it("persists a detached prompt reference at admission before result completion", async () => {
     const dispatchCalled = deferred<void>();
+    const resultRequested = deferred<void>();
     const resultGate = deferred<PromptResult>();
     const interrupt = vi.fn(async () => ({ cancelled: true }));
     let dispatchOptions: PromptOptions | undefined;
@@ -857,6 +858,7 @@ describe("Tangle retained control", () => {
       async *events() {},
       result: async (options) => {
         resultExecutionId = options?.executionId;
+        resultRequested.resolve();
         return resultGate.promise;
       },
       prompt: async () => {
@@ -896,8 +898,7 @@ describe("Tangle retained control", () => {
     });
 
     await dispatchCalled.promise;
-    await Promise.resolve();
-    await Promise.resolve();
+    await resultRequested.promise;
     expect(dispatchOptions?.executionId).toEqual(
       executionIdForTurn(
         {
