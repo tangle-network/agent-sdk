@@ -32,6 +32,7 @@ import type {
   SandboxClientLike,
   SandboxInstanceLike,
   SandboxRuntimeCapabilityDocument,
+  TangleModelCredentialResolver,
 } from "./tangle-types.js";
 import { environmentEventFromSandboxEvent } from "./tangle-events.js";
 import {
@@ -119,6 +120,7 @@ export async function sandboxInstanceAsEnvironment(
     credentialSource?: ProfileCredentialSource;
     credentialHarness?: string;
     nativeAuth?: { harness: string; cliAuth: CliAuthReference };
+    resolveModelCredentials?: TangleModelCredentialResolver;
     captureCapabilities?: SandboxRuntimeCapabilityDocument;
     captureHarness?: string;
   },
@@ -204,7 +206,9 @@ export async function sandboxInstanceAsEnvironment(
     }
     assertNativeCaptureHarness(request.captureCapabilities, backend?.type ?? profileHarness ?? request.captureHarness);
   };
-  const prepareTurn = (input: AgentTurnInput): AgentTurnInput => {
+  const prepareTurn = async (input: AgentTurnInput): Promise<AgentTurnInput> => {
+    AgentTurnInputSchema.parse(input);
+    input.signal?.throwIfAborted();
     assertCaptureInput(input);
     if (nativeReference === undefined) return input;
     const replay = input.lastEventId !== undefined || input.controlRef !== undefined;
@@ -221,7 +225,50 @@ export async function sandboxInstanceAsEnvironment(
       canonicalCandidateDigest(model.cliAuth) !== canonicalCandidateDigest(nativeReference)) {
       throw new Error("Tangle native credential turn cannot replace its selected account reference");
     }
-    const selectedModel = { ...model, cliAuth: nativeReference };
+    assertCliAuthReferenceSupported(harness, { ...model, cliAuth: nativeReference });
+    let selectedReference = nativeReference;
+    // Exact reads retain the admitted execution. A new operation obtains a new durable
+    // account-owner binding; retries of that operation present the same key after restart.
+    if (!replay && request?.resolveModelCredentials !== undefined) {
+      if (!deployment.claudeTokenContinuations || box.grantNativeCredential === undefined ||
+          harness !== "claude-code" || nativeReference.format !== "token") {
+        throw new Error("Tangle fresh subscription turns require proven Claude token continuation and named-grant support");
+      }
+      const profile = backend?.profile;
+      if (profile === undefined || profileCredentialSource(profile) !== "subscription") {
+        throw new Error("Tangle subscription turn selection requires its exact inline profile");
+      }
+      const turnId = boundedIdentifier(input.turnId, "Tangle subscription turn id");
+      const binding = {
+        kind: "native-turn-credentials.v1",
+        environmentId,
+        sessionId: input.sessionId ?? null,
+        turnId,
+      };
+      const selected = captureModelCredentials(await awaitWithSignal(
+        Promise.resolve(request.resolveModelCredentials(Object.freeze({
+          ...deepFreeze({
+            profile,
+            idempotencyKey: canonicalCandidateDigest(binding),
+            metadata: { nativeCredentialTurn: binding },
+          }),
+          ...(input.signal ? { signal: input.signal } : {}),
+        }))),
+        input.signal,
+      ));
+      if (selected === undefined || !("cliAuth" in selected) || selected.cliAuth.format !== "token") {
+        throw new Error("Tangle subscription turn resolver must select a stored Claude token reference");
+      }
+      selectedReference = selected.cliAuth;
+      assertCliAuthReferenceSupported(harness, { ...model, cliAuth: selectedReference });
+      input.signal?.throwIfAborted();
+      await awaitWithSignal(box.grantNativeCredential(
+        { harness, cliAuth: selectedReference },
+        input.signal ? { signal: input.signal } : undefined,
+      ), input.signal);
+      input.signal?.throwIfAborted();
+    }
+    const selectedModel = { ...model, cliAuth: selectedReference };
     assertCliAuthReferenceSupported(harness, selectedModel);
     // Validate explicit substitutions even on replay, without rewriting its admitted digest.
     if (replay) return input;
@@ -248,8 +295,8 @@ export async function sandboxInstanceAsEnvironment(
     capabilities.streaming.detach && box.dispatchPrompt
       ? dispatchEnvironmentRun(box, providerName, environmentId)
       : undefined;
-  const dispatch = dispatchRun === undefined ? undefined : (input: AgentTurnInput) => {
-    return dispatchRun(prepareTurn(input));
+  const dispatch = dispatchRun === undefined ? undefined : async (input: AgentTurnInput) => {
+    return dispatchRun(await prepareTurn(input));
   };
   const exactExecutionEvents = (options: {
     sessionId: string;
@@ -286,7 +333,7 @@ export async function sandboxInstanceAsEnvironment(
     async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
       AgentTurnInputSchema.parse(input);
       input.signal?.throwIfAborted();
-      input = prepareTurn(input);
+      input = await prepareTurn(input);
       const expectedExecutionId = executionIdFromTurnInput(input);
       const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
       if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
@@ -373,7 +420,7 @@ export async function sandboxInstanceAsEnvironment(
               options?.controlRef,
               providerName,
               environmentId,
-              dispatch,
+              dispatchRun,
               exactExecutionEvents,
               retainedControl,
               interactionResponses,

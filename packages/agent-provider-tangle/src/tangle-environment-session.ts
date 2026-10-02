@@ -99,7 +99,7 @@ export function sandboxSessionAsAgentSession(
   interactionResponses: boolean,
   usageLog?: ExecutionUsageLog,
   nativeContinuation = false,
-  beforePrompt?: (input: AgentTurnInput) => AgentTurnInput | void,
+  beforePrompt?: (input: AgentTurnInput) => AgentTurnInput | void | Promise<AgentTurnInput | void>,
   onExecution?: (executionId: string) => void,
 ): AgentSession {
   const measured = (
@@ -444,7 +444,6 @@ export function sandboxSessionAsAgentSession(
       );
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
-      input = beforePrompt?.(input) ?? input;
       AgentTurnInputSchema.parse(input);
       input.signal?.throwIfAborted();
       if (promptInFlight) {
@@ -455,6 +454,8 @@ export function sandboxSessionAsAgentSession(
         if (input.sessionId !== undefined && input.sessionId !== session.id) {
           throw new Error("Tangle sessionId conflicts with this session");
         }
+        input = await beforePrompt?.({ ...input, sessionId: session.id }) ?? input;
+        input.signal?.throwIfAborted();
         const requestedControlRef = resolveRetainedSessionControlRef(
           input.controlRef,
           session.id,

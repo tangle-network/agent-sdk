@@ -17,6 +17,7 @@ import { awaitWithSignal } from "./tangle-contract-safety.js";
 export interface DeploymentCapabilitySupport {
   /** The selected runtime explicitly supports named native credential references. */
   readonly cliAuthReferences: boolean;
+  readonly claudeTokenContinuations: boolean;
   /**
    * Run requests carry the caller's exact `runControlRef`, and admission
    * echoes the executionId. Detached dispatch needs both: it sends the
@@ -50,6 +51,7 @@ export interface DeploymentCapabilitySupport {
  */
 export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
   cliAuthReferences: false,
+  claudeTokenContinuations: false,
   exactDispatch: false,
   canonicalCancellation: false,
   eventReplay: false,
@@ -75,6 +77,7 @@ export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
  */
 export const ADAPTER_CEILING_DEPLOYMENT: DeploymentCapabilitySupport = {
   cliAuthReferences: true,
+  claudeTokenContinuations: true,
   exactDispatch: true,
   canonicalCancellation: true,
   eventReplay: true,
@@ -93,6 +96,7 @@ export function deploymentCapabilitySupport(
   if (!document || typeof document !== "object") return UNPROVEN_DEPLOYMENT;
   return {
     cliAuthReferences: document.cliAuthReferences === true,
+    claudeTokenContinuations: document.claudeTokenContinuations === true,
     exactDispatch:
       document.dispatch?.runControlRef === true &&
       document.dispatch?.executionIdOnAdmission === true,

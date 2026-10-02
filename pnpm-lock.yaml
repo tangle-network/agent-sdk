@@ -342,11 +342,11 @@ importers:
         specifier: workspace:*
         version: link:../agent-provider-testkit
       '@tangle-network/agent-runtime':
-        specifier: 0.286.0
-        version: 0.286.0(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))(@tangle-network/agent-eval@0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))
+        specifier: 0.292.3
+        version: 0.292.3(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(@tangle-network/agent-eval@0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5)))(typescript@7.0.2)
       '@tangle-network/sandbox':
         specifier: 0.58.7
-        version: 0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+        version: 0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5))
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.3
@@ -386,6 +386,9 @@ importers:
         version: 5.0.2(@opentelemetry/api@1.9.1)(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3))
 
 packages:
+
+  '@adraffy/ens-normalize@1.11.1':
+    resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
   '@asteasolutions/zod-to-openapi@9.1.0':
     resolution: {integrity: sha512-pLMeRgRYS7/vZIgAAkOe2P6+XGTifR1MT9pqDoxZ11EmcJJ+DPmdPqLN8ZZF4U8R9KHCCQCS9c2wtuE8wSrfkw==}
@@ -624,6 +627,18 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@noble/ciphers@1.3.0':
+    resolution: {integrity: sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw==}
+    engines: {node: ^14.21.3 || >=16}
+
+  '@noble/curves@1.9.1':
+    resolution: {integrity: sha512-k11yZxZg+t+gWvBbIswW0yoJlu8cHOC7dhunwOzoWH/mXGBiYyR4YY6hAEK/3EUs4UpB8la1RfdRpeGsFHkWsA==}
+    engines: {node: ^14.21.3 || >=16}
+
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@noble/hashes@2.4.0':
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
@@ -957,6 +972,15 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
+  '@scure/base@1.2.6':
+    resolution: {integrity: sha512-g/nm5FgUa//MCj1gV09zTJTaM6KBAHqLN907YVQqf7zC49+DcO4B1so4ZX07Ef10Twr6nuqYEH9GEggFXA4Fmg==}
+
+  '@scure/bip32@1.7.0':
+    resolution: {integrity: sha512-E4FFX/N3f4B80AKWp5dP6ow+flD1LQZo/w8UnLGYZO674jS6YnYeepycOOksv+vLPSpgN35wgKgy+ybfTb2SMw==}
+
+  '@scure/bip39@1.6.0':
+    resolution: {integrity: sha512-+lF0BbLiJNwVlev4eKelw1WWLaiKXw7sSl8T6FvBlWkdX+94aGJ4o8XjUdlyhTCjd8c+B3KT3JfS8P0bLRNU6A==}
+
   '@smithy/core@3.35.0':
     resolution: {integrity: sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A==}
     engines: {node: '>=18.0.0'}
@@ -992,25 +1016,17 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@tangle-network/agent-core@0.9.7':
-    resolution: {integrity: sha512-lKnHpz09tk4wI81Nr10ijq8psakIrqrySWu/giHuH6okeI0jE4zMb0W0XqI//N82W6GHGEZ6Xr2iAr9fGkQHGw==}
-    peerDependencies:
-      '@modelcontextprotocol/sdk': ^1.30.0
-    peerDependenciesMeta:
-      '@modelcontextprotocol/sdk':
-        optional: true
-
-  '@tangle-network/agent-eval@0.199.1':
-    resolution: {integrity: sha512-Wy2wc+paK0oHKPKbTcFlANytACqTutxFip/01QLQrfPkcDgBQqvPMl8JUNBtLuSbGHQLImck2ZusNRmzSZ8GCg==}
+  '@tangle-network/agent-eval@0.203.2':
+    resolution: {integrity: sha512-PTwmJ+kHA9kenow3TVmJlW/RDeMyYS0GcshOOjGfvsVH7EU1B2S4P0UyBi6Uefqsnfbxunos8eDordyYRuXvAA==}
     engines: {node: '>=20.19.0'}
     hasBin: true
 
-  '@tangle-network/agent-knowledge@17.1.10':
-    resolution: {integrity: sha512-/HDWpnE6OwF0JlKjTRxG5jBp64V2wNVIv2CrL0kbdGv8QuoLQNGu5weART+6U/rRs+fHEMf+cKvucDT/s36lyg==}
-    engines: {node: '>=20.19.0'}
+  '@tangle-network/agent-knowledge@18.0.0':
+    resolution: {integrity: sha512-q8+Pjp7kpHA01+K2V0Q5ZavZwIbG81EAHuQ0TkspV4mVYeKqChkhQkm4U4U+1ycENoaqL4Ys9jQqMdg6Oo99wQ==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
-      '@tangle-network/agent-eval': '>=0.182.0 <0.200.0'
+      '@tangle-network/agent-eval': '>=0.201.0 <0.204.0'
       '@tangle-network/agent-interface': workspace:*
 
   '@tangle-network/agent-profile-materialize@0.20.3':
@@ -1018,17 +1034,14 @@ packages:
     peerDependencies:
       '@tangle-network/agent-interface': workspace:*
 
-  '@tangle-network/agent-runtime@0.286.0':
-    resolution: {integrity: sha512-iL7eMbTfn/ZUsMlnyVArPmNtDmv08A2xl20nsdyR+SyJE3JBF85f05YLjljbP3Be7B+ZVZ6CcVTn+Pk19q4kEQ==}
+  '@tangle-network/agent-runtime@0.292.3':
+    resolution: {integrity: sha512-/R9FYlyvyrIFYSRKKyB3pVux2aGTJ+ARoA6+QglaVK2E0NoOri7qk3Nb49q+r88Ja29txvCCHLLXTY4m7x2hwg==}
     engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
-      '@tangle-network/agent-eval': '>=0.199.0 <0.200.0'
+      '@tangle-network/agent-eval': '>=0.201.0 <0.204.0'
       '@tangle-network/agent-interface': workspace:*
-      '@tangle-network/sandbox': '>=0.36.4 <0.48.0 || ^0.49.0-0 || ^0.50.0 || ^0.51.0 || ^0.52.0 || ^0.53.0 || ^0.54.0 || ^0.55.0 || ^0.56.0 || ^0.57.0 || ^0.58.0'
-
-  '@tangle-network/agent-trace-contract@1.3.0':
-    resolution: {integrity: sha512-kvWKftAShL9TB8F945TII4Wj2vpH/MfCNtU2aoChqWZIB8Kt9AzqJKisZimUw7fRouLKSm1uOw9FsdX09vsXEQ==}
+      '@tangle-network/sandbox': '>=0.58.4 <0.61.0'
 
   '@tangle-network/agent-trace-contract@2.0.0':
     resolution: {integrity: sha512-lq2hp3gg8FsNVA3yZAyuj3NvL57pJTsI6sUF8cYwVsUXA8QZlrO78SqRPRslWxf/sMFHxXhusOuDQ3YxVv12bw==}
@@ -1052,6 +1065,15 @@ packages:
         optional: true
       viem:
         optional: true
+
+  '@tangle-network/tcloud-attestation@0.1.1':
+    resolution: {integrity: sha512-+TAF9s5t1jOWGyGHvKhIWe2FYmG7puVaxmmg0Et67ylAjGa7GqUAvISXGjG/6dzld7A170V0kQHK0WVdh2Wh0Q==}
+    engines: {node: '>=18'}
+
+  '@tangle-network/tcloud@0.8.2':
+    resolution: {integrity: sha512-keSEfOGBGEa6jbKJmzy4UYkSkV0QW8XhI/n8VO1Icjy8vZeUIWDjN+Cpu4+uJHmjSS+zmX/D8uPKYLhTba8Qxw==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1343,6 +1365,17 @@ packages:
   '@yuku-toolchain/types@0.10.2':
     resolution: {integrity: sha512-sSeo4SSSToiS+sSD+bwn/s94EEcaLJ7tG5LCp8gFYC1G5VzxzX7fqB6m9RU1yMD8KTpu6zdU/I1NlQf8hVBJ9Q==}
 
+  abitype@1.2.3:
+    resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+      zod: ^3.22.0 || ^4.0.0
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+      zod:
+        optional: true
+
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
@@ -1506,6 +1539,10 @@ packages:
     resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
     engines: {node: '>= 0.8'}
 
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
+
   compare-versions@6.1.1:
     resolution: {integrity: sha512-4hm4VPpIecmlg59CHXnRDnqGplJFrbLG4aFEl5vl6cK1u76ws3LLvX7ikFnTDl5vo39sjWD6AaDPYodJp/NNHg==}
 
@@ -1645,6 +1682,9 @@ packages:
   etag@1.8.1:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
+
+  eventemitter3@5.0.1:
+    resolution: {integrity: sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==}
 
   events-universal@1.0.1:
     resolution: {integrity: sha512-LUd5euvbMLpwOF8m6ivPCbhQeSiYVNb8Vs0fQ8QjXo0JTkEHpz8pxdQf0gStltaPpw0Cca8b39KxvK9cfKRiAw==}
@@ -1881,6 +1921,11 @@ packages:
     peerDependencies:
       ws: '*'
 
+  isows@1.0.7:
+    resolution: {integrity: sha512-I1fSfDCZL5P0v33sVqeTDSpcstAg/N+wF5HS033mogOVIp4B+oHC7oOCsA3axAbBSGTJ8QubbNmnIRN/h8U7hg==}
+    peerDependencies:
+      ws: '*'
+
   jju@1.4.0:
     resolution: {integrity: sha512-8wb9Yw966OSxApiCt0K3yNJL8pnNeIv+OEq2YMidz4FKP6nonSRoOXc80iXY4JaN2FC11B9qsNmDsm+ZOfMROA==}
 
@@ -2102,6 +2147,14 @@ packages:
   openapi3-ts@4.6.1:
     resolution: {integrity: sha512-XW9MOldkhoICNeXVzzmXzmOW5G73ppOEGmh7fLCqHjgfdEYCGGN+00MlVCeUZgovjjfC56j9tvtDt1zGabNjjA==}
 
+  ox@0.14.45:
+    resolution: {integrity: sha512-jpsQ+p0JZh9mKCxxzxz0d5qFHZZg2/O9xW18IpEC/dNXXPVqmDJ0c//9RMz0CILkbSGPA42+cbU0fC/ghwJ03w==}
+    peerDependencies:
+      typescript: '>=5.4.0'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   package-manager-detector@1.8.0:
     resolution: {integrity: sha512-yQA4H19AmPEoMUeavPMDIe1higySl/gH/yaQrkT/s07Qp+7pp2hYz30N3z2l5BkjVkF9Ow6o0wjJamm2y7Sn0A==}
 
@@ -2303,8 +2356,8 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  smol-toml@1.8.0:
-    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
     engines: {node: '>= 18'}
 
   socket.io-client@4.8.4:
@@ -2472,6 +2525,14 @@ packages:
     resolution: {integrity: sha512-mMVzj0TXExtVdlDEq+Mzp0eyOuyznNpFobNM3uAqe3HVm/Ps2c+u17BligMkZjZCA6EiXpoon8iRTer3iu40SQ==}
     engines: {node: '>=18.12.0'}
 
+  viem@2.57.2:
+    resolution: {integrity: sha512-ZbPvu+5fvRsbFh+OymDz0GyEySsSco8GWrEAiHM4ckhEY1vJTPy0tcLVkn0cs70dPiUOjLxkQBnfVyt9YkJ7cA==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   vite@8.3.1:
     resolution: {integrity: sha512-/bvH9E9tmCXRGp2uXY3WbOldqpTwFkbha/8ANaEQ6VkxhH60KyqLwgZq6lG2y+4uT55x9+9eUHMpQ7uGnOCKjA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2579,6 +2640,18 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -2642,18 +2715,17 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@4.5.4:
-    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
-
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
 
-  '@asteasolutions/zod-to-openapi@9.1.0(zod@4.5.4)':
+  '@adraffy/ens-normalize@1.11.1': {}
+
+  '@asteasolutions/zod-to-openapi@9.1.0(zod@4.6.5)':
     dependencies:
       openapi3-ts: 4.6.1
-      zod: 4.5.4
+      zod: 4.6.5
 
   '@aws-sdk/checksums@3.1001.1':
     dependencies:
@@ -3062,29 +3134,6 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)':
-    dependencies:
-      '@hono/node-server': 2.1.1(hono@4.13.9)
-      ajv: 8.20.0
-      ajv-formats: 3.0.1(ajv@8.20.0)
-      content-type: 1.0.5
-      cors: 2.8.6
-      cross-spawn: 7.0.6
-      eventsource: 3.0.7
-      eventsource-parser: 3.1.1
-      express: 5.2.1
-      express-rate-limit: 8.7.0(express@5.2.1)
-      hono: 4.13.9
-      jose: 6.2.12
-      json-schema-typed: 8.0.2
-      pkce-challenge: 5.0.1
-      raw-body: 3.0.2
-      zod: 4.5.4
-      zod-to-json-schema: 3.25.2(zod@4.5.4)
-    transitivePeerDependencies:
-      - supports-color
-    optional: true
-
   '@modelcontextprotocol/sdk@1.30.1(zod@4.6.5)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.9)
@@ -3106,6 +3155,14 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.6.5)
     transitivePeerDependencies:
       - supports-color
+
+  '@noble/ciphers@1.3.0': {}
+
+  '@noble/curves@1.9.1':
+    dependencies:
+      '@noble/hashes': 1.8.0
+
+  '@noble/hashes@1.8.0': {}
 
   '@noble/hashes@2.4.0': {}
 
@@ -3431,6 +3488,19 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
+  '@scure/base@1.2.6': {}
+
+  '@scure/bip32@1.7.0':
+    dependencies:
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/base': 1.2.6
+
+  '@scure/bip39@1.6.0':
+    dependencies:
+      '@noble/hashes': 1.8.0
+      '@scure/base': 1.2.6
+
   '@smithy/core@3.35.0':
     dependencies:
       '@smithy/types': 4.19.0
@@ -3466,76 +3536,101 @@ snapshots:
 
   '@socket.io/component-emitter@3.1.2': {}
 
-  '@tangle-network/agent-core@0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))':
+  '@tangle-network/agent-core@0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))':
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
       '@tangle-network/agent-trace-contract': 2.0.0
       zod: 4.6.5
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.1(zod@4.5.4)
+      '@modelcontextprotocol/sdk': 1.30.1(zod@4.6.5)
 
-  '@tangle-network/agent-core@0.9.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))':
+  '@tangle-network/agent-eval@0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))':
     dependencies:
-      '@tangle-network/agent-interface': link:packages/agent-interface
-      zod: 4.5.4
-    optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.1(zod@4.5.4)
-
-  '@tangle-network/agent-eval@0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))':
-    dependencies:
-      '@asteasolutions/zod-to-openapi': 9.1.0(zod@4.5.4)
+      '@asteasolutions/zod-to-openapi': 9.1.0(zod@4.6.5)
       '@hono/node-server': 2.1.1(hono@4.13.9)
-      '@tangle-network/agent-core': 0.9.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+      '@tangle-network/agent-core': 0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))
       '@tangle-network/agent-interface': link:packages/agent-interface
-      '@tangle-network/agent-trace-contract': 1.3.0
+      '@tangle-network/agent-trace-contract': 2.0.0
       hono: 4.13.9
       linear-sum-assignment: 1.0.9
       re2js: 2.8.6
-      smol-toml: 1.8.0
-      zod: 4.5.4
+      smol-toml: 1.9.0
+      zod: 4.6.5
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
 
-  '@tangle-network/agent-knowledge@17.1.10(@tangle-network/agent-eval@0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))(@tangle-network/agent-interface@packages+agent-interface)':
+  '@tangle-network/agent-knowledge@18.0.0(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(@tangle-network/agent-eval@0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5)))(@tangle-network/agent-interface@packages+agent-interface)(typescript@7.0.2)':
     dependencies:
-      '@tangle-network/agent-eval': 0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+      '@tangle-network/agent-eval': 0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))
       '@tangle-network/agent-interface': link:packages/agent-interface
+      '@tangle-network/tcloud': 0.8.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(typescript@7.0.2)(zod@4.6.5)
       '@types/proper-lockfile': 4.1.4
       proper-lockfile: 4.1.2
-      zod: 4.5.4
+      zod: 4.6.5
+    transitivePeerDependencies:
+      - '@mastra/core'
+      - '@modelcontextprotocol/sdk'
+      - ai
+      - bufferutil
+      - openai
+      - typescript
+      - utf-8-validate
 
   '@tangle-network/agent-profile-materialize@0.20.3(@tangle-network/agent-interface@packages+agent-interface)':
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
 
-  '@tangle-network/agent-runtime@0.286.0(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))(@tangle-network/agent-eval@0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))':
+  '@tangle-network/agent-runtime@0.292.3(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(@tangle-network/agent-eval@0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5)))(typescript@7.0.2)':
     dependencies:
-      '@tangle-network/agent-core': 0.9.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
-      '@tangle-network/agent-eval': 0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+      '@tangle-network/agent-core': 0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))
+      '@tangle-network/agent-eval': 0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))
       '@tangle-network/agent-interface': link:packages/agent-interface
-      '@tangle-network/agent-knowledge': 17.1.10(@tangle-network/agent-eval@0.199.1(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4)))(@tangle-network/agent-interface@packages+agent-interface)
+      '@tangle-network/agent-knowledge': 18.0.0(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(@tangle-network/agent-eval@0.203.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5)))(@tangle-network/agent-interface@packages+agent-interface)(typescript@7.0.2)
       '@tangle-network/agent-profile-materialize': 0.20.3(@tangle-network/agent-interface@packages+agent-interface)
-      '@tangle-network/agent-trace-contract': 1.3.0
-      '@tangle-network/sandbox': 0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+      '@tangle-network/agent-trace-contract': 2.0.0
+      '@tangle-network/sandbox': 0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5))
       tar-stream: 3.2.1
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
+      - '@mastra/core'
       - '@modelcontextprotocol/sdk'
+      - ai
       - bare-abort-controller
       - bare-buffer
+      - bufferutil
+      - openai
       - react-native-b4a
-
-  '@tangle-network/agent-trace-contract@1.3.0': {}
+      - typescript
+      - utf-8-validate
 
   '@tangle-network/agent-trace-contract@2.0.0': {}
 
-  '@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))':
+  '@tangle-network/sandbox@0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5))':
     dependencies:
-      '@tangle-network/agent-core': 0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.5.4))
+      '@tangle-network/agent-core': 0.10.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))
       '@tangle-network/agent-interface': link:packages/agent-interface
       zod: 4.6.5
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.1(zod@4.5.4)
+      '@modelcontextprotocol/sdk': 1.30.1(zod@4.6.5)
+      viem: 2.57.2(typescript@7.0.2)(zod@4.6.5)
+
+  '@tangle-network/tcloud-attestation@0.1.1': {}
+
+  '@tangle-network/tcloud@0.8.2(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(typescript@7.0.2)(zod@4.6.5)':
+    dependencies:
+      '@tangle-network/sandbox': 0.58.7(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(viem@2.57.2(typescript@7.0.2)(zod@4.6.5))
+      '@tangle-network/tcloud-attestation': 0.1.1
+      commander: 15.0.0
+      viem: 2.57.2(typescript@7.0.2)(zod@4.6.5)
+    transitivePeerDependencies:
+      - '@mastra/core'
+      - '@modelcontextprotocol/sdk'
+      - ai
+      - bufferutil
+      - openai
+      - typescript
+      - utf-8-validate
+      - zod
 
   '@types/chai@5.2.3':
     dependencies:
@@ -3703,6 +3798,11 @@ snapshots:
 
   '@yuku-toolchain/types@0.10.2': {}
 
+  abitype@1.2.3(typescript@7.0.2)(zod@4.6.5):
+    optionalDependencies:
+      typescript: 7.0.2
+      zod: 4.6.5
+
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
@@ -3855,6 +3955,8 @@ snapshots:
     dependencies:
       delayed-stream: 1.0.0
 
+  commander@15.0.0: {}
+
   compare-versions@6.1.1: {}
 
   computesdk@4.1.8:
@@ -3976,6 +4078,8 @@ snapshots:
       '@types/estree': 1.0.9
 
   etag@1.8.1: {}
+
+  eventemitter3@5.0.1: {}
 
   events-universal@1.0.1:
     dependencies:
@@ -4225,6 +4329,10 @@ snapshots:
     dependencies:
       ws: 8.22.0
 
+  isows@1.0.7(ws@8.21.0):
+    dependencies:
+      ws: 8.21.0
+
   jju@1.4.0: {}
 
   jose@6.2.12: {}
@@ -4405,6 +4513,21 @@ snapshots:
   openapi3-ts@4.6.1:
     dependencies:
       yaml: 2.9.1
+
+  ox@0.14.45(typescript@7.0.2)(zod@4.6.5):
+    dependencies:
+      '@adraffy/ens-normalize': 1.11.1
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.6.5)
+      eventemitter3: 5.0.1
+    optionalDependencies:
+      typescript: 7.0.2
+    transitivePeerDependencies:
+      - zod
 
   package-manager-detector@1.8.0: {}
 
@@ -4631,7 +4754,7 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  smol-toml@1.8.0: {}
+  smol-toml@1.9.0: {}
 
   socket.io-client@4.8.4:
     dependencies:
@@ -4822,6 +4945,23 @@ snapshots:
 
   verkit@0.4.1: {}
 
+  viem@2.57.2(typescript@7.0.2)(zod@4.6.5):
+    dependencies:
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.6.5)
+      isows: 1.0.7(ws@8.21.0)
+      ox: 0.14.45(typescript@7.0.2)(zod@4.6.5)
+      ws: 8.21.0
+    optionalDependencies:
+      typescript: 7.0.2
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+      - zod
+
   vite@8.3.1(@types/node@26.6.3)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
@@ -4873,6 +5013,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   wrappy@1.0.2: {}
+
+  ws@8.21.0: {}
 
   ws@8.21.3: {}
 
@@ -4937,15 +5079,8 @@ snapshots:
       '@yuku-parser/binding-win32-arm64': 0.10.2
       '@yuku-parser/binding-win32-x64': 0.10.2
 
-  zod-to-json-schema@3.25.2(zod@4.5.4):
-    dependencies:
-      zod: 4.5.4
-    optional: true
-
   zod-to-json-schema@3.25.2(zod@4.6.5):
     dependencies:
       zod: 4.6.5
-
-  zod@4.5.4: {}
 
   zod@4.6.5: {}
