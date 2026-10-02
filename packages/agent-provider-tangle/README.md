@@ -178,6 +178,34 @@ The adapter requires this idempotency key before starting the command.
 Only a successfully decoded public reference can reach Sandbox creation.
 Timeouts, cancellation, nonzero exit, and malformed or oversized output refuse creation with sanitized errors.
 
+### A remote account owner
+
+The Node subpath also provides `createHttpModelCredentialResolver`.
+Use a narrow resolve-only grant and the owner's maintained HTTPS endpoint.
+HTTP is accepted only on loopback for local forwarding.
+The client never follows redirects or sends private account-owner credentials.
+
+```ts
+import { createHttpModelCredentialResolver } from "@tangle-network/agent-provider-tangle/node";
+
+const modelCredentials = createHttpModelCredentialResolver({
+  url: process.env.ACCOUNT_RESOLVER_URL!,
+  bearer: process.env.ACCOUNT_RESOLVER_GRANT!,
+  minimumValidUntil: persistedRunDeadline,
+});
+const provider = createTangleProvider({ client, modelCredentials });
+```
+
+Managed profiles skip the remote call.
+Subscription roots and descendants send the same exact `{ input, minimumValidUntil? }` contract as the command transport.
+The owner must bind the grant to a pool and fixed Sandbox namespace before accepting a request.
+A caller-supplied namespace is never sufficient authorization.
+The response contains only the selected stored reference.
+Errors, redirects, invalid references, cancellation, and bounded response time refuse provisioning.
+The client makes one request; recovery may retry the same immutable dispatch identity through the account owner's durable binding.
+`parseModelCredentialResolverRequest` validates this public wire envelope without normalizing the authored profile.
+Requests are bounded at 64 MiB and responses at 64 KiB.
+
 The account owner retains authority over registration, namespace verification, holds, quota, selection, and trusted renewal.
 Updating a stored secret does not refresh credentials already injected into a live Sandbox.
 Creation-time validity and the selected host's native credential lifecycle still bound long-running work.
@@ -628,3 +656,12 @@ Capture validates those coordinates before reading files.
 A reconstructed environment does not need the original in-memory session cache.
 The returned provenance retains both identities and reports incomplete native coverage explicitly.
 Missing native session evidence preserves the source under Runtime's complete-provenance policy.
+
+The remote request is bounded to 8 MiB; public replies are bounded to 64 KiB.
+A genuine HTTP 429 or 503 may return `{ error: { code, reason, resetAt? } }`.
+Supported codes are `provider_quota_exhausted` for exhausted quota and `upstream_unavailable` for unknown, held, or busy capacity.
+The adapter exposes these as `TangleCredentialCapacityError`, preserving the actual HTTP status and known reset timestamp.
+Authentication failures and malformed metadata do not become typed quota refusals.
+The command transport accepts the same public capacity body only with exit code 75.
+Its typed error has no HTTP status.
+The caller's execution owner decides whether and when to retry.
