@@ -8,6 +8,15 @@ const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessio
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
+// Match the Sidecar request limit without accumulating 100 large JSON payloads.
+const WORKSPACE_BATCH_FILES = 100;
+const WORKSPACE_BATCH_BYTES = 8 * 1024 * 1024;
+interface WorkspaceFileRead {
+  sourcePath: string;
+  path: string;
+  size: number;
+  mode: number;
+}
 interface WorkspaceEntryMetadata {
   path: string;
   type: "file" | "directory" | "symlink";
@@ -209,6 +218,18 @@ export async function captureTangleSandboxEvidence(
   let scannedEntries = 0;
   let scannedSize = 0;
   let capturedBytes = 0;
+  let pending: WorkspaceFileRead[] = [];
+  let pendingBytes = 0;
+  const flushWorkspaceFiles = async () => {
+    if (!pending.length) return;
+    const captured = await readWorkspaceEvidenceBatch(fs, pending, options.maxBytes - capturedBytes, options.signal);
+    for (const file of captured) {
+      files.push(file);
+      capturedBytes += file.bytes.byteLength;
+    }
+    pending = [];
+    pendingBytes = 0;
+  };
   while (stack.length) {
     options.signal?.throwIfAborted();
     const directory = stack.pop()!;
@@ -251,33 +272,18 @@ export async function captureTangleSandboxEvidence(
         excludedPaths.push({ ...item, reason: "credential-path" });
         continue;
       }
-      const remainingBytes = options.maxBytes - capturedBytes;
-      if (entry.size > remainingBytes) throw new Error("Tangle evidence exceeds byte limit");
-      const result = await fs.readBatch([sourcePath], { encoding: "base64" });
-      let bytes: Buffer;
-      if (result.files.length === 0 && result.errors.length === 1 &&
-          result.errors[0]?.path === sourcePath && result.errors[0]?.code === "FILE_TOO_LARGE") {
-        bytes = await downloadWorkspaceEvidenceFile(fs, sourcePath, entry.size, remainingBytes, options.signal);
-      } else {
-        if (result.errors.length || result.files.length !== 1 || result.files[0]?.path !== sourcePath || result.files[0]?.encoding !== "base64") {
-          throw new Error(`Tangle evidence could not read workspace file ${path}`);
-        }
-        const read = result.files[0];
-        bytes = Buffer.from(read.content, "base64");
-        if (bytes.byteLength !== entry.size || read.size !== entry.size || bytes.toString("base64") !== read.content) {
-          throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
-        }
-        if (read.hash && read.hash.replace(/^sha256:/, "") !== createHash("sha256").update(bytes).digest("hex")) {
-          throw new Error(`Tangle evidence workspace file hash mismatch: ${path}`);
-        }
+      if (pending.length && (pending.length >= WORKSPACE_BATCH_FILES || pendingBytes + entry.size > WORKSPACE_BATCH_BYTES)) {
+        await flushWorkspaceFiles();
       }
-      files.push({ path, bytes, mode: entry.permissions & 0o777 });
-      capturedBytes += bytes.byteLength;
+      if (entry.size > options.maxBytes - capturedBytes - pendingBytes) throw new Error("Tangle evidence exceeds byte limit");
+      pending.push({ sourcePath, path, size: entry.size, mode: entry.permissions & 0o777 });
+      pendingBytes += entry.size;
     }
   }
   if (scannedFiles !== usage.fileCount || scannedDirectories !== usage.directoryCount || scannedSize !== usage.sizeBytes) {
     throw new Error("Tangle workspace inventory does not match the complete usage scan");
   }
+  await flushWorkspaceFiles();
   const sessionIds = new Set(options.sandboxSessionIds);
   const sessions: TangleEnvironmentEvidence["provenance"]["sessions"] = [];
   const attempts: TangleEvidenceAttemptLike[] = [];
@@ -742,6 +748,58 @@ export async function captureTangleSandboxEvidence(
   if (capturedBytes + provenanceBytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
   files.push({ path: "__retention__/provenance.json", bytes: provenanceBytes, mode: 0o600 });
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)), provenance };
+}
+
+/** Match every response to exactly one request before accepting any file bytes. */
+async function readWorkspaceEvidenceBatch(
+  fs: NonNullable<SandboxInstanceLike["fs"]>,
+  entries: readonly WorkspaceFileRead[],
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<TangleEnvironmentEvidence["files"]> {
+  signal?.throwIfAborted();
+  const result = await fs.readBatch(entries.map((entry) => entry.sourcePath), { encoding: "base64" });
+  signal?.throwIfAborted();
+  if (!result || !Array.isArray(result.files) || !Array.isArray(result.errors)) {
+    throw new Error("Tangle evidence workspace batch response is malformed");
+  }
+  const expected = new Set(entries.map((entry) => entry.sourcePath));
+  const returned = new Set<string>();
+  for (const item of [...result.files, ...result.errors]) {
+    if (!expected.has(item.path) || returned.has(item.path)) {
+      throw new Error("Tangle evidence workspace batch contains an unexpected or repeated path");
+    }
+    returned.add(item.path);
+  }
+  if (returned.size !== expected.size) throw new Error("Tangle evidence workspace batch omitted a requested path");
+  const reads = new Map(result.files.map((read) => [read.path, read]));
+  const errors = new Map(result.errors.map((error) => [error.path, error]));
+  const files: TangleEnvironmentEvidence["files"] = [];
+  let remainingBytes = maxBytes;
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    const read = reads.get(entry.sourcePath);
+    const error = errors.get(entry.sourcePath);
+    let bytes: Buffer;
+    if (error?.code === "FILE_TOO_LARGE") {
+      bytes = await downloadWorkspaceEvidenceFile(fs, entry.sourcePath, entry.size, remainingBytes, signal);
+    } else {
+      if (error || !read || read.encoding !== "base64") {
+        throw new Error(`Tangle evidence could not read workspace file ${entry.path}`);
+      }
+      bytes = Buffer.from(read.content, "base64");
+      if (bytes.byteLength !== entry.size || read.size !== entry.size || bytes.toString("base64") !== read.content) {
+        throw new Error(`Tangle evidence workspace file changed or was truncated: ${entry.path}`);
+      }
+      if (read.hash && read.hash.replace(/^sha256:/, "") !== createHash("sha256").update(bytes).digest("hex")) {
+        throw new Error(`Tangle evidence workspace file hash mismatch: ${entry.path}`);
+      }
+    }
+    if (bytes.byteLength > remainingBytes) throw new Error("Tangle evidence exceeds byte limit");
+    files.push({ path: entry.path, bytes, mode: entry.mode });
+    remainingBytes -= bytes.byteLength;
+  }
+  return files;
 }
 
 /** The JSON reader has a smaller transport cap than an evidence archive. */
