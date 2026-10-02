@@ -40,6 +40,10 @@ Runtime resolves child source files through this reader without copying their co
 Paths keep the control-plane limit.
 Live reads require the selected Sandbox workspace capability.
 
+Evidence capture batches workspace reads into requests of at most 100 files and 8 MiB of declared file bytes.
+A file larger than that batch target gets its own request.
+Responses must account for every requested path exactly once; missing, duplicate, or unrelated paths fail capture.
+Cancellation stops further batches after the current request returns.
 Evidence capture retains full workspace files that exceed the Sandbox JSON read limit through bounded binary downloads.
 This requires a Sandbox SDK whose filesystem advertises `supportsBoundedDownload`.
 Capture verifies the downloaded size and SHA-256 receipt before adding bytes to the archive.
