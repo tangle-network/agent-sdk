@@ -23,7 +23,7 @@ import { describe, expect, it } from "vitest";
  *   #314  a turn prompt held to the metadata bound, capping a manager's brief at 16 KiB.
  *
  * So this file asserts the pair, not either side. A producer limit larger than the consumer bound
- * it feeds is a defect UNLESS the boundary truncates rather than throws, which is recorded per
+ * it feeds is a defect UNLESS the boundary projects a different bounded record, which is recorded per
  * pair below with the reason. Adding a bound on either side without deciding its partner fails
  * here rather than in a run.
  */
@@ -58,17 +58,16 @@ interface Seam {
   readonly producer: string;
   /** What this provider validates it against. */
   readonly consumer: { readonly name: string; readonly value: number };
-  /** When the consumer side truncates instead of throwing, the reason it is safe for the producer
-   *  to exceed it. Absent means the pair must hold. */
-  readonly truncatedBecause?: string;
+  /** Why the producer value is excluded from the bounded consumer record. */
+  readonly projectedBecause?: string;
 }
 
 const SEAMS: readonly Seam[] = [
   {
     producer: "MAX_SERIALIZED_TOOL_VALUE_BYTES",
     consumer: { name: "CONTRACT_MAX_JSON_BYTES", value: CONTRACT_MAX_JSON_BYTES },
-    truncatedBecause:
-      "validatedSandboxPromptResult truncates toolInvocations[].result with a marker rather than throwing (#312), because the check runs after the turn is paid for",
+    projectedBecause:
+      "Native tool history remains in session evidence; terminal results and events project only the bounded completion summary",
   },
   {
     producer: "MAX_GIT_AUTH_TOKEN_LENGTH",
@@ -94,18 +93,18 @@ const SEAMS: readonly Seam[] = [
 
 describe("producer/consumer bound seam", () => {
   it.each(SEAMS)(
-    "$producer fits inside $consumer.name, or the boundary truncates",
-    ({ producer, consumer, truncatedBecause }) => {
+    "$producer fits inside $consumer.name, or the consumer projects a separate summary",
+    ({ producer, consumer, projectedBecause }) => {
       const written = producerLimit(producer);
-      if (truncatedBecause !== undefined) {
-        // The pair is allowed to disagree only because the boundary degrades instead of refusing.
+      if (projectedBecause !== undefined) {
+        // The native evidence and completion summary are separate contracts.
         // The assertion still runs so the exemption cannot outlive its reason unnoticed.
-        expect(truncatedBecause.length).toBeGreaterThan(0);
+        expect(projectedBecause.length).toBeGreaterThan(0);
         return;
       }
       expect(
         written,
-        `${producer} is ${written} but ${consumer.name} is ${consumer.value}: the SDK can write a value this provider refuses. Either lower the producer, raise the consumer, or truncate at the boundary and record why.`,
+        `${producer} is ${written} but ${consumer.name} is ${consumer.value}: the SDK can write a value this provider refuses. Either align the bounds or document the separate consumer projection.`,
       ).toBeLessThanOrEqual(consumer.value);
     },
   );

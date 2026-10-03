@@ -682,3 +682,13 @@ Authentication failures and malformed metadata do not become typed quota refusal
 The command transport accepts the same public capacity body only with exit code 75.
 Its typed error has no HTTP status.
 The caller's execution owner decides whether and when to retry.
+
+### Completion and native evidence
+
+The provider projects terminal results and terminal stream events into bounded completion summaries.
+Cumulative `toolInvocations` stay in native session evidence; they are not copied into the summary or truncated.
+A projected terminal event omits `providerEvent`, which would otherwise claim to contain the full native event.
+The session, execution, and event identities still bind the summary to its source.
+Use `captureTangleEnvironmentEvidence` or the exact Sandbox session's `rawEvidence()` to retain original arguments, outputs, and process records.
+Capture completeness and missing-source reasons remain authoritative; a successful completion does not imply complete archival capture.
+Individual event, terminal text, identity, and usage validation remain unchanged.

@@ -152,50 +152,31 @@ describe("Sandbox stream event content", () => {
     expect(() => validatedSandboxPromptResult({ ...result, traceId: "x".repeat(CONTRACT_MAX_STRING_LENGTH + 1) })).toThrow(/JSON bound/);
   });
 
-  it("truncates oversized tool output instead of discarding a paid turn", () => {
-    // Widening the bound did not remove the failure mode. This validator runs in the terminal
-    // result read, AFTER the stream drained and the usage receipt was credited, so a throw here
-    // cannot prevent the work or the charge — it can only destroy a finished, paid turn. The
-    // producer serializes each tool value up to 4 MiB while this bound is 1 MiB across the WHOLE
-    // record, so a single 2 MiB fetch, or two 0.6 MiB fetches together, still died.
+  it("projects terminal summaries without changing retained tool history", () => {
     const base = { success: true, status: "success" as const, durationMs: 1, response: "ok" };
-    const withResults = (length: number, count = 1) => ({
-      ...base,
-      toolInvocations: Array.from({ length: count }, (_unused, index) => ({
-        toolName: "webfetch",
-        args: { url: `https://example.test/${index}` },
-        result: "x".repeat(length),
-      })),
-    });
-    const marked = (out: unknown) =>
-      ((out as { toolInvocations: { result: string }[] }).toolInvocations ?? []).filter((entry) =>
-        entry.result.includes("[truncated by the Tangle provider"),
-      ).length;
+    const toolInvocations = Array.from({ length: 423 }, (_, index) => ({
+      toolName: "Read",
+      input: { path: `research/${index}.md`, content: "x".repeat(5000) },
+      result: [{ type: "text", text: "😀\u0000".repeat(2000) }],
+    }));
+    const source = { ...base, toolInvocations };
+    const before = JSON.stringify(source);
+    expect(isBoundedEventContentJson(source)).toBe(false);
+    expect(validatedSandboxPromptResult(source)).toEqual(base);
+    expect(JSON.stringify(source)).toBe(before);
 
-    // A single result larger than the whole-record bound: the turn survives, the tail is cut.
-    const single = validatedSandboxPromptResult(withResults(2 * 1024 * 1024));
-    expect(marked(single)).toBe(1);
-    // The producer's own per-value maximum must not be able to kill a turn either.
-    expect(marked(validatedSandboxPromptResult(withResults(4 * 1024 * 1024)))).toBe(1);
-    // Several results that each fit but together do not: the record converges rather than
-    // destroying the first one it meets.
-    const many = validatedSandboxPromptResult(withResults(600_000, 2));
-    expect(marked(many)).toBeGreaterThanOrEqual(1);
-    expect(isBoundedEventContentJson(many as unknown as Record<string, unknown>)).toBe(true);
-    const wide = validatedSandboxPromptResult(withResults(900_000, 5));
-    expect(isBoundedEventContentJson(wide as unknown as Record<string, unknown>)).toBe(true);
-
-    // The marker names both byte counts, so a reader can tell a truncated result from a tool that
-    // genuinely returned little, and every tool call the turn made is still present.
-    const first = (single as unknown as { toolInvocations: { result: string; toolName: string }[] }).toolInvocations[0];
-    expect(first.toolName).toBe("webfetch");
-    expect(first.result).toMatch(/kept \d+ of 2097152 bytes/u);
-
-    // A record whose overflow is NOT tool output still refuses: only tool output is truncatable,
-    // because every other field is identity, accounting, or control material.
-    expect(() =>
-      validatedSandboxPromptResult({ ...base, response: "x".repeat(2 * 1024 * 1024) }),
-    ).toThrow(/JSON bound/);
+    for (const type of ["result", "done"]) {
+      const event = { type, id: "terminal-1", data: { ...source, executionId: "execution-1", sessionId: "session-1" } };
+      const projected = environmentEventFromSandboxEvent(event, bound);
+      expect(projected.data).toEqual({ ...base, executionId: "execution-1", sessionId: "session-1" });
+      expect(projected).not.toHaveProperty("providerEvent");
+      expect(projected.id).toBe("terminal-1");
+      expect(event.data.toolInvocations).toBe(toolInvocations);
+      expect(JSON.stringify(source)).toBe(before);
+      expect(() => environmentEventFromSandboxEvent(event, { ...bound, executionId: "foreign" })).toThrow(/different executionId/);
+    }
+    expect(() => validatedSandboxPromptResult({ ...source, response: "x".repeat(2 * 1024 * 1024) })).toThrow(/JSON bound/);
+    expect(() => validatedSandboxPromptResult({ ...source, usage: { inputTokens: 1, outputTokens: -1 } })).toThrow(/output token count/);
   });
 });
 

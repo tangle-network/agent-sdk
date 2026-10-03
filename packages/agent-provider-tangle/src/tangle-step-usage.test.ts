@@ -151,7 +151,16 @@ describe("in-flight OpenCode step usage", () => {
       ]);
       // Only step frames gain usage, and every frame keeps its recorded payload.
       expect(events.filter((event) => event.usage !== undefined)).toHaveLength(5);
-      events.forEach((event, index) => expect(event.providerEvent).toEqual(s19[index]));
+      events.forEach((event, index) => {
+        const source = s19[index];
+        if ((source?.type === "result" || source?.type === "done") && Object.hasOwn(source.data, "toolInvocations")) {
+          expect(event.providerEvent).toBeUndefined();
+          expect(event.data.executionId).toBe(source.data.executionId);
+          expect(event.data).not.toHaveProperty("toolInvocations");
+        } else {
+          expect(event.providerEvent).toEqual(source);
+        }
+      });
       expect(() => AgentTurnResultSchema.parse({ text: "", success: true, events })).not.toThrow();
     }
   });
