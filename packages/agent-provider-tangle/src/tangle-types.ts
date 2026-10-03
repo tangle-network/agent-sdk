@@ -752,6 +752,13 @@ export interface SandboxSessionLike {
   messages?(options?: { limit?: number; offset?: number; since?: number }): Promise<unknown[]>;
   /** The SDK returns generic records. Validate their shape before retaining any bytes. */
   rawEvidence?(): Promise<unknown>;
+  /** Bounded, hash-verified native archive; unavailable servers must not fall back to aggregate JSON. */
+  exportRawEvidence?(destination: string, options: {
+    maxBytes: number;
+    maxFiles: number;
+    maxArchiveBytes?: number;
+    signal?: AbortSignal;
+  }): Promise<unknown>;
   /** Exact native coding-agent TUI bound to this session id. */
   interactive?(options?: {
     ref?: AgentInteractiveSessionRef;
@@ -866,4 +873,3 @@ export interface TangleProviderOptions {
   /** External provider-key and measurement verifier for confidential forks. */
   confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
 }
-

@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { EvidenceJsonArray, evidenceJsonChunks } from "./tangle-evidence-json.js";
+import { createDirectoryEvidenceWriter, createMemoryEvidenceWriter, type EvidenceWriter } from "./tangle-evidence-writer.js";
+import { prepareNativeDirectoryEvidence, nativePayloadChunks, type RetainedNativeEvidence } from "./tangle-evidence-native-files.js";
 import { AgentExactRunControlRefSchema, type AgentExactRunControlRef, type AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike, TangleRawEvidenceLike } from "./tangle-types.js";
+import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike } from "./tangle-types.js";
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
@@ -141,6 +144,42 @@ export async function captureTangleEnvironmentEvidence(
   environment: AgentEnvironment,
   options: TangleEnvironmentEvidenceOptions,
 ): Promise<TangleEnvironmentEvidence> {
+  const context = evidenceContext(environment, options);
+  return captureTangleSandboxEvidence(context.box, context.options);
+}
+
+export interface TangleDirectoryEvidence {
+  directory: string;
+  provenance: TangleEnvironmentEvidence["provenance"];
+}
+
+/** Capture to a new private directory without accumulating workspace content in memory. */
+export async function captureTangleEnvironmentEvidenceToDirectory(
+  environment: AgentEnvironment,
+  options: TangleEnvironmentEvidenceOptions & { destination: string },
+): Promise<TangleDirectoryEvidence> {
+  const context = evidenceContext(environment, options);
+  return captureTangleSandboxEvidenceToDirectory(context.box, { ...context.options, destination: options.destination });
+}
+
+/** The caller owns a successful directory; incomplete captures are removed. */
+export async function captureTangleSandboxEvidenceToDirectory(
+  box: SandboxInstanceLike,
+  options: TangleSandboxEvidenceOptions & { destination: string },
+): Promise<TangleDirectoryEvidence> {
+  const writer = await createDirectoryEvidenceWriter(options.destination, options.maxBytes, options.signal);
+  try {
+    const provenance = await captureSandboxEvidence(box, options, writer);
+    return { directory: writer.directory, provenance };
+  } catch (error) {
+    await writer.remove();
+    throw error;
+  }
+}
+
+function evidenceContext(environment: AgentEnvironment, options: TangleEnvironmentEvidenceOptions): {
+  box: SandboxInstanceLike; options: TangleSandboxEvidenceOptions;
+} {
   const state = handles.get(environment);
   if (!state || state.box.id !== environment.id) throw new Error("Tangle evidence requires a live provider environment handle");
   const controlRef = options.controlRef === undefined ? undefined : AgentExactRunControlRefSchema.parse(options.controlRef);
@@ -158,7 +197,7 @@ export async function captureTangleEnvironmentEvidence(
   if (controlRef) sessionExecutionIds[controlRef.sessionId] = [...new Set([
     ...(sessionExecutionIds[controlRef.sessionId] ?? []), controlRef.executionId,
   ])];
-  return captureTangleSandboxEvidence(state.box, {
+  return { box: state.box, options: {
     executionId,
     ...(controlRef === undefined ? {} : { runtimeExecutionId: options.executionId, controlRef }),
     harness: options.harness,
@@ -168,7 +207,7 @@ export async function captureTangleEnvironmentEvidence(
     sessionExecutionIds,
     maxBytes: options.maxBytes,
     signal: options.signal,
-  });
+  } };
 }
 
 /** Export exact Sandbox session and workspace evidence before its owning box is deleted. */
@@ -176,6 +215,16 @@ export async function captureTangleSandboxEvidence(
   box: SandboxInstanceLike,
   options: TangleSandboxEvidenceOptions,
 ): Promise<TangleEnvironmentEvidence> {
+  const writer = createMemoryEvidenceWriter(options.maxBytes, options.signal);
+  const provenance = await captureSandboxEvidence(box, options, writer);
+  return { files: writer.files.sort((a, b) => a.path.localeCompare(b.path)), provenance };
+}
+
+async function captureSandboxEvidence(
+  box: SandboxInstanceLike,
+  options: TangleSandboxEvidenceOptions,
+  writer: EvidenceWriter,
+): Promise<TangleEnvironmentEvidence["provenance"]> {
   if (!safeIdentifier(box.id) || !safeIdentifier(options.executionId)) throw new Error("Tangle evidence requires exact box and execution ids");
   const controlRef = options.controlRef === undefined ? undefined : AgentExactRunControlRefSchema.parse(options.controlRef);
   if (controlRef && (controlRef.environmentId !== box.id ||
@@ -208,7 +257,6 @@ export async function captureTangleSandboxEvidence(
   const usage = await fs.usage(workspaceRoot);
   if (!usage.complete || usage.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
   if (usage.sizeBytes > options.maxBytes) throw new Error("Tangle workspace exceeds evidence byte limit");
-  const files: TangleEnvironmentEvidence["files"] = [];
   const metadata: WorkspaceEntryMetadata[] = [];
   const seenPaths = new Set<string>();
   const excludedPaths: TangleEnvironmentEvidence["provenance"]["excludedPaths"] = [];
@@ -222,10 +270,16 @@ export async function captureTangleSandboxEvidence(
   let pendingBytes = 0;
   const flushWorkspaceFiles = async () => {
     if (!pending.length) return;
-    const captured = await readWorkspaceEvidenceBatch(fs, pending, options.maxBytes - capturedBytes, options.signal);
-    for (const file of captured) {
-      files.push(file);
-      capturedBytes += file.bytes.byteLength;
+    if (writer.download && pending.length === 1 && pending[0]!.size > WORKSPACE_BATCH_BYTES) {
+      const entry = pending[0]!;
+      await writer.download(fs, entry);
+      capturedBytes += entry.size;
+    } else {
+      const captured = await readWorkspaceEvidenceBatch(fs, pending, options.maxBytes - capturedBytes, options.signal);
+      for (const file of captured) {
+        await writer.write(file);
+        capturedBytes += file.bytes.byteLength;
+      }
     }
     pending = [];
     pendingBytes = 0;
@@ -305,46 +359,62 @@ export async function captureTangleSandboxEvidence(
         executionIds.some((executionId) => !safeIdentifier(executionId))) {
       throw new Error("Tangle evidence has invalid session execution attribution");
     }
-    const events: Array<{ executionId: string; event: unknown }> = [];
+    const counts = { events: 0, messages: 0 };
     const eventCountsByExecutionId: Record<string, number> = {};
-    for (const executionId of executionIds) {
-      eventCountsByExecutionId[executionId] = 0;
-      for await (const event of session.events({ since: "0", executionId, signal: options.signal })) {
-        options.signal?.throwIfAborted();
-        if (events.length >= MAX_EVENTS) throw new Error("Tangle event replay limit exceeded");
-        if (typeof event.data?.executionId === "string" && event.data.executionId !== executionId) {
-          throw new Error("Tangle event replay returned an unrelated execution");
+    const events = new EvidenceJsonArray(undefined, async function* () {
+      for (const executionId of executionIds) {
+        eventCountsByExecutionId[executionId] = 0;
+        for await (const event of session.events!({ since: "0", executionId, signal: options.signal })) {
+          options.signal?.throwIfAborted();
+          if (counts.events >= MAX_EVENTS) throw new Error("Tangle event replay limit exceeded");
+          if (typeof event.data?.executionId === "string" && event.data.executionId !== executionId) {
+            throw new Error("Tangle event replay returned an unrelated execution");
+          }
+          if (typeof event.data?.runtimeSessionId === "string" && event.data.runtimeSessionId !== id) {
+            throw new Error("Tangle event replay returned an unrelated session");
+          }
+          counts.events++;
+          eventCountsByExecutionId[executionId] += 1;
+          yield { executionId, event };
         }
-        if (typeof event.data?.runtimeSessionId === "string" && event.data.runtimeSessionId !== id) {
-          throw new Error("Tangle event replay returned an unrelated session");
-        }
-        const attributed = { executionId, event };
-        capturedBytes += Buffer.byteLength(JSON.stringify(attributed));
-        if (capturedBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-        events.push(attributed);
-        eventCountsByExecutionId[executionId] += 1;
       }
-    }
-    const messages: unknown[] = [];
-    for (let offset = 0; ; offset += 1000) {
-      options.signal?.throwIfAborted();
-      if (offset >= MAX_EVENTS) throw new Error("Tangle message pagination limit exceeded");
-      const page = await session.messages({ limit: 1000, offset });
-      if (!Array.isArray(page) || page.length > 1000) throw new Error("Tangle session message page is malformed");
-      capturedBytes += Buffer.byteLength(JSON.stringify(page));
-      if (capturedBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-      messages.push(...page);
-      if (page.length < 1000) break;
-    }
-    const bytes = Buffer.from(JSON.stringify({ kind: "tangle-session-transport.v1", environmentId: box.id, sessionId: id, executionIds, status, events, messages, messageScope: "session" }));
-    if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-    capturedBytes = files.reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength;
-    files.push({ path: `__retention__/sessions/${id}.json`, bytes, mode: 0o600 });
-    const rawNative = await session.rawEvidence?.();
+    });
+    const messages = new EvidenceJsonArray(undefined, async function* () {
+      const pageSize = 100;
+      for (let offset = 0; ; offset += pageSize) {
+        options.signal?.throwIfAborted();
+        if (offset >= MAX_EVENTS) throw new Error("Tangle message pagination limit exceeded");
+        const page = await session.messages!({ limit: pageSize, offset });
+        if (!Array.isArray(page) || page.length > pageSize) throw new Error("Tangle session message page is malformed");
+        for (const message of page) { counts.messages++; yield message; }
+        if (page.length < pageSize) break;
+      }
+    });
+    await writer.writeChunks(`__retention__/sessions/${id}.json`, 0o600,
+      evidenceJsonChunks({ kind: "tangle-session-transport.v1", environmentId: box.id, sessionId: id,
+        executionIds, status, events, messages, messageScope: "session" }));
+    capturedBytes = writer.byteLength;
+    const prepared = writer.directory === undefined ? undefined :
+      await prepareNativeDirectoryEvidence(session, options.maxBytes - capturedBytes, options.signal);
+    try {
+    const rawNative = prepared ? prepared.native : await session.rawEvidence?.();
     if (rawNative !== undefined && (rawNative === null || typeof rawNative !== "object")) {
       throw new Error("Tangle raw evidence is malformed");
     }
-    const native = rawNative as TangleRawEvidenceLike | undefined;
+    const native = rawNative as RetainedNativeEvidence | undefined;
+    const retainNativeContent = async (
+      entry: { sizeBytes: number; sha256?: string; contentBase64?: string }, path: string, mode: number,
+    ): Promise<number> => {
+      const ref = prepared?.payloads.get(entry);
+      if (prepared) {
+        if (!ref || !prepared.directory || ref.sizeBytes !== entry.sizeBytes || ref.sha256 !== entry.sha256 ||
+            ref.sizeBytes > options.maxBytes - writer.byteLength) throw new Error("Tangle native payload reference is absent or inconsistent");
+        return writer.writeChunks(path, mode, nativePayloadChunks(prepared.directory, ref, options.signal));
+      }
+      const bytes = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256, options.maxBytes - writer.byteLength);
+      await writer.write({ path, bytes, mode });
+      return bytes.byteLength;
+    };
     const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
       scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
     };
@@ -486,14 +556,11 @@ export async function captureTangleSandboxEvidence(
           nativePaths.add(identity);
           if (!nativeStatMetadata(entry)) throw new Error("Tangle raw session entry metadata is invalid");
           if (entry.kind === "file") {
-            const content = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256,
-              options.maxBytes - capturedBytes);
-            if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
             const contentPath = "__retention__/sessions/" + id + "/native/" +
               (entry.sourceId === undefined ? "" : entry.sourceId + "/") + entry.rootScope + "/" + path;
-            files.push({ path: contentPath, bytes: content, mode: entry.mode & 0o777 });
+            await retainNativeContent(entry, contentPath, entry.mode & 0o777);
             contentRefs.push({ jsonPointer: `/files/${index}/contentBase64`, path: contentPath });
-            capturedBytes += content.byteLength;
+            capturedBytes = writer.byteLength;
           } else if (entry.kind === "directory" || entry.kind === "symlink") {
             if (entry.contentBase64 !== undefined || entry.sha256 !== undefined ||
                 (entry.kind === "symlink" && (typeof entry.linkTarget !== "string" || entry.linkTarget.includes("\0")))) {
@@ -595,19 +662,16 @@ export async function captureTangleSandboxEvidence(
             processAttributionComplete = false;
             missing.push(`Sandbox session ${id} process ${frame.processId} has no exact source attribution`);
           }
-          const content = exactNativeBytes(frame.contentBase64, frame.sizeBytes, frame.sha256,
-            options.maxBytes - capturedBytes);
-          if (capturedBytes + content.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
           const label = String(frame.sequence).padStart(16, "0");
           const contentPath = "__retention__/sessions/" + id + "/io/" +
             (frame.sourceId === undefined ? "" : frame.sourceId + "/") + frame.processId + "/" + label +
             "-" + frame.stream + ".bin";
-          files.push({ path: contentPath, bytes: content, mode: 0o600 });
+          const contentSize = await retainNativeContent(frame, contentPath, 0o600);
           contentRefs.push({ jsonPointer: `/processIo/${index}/contentBase64`, path: contentPath });
           frameMetadata.push(withoutNativeContent(frame));
-          capturedBytes += content.byteLength;
+          capturedBytes = writer.byteLength;
           const counter = (frame.stream + "Bytes") as "stdinBytes" | "stdoutBytes" | "stderrBytes" | "protocolBytes";
-          processStreams[counter] += content.byteLength;
+          processStreams[counter] += contentSize;
           processStreams.streamCount += 1;
         }
         const terminals = new Set<string>();
@@ -664,12 +728,10 @@ export async function captureTangleSandboxEvidence(
           if (!safeIdentifier(processSource.sourceId) || !sourceHomes.has(processSource.sourceId) ||
               spoolSources.has(processSource.sourceId)) throw new Error("Tangle raw session process source identity is invalid");
           spoolSources.add(processSource.sourceId);
-          const source = exactNativeBytes(processSource.contentBase64, processSource.sizeBytes,
-            processSource.sha256, options.maxBytes - capturedBytes);
           const sourcePath = "__retention__/sessions/" + id + "/process-sources/" + processSource.sourceId + ".jsonl";
-          files.push({ path: sourcePath, bytes: source, mode: 0o600 });
-          capturedBytes += source.byteLength;
-          processStreams.sources.push({ sourceId: processSource.sourceId, path: sourcePath, sizeBytes: source.byteLength, sha256: processSource.sha256 });
+          const sourceSize = await retainNativeContent(processSource, sourcePath, 0o600);
+          capturedBytes = writer.byteLength;
+          processStreams.sources.push({ sourceId: processSource.sourceId, path: sourcePath, sizeBytes: sourceSize, sha256: processSource.sha256 });
           contentRefs.push({ jsonPointer: `/processSources/${index}/contentBase64`, path: sourcePath });
         }
         const missingSpoolSources = [...sourceHomes.keys()].filter((sourceId) => !spoolSources.has(sourceId));
@@ -704,18 +766,16 @@ export async function captureTangleSandboxEvidence(
       } else {
         throw new Error("Tangle raw session capture status is invalid");
       }
-      const manifest = Buffer.from(JSON.stringify({
-        kind: "tangle-native-session-evidence.v1", source: manifestSource, contentEncoding: "base64", contentRefs,
-      }));
-      if (capturedBytes + manifest.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-      files.push({ path: "__retention__/sessions/" + id + "/raw-manifest.json", bytes: manifest, mode: 0o600 });
-      capturedBytes += manifest.byteLength;
+      await writer.writeChunks("__retention__/sessions/" + id + "/raw-manifest.json", 0o600,
+        evidenceJsonChunks({ kind: "tangle-native-session-evidence.v1", source: manifestSource,
+          contentEncoding: "base64", contentRefs }));
+      capturedBytes = writer.byteLength;
     }
     sessions.push({
       id, executionId: artifactExecutionId, executionIds: [...executionIds], eventCountsByExecutionId,
       backendType: options.harness, sidecarImageDigest, sidecarBundleRevision,
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
-      eventCount: events.length, messageCount: messages.length, messageScope: "session",
+      eventCount: counts.events, messageCount: counts.messages, messageScope: "session",
       nativeSessionId, nativeReason, nativeStore, processStreams, nativeEvents,
       evidenceSources,
     });
@@ -727,6 +787,7 @@ export async function captureTangleSandboxEvidence(
     if (!nativeStore.complete || !processStreams.complete || !nativeEvents.complete) {
       missing.push("Raw native session capture for Sandbox session " + id + " is unavailable: " + nativeReason);
     }
+    } finally { await prepared?.remove(); }
   }
   const provenance: TangleEnvironmentEvidence["provenance"] = {
     provider: controlRef?.provider ?? "tangle-sandbox",
@@ -746,8 +807,8 @@ export async function captureTangleSandboxEvidence(
   };
   const provenanceBytes = Buffer.from(JSON.stringify({ kind: "tangle-evidence-provenance.v1", ...provenance }));
   if (capturedBytes + provenanceBytes.byteLength > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-  files.push({ path: "__retention__/provenance.json", bytes: provenanceBytes, mode: 0o600 });
-  return { files: files.sort((a, b) => a.path.localeCompare(b.path)), provenance };
+  await writer.write({ path: "__retention__/provenance.json", bytes: provenanceBytes, mode: 0o600 });
+  return provenance;
 }
 
 /** Match every response to exactly one request before accepting any file bytes. */
@@ -938,7 +999,8 @@ function nativeEventsMatch(events: readonly unknown[], sessionId: string, execut
   for (const event of events) {
     if (event === null || typeof event !== "object") throw new Error("Tangle raw session event buffer is malformed");
     const entry = event as Record<string, unknown>;
-    if (entry.metadata === null || typeof entry.metadata !== "object" || !Array.isArray(entry.frames)) {
+    if (entry.metadata === null || typeof entry.metadata !== "object" ||
+        !(Array.isArray(entry.frames) || entry.frames instanceof EvidenceJsonArray)) {
       throw new Error("Tangle raw session event buffer is malformed");
     }
     const metadata = entry.metadata as Record<string, unknown>;
@@ -946,7 +1008,8 @@ function nativeEventsMatch(events: readonly unknown[], sessionId: string, execut
         !safeIdentifier(metadata.executionId) || (!partial && !executionIds.includes(metadata.executionId)) || seen.has(metadata.executionId)) {
       throw new Error("Tangle raw session event buffer has unrelated or duplicate execution identity");
     }
-    if (!Number.isSafeInteger(metadata.eventCount) || Number(metadata.eventCount) < 0 || metadata.eventCount !== entry.frames.length) {
+    const frameCount = entry.frames instanceof EvidenceJsonArray ? entry.frames.count : entry.frames.length;
+    if (!Number.isSafeInteger(metadata.eventCount) || Number(metadata.eventCount) < 0 || metadata.eventCount !== frameCount) {
       if (!partial) throw new Error("Tangle raw session event buffer count is inconsistent");
       countsComplete = false;
     }

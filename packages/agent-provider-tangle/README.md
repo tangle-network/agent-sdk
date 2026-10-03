@@ -636,6 +636,21 @@ A restored agent environment verifies its actual backend when reconnected.
 The capture requirement also reaches checkpoint operations exposed by an environment.
 Fleet capability summaries are diagnostic observations, not placement admission.
 
+For large captures, import `captureTangleEnvironmentEvidenceToDirectory` or `captureTangleSandboxEvidenceToDirectory` from `@tangle-network/agent-provider-tangle/node`.
+Pass `destination` alongside the same capture options.
+The destination must not exist; its parent must exist.
+The result contains `directory` and `provenance`; callers own removal after durable persistence.
+Failed captures remove their private destination and native-export staging.
+
+Directory capture streams workspace files, native payloads, and event records into private files.
+It requires Sandbox `session.exportRawEvidence()` and its dedicated server archive route.
+It never falls back to the aggregate native JSON response.
+Native metadata is limited to 32 MiB and 100,000 records; an individual event record is limited to 16 MiB.
+Exceeding a bound refuses capture instead of reporting complete evidence.
+Budget disk for the captured tree, archive persistence, and overlapping native export.
+Use Runtime streamed workspace capture and restore to preserve bounded memory through persistence.
+The directory preserves the existing retention manifest, exact payload bytes, modes, attribution, and completeness rules.
+
 Call `captureTangleEnvironmentEvidence(environment, options)` before destroying a provider environment.
 For a Runtime-owned box, call `captureTangleSandboxEvidence(box, options)` with exact session and execution IDs.
 Set `workspaceRoot` to a canonical relative worker directory when the box is shared.
