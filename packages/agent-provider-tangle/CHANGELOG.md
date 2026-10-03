@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.4.1
+
+### Patch Changes
+
+- 2e90533: Validate terminal summaries independently of cumulative tool history.
+  Remove output truncation and preserve native tool arguments and results through existing retained evidence.
+  Keep text, identity, usage, and individual event bounds unchanged.
+
 ## 3.4.0
 
 ### Minor Changes
