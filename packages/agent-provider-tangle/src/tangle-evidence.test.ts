@@ -1,13 +1,62 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
-import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, noteTangleSession } from "./tangle-evidence.js";
+import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, captureTangleEnvironmentEvidenceToDirectory, noteTangleSession } from "./tangle-evidence.js";
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 const fixtureRawResponses = new WeakMap<AgentEnvironment, TangleRawEvidenceLike>();
+
+async function directoryExportFixture(environment: AgentEnvironment, options: {
+  corrupt?: "payload" | "records" | "manifest" | "truncated" | "identity";
+  afterExport?: () => void;
+} = {}) {
+  const { box, originalSession, source } = await readFixtureSource(environment);
+  let exportDirectory: string | undefined;
+  box.session = (id) => ({ ...originalSession(id),
+    async rawEvidence() { throw new Error("The aggregate native route must not be called"); },
+    async exportRawEvidence(destination) {
+      exportDirectory = destination;
+      await mkdir(destination, { mode: 0o700 });
+      let index = 0;
+      const retain = async (bytes: Buffer) => {
+        const path = `payload-${index++}`;
+        const ref = { path, sizeBytes: bytes.length, sha256: "sha256:" + createHash("sha256").update(bytes).digest("hex") };
+        await writeFile(join(destination, path), bytes, { mode: 0o600 });
+        return ref;
+      };
+      const content = async (entry: { contentBase64?: string }) => {
+        const { contentBase64, ...metadata } = entry;
+        return contentBase64 === undefined ? metadata : { ...metadata, content: await retain(Buffer.from(contentBase64, "base64")) };
+      };
+      const ndjson = async (entries: unknown[]) => ({ ...await retain(Buffer.from(entries.map(entry => JSON.stringify(entry) + "\n").join(""))), format: "ndjson", records: entries.length });
+      const files = await Promise.all(source.files.map(content));
+      const processSources = await Promise.all(source.processSources.map(content));
+      const processIo = await ndjson(await Promise.all(source.processIo.map(content)));
+      const processTerminals = await ndjson(source.processTerminals);
+      const events = await Promise.all(source.events.map(async (value) => {
+        const event = value as { metadata: unknown; frames: unknown[] };
+        return { metadata: event.metadata, frames: await ndjson(event.frames) };
+      }));
+      const manifest = { schema: "tangle.raw-evidence-archive.v1", ...source, files, processSources, processIo, processTerminals, events };
+      if (options.corrupt === "identity") manifest.sessionId = "unrelated-session";
+      const manifestBytes = Buffer.from(JSON.stringify(manifest));
+      const manifestRef = await retain(manifestBytes);
+      if (options.corrupt === "payload") await writeFile(join(destination, "payload-0"), Buffer.alloc(source.files[0]!.sizeBytes, 9));
+      if (options.corrupt === "records") await writeFile(join(destination, processIo.path), Buffer.alloc(processIo.sizeBytes, 32));
+      if (options.corrupt === "truncated") await writeFile(join(destination, events[0]!.frames.path), "");
+      if (options.corrupt === "manifest") await writeFile(join(destination, manifestRef.path), Buffer.alloc(manifestBytes.length, 32));
+      options.afterExport?.();
+      return { status: source.status, sessionId: id, directory: destination, manifestPath: join(destination, manifestRef.path),
+        manifestSha256: manifestRef.sha256, manifest, coverageComplete: source.coverageComplete, missingReasons: source.missingReasons };
+    },
+  });
+  return { source, originalSession, exportedDirectory: () => exportDirectory };
+}
 
 function spoolSource(sourceId: string, records: readonly unknown[]) {
   const bytes = Buffer.from(records.map((record) => JSON.stringify(record) + "\n").join(""));
@@ -777,5 +826,84 @@ describe("Tangle evidence capture", () => {
 
   it("refuses a path outside the listed workspace parent", async () => {
     await expect(captureTangleEnvironmentEvidence(fixture({ filePath: "../secret" }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/canonical/);
+  });
+});
+
+describe("bounded directory evidence", () => {
+  it.each([false, true])("preserves the legacy archive bytes and provenance, partial=%s", async (partial) => {
+    const environment = fixture({ native: true, partial, excludedCredential: true });
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: 1_000_000 };
+    try {
+      const expected = await captureTangleEnvironmentEvidence(environment, options);
+      const exported = await directoryExportFixture(environment);
+      const actual = await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(root, "capture") });
+      expect({ ...actual.provenance, capturedAt: expected.provenance.capturedAt }).toEqual(expected.provenance);
+      for (const file of expected.files) {
+        const bytes = await readFile(join(actual.directory, file.path));
+        if (file.path === "__retention__/provenance.json") {
+          expect({ ...JSON.parse(bytes.toString()), capturedAt: expected.provenance.capturedAt }).toEqual(JSON.parse(Buffer.from(file.bytes).toString()));
+        } else expect(bytes).toEqual(Buffer.from(file.bytes));
+        expect((await stat(join(actual.directory, file.path))).mode & 0o777).toBe(file.mode);
+      }
+      await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each(["payload", "records", "manifest", "truncated", "identity"] as const)("refuses %s corruption and removes owned staging", async (corrupt) => {
+    const environment = fixture({ native: true });
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    try {
+      const exported = await directoryExportFixture(environment, { corrupt });
+      const destination = join(root, "capture");
+      await expect(captureTangleEnvironmentEvidenceToDirectory(environment, {
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination,
+      })).rejects.toThrow();
+      await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("removes capture and native staging on cancellation", async () => {
+    const environment = fixture({ native: true });
+    const controller = new AbortController();
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    try {
+      const exported = await directoryExportFixture(environment, { afterExport: () => controller.abort() });
+      const destination = join(root, "capture");
+      await expect(captureTangleEnvironmentEvidenceToDirectory(environment, {
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination, signal: controller.signal,
+      })).rejects.toThrow();
+      await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses unsupported native export without invoking the aggregate route", async () => {
+    const environment = fixture({ native: true });
+    const box = fixtureBoxes.get(environment)!;
+    const session = box.session!.bind(box);
+    let aggregateReads = 0;
+    box.session = id => ({ ...session(id), async rawEvidence() { aggregateReads++; throw new Error("aggregate"); } });
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    try {
+      const destination = join(root, "capture");
+      await expect(captureTangleEnvironmentEvidenceToDirectory(environment, {
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination,
+      })).rejects.toThrow(/requires bounded native export/);
+      expect(aggregateReads).toBe(0);
+      await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("preserves existing destination content", async () => {
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    try {
+      await writeFile(join(root, "owned.txt"), "existing");
+      await expect(captureTangleEnvironmentEvidenceToDirectory(fixture(), {
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination: root,
+      })).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await readFile(join(root, "owned.txt"), "utf8")).toBe("existing");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
