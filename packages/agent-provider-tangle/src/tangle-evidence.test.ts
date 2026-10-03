@@ -191,6 +191,76 @@ async function rotatedFixture(partial = false) {
 }
 
 describe("Tangle evidence capture", () => {
+
+  it.each(["memory", "directory"] as const)("recovers original admitted callers after reconstruction through %s capture", async (mode) => {
+    const { environment: original, source } = await rotatedFixture();
+    const box = fixtureBoxes.get(original)!;
+    const controlRefs: AgentExactRunControlRef[] = ["exec-1", "exec-2"].map((executionId, i) => ({
+      runId: "original-" + executionId, provider: original.provider, environmentId: original.id,
+      sessionId: "session-1", executionId, requestDigest: `sha256:${String(i + 1).repeat(64)}`,
+    }));
+    for (const value of source.events) {
+      const event = value as { metadata: { executionId: string; eventCount: number }; frames: unknown[] };
+      const ref = controlRefs.find(ref => ref.executionId === event.metadata.executionId)!;
+      event.frames.unshift({ type: "execution.started", sessionId: ref.sessionId, executionId: ref.executionId,
+        data: { sessionId: ref.sessionId, executionId: ref.executionId, runControlRef: ref } });
+      event.metadata.eventCount++;
+    }
+    if (mode === "directory") await directoryExportFixture(original);
+    const environment = { id: original.id, provider: original.provider } as AgentEnvironment;
+    bindTangleEvidenceEnvironment(environment, box);
+    const directory = await mkdtemp(join(tmpdir(), "retained-callers-"));
+    try {
+      const options = { executionId: "current-runtime-turn", controlRef: controlRefs[1]!,
+        harness: "opencode" as const, maxBytes: 100_000 };
+      const captured = mode === "directory"
+        ? await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(directory, "capture") })
+        : await captureTangleEnvironmentEvidence(environment, options);
+      expect(captured.provenance.missing).toEqual([]);
+      expect(captured.provenance.sessions[0]?.executionIds).toEqual(["exec-2", "exec-1"]);
+      expect(captured.provenance.sessions[0]?.controlRefs).toEqual(controlRefs);
+      expect(captured.provenance.attempts.map(attempt => attempt.executionId)).toEqual(["exec-1", "exec-2"]);
+      expect(captured.provenance.sessions[0]?.nativeStore.complete).toBe(true);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it.each(["wrong-anchor", "conflicting", "missing", "malformed", "wrong-environment"] as const)(
+    "keeps %s historical caller attribution explicit", async (fault) => {
+      const { environment: original, source } = await rotatedFixture();
+      const box = fixtureBoxes.get(original)!;
+      const refs: AgentExactRunControlRef[] = ["exec-1", "exec-2"].map((executionId, i) => ({
+        runId: "original-" + executionId, provider: original.provider, environmentId: original.id,
+        sessionId: "session-1", executionId, requestDigest: `sha256:${String(i + 1).repeat(64)}`,
+      }));
+      for (const value of source.events) {
+        const event = value as { metadata: { executionId: string; eventCount: number }; frames: unknown[] };
+        const ref = refs.find(ref => ref.executionId === event.metadata.executionId)!;
+        if (fault === "missing" && ref.executionId === "exec-1") continue;
+        const recorded = { ...ref };
+        if (ref.executionId === "exec-1") {
+          if (fault === "malformed") recorded.requestDigest = "invalid" as typeof ref.requestDigest;
+          if (fault === "wrong-environment") recorded.environmentId = "other-box";
+        }
+        const frame = { type: "execution.started", sessionId: ref.sessionId, executionId: ref.executionId,
+          data: { sessionId: ref.sessionId, executionId: ref.executionId, runControlRef: recorded } };
+        event.frames.unshift(frame);
+        if (fault === "conflicting" && ref.executionId === "exec-1") event.frames.push({
+          ...frame, data: { ...frame.data, runControlRef: { ...ref, requestDigest: `sha256:${"9".repeat(64)}` } },
+        });
+        event.metadata.eventCount = event.frames.length;
+      }
+      const environment = { id: original.id, provider: original.provider } as AgentEnvironment;
+      bindTangleEvidenceEnvironment(environment, box);
+      const anchor = fault === "wrong-anchor" ? { ...refs[1]!, requestDigest: `sha256:${"9".repeat(64)}` as const } : refs[1]!;
+      const captured = await captureTangleEnvironmentEvidence(environment, {
+        executionId: "current-runtime-turn", controlRef: anchor, harness: "opencode", maxBytes: 100_000,
+      });
+      expect(captured.provenance.sessions[0]?.executionIds).toEqual(["exec-2"]);
+      expect(captured.provenance.sessions[0]?.nativeStore.complete).toBe(false);
+      expect(captured.provenance.missing).toContain("Sandbox session session-1 has an execution without retained caller attribution: exec-1");
+      expect(captured.files.some(file => file.path.includes("/native/source-1/"))).toBe(true);
+    });
+
   it.each([false, true])("captures exact admitted coordinates after cache loss, partial=%s", async (partial) => {
     const original = fixture({ native: true, partial });
     const box = fixtureBoxes.get(original)!;

@@ -74,6 +74,8 @@
     "dist/tangle-evidence-json.d.ts",
     "dist/tangle-evidence-native-files.js",
     "dist/tangle-evidence-native-files.d.ts",
+    "dist/tangle-retained-attribution.js",
+    "dist/tangle-retained-attribution.d.ts",
     "dist/tangle-native-capture-proof.d.ts",
     "dist/tangle-native-capture-proof.js",
     "dist/tangle-environment-dispatch.d.ts",
