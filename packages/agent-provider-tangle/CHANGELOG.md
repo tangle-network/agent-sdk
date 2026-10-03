@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.4.2
+
+### Patch Changes
+
+- 131468c: Keep the creation-selected account on later turns for Codex and Kimi subscription environments.
+  Per-turn account selection remains limited to Claude setup tokens; before this change every fresh Codex turn under a resolver failed.
+
 ## 3.4.1
 
 ### Patch Changes
