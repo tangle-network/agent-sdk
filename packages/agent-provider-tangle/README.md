@@ -160,7 +160,8 @@ A deliberate new turn can select another eligible account. The selected referenc
 The Provider grants only that named secret through the authenticated Sandbox API before native execution.
 
 This handoff requires the SDK's `grantNativeCredential` operation and a container reporting `claudeTokenContinuations: true`.
-Only Claude token references are qualified. Other harnesses, bundles, and files refuse dynamic handoff before inference.
+Only Claude token references are qualified. A Claude bundle or files reference refuses dynamic handoff before inference.
+Codex and Kimi references keep the account the resolver selected at creation on every turn; that admission already covered the run deadline.
 The Sidecar retires the idle adapter, preserves its original transcript HOME and native session, and acquires the newly selected credential.
 An active credential lease refuses replacement.
 Exact event/result replay never selects or installs credentials and leaves the admitted request unchanged.
