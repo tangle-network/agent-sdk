@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PromptOptions } from "@tangle-network/sandbox";
 import { createTangleProvider, type SandboxInstanceLike } from "./index.js";
-import { sessionPromptRequestDigest } from "./tangle-environment-control.js";
+import { hasReplayPayload, sessionPromptRequestDigest } from "./tangle-environment-control.js";
 import {
   backendRequestIdentity,
   promptOptionsFromTurnInput,
@@ -319,5 +319,50 @@ describe("Tangle per-turn backend options", () => {
       authMode: "oauth",
       authFiles: [{ path: ".config/opencode/auth.json", mode: 0o600 }],
     });
+  });
+});
+
+
+describe("typed exact turn profile projection", () => {
+  const profile = { name: "worker", harness: "claude-code" as const, tools: { Read: true } };
+
+  it("accepts a matching legacy declaration without changing the exact profile", () => {
+    const options = promptOptionsFromTurnInput({
+      prompt: "run", profile,
+      providerOptions: { backend: { type: "claude-code", profile: { tools: { Read: true }, harness: "claude-code", name: "worker" } } },
+    }, target);
+    expect(options.backend?.profile).toEqual(profile);
+  });
+
+  it("refuses contradictory profile and harness declarations", () => {
+    expect(() => promptOptionsFromTurnInput({
+      prompt: "run", profile,
+      providerOptions: { backend: { profile: { ...profile, tools: { Bash: true } } } },
+    }, target)).toThrow(/profile conflicts with its backend profile/);
+    expect(() => promptOptionsFromTurnInput({
+      prompt: "run", profile,
+      providerOptions: { backend: { type: "codex" } },
+    }, target)).toThrow(/profile conflicts with its backend harness/);
+  });
+
+  it("binds the typed profile into retained identity and explicit replay payload", () => {
+    const typed = { prompt: "run", turnId: "same-turn", profile };
+    const legacy = { prompt: "run", turnId: "same-turn", providerOptions: { backend: { profile } } };
+    const digest = (input: Parameters<typeof sessionPromptRequestDigest>[0]) => sessionPromptRequestDigest(input, target.provider, target.environmentId, "session-1");
+    expect(digest(typed)).toBe(digest(legacy));
+    expect(digest(typed)).not.toBe(digest({ ...typed, profile: { ...profile, tools: { Bash: true } } }));
+    expect(hasReplayPayload({ profile })).toBe(true);
+  });
+
+  it("retains profile-aware payload limits and bounded profile metadata", () => {
+    for (const resources of [
+      { files: [{ path: "too-large.txt", resource: { kind: "inline" as const, name: "large", content: "x".repeat(4 * 1024 * 1024 + 1) } }] },
+      { instructions: "x".repeat(1024 * 1024) },
+    ]) {
+      expect(() => promptOptionsFromTurnInput({ prompt: "run", profile: { ...profile, resources } }, target)).toThrow(/bound/);
+    }
+    expect(() => promptOptionsFromTurnInput({
+      prompt: "run", profile: { ...profile, metadata: { long: "x".repeat(16385) } },
+    }, target)).toThrow(/bound/);
   });
 });

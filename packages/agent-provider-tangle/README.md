@@ -30,6 +30,12 @@ const provider = createTangleProvider({
 `Sandbox` requires an explicit `baseUrl`.
 Set `TANGLE_SANDBOX_URL` to use another deployment.
 
+`AgentTurnInput.profile` carries the exact per-turn profile, including mounted file contents larger than the metadata limit.
+The adapter projects it into Sandbox's backend profile and enforces the existing file, inline-payload, and aggregate limits.
+Previously valid `providerOptions.backend.profile` inputs remain supported.
+If both locations are supplied, their canonical profile digests must match; a conflict refuses dispatch before credential selection.
+Use the typed field for large profiles; generic provider metadata keeps its existing limits.
+
 Exact execution replay preserves the admitted request and its digest.
 An explicit replay override cannot replace the selected account, credential channel, or harness.
 

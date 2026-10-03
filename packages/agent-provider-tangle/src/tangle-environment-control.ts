@@ -8,7 +8,7 @@ import type {
   SandboxSessionLike,
 } from "./tangle-types.js";
 import {
-  backendFromTurnProviderOptions,
+  backendFromTurnInput,
   backendRequestIdentity,
 } from "./tangle-prompt.js";
 
@@ -20,7 +20,7 @@ export function sessionPromptRequestDigest(
   options: { executionId?: string; nonce?: string } = {},
 ): `sha256:${string}` {
   const backend = backendRequestIdentity(
-    backendFromTurnProviderOptions(input.providerOptions),
+    backendFromTurnInput(input),
   );
   return canonicalCandidateDigest({
     provider,
@@ -51,6 +51,7 @@ export function sessionPromptRequestDigest(
 
 export function hasReplayPayload(input: AgentTurnInput): boolean {
   return (
+    input.profile !== undefined ||
     input.prompt !== undefined ||
     input.parts !== undefined ||
     input.model !== undefined ||

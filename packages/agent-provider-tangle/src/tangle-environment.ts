@@ -272,11 +272,14 @@ export async function sandboxInstanceAsEnvironment(
     assertCliAuthReferenceSupported(harness, selectedModel);
     // Validate explicit substitutions even on replay, without rewriting its admitted digest.
     if (replay) return input;
+    const { profile: _profile, ...backendOptions } = backend ?? {};
     return {
       ...input,
       providerOptions: {
         ...input.providerOptions,
-        backend: { ...backend, type: harness, model: { ...selectedModel, authMode: "oauth" } },
+        // The next validation still sees bounded options, while projection reads
+        // the exact typed profile again for the actual SDK dispatch.
+        backend: { ...(input.profile === undefined ? backend : backendOptions), type: harness, model: { ...selectedModel, authMode: "oauth" } },
       },
     };
   };

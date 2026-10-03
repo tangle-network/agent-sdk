@@ -6,7 +6,8 @@ import {
   canonicalCandidateJson,
 } from "./agent-candidate-schema-common.js";
 import type { Sha256Digest } from "./agent-candidate.js";
-import type { AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
+import type { AgentProfile, AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
+import { agentProfileSchema } from "./profile-schema.js";
 import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
 import { TokenUsageSchema, type TokenUsage } from "./execution-types.js";
@@ -32,6 +33,8 @@ import type {
 import type { AgentTerminalSession, TerminalAttachRequest, TerminalAttachResult } from "./environment-terminal.js";
 
 export interface AgentTurnInput {
+  /** Exact behavior for this turn, separate from bounded provider metadata. */
+  profile?: AgentProfile;
   prompt?: string;
   parts?: InputPart[];
   sessionId?: string;
@@ -55,6 +58,7 @@ export interface AgentTurnInput {
 }
 
 export const AgentTurnInputSchema = z.strictObject({
+  profile: agentProfileSchema.optional(),
   // A prompt is what the agent is asked to do, so it is CONTENT: its size is set by the work,
   // not by the protocol. Held to the metadata bound it capped a manager's brief at 16,384
   // characters, which refused a director handing a checker a 27 KB patch to re-verify a measured

@@ -36,11 +36,11 @@ import { promptFromTurnInput } from "./tangle-prompt.js";
  *
  * 2.7.0 is where a prompt stopped being metadata. 2.8.0 is where CONTRACT_MAX_ARRAY_LENGTH,
  * CONTRACT_MAX_IDENTIFIER_LENGTH and CONTRACT_MAX_STRING_LENGTH became public, which is what lets
- * this package assert its own bounds at all. Both are load-bearing here, so the floor is the later
- * one. A range that admits less than this is the defect, and it is invisible in a workspace that
+ * this package assert its own bounds at all. 2.17.0 adds the exact typed turn profile outside bounded metadata. These contracts
+ * are load-bearing here, so the floor is the latest one. A range that admits less than this is the defect, and it is invisible in a workspace that
  * overrides the resolution, so it is asserted rather than left to review.
  */
-const REQUIRED_INTERFACE_FLOOR = "2.8.0";
+const REQUIRED_INTERFACE_FLOOR = "2.17.0";
 
 /** The metadata bound's value, written out because a resolution old enough to fail this file is
  *  also too old to export the constant. One case below asserts the two agree. */
@@ -124,6 +124,14 @@ describe("the agent-interface resolution this provider validates with", () => {
     expect(promptFromTurnInput({ prompt })).toBe(prompt);
   });
 
+  it("preserves a typed profile on the resolved turn schema", () => {
+    const profile = { name: "typed-turn", resources: { files: [{
+      path: "evidence.txt", resource: { kind: "inline" as const, name: "evidence", content: "x".repeat(METADATA_BOUND + 1) },
+    }] } };
+    const parsed = agentInterface.AgentTurnInputSchema.parse({ prompt: "Continue", profile });
+    expect(parsed.profile).toEqual(profile);
+  });
+
   it("does not refuse an interactive prompt for its length", () => {
     // The digest and the session coordinates are deliberately unmatched, so this command is
     // invalid. The assertion is only that `prompt` is not among the reasons: a length issue here is
@@ -159,7 +167,7 @@ describe("the agent-interface resolution this provider validates with", () => {
     // file does not fail, it fails to LOAD, which is how the seam it guards stops being checked.
     expect(
       agentInterface.CONTRACT_MAX_STRING_LENGTH,
-      `the resolved @tangle-network/agent-interface (${resolvedInterfaceVersion()}) does not export CONTRACT_MAX_STRING_LENGTH, which became public in ${REQUIRED_INTERFACE_FLOOR} (agent-sdk#315).`,
+      `the resolved @tangle-network/agent-interface (${resolvedInterfaceVersion()}) does not export CONTRACT_MAX_STRING_LENGTH, which became public in 2.8.0 (agent-sdk#315).`,
     ).toBe(METADATA_BOUND);
     expect(agentInterface.CONTRACT_MAX_IDENTIFIER_LENGTH).toBeTypeOf("number");
     expect(agentInterface.CONTRACT_MAX_ARRAY_LENGTH).toBeTypeOf("number");
@@ -185,7 +193,7 @@ describe("the agent-interface resolution this provider validates with", () => {
     const floor = declaredFloor(selfManifest.dependencies?.["@tangle-network/agent-interface"]);
     expect(
       compareVersions(floor, REQUIRED_INTERFACE_FLOOR),
-      `agent-provider-tangle declares ^${floor} for @tangle-network/agent-interface but its validation needs ${REQUIRED_INTERFACE_FLOOR}: the content-bound prompt (2.7.0) and the public contract bounds (2.8.0). Raise the range, or move this floor and say what changed.`,
+      `agent-provider-tangle declares ^${floor} for @tangle-network/agent-interface but its validation needs ${REQUIRED_INTERFACE_FLOOR}: the content-bound prompt (2.7.0), public contract bounds (2.8.0), and typed turn profile (2.17.0). Raise the range, or move this floor and say what changed.`,
     ).toBeGreaterThanOrEqual(0);
   });
 });

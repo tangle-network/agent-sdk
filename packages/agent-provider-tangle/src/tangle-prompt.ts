@@ -17,6 +17,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import {
   agentProfileSchema,
+  canonicalAgentProfileDigest,
   CONTRACT_MAX_JSON_BYTES,
   boundedEventContentRecordSchema,
   isBoundedEventContentJson,
@@ -522,6 +523,27 @@ export function backendRequestIdentity(
   };
 }
 
+/** Project the exact turn profile once for both dispatch and retained identity. */
+export function backendFromTurnInput(
+  input: AgentTurnInput,
+): SandboxPromptBackend | undefined {
+  const declared = backendFromTurnProviderOptions(input.providerOptions);
+  let backend = declared;
+  if (input.profile !== undefined) {
+    if (declared?.profile !== undefined &&
+      canonicalAgentProfileDigest(declared.profile) !== canonicalAgentProfileDigest(input.profile)) {
+      throw new Error("Tangle turn profile conflicts with its backend profile");
+    }
+    if (declared?.type !== undefined && input.profile.harness !== undefined && declared.type !== input.profile.harness) {
+      throw new Error("Tangle turn profile conflicts with its backend harness");
+    }
+    // Validate the complete projected backend, including the existing file/inline
+    // payload bounds. The typed profile never becomes provider metadata.
+    backend = sandboxPromptBackend({ ...declared, profile: input.profile });
+  }
+  return backend;
+}
+
 /**
  * Combine the turn's requested interaction posture with its backend options.
  *
@@ -534,7 +556,7 @@ export function backendRequestIdentity(
 function turnBackendOptions(
   input: AgentTurnInput,
 ): SandboxPromptBackend | undefined {
-  const backend = backendFromTurnProviderOptions(input.providerOptions);
+  const backend = backendFromTurnInput(input);
   const backendModel = backend?.model?.model;
   if (
     input.model !== undefined &&
