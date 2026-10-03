@@ -674,8 +674,10 @@ Partial capture retains the readable native files, process frames, and events in
 Its missing reasons prevent a complete receipt and keep the source available for recovery.
 An unknown attempt outcome or native session identity remains explicit.
 Reconnecting uses the execution ID from the validated durable control reference.
-Earlier executions without retained caller attribution stay in the raw manifest with explicit gaps.
-The caller's attempt projection includes only its known execution IDs.
+Earlier callers are recovered from retained server `execution.started` records only when the current exact control reference matches its recorded admission.
+Recovery validates the provider, environment, session and execution, and preserves each original reference and request digest in `sessions[].controlRefs`.
+Missing, malformed or conflicting historical admissions stay in the raw manifest with explicit gaps.
+The attempt projection includes only caller-known or admission-verified execution IDs.
 The capture records the running sidecar image digest and the served Sidecar bundle revision.
 The image digest can be compared with the pre-create proof only when that proof identifies the actual placement image.
 An incomplete inventory, missing stream, unrelated backend, or mismatched digest does not produce complete evidence.

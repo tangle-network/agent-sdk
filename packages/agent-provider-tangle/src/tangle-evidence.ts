@@ -6,6 +6,7 @@ import { AgentExactRunControlRefSchema, type AgentExactRunControlRef, type Agent
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike } from "./tangle-types.js";
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
+import { retainedCaptureAttribution } from "./tangle-retained-attribution.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
@@ -78,6 +79,8 @@ export interface TangleEnvironmentEvidence {
       id: string;
       executionId: string;
       executionIds: string[];
+      /** Original admitted references recovered from retained server frames. */
+      controlRefs?: AgentExactRunControlRef[];
       eventCountsByExecutionId: Record<string, number>;
       backendType: string;
       sidecarImageDigest: string | null;
@@ -354,10 +357,55 @@ async function captureSandboxEvidence(
       missing.push(`Sandbox session ${id} no longer exists`);
       continue;
     }
-    const executionIds = options.sessionExecutionIds?.[id] ?? [options.executionId];
+    const prepared = writer.directory === undefined ? undefined :
+      await prepareNativeDirectoryEvidence(session, options.maxBytes - capturedBytes, options.signal);
+    try {
+    const rawNative = prepared ? prepared.native : await session.rawEvidence?.();
+    if (rawNative !== undefined && (rawNative === null || typeof rawNative !== "object")) {
+      throw new Error("Tangle raw evidence is malformed");
+    }
+    const native = rawNative as RetainedNativeEvidence | undefined;
+    const retainNativeContent = async (
+      entry: { sizeBytes: number; sha256?: string; contentBase64?: string }, path: string, mode: number,
+    ): Promise<number> => {
+      const ref = prepared?.payloads.get(entry);
+      if (prepared) {
+        if (!ref || !prepared.directory || ref.sizeBytes !== entry.sizeBytes || ref.sha256 !== entry.sha256 ||
+            ref.sizeBytes > options.maxBytes - writer.byteLength) throw new Error("Tangle native payload reference is absent or inconsistent");
+        return writer.writeChunks(path, mode, nativePayloadChunks(prepared.directory, ref, options.signal));
+      }
+      const bytes = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256, options.maxBytes - writer.byteLength);
+      await writer.write({ path, bytes, mode });
+      return bytes.byteLength;
+    };
+    const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
+      scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
+    };
+    const processStreams: TangleEnvironmentEvidence["provenance"]["sessions"][number]["processStreams"] = {
+      complete: false, streamCount: 0, processCount: 0, terminalCount: 0,
+      stdinBytes: 0, stdoutBytes: 0, stderrBytes: 0, protocolBytes: 0, terminals: [],
+      sources: [],
+    };
+    const nativeEvents: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeEvents"] = {
+      scope: "execution", complete: false, count: 0,
+    };
+    const executionIds = [...(options.sessionExecutionIds?.[id] ?? [options.executionId])];
     if (!executionIds.length || new Set(executionIds).size !== executionIds.length ||
         executionIds.some((executionId) => !safeIdentifier(executionId))) {
       throw new Error("Tangle evidence has invalid session execution attribution");
+    }
+    let recoveredControlRefs: AgentExactRunControlRef[] = [];
+    let admissionMissing: string[] = [];
+    if (controlRef && native && (native.status === "captured" || native.status === "partial") &&
+        Array.isArray(native.attempts) && Array.isArray(native.events) &&
+        native.attempts.some(attempt => isEvidenceAttempt(attempt) && !executionIds.includes(attempt.executionId))) {
+      const recovered = await retainedCaptureAttribution(native.events, controlRef, options.signal);
+      recoveredControlRefs = recovered.controlRefs;
+      admissionMissing = recovered.missing;
+      for (const ref of recoveredControlRefs) {
+        if (!executionIds.includes(ref.executionId)) executionIds.push(ref.executionId);
+      }
+      missing.push(...admissionMissing);
     }
     const counts = { events: 0, messages: 0 };
     const eventCountsByExecutionId: Record<string, number> = {};
@@ -394,38 +442,6 @@ async function captureSandboxEvidence(
       evidenceJsonChunks({ kind: "tangle-session-transport.v1", environmentId: box.id, sessionId: id,
         executionIds, status, events, messages, messageScope: "session" }));
     capturedBytes = writer.byteLength;
-    const prepared = writer.directory === undefined ? undefined :
-      await prepareNativeDirectoryEvidence(session, options.maxBytes - capturedBytes, options.signal);
-    try {
-    const rawNative = prepared ? prepared.native : await session.rawEvidence?.();
-    if (rawNative !== undefined && (rawNative === null || typeof rawNative !== "object")) {
-      throw new Error("Tangle raw evidence is malformed");
-    }
-    const native = rawNative as RetainedNativeEvidence | undefined;
-    const retainNativeContent = async (
-      entry: { sizeBytes: number; sha256?: string; contentBase64?: string }, path: string, mode: number,
-    ): Promise<number> => {
-      const ref = prepared?.payloads.get(entry);
-      if (prepared) {
-        if (!ref || !prepared.directory || ref.sizeBytes !== entry.sizeBytes || ref.sha256 !== entry.sha256 ||
-            ref.sizeBytes > options.maxBytes - writer.byteLength) throw new Error("Tangle native payload reference is absent or inconsistent");
-        return writer.writeChunks(path, mode, nativePayloadChunks(prepared.directory, ref, options.signal));
-      }
-      const bytes = exactNativeBytes(entry.contentBase64, entry.sizeBytes, entry.sha256, options.maxBytes - writer.byteLength);
-      await writer.write({ path, bytes, mode });
-      return bytes.byteLength;
-    };
-    const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
-      scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
-    };
-    const processStreams: TangleEnvironmentEvidence["provenance"]["sessions"][number]["processStreams"] = {
-      complete: false, streamCount: 0, processCount: 0, terminalCount: 0,
-      stdinBytes: 0, stdoutBytes: 0, stderrBytes: 0, protocolBytes: 0, terminals: [],
-      sources: [],
-    };
-    const nativeEvents: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeEvents"] = {
-      scope: "execution", complete: false, count: 0,
-    };
     let nativeSessionId: string | null = null;
     let sidecarImageDigest: string | null = null;
     let sidecarBundleRevision: string | null = null;
@@ -443,7 +459,7 @@ async function captureSandboxEvidence(
       nativeSessionId = native.nativeSessionId ?? null;
       if (native.status === "captured" || native.status === "partial") {
         const declaredPartial = native.status === "partial";
-        let partial = declaredPartial;
+        let partial = declaredPartial || admissionMissing.length > 0;
         if (captureProof && (native.proofStatus !== "verified" ||
             native.containerId !== captureProof.containerId ||
             native.sidecarImageDigest !== captureProof.imageId ||
@@ -510,7 +526,7 @@ async function captureSandboxEvidence(
         let processAttributionComplete = sourceCoverage;
         const nativeEventCoverage = nativeEventsMatch(native.events, id, executionIds, partial);
         attempts.push(...sessionAttempts.filter((attempt) => executionIds.includes(attempt.executionId)));
-        if (partial) missing.push(`Sandbox session ${id} declared partial raw capture`);
+        if (declaredPartial) missing.push(`Sandbox session ${id} declared partial raw capture`);
         for (const reason of native.missingReasons) missing.push(`Sandbox session ${id}: ${reason}`);
         for (const attempt of sessionAttempts) {
           for (const reason of attempt.missingReasons) {
@@ -773,6 +789,7 @@ async function captureSandboxEvidence(
     }
     sessions.push({
       id, executionId: artifactExecutionId, executionIds: [...executionIds], eventCountsByExecutionId,
+      ...(recoveredControlRefs.length ? { controlRefs: recoveredControlRefs } : {}),
       backendType: options.harness, sidecarImageDigest, sidecarBundleRevision,
       transportEvents: executionIds.every((executionId) => eventCountsByExecutionId[executionId] > 0) ? "complete" : "unavailable",
       eventCount: counts.events, messageCount: counts.messages, messageScope: "session",
