@@ -8,6 +8,7 @@ import {
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { optionalNonEmptyString } from "./tangle-environment-values.js";
 import { tokenUsageFromData } from "./tangle-result-values.js";
+import { sandboxTerminalProjection } from "./tangle-prompt.js";
 
 type EventRecord = Record<string, unknown>;
 
@@ -215,8 +216,11 @@ export function environmentEventFromSandboxEvent(
   ) {
     throw new Error("Tangle Sandbox event contained an invalid event id");
   }
-  const data = record.data as Record<string, unknown>;
-  assertBoundedRecord(record);
+  const terminal = record.type === "result" || record.type === "done";
+  const sourceData = record.data as Record<string, unknown>;
+  const projected = terminal && Object.hasOwn(sourceData, "toolInvocations");
+  const data = projected ? sandboxTerminalProjection(sourceData) : sourceData;
+  assertBoundedRecord(projected ? { ...record, data } : record);
   if (Object.prototype.hasOwnProperty.call(data, "contextTransferReceipt")) {
     throw new Error(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
@@ -284,7 +288,9 @@ export function environmentEventFromSandboxEvent(
     // contribute a total to whatever sums these events.
     ...(usage ? { usage } : {}),
     ...(usageMode === undefined ? {} : { usageMode }),
-    providerEvent: event,
+    // A terminal projection is not the complete native event. The source is
+    // available through exact session/execution evidence, including tool history.
+    ...(!projected ? { providerEvent: event } : {}),
   };
 }
 
