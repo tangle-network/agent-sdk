@@ -229,9 +229,12 @@ export async function sandboxInstanceAsEnvironment(
     let selectedReference = nativeReference;
     // Exact reads retain the admitted execution. A new operation obtains a new durable
     // account-owner binding; retries of that operation present the same key after restart.
-    if (!replay && request?.resolveModelCredentials !== undefined) {
+    // Per-turn account selection exists for Claude setup tokens, whose named-grant continuation
+    // Sandbox proves. Other harnesses keep the account selected at creation, whose admission
+    // already covered the run deadline.
+    if (!replay && request?.resolveModelCredentials !== undefined && harness === "claude-code") {
       if (!deployment.claudeTokenContinuations || box.grantNativeCredential === undefined ||
-          harness !== "claude-code" || nativeReference.format !== "token") {
+          nativeReference.format !== "token") {
         throw new Error("Tangle fresh subscription turns require proven Claude token continuation and named-grant support");
       }
       const profile = backend?.profile;
