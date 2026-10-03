@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 2.17.0
+
+### Minor Changes
+
+- Carry exact per-turn AgentProfiles outside bounded provider metadata.
+  Preserve mounted payloads, reject conflicting duplicate profiles, and keep native credential preparation from copying the typed profile back into metadata.
+
 ## 2.16.0
 
 ### Minor Changes

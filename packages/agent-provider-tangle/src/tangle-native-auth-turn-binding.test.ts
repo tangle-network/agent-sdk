@@ -222,6 +222,57 @@ describe("owner-selected native turns", () => {
     return { bindings, resolve };
   }
 
+  it.each(["stream", "dispatch", "session"] as const)(
+    "preserves a large typed profile through selected credentials and recovered %s handles",
+    async (operation) => {
+      const f = setup(true);
+      const accountOwner = owner();
+      const exactProfile = {
+        ...profile,
+        resources: { files: Array.from({ length: 110 }, (_, index) => ({
+          path: `inputs/source-${index}.txt`,
+          resource: { kind: "inline" as const, name: `source-${index}`, content: "evidence".repeat(2600) },
+        })) },
+      };
+      const provider = createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve });
+      const created = await provider.create({ profile: exactProfile, idempotencyKey: "large-profile-create" });
+      const replacement = createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve });
+      const recovered = await replacement.get!(created.id);
+      if (!recovered) throw new Error("Expected recovered environment");
+      const input: AgentTurnInput = {
+        prompt: "Continue the research", turnId: "large-profile-turn", sessionId: "native-session", profile: exactProfile,
+        providerOptions: { backend: { type: "claude-code", model: { authMode: "oauth" } } },
+      };
+      const before = structuredClone(input);
+      for (const env of [created, recovered]) {
+        if (operation === "stream") for await (const _event of env.stream(input)) {}
+        if (operation === "dispatch") await env.dispatch!(input);
+        if (operation === "session") await env.session!("native-session").prompt(input);
+      }
+      expect(f.creates).toHaveLength(1);
+      expect(f.calls).toHaveLength(2);
+      expect(f.grants).toHaveLength(2);
+      expect(f.calls.map(call => call.options?.backend?.profile)).toEqual([exactProfile, exactProfile]);
+      expect(f.calls.map(call => call.options?.backend?.model?.cliAuth?.account)).toEqual(["ACCOUNT_2", "ACCOUNT_2"]);
+      for (const [call] of accountOwner.resolve.mock.calls) expect(call.profile).toEqual(exactProfile);
+      expect(input).toEqual(before);
+      expect(input.providerOptions?.backend).not.toHaveProperty("profile");
+      if (operation === "dispatch") expect(f.calls[0]?.options?.runControlRef).toEqual(f.calls[1]?.options?.runControlRef);
+    },
+  );
+
+  it("refuses conflicting typed profiles before owner selection, grants, or dispatch", async () => {
+    const f = setup(true);
+    const accountOwner = owner();
+    const env = await createTangleProvider({ client: f.client, modelCredentials: accountOwner.resolve })
+      .create({ profile, idempotencyKey: "create" });
+    await expect(env.dispatch!({ ...turn(), profile: { ...profile, name: "different-profile" } }))
+      .rejects.toThrow(/profile conflicts/);
+    expect(accountOwner.resolve).toHaveBeenCalledTimes(1);
+    expect(f.grants).toHaveLength(0);
+    expect(f.calls).toHaveLength(0);
+  });
+
   it("selects a new turn before digest minting and recovers its same binding after provider replacement", async () => {
     const f = setup(true);
     const accountOwner = owner();

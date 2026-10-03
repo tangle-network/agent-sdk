@@ -42,6 +42,12 @@ The public `AgentInstanceRecord` contains a credential-free profile identity, no
 
 ## Durable runs, interactions, and context
 
+`AgentTurnInput.profile` carries the exact `AgentProfile` for a turn through its canonical schema.
+Keep mounted resources and behavior in this typed field, separate from bounded `providerOptions` metadata.
+Providers must honor the profile or refuse it before dispatch; callers must not assume every provider supports per-turn profile changes.
+Provider-specific payload and capability limits still apply.
+
+
 `AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
 `RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
 The `child-task` event reports one update of a provider-native child task (a subagent, worker, or delegated task) with a stable `childId`, an optional `parentChildId`, a lifecycle status, start and update times, and the runner, model, usage, and terminal reason when the provider reports them.
