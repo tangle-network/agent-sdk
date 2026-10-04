@@ -44,8 +44,8 @@ export {
  */
 export const PROFILE_KB_SOURCES = ["harness", "model", "learning"] as const;
 
-/** Date the knowledge base was last checked against its sources. */
-export const PROFILE_KB_CHECKED_AT = "2026-09-22";
+/** Date of the latest source audit; individual historical observations retain their own dates. */
+export const PROFILE_KB_CHECKED_AT = "2026-10-04";
 
 /** Find a harness entry by its {@link HarnessType}. */
 export function findProfileKbHarness(
@@ -179,14 +179,14 @@ export function profileKbGuidance(
     blocks.push({
       source: "harness",
       id: harness.id,
-      text: `You are running in ${harness.name}.\n${bullets(harness.prompt)}`,
+      text: `Harness guidance: ${harness.name}.\n${bullets(harness.prompt)}`,
     });
   }
   if (model && model.prompt.length > 0) {
     blocks.push({
       source: "model",
       id: model.id,
-      text: `You are ${model.name}.\n${bullets(model.prompt)}`,
+      text: `Model guidance: ${model.name}.\n${bullets(model.prompt)}`,
     });
   }
   const learnings = learningsFor(harness, model);

@@ -8,6 +8,18 @@ export interface ProfileKbSource {
   checkedAt: string;
   /** What the source is, when the URL alone does not say. */
   note?: string;
+  /** Authority of the source, independent of whether its claim is advice or a measured result. */
+  authority?: "primary" | "secondary" | "local";
+  /** Section, source lines, or retained artifact locator supporting the claim. */
+  locator?: string;
+}
+
+/** A short claim with its qualifications in text, so composition cannot strip them. */
+export interface ProfileKbClaim {
+  text: string;
+  basis: "documented" | "vendor-guidance" | "local-observation" | "hypothesis";
+  audience: "agent" | "operator";
+  sources: [ProfileKbSource, ...ProfileKbSource[]];
 }
 
 /**
@@ -20,11 +32,13 @@ export interface ProfileKbSource {
 export interface ProfileKbHarness {
   id: HarnessType;
   name: string;
-  /** Installed version the guidance was checked against. */
+  /** Version of the checked CLI or upstream source; claim citations distinguish installation from documentation. */
   version: string;
   sources: ProfileKbSource[];
   prompt: string[];
   operator: string[];
+  /** Canonical claims; prompt/operator are projections retained for existing consumers. */
+  claims?: ProfileKbClaim[];
 }
 
 /** Where a model is reached. A model id means different things on each surface. */
@@ -33,9 +47,8 @@ export type ProfileKbSurface = "api" | "codex" | "chatgpt" | "router";
 /**
  * How to get the best from one model.
  *
- * Vendor guidance only, each entry citing its source and date. The guidance is
- * positive and specific to this model; it never ranks the model against
- * another.
+ * API facts, dated observations, and conditional vendor guidance. Sources
+ * establish their stated surface, not current availability or task quality.
  */
 export interface ProfileKbModel {
   /** Canonical vendor id. */
@@ -45,11 +58,12 @@ export interface ProfileKbModel {
   surfaces: ProfileKbSurface[];
   /** Other spellings that resolve to this model: router ids, harness aliases. */
   aliases: string[];
-  /** Vendor default reasoning effort, mapped onto the portable scale. */
+  /** Documented API default mapped onto the portable scale (ultracode means max); harness defaults can differ. */
   defaultEffort?: ReasoningEffort;
   sources: ProfileKbSource[];
   prompt: string[];
   operator: string[];
+  claims?: ProfileKbClaim[];
 }
 
 /**

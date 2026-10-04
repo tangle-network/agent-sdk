@@ -10,17 +10,17 @@ const CHECKED = "2026-09-22";
 export const profileKbLearnings: readonly ProfileKbLearning[] = [];
 
 /**
- * Names the platform asked for that vendor sources state differently, as read
- * on 2026-09-22. Recorded instead of guessed.
+ * Historical naming and availability checks from 2026-09-22. Their dates and
+ * observations are retained; they do not establish current service or identity.
  */
 export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
   {
     subject: "OpenAI Codex models",
     requested: "gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna as the current Codex models",
     observed:
-      "OpenAI's Codex model page lists GPT-6 Astra, GPT-6 Sol, and GPT-6 Luna as the current models. " +
-      "codex-cli 0.156.1 on a ChatGPT account serves all three (each returned OK) and labels the gpt-5.6 tiers 'Older'. " +
-      "The knowledge base carries the GPT-6 tiers as the current Codex models and keeps the requested gpt-5.6 tiers, which Codex and the API still serve.",
+      "On 2026-09-22, OpenAI's Codex model page listed GPT-6 Astra, GPT-6 Sol, and GPT-6 Luna as current. " +
+      "The check notes recorded OK replies for all three with codex-cli 0.156.1 on a ChatGPT account, and labelled the gpt-5.6 tiers 'Older'. " +
+      "Those response checks did not establish served identity, task quality, or availability today.",
     sources: [
       { url: "https://learn.chatgpt.com/docs/models", checkedAt: CHECKED },
       {
@@ -34,9 +34,9 @@ export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
     subject: "DeepSeek V4.1 Pro",
     requested: "DeepSeek V4.1 Pro",
     observed:
-      "DeepSeek has released V4.1 Flash only (2026-09-10). Its changelog says the V4 Pro API continues, its pricing page maps " +
-      "deepseek-v4-pro to DeepSeek-V4-Pro-0813, and its V4.1 Flash announcement says deepseek-v4-pro routes to V4.1 Flash from 2026-09-14. " +
-      "On the Tangle router, deepseek-v4-pro returned HTTP 503 (provider quota exhausted). No V4.1 Pro entry exists until DeepSeek ships it.",
+      "The sources checked on 2026-09-22 documented V4.1 Flash, released 2026-09-10, but did not establish a V4.1 Pro model. " +
+      "The changelog said the V4 Pro API continued; pricing mapped deepseek-v4-pro to DeepSeek-V4-Pro-0813, while the Flash announcement said it routed to V4.1 Flash from 2026-09-14. " +
+      "The router check recorded HTTP 503 (provider quota exhausted) for deepseek-v4-pro; it did not resolve that source disagreement.",
     sources: [
       { url: "https://api-docs.deepseek.com/updates/", checkedAt: CHECKED },
       { url: "https://api-docs.deepseek.com/quick_start/pricing", checkedAt: CHECKED },
@@ -47,7 +47,8 @@ export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
     subject: "DeepSeek V4.1 Flash router id",
     requested: "deepseek-flash (the vendor id)",
     observed:
-      "On the Tangle router, deepseek-flash returned HTTP 503 (provider_pricing_unavailable); deepseek/deepseek-v4.1-flash returned HTTP 200.",
+      "The 2026-09-22 Tangle router check recorded HTTP 503 (provider_pricing_unavailable) for deepseek-flash and HTTP 200 for deepseek/deepseek-v4.1-flash. " +
+      "These statuses did not establish served identity or current availability.",
     sources: [
       {
         url: "https://router.tangle.tools/v1/chat/completions",
@@ -59,7 +60,8 @@ export const profileKbDiscrepancies: readonly ProfileKbDiscrepancy[] = [
     subject: "GPT-6 Pro",
     requested: "GPT-6 Pro in ChatGPT",
     observed:
-      "OpenAI's help center names GPT-6 Pro as a ChatGPT mode powered by GPT-6 Astra; it has no API model id.",
+      "The 2026-09-22 check recorded OpenAI's description of GPT-6 Pro as a ChatGPT mode powered by GPT-6 Astra. " +
+      "That check did not establish a separate API model id for the ChatGPT mode.",
     sources: [
       {
         url: "https://help.openai.com/en/articles/20001354-gpt-56-and-gpt-6-pro-in-chatgpt",

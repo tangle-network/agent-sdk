@@ -194,9 +194,15 @@ These checks do not apply to a replacement environment owned by caller code.
 
 ## Profile knowledge base
 
-`@tangle-network/agent-interface/profile-kb` holds how to get the best from each frontier harness and model this platform runs.
-Every entry cites a vendor source or a command run on a dated check.
-Guidance is specific to one harness or model and never compares models.
+`@tangle-network/agent-interface/profile-kb` holds dated harness and model facts, conditional guidance, and reproduced platform learnings.
+Sources guide investigation; they do not prove that a technique improves this platform's behavior.
+
+Entries can expose optional `claims`, each with `text`, `basis` (`documented`, `vendor-guidance`, `local-observation`, or `hypothesis`), `audience` (`agent` or `operator`), and supporting `sources`.
+A source has a URL and check date, with optional `authority` (`primary`, `secondary`, or `local`) and `locator` for the supporting section or artifact.
+Authority describes the source, independently of the claim's basis.
+The maintained entries derive the legacy `prompt`, `operator`, and `sources` arrays from these claims; hypotheses stay inspectable but contribute no prompt or operator text.
+Only agent guidance enters the profile prompt. An empty `prompt` is legitimate when no supported instruction is needed; do not pad it with generic advice.
+Keep applicability conditions in the claim's text so composition preserves them.
 
 `withProfileKb(profile)` composes harness guidance, then model guidance, then the profile's own text into the profile's prompt:
 
@@ -217,7 +223,8 @@ The knowledge base owns the block sources `harness`, `model`, and `learning` (`P
 Give each layer its own source name and pass it as `replaceSources`: the composition then replaces only those sources and keeps every other block in place. Without `replaceSources`, it replaces every block.
 The block marker is reserved for composers: a hand-written `<profile-guidance source="model" ...>` block counts as a knowledge-base block and is replaced.
 
-The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes for launching each harness and model, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which records where a vendor source states a requested name differently.
+The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which preserves dated naming and availability checks.
+The source audit is retained in [Anthropic and OpenAI](src/profile-kb/research/anthropic-openai.md), [open harnesses and model APIs](src/profile-kb/research/open-harnesses.md), and the [distillation and consumer review](src/profile-kb/research/distillation-review.md).
 
 ### Applicability and evidence
 
@@ -233,7 +240,7 @@ Unknown identity, usage, or cost stays unknown. A requested model name does not 
 
 Before reusing a conclusion after a material change to any of these conditions, review its applicability against the retained evidence. State what still transfers and what needs a new check; use the existing registration and resource authorization for any experiment. Preserve the original record and append the changed scope or new evidence.
 
-The current [learning selector](src/profile-kb/index.ts) matches only harness and model; it does not validate the other conditions above. Keep narrower limits explicit in the learning text, or retain the finding in its evaluation record until it is suitable for composed guidance. The [learning records](src/profile-kb/records.ts) remain the single admission surface; this guidance adds no runtime schema or automatic revalidation.
+The current [learning selector](src/profile-kb/index.ts) matches only harness and model; it does not validate the other conditions above. Keep narrower limits explicit in the learning text, or retain the finding in its evaluation record until it is suitable for composed guidance. The [learning records](src/profile-kb/records.ts) remain the single admission surface. Claim provenance does not automatically revalidate a run or authorize an experiment.
 
 ## Failed execution accounting
 
