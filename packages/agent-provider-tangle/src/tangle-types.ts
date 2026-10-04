@@ -601,6 +601,11 @@ export interface SandboxInstanceLike {
     options?: { timeoutMs?: number; signal?: AbortSignal }
   ): Promise<void>;
   refresh?(signal?: AbortSignal): Promise<void>;
+  /**
+   * Resume a stopped sandbox. An idle or lifetime suspend stops the container
+   * and preserves the workspace; nothing resumes it on access.
+   */
+  resume?(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<void>;
   delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
   /** Managed whole-workspace checkpoint operation. */
   snapshot?(options?: {
