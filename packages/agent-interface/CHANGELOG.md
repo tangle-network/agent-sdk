@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.19.0
+
+### Minor Changes
+
+- 63fe5b2: Add optional per-claim provenance to profile knowledge-base entries while preserving the derived prompt and operator arrays. Refresh model and harness facts, retain conditions on composed guidance, and remove unsupported behavioral instructions. Historical checks remain dated; source research does not establish a platform performance improvement.
+
 ## 2.18.0
 
 ### Minor Changes
