@@ -12,6 +12,51 @@ const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessio
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
+// How long a replay may go without its start marker once the stream is open. The Sidecar sends
+// no replay markers when an execution has buffered nothing yet, so this bounds that case.
+const REPLAY_START_GRACE_MS = 15_000;
+
+type ReplaySession = { events?(options?: { since?: string; executionId?: string; signal?: AbortSignal }): AsyncIterable<{ type: string; data?: Record<string, unknown> }> };
+
+/**
+ * The execution's events as the Sidecar had buffered them when this capture started.
+ *
+ * The Sidecar answers a cursor replay with its buffer between `history.replay.start` and
+ * `history.replay.end`, then follows the live turn, and the SDK returns only on the turn's `done`
+ * or `error`. Read to the end, a capture of a running turn waited for the turn to finish: in the
+ * 2026-10-04 trace proof every 2-minute copy blocked until its turn ended or the Lab's 180 s bound
+ * aborted it, and 6.2 minutes of live turns stored no copy at all. A settled execution's buffer
+ * already ends with its `done` or `error`, so it replays as before.
+ */
+async function* bufferedExecutionEvents(session: ReplaySession, executionId: string, signal: AbortSignal | undefined) {
+  const replay = new AbortController();
+  const forward = () => replay.abort(signal?.reason);
+  if (signal?.aborted) forward();
+  else signal?.addEventListener("abort", forward, { once: true });
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  let empty = false;
+  try {
+    for await (const event of session.events!({ since: "0", executionId, signal: replay.signal })) {
+      if (event.type === "connection.established" && grace === undefined) {
+        grace = setTimeout(() => {
+          empty = true;
+          replay.abort(new DOMException("Tangle replay buffer is empty", "AbortError"));
+        }, REPLAY_START_GRACE_MS);
+        grace.unref?.();
+      }
+      if (event.type === "history.replay.start") clearTimeout(grace);
+      yield event;
+      if (event.type === "history.replay.end") return;
+    }
+  } catch (error) {
+    if (!empty || signal?.aborted) throw error;
+  } finally {
+    clearTimeout(grace);
+    signal?.removeEventListener("abort", forward);
+  }
+  signal?.throwIfAborted();
+}
+
 // Match the Sidecar request limit without accumulating 100 large JSON payloads.
 const WORKSPACE_BATCH_FILES = 100;
 const WORKSPACE_BATCH_BYTES = 8 * 1024 * 1024;
@@ -430,7 +475,7 @@ async function captureSandboxEvidence(
     const events = new EvidenceJsonArray(undefined, async function* () {
       for (const executionId of executionIds) {
         eventCountsByExecutionId[executionId] = 0;
-        for await (const event of session.events!({ since: "0", executionId, signal: options.signal })) {
+        for await (const event of bufferedExecutionEvents(session, executionId, options.signal)) {
           options.signal?.throwIfAborted();
           if (counts.events >= MAX_EVENTS) throw new Error("Tangle event replay limit exceeded");
           if (typeof event.data?.executionId === "string" && event.data.executionId !== executionId) {
