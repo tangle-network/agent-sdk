@@ -397,19 +397,33 @@ export function createTangleProvider(
             const box = await awaitWithSignal(options.client.get?.(id, operation), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
-            if (options.requireNativeSessionCapture) requireNativeCaptureProof(box);
+            if (options.requireNativeSessionCapture) {
+              requireNativeCaptureProof(box);
+              // Native capture admits only the backend the live container reports, so a
+              // suspended sandbox must run again before anything can reconnect to it.
+              await resumeForReconnect(box, options.client, readyTimeoutMs, operation?.signal);
+            }
             let backendType: string | undefined;
+            let backendReadError: unknown;
             if (box.status === "running" && box.backend) {
               try {
                 const status = await awaitWithSignal(box.backend.status(), operation?.signal);
                 backendType = boundedIdentifier(status.type, "Tangle current backend");
-              } catch {
+              } catch (error) {
                 operation?.signal?.throwIfAborted();
+                backendReadError = error;
               }
             }
             let captureCapabilities;
             if (options.requireNativeSessionCapture) {
-              if (backendType === undefined) throw new Error("Tangle native capture requires the current selected backend before reconnect");
+              if (backendType === undefined) {
+                // The read's own failure (a 429 or 503 while the platform suspends the box)
+                // stays the cause, so a caller classifies it as the transport fault it is.
+                throw new Error(
+                  "Tangle native capture requires the current selected backend before reconnect",
+                  backendReadError === undefined ? undefined : { cause: backendReadError },
+                );
+              }
               captureCapabilities = await awaitWithSignal(requireNativeCaptureCapability(box, backendType), operation?.signal);
             }
             const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
@@ -501,6 +515,41 @@ export function createTangleProvider(
         }
       : {}),
   };
+}
+
+/**
+ * Bring a suspended sandbox back before a reconnect reads its container.
+ *
+ * The platform suspends a sandbox after its idle timeout (30 minutes by
+ * default) and nothing resumes it on access. A root turn stalled on an
+ * upstream 429 for that long comes back to a stopped box; without a resume,
+ * every later reconnect finds no live backend and refuses identically until
+ * the driver exhausts its attempts. After the resume the sidecar reports the
+ * interrupted execution as a terminal failure, so the caller settles that
+ * execution and replaces it once instead of dispatching beside it.
+ */
+async function resumeForReconnect(
+  box: SandboxInstanceLike,
+  client: TangleProviderOptions["client"],
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (box.status === "running") return;
+  if (box.status === "stopped") {
+    if (!box.resume) {
+      throw new Error(`Tangle sandbox ${box.id} is stopped and the linked client cannot resume it`);
+    }
+    try {
+      await awaitWithSignal(box.resume({ timeoutMs, ...(signal ? { signal } : {}) }), signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      // Another reconnect may have resumed the same box first; its state decides.
+      await box.refresh?.(signal).catch(() => undefined);
+      const after = statusFromUnknown(box.status);
+      if (after !== "running" && after !== "pending" && after !== "provisioning") throw error;
+    }
+  }
+  await awaitSandboxRunning(box, client, { timeoutMs, ...(signal ? { signal } : {}) });
 }
 
 async function resolveBackend(
