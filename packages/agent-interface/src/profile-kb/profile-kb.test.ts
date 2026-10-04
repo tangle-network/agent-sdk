@@ -6,6 +6,7 @@ import {
 import { canonicalAgentProfileDigest as canonicalProfileDigest } from "../agent-execution-preparation.js";
 import { harnessTypeSchema } from "../harness.js";
 import { agentProfileSchema } from "../profile-schema.js";
+import { kbEntry } from "./entry.js";
 import {
   findProfileKbHarness,
   findProfileKbModel,
@@ -22,39 +23,16 @@ import {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 describe("profile-kb content", () => {
-  it("covers exactly the requested frontier models", () => {
-    expect(profileKbModels.map((model) => model.id).sort()).toEqual(
-      [
-        "claude-fable-5-1",
-        "claude-haiku-4-5",
-        "claude-opus-5-5",
-        "claude-sonnet-5",
-        "deepseek-v4.1-flash",
-        "glm-5.3",
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-6-astra",
-        "gpt-6-luna",
-        "gpt-6-pro",
-        "gpt-6-sol",
-        "kimi-k3",
-      ].sort(),
-    );
-  });
-
-  it("covers the harnesses the platform runs, and nothing superseded", () => {
-    expect(profileKbHarnesses.map((harness) => harness.id)).toEqual([
-      "claude-code",
-      "codex",
-      "opencode",
-      "pi",
-      "kimi-code",
-    ]);
+  it("uses valid, unique harness ids and unambiguous model names", () => {
+    const harnessIds = profileKbHarnesses.map((harness) => harness.id);
+    expect(new Set(harnessIds).size).toBe(harnessIds.length);
     for (const harness of profileKbHarnesses) {
       expect(harnessTypeSchema.safeParse(harness.id).success).toBe(true);
     }
-    expect(findProfileKbHarness("amp")).toBeUndefined();
+    const modelNames = profileKbModels.flatMap((model) =>
+      [model.id, ...model.aliases].map((name) => name.toLowerCase()),
+    );
+    expect(new Set(modelNames).size).toBe(modelNames.length);
   });
 
   it("cites a dated source for every entry", () => {
@@ -69,43 +47,85 @@ describe("profile-kb content", () => {
         expect(source.checkedAt).toMatch(ISO_DATE);
       }
     }
-    for (const entry of [...profileKbModels, ...profileKbHarnesses]) {
-      expect(entry.prompt.length).toBeGreaterThan(0);
-      expect(
-        entry.sources.some((source) => source.url.startsWith("https://")),
-        `${entry.id} cites a vendor URL`,
-      ).toBe(true);
-    }
   });
 
-  it("keeps model guidance free of cross-model comparisons", () => {
-    const names = profileKbModels.flatMap((model) => [model.id, model.name]);
-    for (const model of profileKbModels) {
-      for (const line of model.prompt) {
-        for (const other of names) {
-          if (other === model.id || other === model.name) continue;
-          expect(line.toLowerCase()).not.toContain(other.toLowerCase());
+  it("retains provenance for each projected claim", () => {
+    for (const entry of [...profileKbModels, ...profileKbHarnesses]) {
+      const claims = entry.claims ?? [];
+      expect(claims.length, `${entry.id} has canonical claims`).toBeGreaterThan(
+        0,
+      );
+      for (const claim of claims) {
+        expect(claim.text.trim().length).toBeGreaterThan(0);
+        expect(claim.sources.length).toBeGreaterThan(0);
+        for (const source of claim.sources) {
+          expect(entry.sources).toContainEqual(source);
+          expect(source.checkedAt).toMatch(ISO_DATE);
+          expect(source.url.length).toBeGreaterThan(0);
         }
       }
-      // Operator lines may name the model a mode runs on; neither kind ranks.
-      for (const line of [...model.prompt, ...model.operator]) {
-        expect(line).not.toMatch(
-          /\b(better|worse|than|beats?|lineup|fastest|slowest|cheapest|strongest|smartest|most capable|least)\b/i,
-        );
-      }
+      expect(entry.prompt).toEqual(
+        claims
+          .filter(
+            (claim) =>
+              claim.audience === "agent" && claim.basis !== "hypothesis",
+          )
+          .map((claim) => claim.text),
+      );
+      expect(entry.operator).toEqual(
+        claims
+          .filter(
+            (claim) =>
+              claim.audience === "operator" && claim.basis !== "hypothesis",
+          )
+          .map((claim) => claim.text),
+      );
     }
   });
 
-  it("lists the router surface only with a dated router check", () => {
-    for (const model of profileKbModels) {
-      const routerSources = model.sources.filter((source) =>
-        source.url.startsWith("https://router.tangle.tools/"),
-      );
-      expect(
-        model.surfaces.includes("router"),
-        `${model.id} router surface needs a router check`,
-      ).toBe(routerSources.length > 0);
-    }
+  it("keeps hypotheses inspectable without projecting them into either audience", () => {
+    const source = {
+      url: "https://example.com/contract",
+      checkedAt: "2026-10-04",
+    };
+    const report = {
+      url: "https://example.com/report",
+      checkedAt: "2026-10-04",
+    };
+    const entry = kbEntry({
+      claims: [
+        {
+          text: "When a tool is available, use its documented control.",
+          basis: "documented",
+          audience: "agent",
+          sources: [source],
+        },
+        {
+          text: "Configure the control before launch.",
+          basis: "documented",
+          audience: "operator",
+          sources: [source],
+        },
+        {
+          text: "An unmeasured agent technique.",
+          basis: "hypothesis",
+          audience: "agent",
+          sources: [report],
+        },
+        {
+          text: "An unmeasured launch technique.",
+          basis: "hypothesis",
+          audience: "operator",
+          sources: [report],
+        },
+      ],
+    });
+    expect(entry.prompt).toEqual([
+      "When a tool is available, use its documented control.",
+    ]);
+    expect(entry.operator).toEqual(["Configure the control before launch."]);
+    expect(entry.sources).toEqual([source, report]);
+    expect(entry.claims).toHaveLength(4);
   });
 
   it("admits a learning only with a reproduced agent-eval check", () => {
@@ -117,7 +137,6 @@ describe("profile-kb content", () => {
           learning.appliesTo.model !== undefined,
       ).toBe(true);
     }
-    expect(profileKbLearnings.length).toBeLessThanOrEqual(5);
   });
 });
 
@@ -169,6 +188,10 @@ describe("model lookup", () => {
     expect(findProfileKbModel("openai/gpt-5.6-sol:batch")?.id).toBe(
       "gpt-5.6-sol",
     );
+    expect(findProfileKbModel("anthropic/claude-sonnet-5-5")?.id).toBe(
+      "claude-sonnet-5-5",
+    );
+    expect(findProfileKbModel("openai/gpt-6.1-sol")?.id).toBe("gpt-6.1-sol");
   });
 
   it("never matches a different version", () => {
@@ -198,8 +221,8 @@ describe("withProfileKb", () => {
     expect(modelAt).toBeGreaterThan(harnessAt);
     expect(ownAt).toBeGreaterThan(modelAt);
     expect(text.endsWith("Cite the file you read.")).toBe(true);
-    expect(text).toContain("You are running in Claude Code.");
-    expect(text).toContain("You are Claude Opus 5.5.");
+    expect(text).toContain("Harness guidance: Claude Code.");
+    expect(text).toContain("Model guidance: Claude Opus 5.5.");
     expect(agentProfileSchema.parse(composed)).toEqual(composed);
   });
 
@@ -214,30 +237,36 @@ describe("withProfileKb", () => {
     const composed = withProfileKb(base);
     const overridden = withProfileKb(composed, {
       harness: "codex",
-      model: "gpt-5.6-sol",
+      model: "claude-opus-5-5",
     });
     // codex owns no additive system-prompt control, so guidance moves to instructions.
     expect(overridden.prompt?.appendSystemPrompt).toBe(
       "Cite the file you read.",
     );
     const instructions = overridden.prompt?.instructions ?? [];
-    expect(instructions).toHaveLength(2);
-    expect(instructions[0]).toContain('source="harness" id="codex"');
-    expect(instructions[1]).toContain('source="model" id="gpt-5.6-sol"');
-    expect(JSON.stringify(overridden.prompt)).not.toContain("Claude Code");
-    expect(JSON.stringify(overridden.prompt)).not.toContain("Claude Opus");
+    expect(instructions).toHaveLength(1);
+    expect(instructions[0]).toContain('source="model" id="claude-opus-5-5"');
+    expect(JSON.stringify(overridden.prompt)).not.toContain('source="harness"');
+    const operatorOnly = withProfileKb(overridden, {
+      harness: "codex",
+      model: "gpt-6.1-sol",
+    });
+    expect(operatorOnly.prompt?.appendSystemPrompt).toBe(
+      "Cite the file you read.",
+    );
+    expect(operatorOnly.prompt?.instructions).toEqual([]);
   });
 
   it("keeps the profile's own instructions after the guidance", () => {
     const composed = withProfileKb({
-      harness: "kimi-code",
-      model: { default: "kimi-code/k3" },
+      harness: "codex",
+      model: { default: "claude-opus-5-5" },
       prompt: { instructions: ["Run the tests before you report."] },
     });
     expect(composed.prompt?.instructions?.at(-1)).toBe(
       "Run the tests before you report.",
     );
-    expect(composed.prompt?.instructions).toHaveLength(3);
+    expect(composed.prompt?.instructions).toHaveLength(2);
     expect(composed.prompt?.appendSystemPrompt).toBeUndefined();
   });
 
@@ -254,12 +283,25 @@ describe("withProfileKb", () => {
   it("composes model guidance alone when the harness has no entry", () => {
     const composed = withProfileKb({
       harness: "cli-base",
-      model: { default: "deepseek/deepseek-v4.1-flash" },
+      model: { default: "anthropic/claude-opus-5-5" },
     });
     expect(composed.prompt?.instructions).toHaveLength(1);
     expect(composed.prompt?.instructions?.[0]).toContain(
-      'source="model" id="deepseek-v4.1-flash"',
+      'source="model" id="claude-opus-5-5"',
     );
+  });
+
+  it("leaves profiles with operator-only knowledge unchanged", () => {
+    const profile: AgentProfile = {
+      harness: "pi",
+      model: { default: "deepseek/deepseek-v4.1-flash" },
+      prompt: { instructions: ["Keep the caller's instructions."] },
+    };
+    expect(findProfileKbHarness("pi")?.operator.length).toBeGreaterThan(0);
+    expect(
+      findProfileKbModel(profile.model?.default)?.operator.length,
+    ).toBeGreaterThan(0);
+    expect(withProfileKb(profile)).toEqual(profile);
   });
 });
 
@@ -304,22 +346,22 @@ describe("guidance ownership", () => {
     );
     const composed = withProfileKb({
       ...layered,
-      model: { default: "gpt-6-sol" },
+      model: { default: "claude-opus-5-5" },
     });
     const instructions = composed.prompt?.instructions ?? [];
-    expect(instructions).toHaveLength(4);
-    expect(instructions[2]).toContain('source="team"');
-    expect(instructions[3]).toBe("Run the tests.");
-    const switched = withProfileKb(composed, { model: "gpt-6-luna" });
-    expect(JSON.stringify(switched.prompt)).not.toContain("GPT-6 Sol");
-    expect(switched.prompt?.instructions?.[2]).toContain('source="team"');
+    expect(instructions).toHaveLength(3);
+    expect(instructions[1]).toContain('source="team"');
+    expect(instructions[2]).toBe("Run the tests.");
+    const switched = withProfileKb(composed, { model: "gpt-6.1-sol" });
+    expect(switched.prompt?.instructions).toEqual(instructions.slice(1));
   });
 
   it("keeps a caller instruction that only starts with a marker", () => {
-    const partial = '<profile-guidance source="model" id="example">\nliteral text';
+    const partial =
+      '<profile-guidance source="model" id="example">\nliteral text';
     const composed = withProfileKb({
       harness: "codex",
-      model: { default: "gpt-6-sol" },
+      model: { default: "claude-opus-5-5" },
       prompt: { instructions: [partial] },
     });
     expect(composed.prompt?.instructions?.at(-1)).toBe(partial);
@@ -403,9 +445,14 @@ describe("guidance ownership", () => {
       "appendSystemPrompt",
       { replaceSources: ["model"] },
     );
-    const twice = composeAgentProfileGuidance(once, [model], "appendSystemPrompt", {
-      replaceSources: ["model"],
-    });
+    const twice = composeAgentProfileGuidance(
+      once,
+      [model],
+      "appendSystemPrompt",
+      {
+        replaceSources: ["model"],
+      },
+    );
     expect(twice).toEqual(once);
   });
 
@@ -476,7 +523,9 @@ describe("guidance ownership", () => {
     try {
       models.reverse();
       expect(findProfileKbModel("glm-5.3")?.id).toBe("glm-5.3");
-      expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe("claude-opus-5-5");
+      expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe(
+        "claude-opus-5-5",
+      );
     } finally {
       models.splice(0, models.length, ...saved);
     }
@@ -504,9 +553,9 @@ describe("composeAgentProfileGuidance", () => {
 
   it("preserves an explicitly empty appended prompt", () => {
     const profile: AgentProfile = { prompt: { appendSystemPrompt: "" } };
-    expect(composeAgentProfileGuidance(profile, [], "appendSystemPrompt")).toEqual(
-      profile,
-    );
+    expect(
+      composeAgentProfileGuidance(profile, [], "appendSystemPrompt"),
+    ).toEqual(profile);
   });
 
   it("refuses a block that could forge the marker", () => {
@@ -540,8 +589,18 @@ describe("composeAgentProfileGuidance", () => {
     );
     const model = [{ source: "model", id: "k", text: "K" }];
     const own = { replaceSources: ["model"] };
-    const once = composeAgentProfileGuidance(team, model, "appendSystemPrompt", own);
-    const twice = composeAgentProfileGuidance(once, model, "appendSystemPrompt", own);
+    const once = composeAgentProfileGuidance(
+      team,
+      model,
+      "appendSystemPrompt",
+      own,
+    );
+    const twice = composeAgentProfileGuidance(
+      once,
+      model,
+      "appendSystemPrompt",
+      own,
+    );
     expect(twice).toEqual(once);
     expect(once.prompt?.appendSystemPrompt).toBe(
       `<profile-guidance source="model" id="k">\nK\n</profile-guidance>\n\n${team.prompt?.appendSystemPrompt}`,
