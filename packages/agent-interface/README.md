@@ -5,6 +5,20 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+## Profile measurements
+
+`measureAgentProfile(profile)` returns the canonical profile digest and JSON byte size,
+per-prompt and inline resource UTF-8 bytes and logical lines, enabled/disabled tool and
+MCP declarations, and declared subagent counts. Resource rows use JSON Pointers;
+GitHub resource content has `bytes: null` and `lines: null` until independently resolved.
+The summary contains no prompt text, resource text, or server configuration.
+
+Store it with the existing profile record and cache by `profileDigest`. Measure authored
+and effective profiles separately, joined through their execution preparation or
+materialization receipts. The function does not load resources or estimate tokens.
+Its coverage explicitly leaves tokenization, materialization, and observed use unassessed.
+A capability declaration is not evidence that it was delivered, opened, or applied.
+
 ## Agent instances
 
 `AgentProfile` describes behavior. `AgentInstanceSpec` describes one optional managed Agent inside an existing execution environment. The environment remains the computer and security boundary, so it may host zero, one, or many Agent instances.

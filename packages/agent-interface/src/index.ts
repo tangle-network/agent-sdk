@@ -110,6 +110,7 @@ export * from "./agent-instance.js";
 export * from "./agent-profile-snapshot.js";
 export * from "./agent-profile-activation.js";
 export * from "./agent-profile-materialization.js";
+export * from "./agent-profile-measurements.js";
 export * from "./agent-execution-preparation.js";
 export * from "./agent-workspace-lease.js";
 export * from "./certified-context.js";
