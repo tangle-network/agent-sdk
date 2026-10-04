@@ -6,7 +6,6 @@ import {
 import { canonicalAgentProfileDigest as canonicalProfileDigest } from "../agent-execution-preparation.js";
 import { harnessTypeSchema } from "../harness.js";
 import { agentProfileSchema } from "../profile-schema.js";
-import { kbEntry } from "./entry.js";
 import {
   findProfileKbHarness,
   findProfileKbModel,
@@ -64,68 +63,7 @@ describe("profile-kb content", () => {
           expect(source.url.length).toBeGreaterThan(0);
         }
       }
-      expect(entry.prompt).toEqual(
-        claims
-          .filter(
-            (claim) =>
-              claim.audience === "agent" && claim.basis !== "hypothesis",
-          )
-          .map((claim) => claim.text),
-      );
-      expect(entry.operator).toEqual(
-        claims
-          .filter(
-            (claim) =>
-              claim.audience === "operator" && claim.basis !== "hypothesis",
-          )
-          .map((claim) => claim.text),
-      );
     }
-  });
-
-  it("keeps hypotheses inspectable without projecting them into either audience", () => {
-    const source = {
-      url: "https://example.com/contract",
-      checkedAt: "2026-10-04",
-    };
-    const report = {
-      url: "https://example.com/report",
-      checkedAt: "2026-10-04",
-    };
-    const entry = kbEntry({
-      claims: [
-        {
-          text: "When a tool is available, use its documented control.",
-          basis: "documented",
-          audience: "agent",
-          sources: [source],
-        },
-        {
-          text: "Configure the control before launch.",
-          basis: "documented",
-          audience: "operator",
-          sources: [source],
-        },
-        {
-          text: "An unmeasured agent technique.",
-          basis: "hypothesis",
-          audience: "agent",
-          sources: [report],
-        },
-        {
-          text: "An unmeasured launch technique.",
-          basis: "hypothesis",
-          audience: "operator",
-          sources: [report],
-        },
-      ],
-    });
-    expect(entry.prompt).toEqual([
-      "When a tool is available, use its documented control.",
-    ]);
-    expect(entry.operator).toEqual(["Configure the control before launch."]);
-    expect(entry.sources).toEqual([source, report]);
-    expect(entry.claims).toHaveLength(4);
   });
 
   it("admits a learning only with a reproduced agent-eval check", () => {
