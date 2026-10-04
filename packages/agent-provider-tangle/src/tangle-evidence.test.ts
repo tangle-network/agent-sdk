@@ -454,6 +454,31 @@ describe("Tangle evidence capture", () => {
     expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json");
   });
 
+  // 2026-10-04 trace proof: every 2-minute copy of a running turn followed the replay to the turn's
+  // end, so 6.2 minutes of live turns stored no copy.
+  it("copies a live turn's buffered events without following the turn to its end", async () => {
+    const environment = fixture({ native: true, partial: true });
+    const box = fixtureBoxes.get(environment)!;
+    const session = box.session!.bind(box);
+    let followedLiveTurn = false;
+    box.session = ((id: string) => ({
+      ...session(id),
+      async status() { return { id, status: "running" }; },
+      async *events() {
+        yield { type: "connection.established", data: {} };
+        yield { type: "history.replay.start", data: { properties: { totalEvents: 1, status: "active" } } };
+        yield { id: "1", type: "message.part.updated", data: { executionId: "exec-1" } };
+        yield { type: "history.replay.end", data: { properties: { continuing: true, status: "active" } } };
+        followedLiveTurn = true;
+        await new Promise(() => undefined);
+      },
+    })) as typeof box.session;
+    const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(followedLiveTurn).toBe(false);
+    expect(evidence.provenance.sessions[0]?.eventCountsByExecutionId).toEqual({ "exec-1": 4 });
+    expect(evidence.files.map((file) => file.path)).toContain("__retention__/sessions/session-1/native/source-1/session-home/.local/share/session.json");
+  }, 10_000);
+
   it("retains native files and process frames when a terminal receipt is missing", async () => {
     const environment = fixture({ native: true, partial: true, missingTerminal: true });
     const evidence = await captureTangleEnvironmentEvidence(environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
