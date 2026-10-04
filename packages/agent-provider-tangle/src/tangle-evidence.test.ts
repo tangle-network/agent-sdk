@@ -920,6 +920,40 @@ describe("bounded directory evidence", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it("exports native sessions without reading the workspace when the scope is none", async () => {
+    const environment = fixture({ native: true });
+    const box = fixtureBoxes.get(environment)!;
+    // A workspace over the byte bound, or one that changes mid-scan, must not cost the session.
+    box.fs = {
+      async usage() { throw new Error("the workspace must not be scanned"); },
+      async list() { throw new Error("the workspace must not be listed"); },
+      async readBatch() { throw new Error("the workspace must not be read"); },
+    } as unknown as SandboxInstanceLike["fs"];
+    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
+    try {
+      await directoryExportFixture(environment);
+      const captured = await captureTangleEnvironmentEvidenceToDirectory(environment, {
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, workspace: "none", destination: join(root, "capture"),
+      });
+      expect(captured.provenance.workspaceScope).toBe("none");
+      expect(captured.provenance.workspace).toEqual({ scannedFiles: 0, scannedDirectories: 0, reportedFiles: 0, reportedDirectories: 0, complete: false });
+      expect(captured.provenance.entries).toEqual([]);
+      expect(captured.provenance.sessions[0]?.nativeStore.complete).toBe(true);
+      expect(captured.provenance.sessions[0]?.nativeStore.entries.length).toBeGreaterThan(0);
+      await expect(stat(join(captured.directory, "notes/.finding.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      const provenance = JSON.parse((await readFile(join(captured.directory, "__retention__/provenance.json"))).toString());
+      expect(provenance.workspaceScope).toBe("none");
+      expect(provenance.executionId).toBe("exec-1");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses an unknown workspace scope", async () => {
+    const environment = fixture({ native: true });
+    await expect(captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, workspace: "home" as "none",
+    })).rejects.toThrow("workspace scope is invalid");
+  });
+
   it.each(["payload", "records", "manifest", "truncated", "identity"] as const)("refuses %s corruption and removes owned staging", async (corrupt) => {
     const environment = fixture({ native: true });
     const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));

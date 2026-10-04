@@ -46,6 +46,13 @@ export interface TangleEnvironmentEvidenceOptions {
   requireNativeSessionCapture?: boolean;
   /** Exact Sandbox session id when execution was reattached after provider restart. */
   sandboxSessionId?: string | null;
+  /**
+   * `none` exports the attributed sessions' native evidence without walking the workspace. A
+   * caller uses it to copy a harness session while its turn is still running, or when the
+   * workspace is over the byte bound, so neither the workspace's size nor its scan can lose the
+   * session. Defaults to `environment`, which captures both.
+   */
+  workspace?: "environment" | "none";
   maxBytes: number;
   signal?: AbortSignal;
 }
@@ -68,12 +75,13 @@ export interface TangleEnvironmentEvidence {
     executionId: string;
     controlRef?: AgentExactRunControlRef;
     captureProof?: NativeCaptureProofLike;
-    workspaceScope: "environment";
+    workspaceScope: "environment" | "none";
     workspaceRoot: string;
     capturedAt: string;
     entries: WorkspaceEntryMetadata[];
     excludedPaths: Array<WorkspaceEntryMetadata & { reason: "credential-path" | "symlink" | "runtime-owned" }>;
-    workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: true };
+    /** `complete` is false only when `workspaceScope` is `none`: no workspace was scanned. */
+    workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: boolean };
     attempts: TangleEvidenceAttemptLike[];
     sessions: Array<{
       id: string;
@@ -208,6 +216,7 @@ function evidenceContext(environment: AgentEnvironment, options: TangleEnvironme
     requireNativeSessionCapture: options.requireNativeSessionCapture,
     sandboxSessionIds: [...sessionIds],
     sessionExecutionIds,
+    ...(options.workspace === undefined ? {} : { workspace: options.workspace }),
     maxBytes: options.maxBytes,
     signal: options.signal,
   } };
@@ -254,16 +263,25 @@ async function captureSandboxEvidence(
   const captureProof = options.requireNativeSessionCapture ? requireNativeCaptureProof(box) : null;
   const workspaceRoot = options.workspaceRoot ?? ".";
   if (workspaceRoot !== ".") canonicalEntryPath(workspaceRoot);
-  const fs = box.fs;
-  if (!fs?.list || !fs.usage || !fs.readBatch) throw new Error("Tangle evidence requires workspace list, usage, and binary batch read");
+  const workspaceScope = options.workspace ?? "environment";
+  if (workspaceScope !== "environment" && workspaceScope !== "none") throw new Error("Tangle evidence workspace scope is invalid");
+  const boxFs = box.fs;
+  if (workspaceScope === "environment" && (!boxFs?.list || !boxFs.usage || !boxFs.readBatch)) {
+    throw new Error("Tangle evidence requires workspace list, usage, and binary batch read");
+  }
+  // Only the environment scope reads through it, after the check above.
+  const fs = boxFs as NonNullable<SandboxInstanceLike["fs"]> &
+    Required<Pick<NonNullable<SandboxInstanceLike["fs"]>, "list" | "usage" | "readBatch">>;
   options.signal?.throwIfAborted();
-  const usage = await fs.usage(workspaceRoot);
+  const usage = workspaceScope === "none"
+    ? { complete: true, skippedEntries: 0, sizeBytes: 0, fileCount: 0, directoryCount: 0 }
+    : await fs.usage(workspaceRoot);
   if (!usage.complete || usage.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
   if (usage.sizeBytes > options.maxBytes) throw new Error("Tangle workspace exceeds evidence byte limit");
   const metadata: WorkspaceEntryMetadata[] = [];
   const seenPaths = new Set<string>();
   const excludedPaths: TangleEnvironmentEvidence["provenance"]["excludedPaths"] = [];
-  const stack = [workspaceRoot];
+  const stack = workspaceScope === "none" ? [] : [workspaceRoot];
   let scannedFiles = 0;
   let scannedDirectories = 0;
   let scannedEntries = 0;
@@ -812,12 +830,12 @@ async function captureSandboxEvidence(
     executionId: artifactExecutionId,
     ...(controlRef === undefined ? {} : { controlRef }),
     ...(captureProof ? { captureProof } : {}),
-    workspaceScope: "environment",
+    workspaceScope,
     workspaceRoot,
     capturedAt: new Date().toISOString(),
     entries: metadata.sort((a, b) => a.path.localeCompare(b.path)),
     excludedPaths,
-    workspace: { scannedFiles, scannedDirectories, reportedFiles: usage.fileCount, reportedDirectories: usage.directoryCount, complete: true },
+    workspace: { scannedFiles, scannedDirectories, reportedFiles: usage.fileCount, reportedDirectories: usage.directoryCount, complete: workspaceScope === "environment" },
     attempts,
     sessions,
     missing,
