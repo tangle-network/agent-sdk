@@ -219,6 +219,22 @@ The block marker is reserved for composers: a hand-written `<profile-guidance so
 
 The module also exports the data (`profileKbHarnesses`, `profileKbModels`), operator notes for launching each harness and model, platform learnings (admitted only after an agent-eval check reproduced them), and `profileKbDiscrepancies`, which records where a vendor source states a requested name differently.
 
+### Applicability and evidence
+
+Read vendor guidance within its documented, dated scope. Papers and social posts propose hypotheses to evaluate; they do not establish universal agent constraints. A measured conclusion applies to the configuration, tasks, environment, and evidence that supported it.
+
+Keep that scope with the existing evaluation record and link it from the learning's evidence source:
+
+- Requested model and observed served identity, provider route and adapter revision, harness and CLI version, and the authored and effective `AgentProfile` revisions or digests.
+- Reasoning settings, tool, MCP server and hook versions or definitions, permissions, and the loaded skill and instruction revisions. Distinguish declared configuration from observed delivery and use.
+- Task and acceptance-check revisions, environment and relevant resource limits, sampling and budget, measured outcome, errors and counterexamples, and source traces or artifacts.
+
+Unknown identity, usage, or cost stays unknown. A requested model name does not prove which model served the run; partial accounting supports a floor, not a complete total or zero spend.
+
+Before reusing a conclusion after a material change to any of these conditions, review its applicability against the retained evidence. State what still transfers and what needs a new check; use the existing registration and resource authorization for any experiment. Preserve the original record and append the changed scope or new evidence.
+
+The current [learning selector](src/profile-kb/index.ts) matches only harness and model; it does not validate the other conditions above. Keep narrower limits explicit in the learning text, or retain the finding in its evaluation record until it is suitable for composed guidance. The [learning records](src/profile-kb/records.ts) remain the single admission surface; this guidance adds no runtime schema or automatic revalidation.
+
 ## Failed execution accounting
 
 An adapter can reject with `AgentExecutionError` and retain observed usage and timing in its immutable `receipt`.
