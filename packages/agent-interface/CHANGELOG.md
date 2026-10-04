@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.18.0
+
+### Minor Changes
+
+- c9622ad: Add measureAgentProfile for canonical declaration measurements: profile bytes, per-prompt and inline-resource bytes and lines, tool and MCP enablement counts, and subagent counts. External resource content, tokenization, materialization, and usage remain explicitly unmeasured. Consumers can cache these content-free measurements with existing profile records.
+
 ## 2.17.0
 
 ### Minor Changes
