@@ -248,12 +248,15 @@ export interface NativeSessionCopy {
   /** `snapshot`: taken while the harness ran. `settled`: taken after it exited, however it ended. */
   copy: 'snapshot' | 'settled'
   capturedAt: string
-  process: { pid: number; exitedAt: string | null; exitCode: number | null; signal: string | null }
+  /** Null where the sidecar did not observe the value at the copy point. */
+  process: { pid: number | null; exitedAt: string | null; exitCode: number | null; signal: string | null }
   files: Array<{
     /** Path inside the archive, relative to the archive root. */
     path: string
     /** The store root the file belongs to, relative to the runtime HOME. */
     store: string
+    /** The file's own path relative to the runtime HOME; the sidecar archive's payload names are flat. */
+    storePath?: string
     sizeBytes: number
     sha256: string
     method: 'byte-prefix' | 'atomic-file' | 'sqlite-backup'

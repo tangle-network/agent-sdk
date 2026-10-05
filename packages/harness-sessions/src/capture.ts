@@ -87,7 +87,7 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
     }
     const truncated = copy.files.some((f) => f.truncated)
     if (store.shared) {
-      const db = copy.files.find((f) => inStore(f.path) === store.files[0])
+      const db = copy.files.find((f) => inStore(storePathOf(f)) === store.files[0])
       if (!db) {
         listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'store_file_missing', nativeSessionId: copy.nativeSessionId })
         continue
@@ -107,19 +107,28 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
     }
     const main = storeGlob(reader.globs.session, copy.nativeSessionId)
     const nested = reader.globs.children ? [storeGlob(reader.globs.children, copy.nativeSessionId)] : []
-    const mainFile = copy.files.find((f) => { const rel = inStore(f.path); return rel !== null && main.test(rel) })
+    const mainFile = copy.files.find((f) => { const rel = inStore(storePathOf(f)); return rel !== null && main.test(rel) })
     if (!mainFile) {
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'native_session_file_missing', nativeSessionId: copy.nativeSessionId })
       continue
     }
     const mainPath = join(archiveDir, mainFile.path)
-    const nestedFiles = copy.files.filter((f) => { const rel = inStore(f.path); return rel !== null && nested.some((n) => n.test(rel)) }).map((f) => join(archiveDir, f.path))
+    const nestedFiles = copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && nested.some((n) => n.test(rel)) }).map((f) => join(archiveDir, f.path))
     listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files: [mainPath, ...nestedFiles], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }, copy, true, archiveDir, mainPath))
     for (const file of nestedFiles) {
       const child = file.split('/').pop()!.replace(/\.jsonl$/u, '').replace(/^agent-/u, '')
       listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: child, path: file, files: [file], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: copy.nativeSessionId, truncated }, copy, false, archiveDir, file))
     }
   }
+}
+
+/**
+ * The file's path relative to the runtime HOME, which the store globs match. The sidecar's archive
+ * stores payloads under flat member names (`path`) and names the HOME path in `storePath`; a
+ * capture laid out like the HOME carries it in `path` itself.
+ */
+function storePathOf(file: NativeSessionCopy['files'][number]): string {
+  return file.storePath ?? file.path
 }
 
 function readerForFormatSafe(format: NativeSessionCopy['format']): HarnessSessionReader | undefined {
