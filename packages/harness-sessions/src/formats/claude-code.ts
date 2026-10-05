@@ -11,7 +11,7 @@
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
-import { newSourceStats, readJsonlRecords } from '../source.js'
+import { fileRecords, type RecordSource } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 
@@ -33,16 +33,16 @@ function usageOf(value: unknown): TokenUsage | null {
 
 const INTERRUPTED = /^\[Request interrupted by user/u
 
-async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Promise<SessionBuilder> {
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
   const subagent = ref.parentNativeSessionId !== null
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = newSourceStats(ref.path)
+  const stats = source.stats
   let sidechainSkipped = 0
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
 
-  for await (const record of readJsonlRecords(ref.path, stats, { strict: options.corruption === 'strict', signal: options.signal })) {
+  for await (const record of source.records) {
     if (!subagent && record.isSidechain === true) {
       sidechainSkipped += 1
       continue
@@ -61,7 +61,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
         builder.nativeSessionId = record.sessionId
       }
     }
-    const uuid = str(record.uuid) ?? `${ref.nativeSessionId}:${stats.bytes}`
+    const uuid = str(record.uuid) ?? `${builder.nativeSessionId}:${stats.line}`
 
     if (type === 'system') {
       if (record.subtype !== 'api_error') continue

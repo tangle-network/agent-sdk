@@ -5,12 +5,13 @@
  * tool calls and a final answer, 100 input and 20 output tokens per response. The assertions are
  * that script, read back through each harness's own store.
  */
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { validateTraceSpans } from '@tangle-network/agent-trace-contract'
 import {
   claudeCodeReader, claudeCodeRefForFile, codexReader, codexRefForFile, opencodeReader, opencodeSessionsInStore,
-  piReader, piRefForFile, readerFor, toChatMessages, toOtlpSpans, toTurns,
+  piReader, piRefForFile, readerFor, readSessionInput, toChatMessages, toOtlpSpans, toTurns,
   type HarnessSession, type HarnessSessionReader, type SessionRef,
 } from '../src/index.js'
 
@@ -103,6 +104,29 @@ describe('Pi', () => {
     expect(s.servedModels).toEqual({})
     expect(s.ending.status).toBe('error')
     expect(s.ending.error?.message).toBe('Connection error.')
+  })
+})
+
+describe('in-memory input', () => {
+  it('reads text and parsed records through the same fold as the file', async () => {
+    for (const [harness, path, ref] of [
+      ['claude-code', fixture('claude-code', 'completed.jsonl'), claudeCodeRefForFile(fixture('claude-code', 'completed.jsonl'))],
+      ['codex', fixture('codex', 'rollout-2026-10-04T21-50-21-01a108e5-81d9-71b0-9cec-e5d33586604f.jsonl'), codexRefForFile(fixture('codex', 'rollout-2026-10-04T21-50-21-01a108e5-81d9-71b0-9cec-e5d33586604f.jsonl'))],
+      ['pi', fixture('pi', '2026-10-05T00-42-50-830Z_7b2f3c4e-1d2a-4b5c-8e9f-0a1b2c3d4e5f.jsonl'), piRefForFile(fixture('pi', '2026-10-05T00-42-50-830Z_7b2f3c4e-1d2a-4b5c-8e9f-0a1b2c3d4e5f.jsonl'))],
+    ] as const) {
+      const text = readFileSync(path, 'utf8')
+      const fromFile = await readerFor(harness).read(ref)
+      const fromText = await readSessionInput(harness, { text })
+      const fromRecords = await readSessionInput(harness, { records: text.split('\n').filter(Boolean).map((line) => JSON.parse(line)) })
+      for (const other of [fromText, fromRecords]) {
+        expect(other.nativeSessionId).toBe(fromFile.nativeSessionId)
+        expect(other.messages).toEqual(fromFile.messages)
+        expect(other.toolCalls).toEqual(fromFile.toolCalls)
+        expect(other.modelCalls).toEqual(fromFile.modelCalls)
+        expect(other.ending).toEqual(fromFile.ending)
+      }
+      expect(fromText.integrity.sourceFiles[0]!.sha256).toBe(fromFile.integrity.sourceFiles[0]!.sha256)
+    }
   })
 })
 

@@ -169,6 +169,8 @@ export interface SessionSummary {
   replies: number
   toolCalls: number
   servedModels: Record<string, number>
+  /** The served-model key (`provider/model`) of the last model call that a model answered. */
+  lastServedModel: string | null
   modelSource: HarnessSession['modelSource']
   usage: TokenUsage | null
   ending: SessionEnding

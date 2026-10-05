@@ -22,7 +22,7 @@ import {
   type BuildMode,
 } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { newSourceStats, readJsonlRecords } from '../source.js'
+import { fileRecords, type RecordSource } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 import { join } from 'node:path'
@@ -87,9 +87,9 @@ function outputOf(output: unknown): { output: unknown; text: string | null; isEr
 
 const MODEL_OUTPUT = new Set(['message', 'reasoning'])
 
-async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Promise<SessionBuilder> {
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = newSourceStats(ref.path)
+  const stats = source.stats
   let provider: string | null = null
   let model: string | null = null
   let open: ModelCall | null = null
@@ -113,7 +113,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
   const openCall = (at: string | null): ModelCall => {
     if (open) return open
     calls += 1
-    open = builder.modelCall({ id: `${ref.nativeSessionId}:response:${calls}`, at, provider, servedModel: model, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: null })
+    open = builder.modelCall({ id: `${builder.nativeSessionId}:response:${calls}`, at, provider, servedModel: model, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: null })
     openMessage = null
     return open
   }
@@ -126,7 +126,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
     }
   }
 
-  for await (const record of readJsonlRecords(ref.path, stats, { strict: options.corruption === 'strict', signal: options.signal })) {
+  for await (const record of source.records) {
     const payload = isRecord(record.payload) ? record.payload : {}
     if (inherited) {
       const turnId = str(payload.turn_id)
@@ -136,7 +136,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
         inheritedRecords += 1
         if (record.type === 'response_item' && payload.type === 'message') {
           const role = str(payload.role)
-          builder.message({ id: str(payload.id) ?? `${ref.nativeSessionId}:inherited:${inheritedRecords}`, role: role === 'assistant' ? 'assistant' : role === 'user' ? 'user' : 'system', actor: 'injected', at: null, modelCallId: null, parts: contentParts(payload.content) })
+          builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:inherited:${inheritedRecords}`, role: role === 'assistant' ? 'assistant' : role === 'user' ? 'user' : 'system', actor: 'injected', at: null, modelCallId: null, parts: contentParts(payload.content) })
         }
         continue
       }
@@ -173,7 +173,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
         if (kind === 'agent_message') {
           // A message from another agent of the same run (a task or a reply); input to this thread.
           open = null
-          builder.message({ id: str(payload.id) ?? `${ref.nativeSessionId}:${stats.bytes}`, role: 'user', actor: 'subagent-spawn', at, modelCallId: null, parts: contentParts(payload.content) })
+          builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:${stats.line}`, role: 'user', actor: 'subagent-spawn', at, modelCallId: null, parts: contentParts(payload.content) })
         } else if (kind === 'message') {
           const role = str(payload.role)
           const parts = contentParts(payload.content)
@@ -183,9 +183,9 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
             open = null
             const text = parts.find((p) => p.type === 'text')
             const injected = text?.type === 'text' && INJECTED_USER_TEXT.test(text.text)
-            builder.message({ id: str(payload.id) ?? `${ref.nativeSessionId}:${stats.bytes}`, role: 'user', actor: injected ? 'injected' : ref.parentNativeSessionId || builder.parentNativeSessionId ? 'subagent-spawn' : 'human', at, modelCallId: null, parts })
+            builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:${stats.line}`, role: 'user', actor: injected ? 'injected' : ref.parentNativeSessionId || builder.parentNativeSessionId ? 'subagent-spawn' : 'human', at, modelCallId: null, parts })
           } else {
-            builder.message({ id: str(payload.id) ?? `${ref.nativeSessionId}:${stats.bytes}`, role: 'system', actor: 'injected', at, modelCallId: null, parts })
+            builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:${stats.line}`, role: 'system', actor: 'injected', at, modelCallId: null, parts })
           }
         } else if (kind === 'reasoning') {
           const summary = Array.isArray(payload.summary) ? payload.summary : []
@@ -194,7 +194,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
           const visible = content ?? text
           assistantMessage(at, openCall(at), [{ type: 'reasoning', text: visible, redacted: visible.length === 0 && payload.encrypted_content != null }])
         } else if (kind.endsWith('_call') && !MODEL_OUTPUT.has(kind)) {
-          const callId = str(payload.call_id) ?? str(payload.id) ?? `${ref.nativeSessionId}:call:${stats.bytes}`
+          const callId = str(payload.call_id) ?? str(payload.id) ?? `${builder.nativeSessionId}:call:${stats.line}`
           const name = str(payload.name) ?? kind.replace(/_call$/u, '')
           const raw = kind === 'function_call' ? payload.arguments : kind === 'custom_tool_call' ? payload.input : (payload.action ?? payload.arguments ?? payload.input)
           const call = openCall(at)
@@ -252,7 +252,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
         } else if (kind === 'stream_error') {
           // A dropped stream that Codex retries. It is a model request that returned no answer.
           calls += 1
-          builder.modelCall({ id: `${ref.nativeSessionId}:response:${calls}`, at, provider, servedModel: model, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: sessionError('stream_error', str(payload.message) ?? 'stream error', at, httpStatusOf(payload)) })
+          builder.modelCall({ id: `${builder.nativeSessionId}:response:${calls}`, at, provider, servedModel: model, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: sessionError('stream_error', str(payload.message) ?? 'stream error', at, httpStatusOf(payload)) })
         } else if (kind === 'turn_aborted') {
           aborted = { at, reason: str(payload.reason) ?? 'aborted' }
           open = null

@@ -41,7 +41,16 @@ export interface CapturedSessionRef {
 export interface CaptureListing {
   sessions: CapturedSessionRef[]
   /** Executions whose harness has no reader, and ids recorded but not found in the copy. */
-  missing: Array<{ sandboxSessionId: string | null; harness: string | null; reason: string; nativeSessionId?: string }>
+  missing: Array<{
+    sandboxSessionId: string | null
+    harness: string | null
+    reason: string
+    nativeSessionId?: string
+    /** The capture root (relative to the capture directory) and store file a reason refers to. */
+    root?: string
+    path?: string
+    detail?: string
+  }>
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -137,7 +146,7 @@ function captured(ref: SessionRef, copy: NativeSessionCopy, recordedId: boolean,
 }
 
 /** Sessions in provider-tangle's retention layout, found through each reader's declared stores. */
-async function fromRetention(captureDir: string, listing: CaptureListing): Promise<void> {
+async function fromRetention(captureDir: string, listing: CaptureListing, fallbackHarness: string | null): Promise<void> {
   const sessionsDir = join(captureDir, RETENTION_SESSIONS)
   for (const sandboxSessionId of await dirs(sessionsDir)) {
     const dir = join(sessionsDir, sandboxSessionId)
@@ -147,7 +156,9 @@ async function fromRetention(captureDir: string, listing: CaptureListing): Promi
       await fromV2(dir, manifest as unknown as RawEvidenceArchiveManifestV2, listing)
       continue
     }
-    const harness = source ? str(source.backendType) : null
+    // The manifest names the harness; a capture whose manifest does not falls back to the
+    // harness the caller ran (the profile's), never to guessing from paths.
+    const harness = (source ? str(source.backendType) : null) ?? fallbackHarness
     const reader = harness ? maybeReaderFor(harness) : undefined
     if (!reader) {
       listing.missing.push({ sandboxSessionId, harness, reason: harness ? 'no_reader_for_harness' : 'harness_not_recorded' })
@@ -169,7 +180,16 @@ async function fromRetention(captureDir: string, listing: CaptureListing): Promi
     for (const sourceId of await dirs(join(dir, 'native'))) {
       for (const rootScope of await dirs(join(dir, 'native', sourceId))) {
         const home = join(dir, 'native', sourceId, rootScope)
-        for (const ref of await reader.locate(home)) {
+        let refs: SessionRef[]
+        try {
+          refs = await reader.locate(home)
+        } catch (error) {
+          // A store that cannot be opened (a corrupt SQLite file) proves nothing about the turn.
+          const store = reader.stores[0]!
+          listing.missing.push({ sandboxSessionId, harness: reader.harness, reason: 'store_unreadable', root: home.slice(captureDir.length + 1), path: store.shared ? `${store.root}/${store.files[0]}` : store.root, detail: error instanceof Error ? error.message : String(error) })
+          continue
+        }
+        for (const ref of refs) {
           const join_ = recorded.get(ref.nativeSessionId) ?? (ref.parentNativeSessionId ? recorded.get(ref.parentNativeSessionId) : undefined)
           found.add(ref.nativeSessionId)
           listing.sessions.push({
@@ -197,15 +217,23 @@ async function fromRetention(captureDir: string, listing: CaptureListing): Promi
  * Every native session in a capture: from `manifest.nativeSessions` when a v2 manifest is given
  * (files relative to `dir`), otherwise from the retention layout under `dir`.
  */
-export async function listCapture(dir: string, manifest?: RawEvidenceArchiveManifestV2 | null): Promise<CaptureListing> {
+export async function listCapture(
+  dir: string,
+  manifest?: RawEvidenceArchiveManifestV2 | null,
+  options: { harness?: string } = {},
+): Promise<CaptureListing> {
   const listing: CaptureListing = { sessions: [], missing: [] }
   if (manifest && Array.isArray(manifest.nativeSessions)) await fromV2(dir, manifest, listing)
-  else await fromRetention(dir, listing)
+  else await fromRetention(dir, listing, options.harness ?? null)
   return listing
 }
 
 /** Every native session in a capture, read in full. */
-export async function* readCapture(dir: string, manifest?: RawEvidenceArchiveManifestV2 | null): AsyncIterable<HarnessSession> {
-  const listing = await listCapture(dir, manifest)
+export async function* readCapture(
+  dir: string,
+  manifest?: RawEvidenceArchiveManifestV2 | null,
+  options: { harness?: string } = {},
+): AsyncIterable<HarnessSession> {
+  const listing = await listCapture(dir, manifest, options)
   for (const session of listing.sessions) yield await readerFor(session.harness).read(session.ref)
 }
