@@ -223,6 +223,7 @@ export const opencodeReader: HarnessSessionReader = {
   aliases: ['opencode-acp', 'opencode-cli'],
   formats: [FORMAT],
   stores: [STORE],
+  globs: { session: STORE.files[0] },
   evidence: EVIDENCE[FORMAT],
   async locate(home, opts = {}) {
     const path = join(home, STORE.root, STORE.files[0])

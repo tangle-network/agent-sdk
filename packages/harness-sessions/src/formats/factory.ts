@@ -11,7 +11,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSessionReader, LocateOptions, NativeSessionStore, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
+import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { runFold, type SessionFold } from './fold.js'
@@ -20,15 +20,6 @@ import { headRecord } from './head.js'
 const FORMAT = 'factory.session-jsonl' as const
 const STORE = STORES[FORMAT]
 const HARNESS = 'factory-droids'
-
-/** The settings file Factory rewrites beside each transcript. */
-export const FACTORY_SETTINGS_STORE: NativeSessionStore = {
-  root: '.factory/sessions',
-  files: ['*/{id}.settings.json'],
-  write: 'json-rewrite',
-  shared: false,
-  format: FORMAT,
-}
 
 interface FactorySettings {
   model: string | null
@@ -151,7 +142,8 @@ export const factoryReader: HarnessSessionReader = {
   harness: HARNESS,
   aliases: ['factory', 'droid'],
   formats: [FORMAT],
-  stores: [STORE, FACTORY_SETTINGS_STORE],
+  stores: [STORE],
+  globs: { session: STORE.files[0] },
   evidence: EVIDENCE[FORMAT],
   locate: (home, opts = {}) => locate(home, opts),
   async read(ref, opts = {}) {

@@ -338,6 +338,7 @@ export const codexReader: HarnessSessionReader = {
   aliases: ['codex-acp', 'codex-cli'],
   formats: [FORMAT],
   stores: [STORE],
+  globs: { session: STORE.files[0] },
   evidence: EVIDENCE[FORMAT],
   locate: (home, opts = {}) => locate(home, opts),
   async read(ref, opts = {}) {
