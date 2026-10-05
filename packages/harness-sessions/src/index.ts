@@ -36,6 +36,8 @@ export { claudeCodeReader, claudeCodeRefForFile } from './formats/claude-code.js
 export { codexReader, codexRefForFile } from './formats/codex.js'
 export { opencodeReader, opencodeSessionsInStore } from './formats/opencode.js'
 export { piReader, piRefForFile } from './formats/pi.js'
+export { kimiReader, kimiRefForFile } from './formats/kimi.js'
+export { FACTORY_SETTINGS_STORE, factoryReader, factoryRefForFile } from './formats/factory.js'
 export {
   listCapture,
   readCapture,

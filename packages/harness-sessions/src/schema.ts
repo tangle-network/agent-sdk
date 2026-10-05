@@ -41,7 +41,8 @@ export interface NativeSessionStore {
 
 /** Where a format's served-model, usage and ending-error evidence comes from. */
 export interface SessionEvidenceSources {
-  servedModel: 'provider-response' | 'session-record' | 'turn-context'
+  /** `none`: the harness records no model at all (Kimi's wire log); served models stay empty. */
+  servedModel: 'provider-response' | 'session-record' | 'turn-context' | 'none'
   usage: 'per-response' | 'cumulative' | 'session-total'
   endingError: 'session-record' | 'none'
 }

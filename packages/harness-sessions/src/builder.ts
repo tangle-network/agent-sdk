@@ -159,6 +159,14 @@ export class SessionBuilder {
     if (message) message.parts.push(...parts)
   }
 
+  /** Replace a tool call's arguments (a harness that streams them in parts). */
+  setToolInput(id: string, inputText: string): void {
+    const call = this.toolCalls.get(id)
+    if (!call) return
+    call.inputText = inputText
+    call.input = argumentsOf(inputText).input
+  }
+
   hasMessage(messageId: string): boolean {
     return this.messageById.has(messageId)
   }

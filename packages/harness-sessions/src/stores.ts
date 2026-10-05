@@ -38,6 +38,20 @@ export const STORES = {
     shared: false,
     format: 'pi.session-jsonl',
   },
+  'factory.session-jsonl': {
+    root: '.factory/sessions',
+    files: ['*/{id}.jsonl'],
+    write: 'jsonl-append',
+    shared: false,
+    format: 'factory.session-jsonl',
+  },
+  'kimi.session-dir': {
+    root: '.kimi/sessions',
+    files: ['*/{id}/wire.jsonl', '*/{id}/context.jsonl'],
+    write: 'jsonl-append',
+    shared: false,
+    format: 'kimi.session-dir',
+  },
 } as const satisfies Partial<Record<SessionFormatId, NativeSessionStore>>
 
 /** Where each format's served model, usage and ending error come from. */
@@ -46,6 +60,8 @@ export const EVIDENCE = {
   'codex.rollout-jsonl': { servedModel: 'turn-context', usage: 'cumulative', endingError: 'session-record' },
   'opencode.sqlite': { servedModel: 'session-record', usage: 'per-response', endingError: 'session-record' },
   'pi.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'session-record' },
+  'kimi.session-dir': { servedModel: 'none', usage: 'per-response', endingError: 'session-record' },
+  'factory.session-jsonl': { servedModel: 'turn-context', usage: 'session-total', endingError: 'none' },
 } as const satisfies Partial<Record<SessionFormatId, SessionEvidenceSources>>
 
 const REGEX_SPECIALS = /[.+^$()|[\]\\]/gu
