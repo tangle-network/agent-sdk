@@ -38,6 +38,11 @@ export interface TurnOptions {
   summaryChars?: number
   /** Characters kept in a tool input or result preview. Default 600. */
   previewChars?: number
+  /**
+   * The files a tool call touched. Defaults to the path of an edit or write tool and the files a
+   * patch names; a caller with its own notion (paths mentioned anywhere in the input) passes it.
+   */
+  filesOf?: (call: SessionToolCall) => string[]
 }
 
 export function summarizeText(text: string, n: number): string {
@@ -125,10 +130,11 @@ export function toTurns(session: HarnessSession, options: TurnOptions = {}): Tur
     const toolCalls = message.parts.filter((p) => p.type === 'tool-call').map((p) => calls.get((p as { toolCallId: string }).toolCallId)).filter((c): c is SessionToolCall => c !== undefined)
     const call = message.modelCallId ? modelCalls.get(message.modelCallId) : undefined
     if (!body && toolCalls.length === 0 && !call?.error) continue
-    const files = toolCalls.flatMap(touched).map(relativize)
+    const filesOf = options.filesOf ?? touched
+    const files = toolCalls.flatMap(filesOf).map(relativize)
     const details: TurnToolCall[] = toolCalls.map((c) => {
       const preview = inputPreview(c)
-      const path = touched(c)[0]
+      const path = (options.filesOf ?? touched)(c)[0]
       const result = c.result?.text ?? (typeof c.result?.output === 'string' ? (c.result.output as string) : undefined)
       return {
         name: c.name,

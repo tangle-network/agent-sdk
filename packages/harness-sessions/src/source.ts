@@ -16,6 +16,15 @@ export interface SourceStats {
   tornTail: boolean
   /** The line number (1-based) of the record most recently yielded. */
   line: number
+  /** Line numbers of the first unparsable lines (at most 50), for the gaps a reader reports. */
+  unparsedLines?: number[]
+}
+
+const MAX_UNPARSED_LINES = 50
+function noteUnparsed(stats: SourceStats, line: number): void {
+  stats.unparsed += 1
+  stats.unparsedLines ??= []
+  if (stats.unparsedLines.length < MAX_UNPARSED_LINES) stats.unparsedLines.push(line)
 }
 
 /** Records to fold, with the stats of the bytes they came from. */
@@ -66,12 +75,12 @@ export async function* readJsonlRecords(
         return undefined
       }
       if (options.strict) throw new SessionParseError(path, lineNumber, 'malformed JSON')
-      stats.unparsed += 1
+      noteUnparsed(stats, lineNumber)
       return undefined
     }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       if (options.strict) throw new SessionParseError(path, lineNumber, 'record is not a JSON object')
-      stats.unparsed += 1
+      noteUnparsed(stats, lineNumber)
       return undefined
     }
     return value as Record<string, unknown>
@@ -148,12 +157,12 @@ export function* textRecordsSync(text: string, stats: SourceStats, options: { st
         continue
       }
       if (options.strict) throw new SessionParseError(stats.path, index + 1, 'malformed JSON')
-      stats.unparsed += 1
+      noteUnparsed(stats, index + 1)
       continue
     }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       if (options.strict) throw new SessionParseError(stats.path, index + 1, 'record is not a JSON object')
-      stats.unparsed += 1
+      noteUnparsed(stats, index + 1)
       continue
     }
     stats.line = index + 1
@@ -165,7 +174,7 @@ export function* textRecordsSync(text: string, stats: SourceStats, options: { st
 export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats): Generator<Record<string, unknown>> {
   for (const [index, value] of values.entries()) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      stats.unparsed += 1
+      noteUnparsed(stats, index + 1)
       continue
     }
     stats.line = index + 1

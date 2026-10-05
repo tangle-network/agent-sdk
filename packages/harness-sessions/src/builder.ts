@@ -219,9 +219,10 @@ export class SessionBuilder {
     if (this.gaps.length < 200) this.gaps.push(text)
   }
 
-  source(stats: SourceStats | { path: string; sha256: string; bytes: number; unparsed?: number; tornTail?: boolean }): void {
+  source(stats: SourceStats | { path: string; sha256: string; bytes: number; unparsed?: number; tornTail?: boolean; unparsedLines?: number[] }): void {
     this.sources.push({ path: stats.path, sha256: stats.sha256, bytes: stats.bytes })
     this.unparsed += stats.unparsed ?? 0
+    for (const line of stats.unparsedLines ?? []) this.gap(`${stats.path}: line ${line} is not a JSON record`)
     if (stats.tornTail) {
       this.truncated = true
       this.gap(`${stats.path}: last record was still being written when the copy was taken`)
