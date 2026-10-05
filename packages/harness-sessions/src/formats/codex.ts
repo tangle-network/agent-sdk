@@ -22,7 +22,8 @@ import {
   type BuildMode,
 } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource } from '../source.js'
+import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 import { join } from 'node:path'
@@ -87,9 +88,8 @@ function outputOf(output: unknown): { output: unknown; text: string | null; isEr
 
 const MODEL_OUTPUT = new Set(['message', 'reasoning'])
 
-export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = source.stats
   let provider: string | null = null
   let model: string | null = null
   let open: ModelCall | null = null
@@ -126,7 +126,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     }
   }
 
-  for await (const record of source.records) {
+  const observe = (record: Record<string, unknown>): void => {
     const payload = isRecord(record.payload) ? record.payload : {}
     if (inherited) {
       const turnId = str(payload.turn_id)
@@ -138,7 +138,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
           const role = str(payload.role)
           builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:inherited:${inheritedRecords}`, role: role === 'assistant' ? 'assistant' : role === 'user' ? 'user' : 'system', actor: 'injected', at: null, modelCallId: null, parts: contentParts(payload.content) })
         }
-        continue
+        return
       }
     }
     const at = builder.seen(record.timestamp)
@@ -270,15 +270,23 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     }
   }
 
-  builder.source(stats)
-  if (compacted > 0) builder.gap(`${compacted} compaction records replaced earlier context`)
-  if (inheritedRecords > 0) builder.gap(`${inheritedRecords} records replay the history of the session this one was forked from`)
-  if (foreignThreads.size > 0) builder.gap(`${foreignThreads.size} child threads logged their items in this rollout; they are not read as this session`)
-  const total = addTotals(committedTotal, lastTotal)
-  if (total !== null) builder.setSessionUsage(total)
-  const last = builder.modelCalls[builder.modelCalls.length - 1]
-  builder.inferEnding(aborted && !last?.error ? { at: aborted.at, error: sessionError('turn_aborted', aborted.reason, aborted.at, null) } : undefined)
-  return builder
+  const finish = (): SessionBuilder => {
+
+    builder.source(stats)
+    if (compacted > 0) builder.gap(`${compacted} compaction records replaced earlier context`)
+    if (inheritedRecords > 0) builder.gap(`${inheritedRecords} records replay the history of the session this one was forked from`)
+    if (foreignThreads.size > 0) builder.gap(`${foreignThreads.size} child threads logged their items in this rollout; they are not read as this session`)
+    const total = addTotals(committedTotal, lastTotal)
+    if (total !== null) builder.setSessionUsage(total)
+    const last = builder.modelCalls[builder.modelCalls.length - 1]
+    builder.inferEnding(aborted && !last?.error ? { at: aborted.at, error: sessionError('turn_aborted', aborted.reason, aborted.at, null) } : undefined)
+    return builder
+  }
+  return { builder, observe, finish }
+}
+
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+  return runFold(createFold(ref, mode, source.stats), source)
 }
 
 function httpStatusOf(payload: Record<string, unknown>): number | null {

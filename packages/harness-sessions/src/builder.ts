@@ -184,7 +184,7 @@ export class SessionBuilder {
   }
 
   /** The result of a tool call. A result whose call was not recorded becomes a call of its own. */
-  toolResult(id: string, result: { output: unknown; text: string | null; isError: boolean; at: string | null; name?: string; messageId: string }): void {
+  toolResult(id: string, result: { output: unknown; text: string | null; isError: boolean; at: string | null; name?: string; messageId: string; details?: unknown }): void {
     if (!this.toolCallIds.has(id)) {
       this.toolCall({ id, name: result.name ?? 'unknown', input: null, inputText: null, at: result.at, messageId: result.messageId })
       this.gap(`tool result ${id} has no recorded call`)
@@ -193,7 +193,7 @@ export class SessionBuilder {
     if (!this.full) return
     const call = this.toolCalls.get(id)
     if (!call) return
-    call.result = { output: result.output, text: result.text, isError: result.isError, at: result.at }
+    call.result = { output: result.output, text: result.text, isError: result.isError, at: result.at, details: result.details ?? null }
     call.status = result.isError ? 'error' : 'completed'
     call.endedAt = result.at
   }

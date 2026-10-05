@@ -157,7 +157,7 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
             const output = state.status === 'error' ? (state.error ?? null) : (state.output ?? null)
             const resultId = `${callId}:result`
             builder.message({ id: resultId, role: 'tool', actor: 'tool-result', at: endAt, modelCallId: null, parts: [{ type: 'tool-result', toolCallId: callId }] })
-            builder.toolResult(callId, { output, text: typeof output === 'string' ? output : null, isError: state.status === 'error', at: endAt, messageId: resultId })
+            builder.toolResult(callId, { output, text: typeof output === 'string' ? output : null, isError: state.status === 'error', at: endAt, messageId: resultId, details: state.metadata ?? null })
           }
           const metadata = isRecord(state.metadata) ? state.metadata : {}
           const childId = str(metadata.sessionId)

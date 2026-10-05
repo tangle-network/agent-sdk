@@ -97,7 +97,14 @@ export interface SessionToolCall {
   input: unknown
   /** The arguments exactly as the harness recorded them when it recorded text. */
   inputText: string | null
-  result: { output: unknown; text: string | null; isError: boolean; at: string | null } | null
+  result: {
+    output: unknown
+    text: string | null
+    isError: boolean
+    at: string | null
+    /** The harness's own structured result (Claude Code `toolUseResult`, Pi `details`, OpenCode `metadata`). */
+    details: unknown
+  } | null
   status: 'completed' | 'error' | 'pending' | 'interrupted'
   startedAt: string | null
   endedAt: string | null
