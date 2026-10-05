@@ -116,7 +116,8 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         id,
         at,
         provider: failed ? null : str(message.provider),
-        servedModel: failed ? null : str(message.model),
+        // Pi 0.85 records the provider's own answer as responseModel; model is what it asked for.
+        servedModel: failed ? null : (str(message.responseModel) ?? str(message.model)),
         requestedModel: str(message.model),
         usage,
         costUsd: cost,

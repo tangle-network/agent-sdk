@@ -262,6 +262,13 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         } else if (kind === 'task_complete') {
           aborted = null
           open = null
+          // Codex 0.145 records a turn that ended on a failed request only here: the request that
+          // failed returned no answer, so it is a model call with that error and no served model.
+          if (isRecord(payload.error)) {
+            const failure = payload.error
+            calls += 1
+            builder.modelCall({ id: `${builder.nativeSessionId}:response:${calls}`, at, provider, servedModel: null, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: sessionError(str(failure.codex_error_info) ?? 'error', str(failure.message) ?? 'error', at, httpStatusOf(failure)) })
+          }
         }
         break
       }
