@@ -1,0 +1,61 @@
+{
+  "name": "@tangle-network/harness-sessions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One reader for every coding-agent harness's native session (Claude Code, Codex, OpenCode, Pi): store layouts, a normalized session with messages, tool calls, served models, usage and ending errors, and projections to chat messages, OTLP spans and turns",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "bin": {
+    "harness-sessions": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./src/index.ts"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tangle-network/agent-sdk.git",
+    "directory": "packages/harness-sessions"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@tangle-network/agent-trace-contract": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "7.0.2",
+    "vitest": "catalog:"
+  }
+}
