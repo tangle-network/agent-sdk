@@ -226,6 +226,11 @@ export interface HarnessSessionReader {
   aliases: readonly string[]
   formats: readonly SessionFormatId[]
   stores: readonly NativeSessionStore[]
+  /**
+   * Globs under the first store's root: the file this reader folds for one session, and for a
+   * harness that writes each subagent's transcript separately, those files.
+   */
+  globs: { session: string; children?: string }
   evidence: SessionEvidenceSources
   locate(home: string, opts?: LocateOptions): Promise<SessionRef[]>
   read(ref: SessionRef, opts?: ReadOptions): Promise<HarnessSession>

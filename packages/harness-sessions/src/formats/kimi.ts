@@ -20,6 +20,8 @@ import { runFold, type SessionFold } from './fold.js'
 const FORMAT = 'kimi.session-dir' as const
 const STORE = STORES[FORMAT]
 const HARNESS = 'kimi-code'
+/** The event stream this reader folds; the store also holds context.jsonl and state.json. */
+const WIRE = '*/{id}/wire.jsonl'
 
 function usageOf(value: unknown): TokenUsage | null {
   if (!isRecord(value)) return null
@@ -160,7 +162,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
   const root = join(home, STORE.root)
-  const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
+  const pattern = storeGlob(WIRE, opts.nativeSessionId)
   const refs: SessionRef[] = []
   for (const rel of await walkFiles(root)) {
     if (!pattern.test(rel)) continue
@@ -182,6 +184,7 @@ export const kimiReader: HarnessSessionReader = {
   aliases: ['kimi', 'kimi-cli'],
   formats: [FORMAT],
   stores: [STORE],
+  globs: { session: WIRE },
   evidence: EVIDENCE[FORMAT],
   locate: (home, opts = {}) => locate(home, opts),
   async read(ref, opts = {}) {

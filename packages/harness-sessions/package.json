@@ -15,6 +15,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./src/index.ts"
+    },
+    "./catalog": {
+      "import": "./dist/catalog.js",
+      "types": "./src/catalog.ts"
     }
   },
   "repository": {
@@ -32,6 +36,11 @@
         "import": "./dist/index.js",
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./catalog": {
+        "import": "./dist/catalog.js",
+        "types": "./dist/catalog.d.ts",
+        "default": "./dist/catalog.js"
       }
     }
   },

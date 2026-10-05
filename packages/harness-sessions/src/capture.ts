@@ -105,8 +105,8 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       }
       continue
     }
-    const main = storeGlob(store.files[0]!, copy.nativeSessionId)
-    const nested = store.files.slice(1).map((glob) => storeGlob(glob, copy.nativeSessionId))
+    const main = storeGlob(reader.globs.session, copy.nativeSessionId)
+    const nested = reader.globs.children ? [storeGlob(reader.globs.children, copy.nativeSessionId)] : []
     const mainFile = copy.files.find((f) => { const rel = inStore(f.path); return rel !== null && main.test(rel) })
     if (!mainFile) {
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'native_session_file_missing', nativeSessionId: copy.nativeSessionId })

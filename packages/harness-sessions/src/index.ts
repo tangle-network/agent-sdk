@@ -30,14 +30,14 @@ export type {
   TokenUsage,
 } from './schema.js'
 export { HARNESS_SESSION_SCHEMA } from './schema.js'
-export { EVIDENCE, STORES, assertStoreRoot, storeGlob } from './stores.js'
+export { EVIDENCE, SESSION_FORMAT_IDS, STORES, assertStoreRoot, storeGlob } from './catalog.js'
 export { knownHarnesses, listReaders, maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 export { claudeCodeReader, claudeCodeRefForFile } from './formats/claude-code.js'
 export { codexReader, codexRefForFile } from './formats/codex.js'
 export { opencodeReader, opencodeSessionsInStore } from './formats/opencode.js'
 export { piReader, piRefForFile } from './formats/pi.js'
 export { kimiReader, kimiRefForFile } from './formats/kimi.js'
-export { FACTORY_SETTINGS_STORE, factoryReader, factoryRefForFile } from './formats/factory.js'
+export { factoryReader, factoryRefForFile } from './formats/factory.js'
 export {
   listCapture,
   readCapture,

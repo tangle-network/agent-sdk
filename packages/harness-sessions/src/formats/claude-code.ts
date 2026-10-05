@@ -256,6 +256,7 @@ export const claudeCodeReader: HarnessSessionReader = {
   aliases: ['claude', 'claude-code-acp', 'claudish'],
   formats: [FORMAT],
   stores: [STORE],
+  globs: { session: STORE.files[0], children: STORE.files[1] },
   evidence: EVIDENCE[FORMAT],
   locate: (home, opts = {}) => locate(home, opts),
   async read(ref, opts = {}): Promise<HarnessSession> {
