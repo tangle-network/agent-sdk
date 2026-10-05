@@ -11,7 +11,8 @@
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource } from '../source.js'
+import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 
@@ -52,15 +53,14 @@ function idFromName(path: string): string {
   return basename(path, '.jsonl').replace(/^[\dTZ.:-]+_/u, '')
 }
 
-export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = source.stats
   let previousId: string | null = null
   let branches = 0
   let compactions = 0
   let aborted: { at: string | null; message: string | null } | null = null
 
-  for await (const entry of source.records) {
+  const observe = (entry: Record<string, unknown>): void => {
     const entryAt = builder.seen(entry.timestamp)
     const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
@@ -68,7 +68,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       if (typeof entry.id === 'string') builder.nativeSessionId = entry.id
       builder.cwd = str(entry.cwd)
       previousId = null
-      continue
+      return
     }
     if (parentId !== null && previousId !== null && parentId !== previousId) branches += 1
     previousId = id
@@ -77,9 +77,9 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       if (typeof entry.summary === 'string') {
         builder.message({ id, role: 'user', actor: 'injected', at: entryAt, modelCallId: null, parts: [{ type: 'text', text: entry.summary }] })
       }
-      continue
+      return
     }
-    if (entry.type !== 'message' || !isRecord(entry.message)) continue
+    if (entry.type !== 'message' || !isRecord(entry.message)) return
     const message = entry.message
     const at = entryAt ?? builder.seen(message.timestamp)
     const role = str(message.role)
@@ -87,7 +87,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     if (role === 'user') {
       aborted = null
       builder.message({ id, role: 'user', actor: ref.parentNativeSessionId ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: contentParts(message.content, id) })
-      continue
+      return
     }
     if (role === 'toolResult') {
       const callId = str(message.toolCallId) ?? `${id}:result`
@@ -101,8 +101,9 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
         at,
         name: str(message.toolName) ?? undefined,
         messageId: id,
+        details: message.details ?? null,
       })
-      continue
+      return
     }
     if (role === 'assistant') {
       const stopReason = str(message.stopReason)
@@ -133,7 +134,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       }
       builder.message({ id, role: 'assistant', actor: failed ? 'injected' : 'agent', at, modelCallId: id, parts: failed && parts.length === 0 && errorText ? [{ type: 'text', text: errorText }] : parts })
       aborted = stopReason === 'aborted' ? { at, message: errorText } : null
-      continue
+      return
     }
     // Harness-injected messages (system prompts, extension messages, shell executions).
     if (role === 'system' || role === 'custom' || role === 'bashExecution') {
@@ -141,11 +142,19 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     }
   }
 
-  builder.source(stats)
-  if (branches > 0) builder.gap(`${branches} entries continue an earlier entry rather than the previous one (the session branched); all branches are read in file order`)
-  if (compactions > 0) builder.gap(`${compactions} compaction entries replaced earlier context`)
-  builder.inferEnding(aborted ? { at: aborted.at, error: aborted.message ? sessionError('aborted', aborted.message, aborted.at, null) : null } : undefined)
-  return builder
+  const finish = (): SessionBuilder => {
+
+    builder.source(stats)
+    if (branches > 0) builder.gap(`${branches} entries continue an earlier entry rather than the previous one (the session branched); all branches are read in file order`)
+    if (compactions > 0) builder.gap(`${compactions} compaction entries replaced earlier context`)
+    builder.inferEnding(aborted ? { at: aborted.at, error: aborted.message ? sessionError('aborted', aborted.message, aborted.at, null) : null } : undefined)
+    return builder
+  }
+  return { builder, observe, finish }
+}
+
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+  return runFold(createFold(ref, mode, source.stats), source)
 }
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {

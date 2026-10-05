@@ -126,53 +126,51 @@ export function fileRecords(path: string, options: { strict?: boolean; signal?: 
   return { stats, records: readJsonlRecords(path, stats, options) }
 }
 
-/** The records of JSONL text already in memory (a retained copy, a blob). */
-export function textRecords(text: string, label: string, options: { strict?: boolean } = {}): RecordSource {
+/** Stats for bytes already in memory. */
+export function memoryStats(label: string, text?: string): SourceStats {
+  if (text === undefined) return { path: label, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
   const bytes = Buffer.from(text, 'utf8')
-  const stats: SourceStats = { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
-  async function* records(): AsyncGenerator<Record<string, unknown>> {
-    const lines = text.split('\n')
-    for (const [index, raw] of lines.entries()) {
-      const line = raw.replace(/\r$/u, '')
-      if (line.trim().length === 0) continue
-      let value: unknown
-      try {
-        value = JSON.parse(line)
-      } catch {
-        if (index === lines.length - 1) {
-          stats.tornTail = true
-          continue
-        }
-        if (options.strict) throw new SessionParseError(label, index + 1, 'malformed JSON')
-        stats.unparsed += 1
+  return { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
+}
+
+/** The records of JSONL text already in memory (a retained copy, a blob), read synchronously. */
+export function* textRecordsSync(text: string, stats: SourceStats, options: { strict?: boolean } = {}): Generator<Record<string, unknown>> {
+  const lines = text.split('\n')
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.replace(/\r$/u, '')
+    if (line.trim().length === 0) continue
+    let value: unknown
+    try {
+      value = JSON.parse(line)
+    } catch {
+      if (index === lines.length - 1) {
+        stats.tornTail = true
         continue
       }
-      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-        if (options.strict) throw new SessionParseError(label, index + 1, 'record is not a JSON object')
-        stats.unparsed += 1
-        continue
-      }
-      stats.line = index + 1
-      yield value as Record<string, unknown>
+      if (options.strict) throw new SessionParseError(stats.path, index + 1, 'malformed JSON')
+      stats.unparsed += 1
+      continue
     }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      if (options.strict) throw new SessionParseError(stats.path, index + 1, 'record is not a JSON object')
+      stats.unparsed += 1
+      continue
+    }
+    stats.line = index + 1
+    yield value as Record<string, unknown>
   }
-  return { stats, records: records() }
 }
 
 /** Records a caller already parsed (one per line, in order). Non-objects count as unparsed. */
-export function arrayRecords(values: readonly unknown[], label: string): RecordSource {
-  const stats: SourceStats = { path: label, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
-  async function* records(): AsyncGenerator<Record<string, unknown>> {
-    for (const [index, value] of values.entries()) {
-      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-        stats.unparsed += 1
-        continue
-      }
-      stats.line = index + 1
-      yield value as Record<string, unknown>
+export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats): Generator<Record<string, unknown>> {
+  for (const [index, value] of values.entries()) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      stats.unparsed += 1
+      continue
     }
+    stats.line = index + 1
+    yield value as Record<string, unknown>
   }
-  return { stats, records: records() }
 }
 
 /** Hash a file without parsing it. */

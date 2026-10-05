@@ -11,7 +11,8 @@
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource } from '../source.js'
+import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 
@@ -33,22 +34,21 @@ function usageOf(value: unknown): TokenUsage | null {
 
 const INTERRUPTED = /^\[Request interrupted by user/u
 
-export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
   const subagent = ref.parentNativeSessionId !== null
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = source.stats
   let sidechainSkipped = 0
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
 
-  for await (const record of source.records) {
+  const observe = (record: Record<string, unknown>): void => {
     if (!subagent && record.isSidechain === true) {
       sidechainSkipped += 1
-      continue
+      return
     }
     const type = record.type
-    if (type !== 'user' && type !== 'assistant' && type !== 'system') continue
+    if (type !== 'user' && type !== 'assistant' && type !== 'system') return
     const at = builder.seen(record.timestamp)
     if (builder.cwd === null && typeof record.cwd === 'string') builder.cwd = record.cwd
     if (!identified && typeof record.sessionId === 'string') {
@@ -64,7 +64,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     const uuid = str(record.uuid) ?? `${builder.nativeSessionId}:${stats.line}`
 
     if (type === 'system') {
-      if (record.subtype !== 'api_error') continue
+      if (record.subtype !== 'api_error') return
       // A failed API request that Claude Code retried (or gave up on). It is a model call that
       // returned no answer; a later success supersedes it in the ending.
       const error = isRecord(record.error) ? record.error : {}
@@ -81,13 +81,13 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
         error: sessionError('api_error', message, at, count(error.status)),
       })
       errors += 1
-      continue
+      return
     }
 
     const message = isRecord(record.message) ? record.message : null
     if (message === null) {
       builder.gap(`record ${uuid}: ${type} record has no message`)
-      continue
+      return
     }
 
     if (type === 'user') {
@@ -103,21 +103,24 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
           modelCallId: null,
           parts: [{ type: 'text', text: content }],
         })
-        continue
+        return
       }
-      if (!Array.isArray(content)) continue
+      if (!Array.isArray(content)) return
       const toolParts: Part[] = []
       const userParts: Part[] = []
       for (const block of content) {
         if (!isRecord(block)) continue
         if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
           toolParts.push({ type: 'tool-result', toolCallId: block.tool_use_id })
+          const results = content.filter((b) => isRecord(b) && b.type === 'tool_result').length
           builder.toolResult(block.tool_use_id, {
             output: block.content ?? null,
             text: textOf(block.content),
             isError: block.is_error === true,
             at,
             messageId: `${uuid}:tool`,
+            // The record's structured result belongs to its tool result when it carries one.
+            details: results === 1 ? (record.toolUseResult ?? null) : null,
           })
           const result = isRecord(record.toolUseResult) ? record.toolUseResult : null
           const agentId = result ? str(result.agentId) : null
@@ -141,7 +144,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
           parts: userParts,
         })
       }
-      continue
+      return
     }
 
     // assistant
@@ -163,7 +166,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       })
       builder.message({ id: uuid, role: 'assistant', actor: 'injected', at, modelCallId: call.id, parts: [{ type: 'text', text }] })
       errors += 1
-      continue
+      return
     }
     const apiId = str(message.id) ?? uuid
     const parts: Part[] = []
@@ -185,7 +188,7 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       existing.usage = usageOf(message.usage) ?? existing.usage
       existing.stopReason = str(message.stop_reason) ?? existing.stopReason
       if (builder.hasMessage(apiId)) builder.appendParts(apiId, parts)
-      continue
+      return
     }
     builder.modelCall({
       id: apiId,
@@ -201,11 +204,19 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
     builder.message({ id: apiId, role: 'assistant', actor: 'agent', at, modelCallId: apiId, parts })
   }
 
-  builder.source(stats)
-  if (sidechainSkipped > 0) builder.gap(`${sidechainSkipped} sidechain records in the main transcript belong to subagents and were not read as this session`)
-  if (errors > 0 && builder.modelCalls.every((c) => c.error)) builder.gap('every model call in the session failed')
-  builder.inferEnding(aborted ? { at: aborted.at, error: null } : undefined)
-  return builder
+  const finish = (): SessionBuilder => {
+
+    builder.source(stats)
+    if (sidechainSkipped > 0) builder.gap(`${sidechainSkipped} sidechain records in the main transcript belong to subagents and were not read as this session`)
+    if (errors > 0 && builder.modelCalls.every((c) => c.error)) builder.gap('every model call in the session failed')
+    builder.inferEnding(aborted ? { at: aborted.at, error: null } : undefined)
+    return builder
+  }
+  return { builder, observe, finish }
+}
+
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+  return runFold(createFold(ref, mode, source.stats), source)
 }
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
