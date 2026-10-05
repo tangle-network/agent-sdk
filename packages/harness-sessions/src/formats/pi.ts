@@ -11,7 +11,7 @@
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { newSourceStats, readJsonlRecords } from '../source.js'
+import { fileRecords, type RecordSource } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
 
@@ -52,17 +52,17 @@ function idFromName(path: string): string {
   return basename(path, '.jsonl').replace(/^[\dTZ.:-]+_/u, '')
 }
 
-async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Promise<SessionBuilder> {
+export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  const stats = newSourceStats(ref.path)
+  const stats = source.stats
   let previousId: string | null = null
   let branches = 0
   let compactions = 0
   let aborted: { at: string | null; message: string | null } | null = null
 
-  for await (const entry of readJsonlRecords(ref.path, stats, { strict: options.corruption === 'strict', signal: options.signal })) {
+  for await (const entry of source.records) {
     const entryAt = builder.seen(entry.timestamp)
-    const id = str(entry.id) ?? `${ref.nativeSessionId}:${stats.bytes}`
+    const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
     if (entry.type === 'session') {
       if (typeof entry.id === 'string') builder.nativeSessionId = entry.id

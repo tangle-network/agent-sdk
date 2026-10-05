@@ -327,6 +327,7 @@ export class SessionBuilder {
       replies: this.replies,
       toolCalls: this.toolCallCount,
       servedModels: this.servedModels(),
+      lastServedModel: [...this.modelCalls].reverse().map(servedModelKey).find((key) => key !== null) ?? null,
       modelSource: this.modelSource,
       usage: this.usage(),
       ending: this.ending,

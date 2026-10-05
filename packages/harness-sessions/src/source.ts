@@ -14,6 +14,14 @@ export interface SourceStats {
   unparsed: number
   /** The file ended without a newline and its last bytes were not a complete record. */
   tornTail: boolean
+  /** The line number (1-based) of the record most recently yielded. */
+  line: number
+}
+
+/** Records to fold, with the stats of the bytes they came from. */
+export interface RecordSource {
+  stats: SourceStats
+  records: AsyncIterable<Record<string, unknown>>
 }
 
 export class SessionParseError extends Error {
@@ -87,7 +95,10 @@ export async function* readJsonlRecords(
         line = chunk.subarray(start, index)
       }
       const record = parse(line, true)
-      if (record !== undefined) yield record
+      if (record !== undefined) {
+        stats.line = lineNumber
+        yield record
+      }
       start = index + 1
     }
     if (start < chunk.length) {
@@ -97,13 +108,71 @@ export async function* readJsonlRecords(
   }
   if (pendingBytes > 0) {
     const record = parse(Buffer.concat(pending), false)
-    if (record !== undefined) yield record
+    if (record !== undefined) {
+      stats.line = lineNumber
+      yield record
+    }
   }
   stats.sha256 = `sha256:${hash.digest('hex')}`
 }
 
 export function newSourceStats(path: string): SourceStats {
-  return { path, sha256: '', bytes: 0, unparsed: 0, tornTail: false }
+  return { path, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
+}
+
+/** The records of a JSONL file, streamed. */
+export function fileRecords(path: string, options: { strict?: boolean; signal?: AbortSignal } = {}): RecordSource {
+  const stats = newSourceStats(path)
+  return { stats, records: readJsonlRecords(path, stats, options) }
+}
+
+/** The records of JSONL text already in memory (a retained copy, a blob). */
+export function textRecords(text: string, label: string, options: { strict?: boolean } = {}): RecordSource {
+  const bytes = Buffer.from(text, 'utf8')
+  const stats: SourceStats = { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
+  async function* records(): AsyncGenerator<Record<string, unknown>> {
+    const lines = text.split('\n')
+    for (const [index, raw] of lines.entries()) {
+      const line = raw.replace(/\r$/u, '')
+      if (line.trim().length === 0) continue
+      let value: unknown
+      try {
+        value = JSON.parse(line)
+      } catch {
+        if (index === lines.length - 1) {
+          stats.tornTail = true
+          continue
+        }
+        if (options.strict) throw new SessionParseError(label, index + 1, 'malformed JSON')
+        stats.unparsed += 1
+        continue
+      }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        if (options.strict) throw new SessionParseError(label, index + 1, 'record is not a JSON object')
+        stats.unparsed += 1
+        continue
+      }
+      stats.line = index + 1
+      yield value as Record<string, unknown>
+    }
+  }
+  return { stats, records: records() }
+}
+
+/** Records a caller already parsed (one per line, in order). Non-objects count as unparsed. */
+export function arrayRecords(values: readonly unknown[], label: string): RecordSource {
+  const stats: SourceStats = { path: label, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
+  async function* records(): AsyncGenerator<Record<string, unknown>> {
+    for (const [index, value] of values.entries()) {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        stats.unparsed += 1
+        continue
+      }
+      stats.line = index + 1
+      yield value as Record<string, unknown>
+    }
+  }
+  return { stats, records: records() }
 }
 
 /** Hash a file without parsing it. */

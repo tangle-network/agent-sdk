@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * harness-sessions read <file|home|capture> [--harness h] [--session id] [--summary] [--json]
+ * harness-sessions read <file|home|capture> [--harness h] [--session id] [--cwd dir] [--summary] [--json]
  *
  * Reads native harness sessions into the normalized form, for callers that are not JavaScript.
  * A file is one session file (or an OpenCode store); a directory is a capture when it holds
@@ -18,7 +18,7 @@ import { listReaders, readerFor } from './registry.js'
 import type { SessionRef } from './schema.js'
 
 function usage(): never {
-  process.stderr.write('usage: harness-sessions read <file|home|capture> [--harness h] [--session id] [--summary] [--json]\n')
+  process.stderr.write('usage: harness-sessions read <file|home|capture> [--harness h] [--session id] [--cwd dir] [--summary] [--json]\n')
   process.exit(2)
 }
 
@@ -54,12 +54,14 @@ async function main(argv: string[]): Promise<void> {
   if (command !== 'read' || !target) usage()
   let harness: string | null = null
   let session: string | null = null
+  let cwd: string | null = null
   let summary = false
   let json = false
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i]
     if (arg === '--harness') harness = rest[++i] ?? usage()
     else if (arg === '--session') session = rest[++i] ?? usage()
+    else if (arg === '--cwd') cwd = rest[++i] ?? usage()
     else if (arg === '--summary') summary = true
     else if (arg === '--json') json = true
     else usage()
@@ -78,7 +80,7 @@ async function main(argv: string[]): Promise<void> {
   } else {
     refs.push(...(await refsForFile(target, harness, session)))
   }
-  const selected = session ? refs.filter((r) => r.nativeSessionId === session) : refs
+  const selected = refs.filter((r) => (!session || r.nativeSessionId === session) && (!cwd || r.cwd === cwd))
 
   for (const ref of selected) {
     const reader = readerFor(ref.harness)
