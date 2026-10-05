@@ -1,10 +1,12 @@
 import { claudeCodeReader } from './formats/claude-code.js'
 import { codexReader } from './formats/codex.js'
+import { kimiReader } from './formats/kimi.js'
+import { factoryReader } from './formats/factory.js'
 import { opencodeReader } from './formats/opencode.js'
 import { piReader } from './formats/pi.js'
 import type { HarnessSessionReader, SessionFormatId } from './schema.js'
 
-const READERS: readonly HarnessSessionReader[] = [claudeCodeReader, codexReader, opencodeReader, piReader]
+const READERS: readonly HarnessSessionReader[] = [claudeCodeReader, codexReader, opencodeReader, piReader, kimiReader, factoryReader]
 
 const BY_NAME = new Map<string, HarnessSessionReader>()
 for (const reader of READERS) {

@@ -7,6 +7,8 @@ import type { BuildMode, SessionBuilder } from './builder.js'
 import { createFold as claudeCodeFold } from './formats/claude-code.js'
 import { createFold as codexFold } from './formats/codex.js'
 import type { SessionFold } from './formats/fold.js'
+import { createFold as kimiFold } from './formats/kimi.js'
+import { createFold as factoryFold } from './formats/factory.js'
 import { createFold as piFold } from './formats/pi.js'
 import { readerFor } from './registry.js'
 import type { HarnessSession, ReadOptions, SessionRef, SessionSummary } from './schema.js'
@@ -29,6 +31,8 @@ const FOLDS: Record<string, CreateFold> = {
   'claude-code': claudeCodeFold,
   codex: codexFold,
   pi: piFold,
+  'kimi-code': kimiFold,
+  'factory-droids': (ref, mode, stats) => factoryFold(ref, mode, stats),
 }
 
 function foldInput(harness: string, input: SessionInput, init: SessionInputInit, mode: BuildMode, options: Pick<ReadOptions, 'corruption'>): SessionBuilder {
@@ -54,7 +58,7 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
   return fold.finish()
 }
 
-/** Read a JSONL-format session (Claude Code, Codex, Pi) from text or parsed records, synchronously. */
+/** Read a JSONL-format session (Claude Code, Codex, Pi, Kimi) from text or parsed records, synchronously. */
 export function readSessionInput(harness: string, input: SessionInput, init: SessionInputInit = {}, options: Pick<ReadOptions, 'corruption'> = {}): HarnessSession {
   return foldInput(harness, input, init, 'full', options).build()
 }

@@ -14,6 +14,8 @@ import { claudeCodeRefForFile } from './formats/claude-code.js'
 import { codexRefForFile } from './formats/codex.js'
 import { opencodeSessionsInStore } from './formats/opencode.js'
 import { piRefForFile } from './formats/pi.js'
+import { kimiRefForFile } from './formats/kimi.js'
+import { factoryRefForFile } from './formats/factory.js'
 import { listReaders, readerFor } from './registry.js'
 import type { SessionRef } from './schema.js'
 
@@ -35,6 +37,8 @@ function harnessOfFile(path: string): string | null {
   if (/(^|\/)\.claude\/projects\//u.test(path)) return 'claude-code'
   if (/(^|\/)\.codex\/sessions\//u.test(path) || /rollout-[^/]*\.jsonl$/u.test(path)) return 'codex'
   if (/(^|\/)\.pi\/agent\/sessions\//u.test(path)) return 'pi'
+  if (/(^|\/)\.kimi\/sessions\/.+\/wire\.jsonl$/u.test(path)) return 'kimi-code'
+  if (/(^|\/)\.factory\/sessions\//u.test(path)) return 'factory-droids'
   return null
 }
 
@@ -45,7 +49,7 @@ async function refsForFile(path: string, harness: string | null, session: string
   if (reader.harness === 'opencode') return opencodeSessionsInStore(path, null, session ? { nativeSessionId: session } : {})
   const ref = reader.harness === 'claude-code'
     ? claudeCodeRefForFile(path, /\/subagents\//u.test(path) ? 'parent' : null)
-    : reader.harness === 'codex' ? codexRefForFile(path) : piRefForFile(path)
+    : reader.harness === 'codex' ? codexRefForFile(path) : reader.harness === 'kimi-code' ? kimiRefForFile(path) : reader.harness === 'factory-droids' ? factoryRefForFile(path) : piRefForFile(path)
   return [ref]
 }
 
