@@ -33,7 +33,7 @@ concurrency:
 jobs:
   release-commit:
     name: Detect release commit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     outputs:
       run: ${{ steps.release.outputs.run }}
     steps:
@@ -84,7 +84,7 @@ jobs:
     name: ${{ matrix.check }}
     if: ${{ needs.release-commit.outputs.run == 'true' }}
     needs: release-commit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +113,7 @@ jobs:
     if: ${{ needs.release-commit.outputs.run == 'true' }}
     needs: release-commit
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     strategy:
       fail-fast: false
       matrix:
@@ -156,25 +156,10 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
             cli-bridge/pnpm-lock.yaml
-      - name: Enable CLI Bridge filesystem jail
+      # The self-hosted runners provide bubblewrap and unprivileged user namespaces.
+      - name: Check CLI Bridge filesystem jail
         shell: bash
-        run: |
-          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
-            sudo sed -i \
-              's#http://azure.archive.ubuntu.com/ubuntu/#https://archive.ubuntu.com/ubuntu/#g' \
-              /etc/apt/apt-mirrors.txt
-          fi
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 120s apt-get \
-            -o Acquire::Retries=2 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            update
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 60s apt-get \
-            install --yes --no-install-recommends bubblewrap
-          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --unshare-user --ro-bind / / -- true
+        run: bwrap --unshare-user --ro-bind / / -- true
       - run: pnpm install --frozen-lockfile
         working-directory: cli-bridge
       - run: pnpm rebuild better-sqlite3
@@ -197,7 +182,7 @@ jobs:
     if: ${{ needs.release-commit.outputs.run == 'true' }}
     needs: release-commit
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     strategy:
       fail-fast: false
       matrix:
