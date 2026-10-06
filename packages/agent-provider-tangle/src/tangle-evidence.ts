@@ -377,6 +377,17 @@ async function captureSandboxEvidence(
         scannedDirectories++;
         if (path.split("/").some((part) => blockedNames.has(part))) {
           excludedPaths.push({ ...item, reason: "credential-path" });
+          // Nothing below a credential directory is read, so none of it is listed either: one
+          // complete usage scan accounts for its subtree against the workspace totals. Listing it
+          // cost one request per directory; .opencode/node_modules alone was 271 of a capture's
+          // 302 list calls and about 100 s of each two-minute workspace capture on 2026-10-06.
+          options.signal?.throwIfAborted();
+          const subtree = await fs.usage(sourcePath);
+          if (!subtree.complete || subtree.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
+          scannedDirectories += subtree.directoryCount;
+          scannedFiles += subtree.fileCount;
+          scannedSize += subtree.sizeBytes;
+          continue;
         }
         stack.push(sourcePath);
         continue;

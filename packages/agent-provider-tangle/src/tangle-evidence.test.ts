@@ -919,6 +919,56 @@ describe("Tangle evidence capture", () => {
       .rejects.toThrow(/inventory does not reconcile/);
   });
 
+  function credentialTreeWorkspace(subtree: { complete?: boolean; opencodeDirectories?: number } = {}) {
+    const environment = fixture();
+    const fs = fixtureBoxes.get(environment)!.fs!;
+    const result = Buffer.from("found");
+    const dir = (path: string) => ({ path, name: path.split("/").at(-1)!, size: 0, isDir: true, isFile: false, isSymlink: false, permissions: 0o755 });
+    const listed: string[] = [];
+    const usages: Record<string, { sizeBytes: number; fileCount: number; directoryCount: number }> = {
+      // notes, .opencode, .config, and .opencode's node_modules, zod, v4 and v4/core.
+      ".": { sizeBytes: result.byteLength + 17 + 20, fileCount: 4, directoryCount: 7 },
+      ".opencode": { sizeBytes: 17, fileCount: 2, directoryCount: subtree.opencodeDirectories ?? 4 },
+      ".config": { sizeBytes: 20, fileCount: 1, directoryCount: 0 },
+    };
+    fs.usage = async (path = ".") => {
+      const totals = usages[path];
+      if (!totals) throw new Error(`fixture has no usage for ${path}`);
+      return { ...totals, complete: path === "." || (subtree.complete ?? true), skippedEntries: 0 };
+    };
+    fs.list = async (path) => {
+      listed.push(path);
+      if (path === ".") return [dir("notes"), dir(".opencode"), dir(".config")];
+      if (path === "notes") return [{ path: "notes/result.txt", name: "result.txt", size: result.byteLength, isDir: false, isFile: true, isSymlink: false, permissions: 0o644 }];
+      throw new Error(`listed inside a credential directory: ${path}`);
+    };
+    fs.readBatch = async (paths) => {
+      if (paths.some((path) => path !== "notes/result.txt")) throw new Error("credential read forbidden");
+      return { files: [{ path: "notes/result.txt", content: result.toString("base64"), encoding: "base64" as const, size: result.byteLength }], errors: [] };
+    };
+    return { environment, listed };
+  }
+
+  it("accounts for a credential directory with one usage scan instead of listing below it", async () => {
+    const workspace = credentialTreeWorkspace();
+    const evidence = await captureTangleEnvironmentEvidence(workspace.environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
+    expect(workspace.listed.sort()).toEqual([".", "notes"]);
+    expect(evidence.files.map((file) => file.path)).toContain("notes/result.txt");
+    expect(evidence.files.some((file) => file.path.startsWith(".opencode") || file.path.startsWith(".config"))).toBe(false);
+    expect(evidence.provenance.excludedPaths).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ".opencode", reason: "credential-path" }),
+      expect.objectContaining({ path: ".config", reason: "credential-path" }),
+    ]));
+    expect(evidence.provenance.workspace).toMatchObject({ scannedFiles: 4, scannedDirectories: 7, reportedFiles: 4, reportedDirectories: 7 });
+  });
+
+  it("refuses a credential directory whose usage scan is incomplete or disagrees with the workspace totals", async () => {
+    await expect(captureTangleEnvironmentEvidence(credentialTreeWorkspace({ complete: false }).environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
+      .rejects.toThrow(/usage scan is incomplete/);
+    await expect(captureTangleEnvironmentEvidence(credentialTreeWorkspace({ opencodeDirectories: 3 }).environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
+      .rejects.toThrow(/does not match the complete usage scan/);
+  });
+
   it("refuses a path outside the listed workspace parent", async () => {
     await expect(captureTangleEnvironmentEvidence(fixture({ filePath: "../secret" }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/canonical/);
   });
