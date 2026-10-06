@@ -124,7 +124,7 @@ function normalizedTeeId(value: string): string {
 }
 
 /** Match one requested TEE against a provider-reported TEE identifier. */
-export function confidentialTeeMatchesRequest(
+function confidentialTeeMatchesRequest(
   requested: string | undefined,
   attested: string | undefined,
 ): boolean {

@@ -210,7 +210,7 @@ export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
     }
   }) satisfies z.ZodType<AgentCandidateWorkspaceSnapshotEvidence>;
 
-export function validateEmbeddedArtifact(
+function validateEmbeddedArtifact(
   artifact: { content: string; byteLength: number },
   ctx: z.RefinementCtx,
 ): void {

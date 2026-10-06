@@ -323,36 +323,6 @@ function configRecordSchema(keySchema: z.ZodString) {
 export const environmentConfigSchema = configRecordSchema(
   environmentNameSchema,
 );
-export const headerConfigSchema = configRecordSchema(headerNameSchema);
-
-export const candidateMetadataSchema = z
-  .record(z.string(), z.unknown())
-  .superRefine((metadata, ctx) => {
-    if (hasSensitiveMetadataKey(metadata)) {
-      ctx.addIssue({
-        code: "custom",
-        message: "metadata must not contain credential-bearing keys",
-      });
-    }
-  });
-
-function hasSensitiveMetadataKey(
-  value: unknown,
-  ancestors = new Set<object>(),
-): boolean {
-  if (value === null || typeof value !== "object" || ancestors.has(value)) {
-    return false;
-  }
-  const nextAncestors = new Set(ancestors).add(value);
-  if (Array.isArray(value)) {
-    return value.some((entry) => hasSensitiveMetadataKey(entry, nextAncestors));
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (secretNamePattern.test(key)) return true;
-    if (hasSensitiveMetadataKey(entry, nextAncestors)) return true;
-  }
-  return false;
-}
 
 export const agentCandidateGitHubRepositorySchema = z
   .object({

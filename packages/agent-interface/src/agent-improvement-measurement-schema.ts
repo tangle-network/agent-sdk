@@ -9,7 +9,7 @@ import type {
 import { isCanonicalJsonValue, sha256DigestSchema } from "./agent-candidate-schema-common.js";
 import { numbersApproximatelyEqual } from "./number-validation.js";
 
-export const canonicalJsonSchema = z.custom<AgentCandidateJsonValue>(
+const canonicalJsonSchema = z.custom<AgentCandidateJsonValue>(
   isCanonicalJsonValue,
   "value must be finite, acyclic RFC 8785 JSON",
 );
@@ -122,7 +122,7 @@ export const agentCandidateEvaluationPolicySchema = z
     }
   });
 
-export const agentImprovementCostSchema = z
+const agentImprovementCostSchema = z
   .object({
     usd: z.number().finite().nonnegative(),
     provenance: z.enum(["observed", "estimated"]),
@@ -473,7 +473,7 @@ export function refineMeasuredComparisonSummary<TReceipt>(
   }
 }
 
-export function refineEstimate(
+function refineEstimate(
   estimate: {
     baseline: number;
     candidate: number;

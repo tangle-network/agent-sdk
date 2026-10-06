@@ -140,42 +140,10 @@ type WithDigest<Material> = Material extends unknown
 
 /** Self-hashed public projection. Private authorization and durable state stay out. */
 export type AgentWorkspaceLeaseRecord = WithDigest<AgentWorkspaceLeaseRecordMaterial>;
-export type AgentWorkspaceCopyReadyLeaseRecord =
-  WithDigest<AgentWorkspaceCopyReadyLeaseRecordMaterial>;
 export type AgentWorkspaceSealedLeaseRecord =
   WithDigest<AgentWorkspaceSealedLeaseRecordMaterial>;
 export type AgentWorkspaceExecutionBoundLeaseRecord =
   WithDigest<AgentWorkspaceExecutionBoundLeaseRecordMaterial>;
-export type AgentWorkspaceDestroyingLeaseRecord =
-  WithDigest<AgentWorkspaceDestroyingLeaseRecordMaterial>;
-export type AgentWorkspaceCleanupFailedLeaseRecord =
-  WithDigest<AgentWorkspaceCleanupFailedLeaseRecordMaterial>;
-export type AgentWorkspaceDestroyedLeaseRecord =
-  WithDigest<AgentWorkspaceDestroyedLeaseRecordMaterial>;
-
-/**
- * Request-only owner capability. Providers persist at most a one-way digest;
- * this value never belongs in a public lease or execution receipt.
- */
-export interface AgentWorkspaceLeaseAuthorization {
-  leaseId: string;
-  ownerToken: string;
-}
-
-export interface AgentWorkspaceSealRequest
-  extends AgentWorkspaceLeaseAuthorization {
-  profileActivationDigest: Sha256Digest;
-}
-
-export interface AgentWorkspaceExecutionBindingRequest
-  extends AgentWorkspaceLeaseAuthorization {
-  executionPreparationDigest: Sha256Digest;
-}
-
-export interface AgentWorkspaceLeaseRenewalRequest
-  extends AgentWorkspaceLeaseAuthorization {
-  expiresAtMs: number;
-}
 
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 
@@ -281,15 +249,6 @@ export const agentWorkspaceLeaseRecordSchema: z.ZodType<AgentWorkspaceLeaseRecor
       }
     })
     .transform((record) => record as AgentWorkspaceLeaseRecord);
-
-/** Canonical public identity; private token/state fields cannot enter its schema. */
-export function canonicalAgentWorkspaceLeaseRecordDigest(
-  material: AgentWorkspaceLeaseRecordMaterial,
-): Sha256Digest {
-  return canonicalCandidateDigest(
-    agentWorkspaceLeaseRecordMaterialSchema.parse(material),
-  );
-}
 
 /** Build and self-hash one phase-valid public workspace lease record. */
 export function buildAgentWorkspaceLeaseRecord<

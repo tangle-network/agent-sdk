@@ -25,7 +25,6 @@ import type { HarnessType } from "./harness.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import {
   agentWorkspaceLeaseRecordSchema,
-  type AgentWorkspaceExecutionBoundLeaseRecord,
   type AgentWorkspaceSealedLeaseRecord,
 } from "./agent-workspace-lease.js";
 
@@ -64,7 +63,7 @@ export interface BuildAgentExecutionPreparationReceiptInput {
   nowMs?: number;
 }
 
-export interface ValidateAgentExecutionPreparationReceiptOptions {
+interface ValidateAgentExecutionPreparationReceiptOptions {
   receipt: unknown;
   requestDigest: Sha256Digest;
   authoredProfile: AgentProfile;
@@ -72,8 +71,7 @@ export interface ValidateAgentExecutionPreparationReceiptOptions {
   /** Expected public-plan identity; callers must not derive it from secret values. */
   executionPlanDigest: Sha256Digest;
   profileActivation: Pick<AgentProfileActivationEvidence, "digest">;
-  /** Bound lease closes the receipt→workspace link before compute begins. */
-  workspaceLease: AgentWorkspaceExecutionBoundLeaseRecord;
+  workspaceLease: AgentWorkspaceSealedLeaseRecord;
   nowMs?: number;
   preparationId?: string;
   backend?: string;
@@ -86,7 +84,6 @@ export type AgentExecutionPreparationValidationIssueCode =
   | "invalid-profile"
   | "invalid-workspace-lease"
   | "workspace-not-execution-bound"
-  | "execution-binding-mismatch"
   | "digest-mismatch"
   | "expectation-mismatch"
   | "expired"
@@ -197,35 +194,13 @@ export function buildAgentExecutionPreparationReceipt(
     harness: input.harness,
     harnessVersion: input.harnessVersion,
     workspaceLease,
-    requireExecutionBinding: false,
   });
   if (validation.ok) return validation.receipt;
   throw new AgentExecutionPreparationValidationError(validation.issues);
 }
 
-/** Validate structure, bindings, expiry, model fidelity, and exact path coverage. */
-export function validateAgentExecutionPreparationReceipt(
-  options: ValidateAgentExecutionPreparationReceiptOptions,
-): AgentExecutionPreparationValidationResult {
-  return validateAgentExecutionPreparationReceiptInternal({
-    ...options,
-    requireExecutionBinding: true,
-  });
-}
-
-interface InternalValidateAgentExecutionPreparationReceiptOptions
-  extends Omit<
-    ValidateAgentExecutionPreparationReceiptOptions,
-    "workspaceLease"
-  > {
-  workspaceLease:
-    | AgentWorkspaceSealedLeaseRecord
-    | AgentWorkspaceExecutionBoundLeaseRecord;
-  requireExecutionBinding: boolean;
-}
-
 function validateAgentExecutionPreparationReceiptInternal(
-  options: InternalValidateAgentExecutionPreparationReceiptOptions,
+  options: ValidateAgentExecutionPreparationReceiptOptions,
 ): AgentExecutionPreparationValidationResult {
   const parsedReceipt = agentExecutionPreparationReceiptSchema.safeParse(
     options.receipt,
@@ -255,9 +230,7 @@ function validateAgentExecutionPreparationReceiptInternal(
     };
   }
   const workspaceLease = workspaceLeaseResult.data;
-  const expectedPhase = options.requireExecutionBinding
-    ? "execution-bound"
-    : "workspace-sealed";
+  const expectedPhase = "workspace-sealed";
   if (workspaceLease.phase !== expectedPhase) {
     return {
       ok: false,
@@ -341,17 +314,6 @@ function validateAgentExecutionPreparationReceiptInternal(
     receipt.workspace.profileActivationDigest,
     workspaceLease.profileActivationDigest,
   );
-  if (
-    workspaceLease.phase === "execution-bound" &&
-    workspaceLease.executionPreparationDigest !== receipt.digest
-  ) {
-    issues.push({
-      code: "execution-binding-mismatch",
-      message:
-        "workspace execution binding does not name this preparation receipt",
-    });
-  }
-
   compareExpectation(
     issues,
     "preparation id",
@@ -459,15 +421,6 @@ function validateAgentExecutionPreparationReceiptInternal(
   return issues.length === 0
     ? { ok: true, receipt, issues: [] }
     : { ok: false, issues };
-}
-
-/** Throw one structured error when a preparation acknowledgement is invalid. */
-export function assertAgentExecutionPreparationReceipt(
-  options: ValidateAgentExecutionPreparationReceiptOptions,
-): AgentExecutionPreparationReceipt {
-  const validation = validateAgentExecutionPreparationReceipt(options);
-  if (validation.ok) return validation.receipt;
-  throw new AgentExecutionPreparationValidationError(validation.issues);
 }
 
 export class AgentExecutionPreparationValidationError extends Error {

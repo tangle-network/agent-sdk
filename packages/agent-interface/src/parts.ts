@@ -121,18 +121,6 @@ export type InputImagePart = {
 
 export type InputPart = InputTextPart | InputFilePart | InputImagePart;
 
-export function isInputTextPart(part: InputPart): part is InputTextPart {
-  return part.type === "text";
-}
-
-export function isInputFilePart(part: InputPart): part is InputFilePart {
-  return part.type === "file";
-}
-
-export function isInputImagePart(part: InputPart): part is InputImagePart {
-  return part.type === "image";
-}
-
 export function normalizeInputParts(input: {
   message?: string;
   parts?: InputPart[];

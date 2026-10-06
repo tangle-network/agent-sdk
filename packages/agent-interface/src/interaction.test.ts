@@ -13,7 +13,6 @@ import {
   interactionResponseCommandDigest,
   interactionRequestDigest,
   permissionAnswerSpec,
-  validateAndParseInteractionResponse,
   validateInteractionAnswer,
   validateInteractionResponse,
   type InteractionAnswerSpec,
@@ -508,18 +507,16 @@ describe("interaction response command", () => {
         fields: [{ type: "text", name: "answer", label: "Answer" }],
       },
     });
-    const parsed = validateAndParseInteractionResponse(request, {
+    const parsed = validateInteractionResponse(request, {
       id: request.id,
       outcome: "accepted",
       data: { answer: "yes" },
     });
-    expect(parsed).toEqual({
-      ok: true,
-      response: {
-        id: request.id,
-        outcome: "accepted",
-        data: { answer: "yes" },
-      },
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ok ? parsed.response : undefined).toEqual({
+      id: request.id,
+      outcome: "accepted",
+      data: { answer: "yes" },
     });
     expect(
       Object.getOwnPropertyNames(parsed.ok ? parsed.response.data ?? {} : {}),
