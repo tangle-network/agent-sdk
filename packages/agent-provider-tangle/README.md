@@ -54,6 +54,7 @@ Evidence capture retains full workspace files that exceed the Sandbox JSON read 
 This requires a Sandbox SDK whose filesystem advertises `supportsBoundedDownload`.
 Capture verifies the downloaded size and SHA-256 receipt before adding bytes to the archive.
 Aggregate limits, credential exclusions, and exact native-session proof remain enforced.
+Capture lists no directory below a credential directory such as `.opencode` or `.config`: it records the directory as excluded and accounts for its subtree with one complete usage scan, so the workspace totals still reconcile.
 An unsupported downloader or incomplete transfer fails capture and preserves the source environment.
 
 ## Named model credentials at creation
