@@ -3,6 +3,8 @@ import {
   harnessHonorsEffort,
   harnessHonorsModel,
   harnessHonorsSelectors,
+  harnessModelExclusions,
+  harnessModelSupport,
   harnessProviders,
   harnessReasoningEfforts,
   harnessSupportsModel,
@@ -11,6 +13,7 @@ import {
   nativeReasoningControl,
   preferredHarnessForModel,
   reasoningEffortsFor,
+  resolveModelProvider,
   snapHarnessToModel,
   snapModelToHarness,
 } from "./harness-capabilities.js";
@@ -77,9 +80,92 @@ describe("harness ↔ model compatibility", () => {
     ]);
   });
 
-  it("provider-less / sentinel ids are compatible everywhere", () => {
+  it("a sentinel id with no resolvable provider is left to the harness", () => {
     expect(harnessSupportsModel("claude-code", "default")).toBe(true);
-    expect(harnessSupportsModel("codex", "gemini-2.5-flash-lite")).toBe(true);
+    expect(harnessSupportsModel("codex", "my-finetune")).toBe(true);
+  });
+
+  it("a bare catalog id resolves its provider before the lock applies", () => {
+    expect(resolveModelProvider("claude-sonnet-5-5")).toBe("anthropic");
+    expect(resolveModelProvider("gpt-5.5")).toBe("openai");
+    expect(resolveModelProvider("o3")).toBe("openai");
+    expect(resolveModelProvider("glm-5.3")).toBe("zai");
+    expect(resolveModelProvider("gemini-2.5-flash-lite")).toBe("google");
+    expect(resolveModelProvider("default")).toBeNull();
+    expect(harnessSupportsModel("claude-code", "claude-sonnet-5-5")).toBe(true);
+    expect(harnessSupportsModel("claude-code", "glm-5.3")).toBe(false);
+    expect(harnessSupportsModel("codex", "gemini-2.5-flash-lite")).toBe(false);
+    expect(preferredHarnessForModel("claude-sonnet-5-5")).toBe("claude-code");
+  });
+
+  it("a provider-lock refusal names the harness, the model and the providers it accepts", () => {
+    const support = harnessModelSupport("claude-code", "glm-5.3");
+    expect(support).toMatchObject({
+      supported: false,
+      model: "zai/glm-5.3",
+      provider: "zai",
+      allowedProviders: ["anthropic"],
+    });
+    expect(support.supported === false && support.message).toBe(
+      "Harness claude-code runs only anthropic models; zai/glm-5.3 is a zai model. " +
+        "Choose a model whose id starts with anthropic/, or a harness that runs zai models, such as opencode.",
+    );
+  });
+});
+
+describe("measured harness × model exclusions", () => {
+  it("refuses the pi pairs measured to fail on production, and keeps the pairs that passed", () => {
+    const medium = { reasoningEffort: "medium" as const };
+    expect(harnessSupportsModel("pi", "anthropic/claude-sonnet-5-5", medium)).toBe(false);
+    expect(harnessSupportsModel("pi", "anthropic/claude-opus-5-5", medium)).toBe(false);
+    expect(harnessSupportsModel("pi", "openai/gpt-5.6-luna", medium)).toBe(false);
+    expect(harnessSupportsModel("pi", "google/gemini-3.8-flash", medium)).toBe(false);
+    expect(harnessSupportsModel("pi", "openai/gpt-5.5", medium)).toBe(true);
+    expect(harnessSupportsModel("pi", "zai/glm-5.3", medium)).toBe(true);
+    for (const model of [
+      "anthropic/claude-sonnet-5-5",
+      "openai/gpt-5.6-luna",
+      "google/gemini-3.8-flash",
+      "zai/glm-5.3",
+    ]) {
+      expect(harnessSupportsModel("opencode", model, medium)).toBe(true);
+    }
+  });
+
+  it("applies a reasoning-only exclusion only when a reasoning effort is requested", () => {
+    expect(harnessSupportsModel("pi", "anthropic/claude-sonnet-5-5")).toBe(true);
+    expect(
+      harnessSupportsModel("pi", "anthropic/claude-sonnet-5-5", { reasoningEffort: "none" }),
+    ).toBe(true);
+    expect(harnessSupportsModel("pi", "openai/gpt-5.6-luna", { reasoningEffort: null })).toBe(true);
+    expect(harnessSupportsModel("pi", "google/gemini-3.8-flash")).toBe(false);
+  });
+
+  it("matches bare catalog ids through their provider", () => {
+    expect(harnessSupportsModel("pi", "claude-sonnet-5-5", { reasoningEffort: "high" })).toBe(false);
+    expect(harnessSupportsModel("pi", "gemini-3.8-flash")).toBe(false);
+  });
+
+  it("names the measurement in the refusal", () => {
+    const support = harnessModelSupport("pi", "anthropic/claude-sonnet-5-5", {
+      reasoningEffort: "medium",
+    });
+    expect(support.supported).toBe(false);
+    if (support.supported) return;
+    expect(support.exclusion?.measuredOn).toBe("2026-10-05");
+    expect(support.message).toContain(
+      "Harness pi cannot run anthropic/claude-sonnet-5-5 with a reasoning effort",
+    );
+    expect(support.message).toContain("Remove model.reasoningEffort");
+    expect(support.message).toContain("agent-dev-container/issues/9382");
+  });
+
+  it("every exclusion names a router-backed harness, a date and evidence", () => {
+    for (const entry of harnessModelExclusions) {
+      expect(harnessProviders(entry.harness)).toBeNull();
+      expect(entry.measuredOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(entry.evidence).toMatch(/^https:\/\//);
+    }
   });
 
   it("preferredHarnessForModel maps a vendor provider to its native harness", () => {

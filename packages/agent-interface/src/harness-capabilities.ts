@@ -30,7 +30,8 @@ export const reasoningLadder: readonly ReasoningEffort[] = REASONING_EFFORTS;
 
 /**
  * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `anthropic`, `openai`).
- * A harness with no entry is router-backed: it runs any model.
+ * A harness with no entry is router-backed: it runs any model, except the measured exclusions in
+ * {@link harnessModelExclusions}.
  *
  * `nanoclaw` is deliberately absent despite the "claw" name: its runner routes every provider through
  * the Tangle router (canonical model id straight to the gateway), so it is router-backed like
@@ -48,6 +49,36 @@ export function modelProvider(modelId: string): string | null {
   return slash > 0 ? modelId.slice(0, slash) : null;
 }
 
+/**
+ * Model families whose bare ids belong to one provider. The Router catalog serves most ids without a
+ * prefix (`claude-sonnet-5-5`, `gpt-5.5`, `glm-5.3`) and names the provider beside them, so a check
+ * that read every bare id as "any provider" offered `claude-code` with `glm-5.3`.
+ */
+const bareModelFamilyProviders: readonly (readonly [RegExp, string])[] = [
+  [/^claude-/, "anthropic"],
+  [/^(gpt-|chatgpt-|codex-|o\d+(-|$))/, "openai"],
+  [/^(kimi-|moonshot-)/, "moonshot"],
+  [/^gemini-/, "google"],
+  [/^glm-/, "zai"],
+  [/^deepseek-/, "deepseek"],
+  [/^grok-/, "xai"],
+];
+
+/**
+ * The provider a model id belongs to: its explicit prefix, else the provider of its bare-id family
+ * (`claude-sonnet-5-5` → `anthropic`). `null` for an id outside every family, such as the `default`
+ * sentinel, whose provider only the serving harness knows.
+ */
+export function resolveModelProvider(modelId: string): string | null {
+  const explicit = modelProvider(modelId);
+  if (explicit) return explicit;
+  const id = modelId.trim().toLowerCase();
+  for (const [family, provider] of bareModelFamilyProviders) {
+    if (family.test(id)) return provider;
+  }
+  return null;
+}
+
 /** The providers a harness is locked to, or `null` when it is router-backed (any model). */
 export function harnessProviders(
   harness: HarnessType,
@@ -55,24 +86,174 @@ export function harnessProviders(
   return harnessProviderLock[harness] ?? null;
 }
 
+/** A harness × model pair that a production run measured to fail at its first model call. */
+export interface HarnessModelExclusion {
+  readonly harness: HarnessType;
+  /** Canonical `provider/model` ids the measurement covers. */
+  readonly models: RegExp;
+  /**
+   * The failure needs a reasoning effort above `none`: the harness sends the rejected control only
+   * then, so the same pair without a reasoning effort is not excluded.
+   */
+  readonly onlyWithReasoningEffort: boolean;
+  /** What the provider rejected, and why the harness triggers it. */
+  readonly reason: string;
+  /** ISO date of the production measurement. */
+  readonly measuredOn: string;
+  /** Where the measurement is recorded. */
+  readonly evidence: string;
+}
+
+const SANDBOX_HARNESS_MATRIX_EVIDENCE =
+  "https://github.com/tangle-network/agent-dev-container/issues/9382";
+
 /**
- * Whether a harness can run a model. Router-backed harnesses (no provider lock) accept anything;
- * a model id with no provider prefix (a sentinel like `default`) is treated as compatible too.
+ * Pairs a router-backed harness cannot run, measured on production with the Router credential: one
+ * prompt per pair, profile reasoning effort `medium` (2026-10-05). The same run passed pi with
+ * `openai/gpt-5.5` and `zai/glm-5.3`, and opencode with every model listed here. Pairs not listed
+ * were not measured to fail. An entry is removed when its harness adapter or the Router is fixed and
+ * the pair passes a new production measurement.
+ *
+ * pi's chat-completions client (pi-ai 0.85.1) marks a model as reasoning only when the profile asks
+ * for a reasoning effort, and only a reasoning model is sent the `developer` role and
+ * `reasoning_effort`; that is why the first two entries need a reasoning effort.
+ */
+export const harnessModelExclusions: readonly HarnessModelExclusion[] = [
+  {
+    harness: "pi",
+    models: /^anthropic\//,
+    onlyWithReasoningEffort: true,
+    reason:
+      'the Router\'s chat-completions route for Anthropic models rejects the "developer" role pi sends ' +
+      'to a reasoning model (400 Unexpected role "developer")',
+    measuredOn: "2026-10-05",
+    evidence: SANDBOX_HARNESS_MATRIX_EVIDENCE,
+  },
+  {
+    harness: "pi",
+    models: /^openai\/gpt-5\.6-luna$/,
+    onlyWithReasoningEffort: true,
+    reason:
+      "OpenAI does not accept function tools together with reasoning_effort for this model on " +
+      "/v1/chat/completions, the only route pi speaks",
+    measuredOn: "2026-10-05",
+    evidence: SANDBOX_HARNESS_MATRIX_EVIDENCE,
+  },
+  {
+    harness: "pi",
+    models: /^google\/gemini-3\.8-flash$/,
+    onlyWithReasoningEffort: false,
+    reason:
+      "the model requires each function call to return its thought_signature, which pi's " +
+      "chat-completions client does not send back (400 Function call is missing a thought_signature)",
+    measuredOn: "2026-10-05",
+    evidence: SANDBOX_HARNESS_MATRIX_EVIDENCE,
+  },
+];
+
+/** The answer to "can this harness run this model", with the refusal a caller can show as-is. */
+export type HarnessModelSupport =
+  | {
+      readonly supported: true;
+      /** Canonical `provider/model` id when the provider resolved, else the id as given. */
+      readonly model: string;
+      readonly provider: string | null;
+    }
+  | {
+      readonly supported: false;
+      readonly model: string;
+      readonly provider: string | null;
+      /** The providers a vendor-locked harness accepts; absent for a measured exclusion. */
+      readonly allowedProviders?: readonly string[];
+      /** The measurement behind a refusal of a router-backed pair. */
+      readonly exclusion?: HarnessModelExclusion;
+      /** One sentence naming the harness, the model and the reason. */
+      readonly message: string;
+    };
+
+export interface HarnessModelSupportOptions {
+  /** The run's reasoning effort; `null`, `undefined` and `none` all mean no reasoning effort. */
+  readonly reasoningEffort?: ReasoningEffort | null;
+}
+
+/**
+ * Whether a harness can run a model, and why not. A bare id resolves its provider through
+ * {@link resolveModelProvider}; an id whose provider cannot be resolved (a sentinel like `default`)
+ * is left to the harness, because its provider only the serving harness knows. A vendor-locked
+ * harness refuses every other provider; a router-backed harness refuses only the measured
+ * {@link harnessModelExclusions}.
+ */
+export function harnessModelSupport(
+  harness: HarnessType,
+  modelId: string,
+  options: HarnessModelSupportOptions = {},
+): HarnessModelSupport {
+  const trimmed = modelId.trim();
+  const provider = resolveModelProvider(trimmed);
+  const model =
+    provider !== null && modelProvider(trimmed) === null
+      ? `${provider}/${trimmed}`
+      : trimmed;
+  if (provider === null) return { supported: true, model, provider };
+
+  const allowedProviders = harnessProviders(harness);
+  if (allowedProviders && !allowedProviders.includes(provider)) {
+    return {
+      supported: false,
+      model,
+      provider,
+      allowedProviders,
+      message:
+        `Harness ${harness} runs only ${allowedProviders.join(" or ")} models; ` +
+        `${model} is a ${provider} model. Choose a model whose id starts with ` +
+        `${allowedProviders.map((p) => `${p}/`).join(" or ")}, or a harness that runs ` +
+        `${provider} models, such as opencode.`,
+    };
+  }
+
+  const reasoning =
+    options.reasoningEffort !== undefined &&
+    options.reasoningEffort !== null &&
+    options.reasoningEffort !== "none";
+  const exclusion = harnessModelExclusions.find(
+    (entry) =>
+      entry.harness === harness &&
+      entry.models.test(model) &&
+      (!entry.onlyWithReasoningEffort || reasoning),
+  );
+  if (exclusion) {
+    return {
+      supported: false,
+      model,
+      provider,
+      exclusion,
+      message:
+        `Harness ${harness} cannot run ${model}` +
+        (exclusion.onlyWithReasoningEffort ? " with a reasoning effort" : "") +
+        `: ${exclusion.reason} (measured ${exclusion.measuredOn}, ${exclusion.evidence}). ` +
+        (exclusion.onlyWithReasoningEffort
+          ? "Remove model.reasoningEffort, or choose another harness or model."
+          : "Choose another harness or model."),
+    };
+  }
+  return { supported: true, model, provider };
+}
+
+/**
+ * Whether a harness can run a model; {@link harnessModelSupport} gives the reason when it cannot.
  */
 export function harnessSupportsModel(
   harness: HarnessType,
   modelId: string,
+  options?: HarnessModelSupportOptions,
 ): boolean {
-  const providers = harnessProviders(harness);
-  if (!providers) return true;
-  const provider = modelProvider(modelId);
-  return provider === null || providers.includes(provider);
+  return harnessModelSupport(harness, modelId, options).supported;
 }
 
 /** The harness to adopt for a model whose provider is vendor-locked (`anthropic` → `claude-code`,
  *  `openai` → `codex`, `moonshot` → `kimi-code`); `null` when any router-backed harness will do. */
 export function preferredHarnessForModel(modelId: string): HarnessType | null {
-  const provider = modelProvider(modelId);
+  const provider = resolveModelProvider(modelId);
   if (!provider) return null;
   for (const [harness, providers] of Object.entries(harnessProviderLock)) {
     if (providers?.includes(provider)) return harness as HarnessType;
