@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 2.20.1
+
+### Patch Changes
+
+- ad39a25: Word the provider-lock refusal without an article that is wrong for most provider names: "Harness claude-code runs only anthropic models, not zai/glm-5.3 (provider zai)."
+
 ## 2.20.0
 
 ### Minor Changes
