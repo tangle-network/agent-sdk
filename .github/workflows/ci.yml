@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -21,9 +21,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Release runs the artifact checks with this exact npm. Run them with the
       # same npm here so a pull request cannot pass CI and then fail at release.
+      # Install it under this job's temp directory: the self-hosted runners keep
+      # their tool cache between jobs, so a global install would leak.
       - run: |
-          npm install -g npm@12.1.0
-          test "$(npm --version)" = "12.1.0"
+          npm install --prefix "$RUNNER_TEMP/npm" --no-save npm@12.1.0
+          echo "$RUNNER_TEMP/npm/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: test "$(npm --version)" = "12.1.0"
       - run: pnpm -r build
       - run: pnpm -r check-types
       - run: pnpm -r test
@@ -32,7 +35,7 @@ jobs:
 
   cli-bridge-integration:
     name: CLI Bridge integration
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -70,25 +73,10 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
             cli-bridge/pnpm-lock.yaml
-      - name: Enable CLI Bridge filesystem jail
+      # The self-hosted runners provide bubblewrap and unprivileged user namespaces.
+      - name: Check CLI Bridge filesystem jail
         shell: bash
-        run: |
-          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
-            sudo sed -i \
-              's#http://azure.archive.ubuntu.com/ubuntu/#https://archive.ubuntu.com/ubuntu/#g' \
-              /etc/apt/apt-mirrors.txt
-          fi
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 120s apt-get \
-            -o Acquire::Retries=2 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            update
-          sudo env DEBIAN_FRONTEND=noninteractive timeout 60s apt-get \
-            install --yes --no-install-recommends bubblewrap
-          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --unshare-user --ro-bind / / -- true
+        run: bwrap --unshare-user --ro-bind / / -- true
       - run: pnpm install --frozen-lockfile
         working-directory: cli-bridge
       - run: pnpm rebuild better-sqlite3

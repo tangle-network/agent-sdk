@@ -8,14 +8,69 @@ on:
 concurrency: release-${{ github.ref }}
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  # Runs on every push. Pending changesets open or update the release PR here.
+  # Without pending changesets, a package version missing from npm means the
+  # release PR merged and this push publishes.
+  plan:
+    runs-on: [self-hosted, ci-public]
     permissions:
-      actions: write
       contents: write
       pull-requests: write
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - id: plan
+        name: Decide whether this push versions or publishes
+        shell: bash
+        run: |
+          if find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | grep -q .; then
+            echo "Changesets are pending; this push updates the release PR"
+            echo "changesets=true" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changesets=false" >> "$GITHUB_OUTPUT"
+          publish=false
+          for manifest in packages/*/package.json; do
+            [ "$(jq -r '.private // false' "$manifest")" = true ] && continue
+            name="$(jq -r '.name' "$manifest")"
+            version="$(jq -r '.version' "$manifest")"
+            if ! npm view "$name@$version" version --registry=https://registry.npmjs.org 2>/dev/null | grep -qx "$version"; then
+              echo "$name@$version is not on npm"
+              publish=true
+            fi
+          done
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+      - if: steps.plan.outputs.changesets == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Open or update the release PR
+        if: steps.plan.outputs.changesets == 'true'
+        uses: changesets/action@v2.1.2
+        with:
+          version-script: pnpm changeset:version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # npm accepts trusted publishing only from GitHub-hosted runners, so this job
+  # starts only when plan found an unpublished version. The hosted runner is
+  # ephemeral, so the global npm install below does not leak into other jobs.
+  publish:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
       # Required for npm OIDC trusted publishing (tokenless) + provenance.
       id-token: write
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      sha: ${{ steps.release-commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,6 +87,7 @@ jobs:
           npm install -g npm@12.1.0
           test "$(npm --version)" = "12.1.0"
       - run: pnpm -r build
+      # Check the exact build this job publishes.
       - run: pnpm check:package-artifacts
       - run: pnpm check:control-artifacts
       - id: changesets
@@ -60,12 +116,23 @@ jobs:
             exit 1
           fi
           echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+  evidence:
+    needs: publish
+    if: needs.publish.outputs.published == 'true'
+    runs-on: [self-hosted, ci-public]
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.publish.outputs.sha }}
       - id: release-ref
         name: Create immutable release ref
-        if: steps.changesets.outputs.published == 'true'
         shell: bash
         env:
-          RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
+          RELEASE_SHA: ${{ needs.publish.outputs.sha }}
         run: |
           release_tag="agent-sdk-release-${RELEASE_SHA}"
           remote_sha="$(git ls-remote --refs origin "refs/tags/$release_tag" | cut -f1)"
@@ -82,10 +149,9 @@ jobs:
       # second push workflow. Dispatch the evidence workflow after the release
       # action so it checks the exact immutable ref the action just versioned.
       - name: Dispatch upstream evidence
-        if: steps.changesets.outputs.published == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
+          RELEASE_SHA: ${{ needs.publish.outputs.sha }}
           RELEASE_REF: ${{ steps.release-ref.outputs.ref }}
           REPOSITORY: ${{ github.repository }}
         run: |
