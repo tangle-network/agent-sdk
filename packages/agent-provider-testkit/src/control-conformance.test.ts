@@ -555,6 +555,39 @@ describe("runWorkspaceBranchingConformance", () => {
     });
   });
 
+  it("accepts forks that hold their own copy of the checkpoint", async () => {
+    const material = { source: copySource("run-fork-copies"), name: "source boundary" };
+    const report = await runWorkspaceBranchingConformance({
+      name: "in-memory copying port",
+      operations: inMemoryWorkspaceBranching({ forks: "copies" }),
+      checkpointRequest: {
+        ...material,
+        idempotencyKey: "checkpoint-fork-copies",
+        requestDigest: workspaceCheckpointRequestDigest(material),
+      },
+      forkRequest: workspaceForkRequest,
+    });
+    expect(report.checked).toContain("cleanup-independent-fork");
+    expect(report.checked).not.toContain("cleanup-dependency-order");
+    expect(report.checked).toContain("confirmed-cleanup");
+  });
+
+  it("rejects a checkpoint deletion that loses a live fork", async () => {
+    const material = { source: copySource("run-fork-lost"), name: "source boundary" };
+    await expect(
+      runWorkspaceBranchingConformance({
+        name: "in-memory port that loses forks",
+        operations: inMemoryWorkspaceBranching({ forks: "lost-with-checkpoint" }),
+        checkpointRequest: {
+          ...material,
+          idempotencyKey: "checkpoint-fork-lost",
+          requestDigest: workspaceCheckpointRequestDigest(material),
+        },
+        forkRequest: workspaceForkRequest,
+      }),
+    ).rejects.toThrow(/deleting a checkpoint must leave its fork recoverable/);
+  });
+
   it("deletes a created checkpoint when a later check fails", async () => {
     const source = {
       runId: "run-cleanup-checkpoint",
@@ -1337,7 +1370,26 @@ function portablePlan(source: PortableConversationContext): PortableContextPlan 
   return { ...material, digest: portableContextPlanDigest(material) };
 }
 
-function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
+/**
+ * `forks` says what a fork holds of its checkpoint: `dependent` forks block the
+ * checkpoint's deletion, `copies` do not, and `lost-with-checkpoint` is a broken
+ * port whose forks disappear when their checkpoint is deleted.
+ */
+function copySource(runId: string): WorkspaceCheckpointRef["source"] {
+  return {
+    runId,
+    provider: "tangle",
+    environmentId: "environment-source",
+    sessionId: "session-source",
+    executionId: "execution-source",
+    requestDigest: `sha256:${"d".repeat(64)}` as `sha256:${string}`,
+  };
+}
+
+function inMemoryWorkspaceBranching(
+  options: { forks?: "dependent" | "copies" | "lost-with-checkpoint" } = {},
+): AgentWorkspaceBranching {
+  const forkMode = options.forks ?? "dependent";
   const checkpoints = new Map<string, WorkspaceCheckpointRef>();
   const cleanupOperations = new Map<string, `sha256:${string}`>();
   const forks = new Map<string, {
@@ -1437,7 +1489,7 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
         )
         .map((environment) => environment.environmentId)
         .sort();
-      if (blockingTargetIds.length > 0) {
+      if (blockingTargetIds.length > 0 && forkMode === "dependent") {
         return {
           operationId: request.operationId,
           kind: request.kind,
@@ -1450,6 +1502,11 @@ function inMemoryWorkspaceBranching(): AgentWorkspaceBranching {
         };
       }
       checkpoints.delete(entry[0]);
+      if (forkMode === "lost-with-checkpoint") {
+        for (const [key, environment] of forks) {
+          if (environment.sourceCheckpointId === entry[1].checkpointId) forks.delete(key);
+        }
+      }
       return {
         operationId: request.operationId,
         kind: request.kind,

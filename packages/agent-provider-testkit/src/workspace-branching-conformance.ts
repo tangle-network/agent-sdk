@@ -171,43 +171,71 @@ export async function runWorkspaceBranchingConformance(
         provider: createdCheckpoint.checkpoint.provider,
       }),
     };
-    const inUseCheckpoint = WorkspaceCleanupAcknowledgementSchema.parse(
+    // A fork either depends on its checkpoint or holds its own copy of it. A
+    // provider with dependent forks refuses with `in_use`, names the fork and
+    // deletes nothing; one whose forks hold a copy deletes the checkpoint. In
+    // both cases the fork survives.
+    const checkpointCleanupWhileForked = WorkspaceCleanupAcknowledgementSchema.parse(
       await options.operations.deleteCheckpoint(checkpointCleanupRequest),
     );
-    assert(
-      inUseCheckpoint.status === "in_use" &&
-        inUseCheckpoint.operationId === checkpointCleanupRequest.operationId &&
-        inUseCheckpoint.targetId === checkpointCleanupRequest.targetId &&
-        inUseCheckpoint.provider === checkpointCleanupRequest.provider &&
-        inUseCheckpoint.blockingTargetIds?.includes(
-          createdFork.environment.environmentId,
-        ) === true &&
-        !workspaceCleanupAcknowledgementMatches(
+    const checkpointDeletedWhileForked =
+      checkpointCleanupWhileForked.status === "deleted";
+    if (checkpointDeletedWhileForked) {
+      assert(
+        workspaceCleanupAcknowledgementMatches(
           checkpointCleanupRequest,
-          inUseCheckpoint,
+          checkpointCleanupWhileForked,
         ),
-      "checkpoint cleanup must identify a dependent fork without deleting either resource",
-      checked,
-    );
-    const checkpointAfterBlockedCleanup = WorkspaceCheckpointLookupResultSchema.parse(
-      await options.operations.lookupCheckpoint({
-        idempotencyKey: checkpointRequest.idempotencyKey,
-        requestDigest: checkpointRequest.requestDigest,
-      }),
-    );
-    const forkAfterBlockedCleanup = WorkspaceForkLookupResultSchema.parse(
+        "checkpoint cleanup while a fork lives must be confirmed for the exact target",
+        checked,
+      );
+    } else {
+      assert(
+        checkpointCleanupWhileForked.status === "in_use" &&
+          checkpointCleanupWhileForked.operationId ===
+            checkpointCleanupRequest.operationId &&
+          checkpointCleanupWhileForked.targetId ===
+            checkpointCleanupRequest.targetId &&
+          checkpointCleanupWhileForked.provider ===
+            checkpointCleanupRequest.provider &&
+          checkpointCleanupWhileForked.blockingTargetIds?.includes(
+            createdFork.environment.environmentId,
+          ) === true &&
+          !workspaceCleanupAcknowledgementMatches(
+            checkpointCleanupRequest,
+            checkpointCleanupWhileForked,
+          ),
+        "checkpoint cleanup must identify a dependent fork without deleting either resource, or delete the checkpoint",
+        checked,
+      );
+    }
+    const checkpointAfterCleanupWhileForked =
+      WorkspaceCheckpointLookupResultSchema.parse(
+        await options.operations.lookupCheckpoint({
+          idempotencyKey: checkpointRequest.idempotencyKey,
+          requestDigest: checkpointRequest.requestDigest,
+        }),
+      );
+    const forkAfterCleanupWhileForked = WorkspaceForkLookupResultSchema.parse(
       await options.operations.lookupFork({
         idempotencyKey: forkRequest.idempotencyKey,
         requestDigest: forkRequest.requestDigest,
       }),
     );
     assert(
-      checkpointAfterBlockedCleanup.status === "found" &&
-        forkAfterBlockedCleanup.status === "found",
-      "blocked checkpoint cleanup must leave the checkpoint and fork recoverable",
+      forkAfterCleanupWhileForked.status === "found" &&
+        (checkpointDeletedWhileForked ||
+          checkpointAfterCleanupWhileForked.status === "found"),
+      checkpointDeletedWhileForked
+        ? "deleting a checkpoint must leave its fork recoverable"
+        : "blocked checkpoint cleanup must leave the checkpoint and fork recoverable",
       checked,
     );
-    checked.push("cleanup-dependency-order");
+    checked.push(
+      checkpointDeletedWhileForked
+        ? "cleanup-independent-fork"
+        : "cleanup-dependency-order",
+    );
 
     const forkCleanupRequest = {
       operationId: `${forkRequest.idempotencyKey}-cleanup`,
@@ -269,7 +297,8 @@ export async function runWorkspaceBranchingConformance(
       await options.operations.deleteCheckpoint(checkpointCleanupRequest),
     );
     assert(
-      checkpointCleanup.status === "deleted" &&
+      checkpointCleanup.status ===
+        (checkpointDeletedWhileForked ? "already_absent" : "deleted") &&
         workspaceCleanupAcknowledgementMatches(
           checkpointCleanupRequest,
           checkpointCleanup,

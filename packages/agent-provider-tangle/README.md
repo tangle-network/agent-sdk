@@ -447,8 +447,9 @@ metadata so a fresh process can recover the exact interface digest.
 Snapshot-created children are validated through the marker and complete
 account inventory, while legacy fork markers also require the Sandbox fork
 ledger to report a settled success.
-Checkpoint deletion reports `in_use` with every verified child that still
-references it; delete the child first, then retry checkpoint deletion.
+Checkpoint deletion reads only the source's own snapshots. A child created
+from a checkpoint holds a full restore of it in its own volume, so deleting the
+checkpoint neither waits for nor affects its children.
 The adapter never treats an SDK response without an explicit idempotency or
 deletion outcome as success.
 

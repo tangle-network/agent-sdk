@@ -116,6 +116,7 @@ Providers that support recoverable workspace copies expose `workspaceBranching` 
 Checkpoint and fork requests bind an idempotency key to a canonical request digest.
 Every returned resource repeats and validates that identity, lookups recover remote success after caller restart, changed-input key reuse returns a conflict, and cleanup binds its acknowledgement to the exact provider and target.
 A checkpoint with dependent forks returns `in_use` plus the blocking environment identifiers and remains recoverable until those forks are destroyed.
+A provider whose forks hold their own copy of the checkpoint deletes it without waiting for them.
 The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
 
 `CreateAgentEnvironmentInput.idempotencyKey` makes generic environment creation one retry-safe operation.

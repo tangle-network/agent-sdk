@@ -67,7 +67,6 @@ import {
   findForkByKey,
   findForkChildById,
   completeForkChild,
-  findBlockingForks,
   lookupOutcomeFromSandbox,
   isoDate,
 } from "./tangle-workspace-recovery.js";
@@ -437,40 +436,17 @@ export function createTangleWorkspaceBranching(
       if (previous.requestDigest !== request.requestDigest) {
         return cleanupConflict(request, previous.requestDigest);
       }
-      if (previous.acknowledgement.status === "in_use") {
-        // A dependency response binds the operation id, but it is not
-        // terminal. Re-scan children so the same request can converge after
-        // callers destroy the blocking fork.
-      } else if (previous.acknowledgement.status === "deleted") {
-        return cleanupAlreadyAbsent(request);
-      } else {
-        return previous.acknowledgement;
-      }
+      return previous.acknowledgement.status === "deleted"
+        ? cleanupAlreadyAbsent(request)
+        : previous.acknowledgement;
     }
 
-    const blocking = await findBlockingForks(
-      box,
-      client,
-      provider,
-      request.targetId,
-      operation?.signal
-    );
-    if (blocking === undefined) {
-      return cleanupUnknown(
-        request,
-        "Sandbox child inventory is unavailable; deletion was not attempted",
-        true
-      );
-    }
-    if (blocking.length > 0) {
-      const acknowledgement = cleanupInUse(request, blocking);
-      cleanup.set(request.operationId, {
-        requestDigest: request.requestDigest,
-        acknowledgement,
-      });
-      return acknowledgement;
-    }
-
+    // No child depends on a checkpoint: a child created from one holds a full
+    // restore of it in its own volume, and Sandbox deletes a snapshot without
+    // regard to children. So deletion reads only this source's snapshots. The
+    // account-wide child scan it replaces paged a listing that Sandbox rebuilds
+    // and re-sorts on every page; on a busy account a page failed or repeated,
+    // deletion was never attempted, and the source sandbox was kept running.
     const known = await findManagedCheckpoint(
       box,
       provider,
@@ -1454,18 +1430,6 @@ function cleanupConflict(
     status: "conflict",
     existingRequestDigest,
     message: "Cleanup operation id is bound to another target",
-  });
-}
-
-function cleanupInUse(
-  request: WorkspaceCleanupRequest,
-  blockingTargetIds: string[]
-): WorkspaceCleanupAcknowledgement {
-  return WorkspaceCleanupAcknowledgementSchema.parse({
-    ...request,
-    status: "in_use",
-    blockingTargetIds,
-    message: "Checkpoint is still referenced by forked environments",
   });
 }
 
