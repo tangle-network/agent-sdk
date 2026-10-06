@@ -159,6 +159,13 @@ export interface WorkspaceBranchingConformanceOptions {
   forkRequest(
     checkpoint: WorkspaceCheckpointRef,
   ): WorkspaceForkRequest;
+  /**
+   * What a fork holds of its checkpoint. `dependent` (the default): deleting the
+   * checkpoint while the fork lives answers `in_use`, names the fork and deletes
+   * nothing. `copies`: the fork holds its own copy, so the checkpoint is deleted
+   * and the fork stays recoverable.
+   */
+  forks?: "dependent" | "copies";
 }
 
 export interface WorkspaceBranchingConformanceReport {

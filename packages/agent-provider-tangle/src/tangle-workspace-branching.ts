@@ -441,12 +441,16 @@ export function createTangleWorkspaceBranching(
         : previous.acknowledgement;
     }
 
-    // No child depends on a checkpoint: a child created from one holds a full
-    // restore of it in its own volume, and Sandbox deletes a snapshot without
-    // regard to children. So deletion reads only this source's snapshots. The
-    // account-wide child scan it replaces paged a listing that Sandbox rebuilds
-    // and re-sorts on every page; on a busy account a page failed or repeated,
-    // deletion was never attempted, and the source sandbox was kept running.
+    // A child created from a checkpoint holds a full restore of it in its own
+    // volume, and Sandbox deletes a snapshot without regard to children, so
+    // deletion reads only this source's snapshots. One Sandbox path still names
+    // the checkpoint after create: last-resort sidecar recreation replays the
+    // child's original create request, and after deletion that replay fails
+    // with SNAPSHOT_NOT_FOUND instead of restoring the checkpoint
+    // (agent-dev-container#9388). The
+    // account-wide child scan this replaces paged a listing that Sandbox
+    // rebuilds and re-sorts on every page; on a busy account a page failed or
+    // repeated, deletion was never attempted, and the source was kept running.
     const known = await findManagedCheckpoint(
       box,
       provider,

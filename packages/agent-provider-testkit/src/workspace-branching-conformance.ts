@@ -171,22 +171,20 @@ export async function runWorkspaceBranchingConformance(
         provider: createdCheckpoint.checkpoint.provider,
       }),
     };
-    // A fork either depends on its checkpoint or holds its own copy of it. A
-    // provider with dependent forks refuses with `in_use`, names the fork and
-    // deletes nothing; one whose forks hold a copy deletes the checkpoint. In
-    // both cases the fork survives.
+    // The provider declares what a fork holds of its checkpoint, and cleanup
+    // while the fork lives must match that declaration.
+    const forksHoldCopies = options.forks === "copies";
     const checkpointCleanupWhileForked = WorkspaceCleanupAcknowledgementSchema.parse(
       await options.operations.deleteCheckpoint(checkpointCleanupRequest),
     );
-    const checkpointDeletedWhileForked =
-      checkpointCleanupWhileForked.status === "deleted";
-    if (checkpointDeletedWhileForked) {
+    if (forksHoldCopies) {
       assert(
-        workspaceCleanupAcknowledgementMatches(
-          checkpointCleanupRequest,
-          checkpointCleanupWhileForked,
-        ),
-        "checkpoint cleanup while a fork lives must be confirmed for the exact target",
+        checkpointCleanupWhileForked.status === "deleted" &&
+          workspaceCleanupAcknowledgementMatches(
+            checkpointCleanupRequest,
+            checkpointCleanupWhileForked,
+          ),
+        "a provider whose forks hold copies must delete the checkpoint while a fork lives",
         checked,
       );
     } else {
@@ -205,7 +203,7 @@ export async function runWorkspaceBranchingConformance(
             checkpointCleanupRequest,
             checkpointCleanupWhileForked,
           ),
-        "checkpoint cleanup must identify a dependent fork without deleting either resource, or delete the checkpoint",
+        "checkpoint cleanup must identify a dependent fork without deleting either resource",
         checked,
       );
     }
@@ -223,18 +221,28 @@ export async function runWorkspaceBranchingConformance(
       }),
     );
     assert(
+      checkpointAfterCleanupWhileForked.status ===
+        (forksHoldCopies ? "not_found" : "found"),
+      forksHoldCopies
+        ? "a deleted checkpoint must no longer be found"
+        : "blocked checkpoint cleanup must leave the checkpoint recoverable",
+      checked,
+    );
+    assert(
       forkAfterCleanupWhileForked.status === "found" &&
-        (checkpointDeletedWhileForked ||
-          checkpointAfterCleanupWhileForked.status === "found"),
-      checkpointDeletedWhileForked
-        ? "deleting a checkpoint must leave its fork recoverable"
-        : "blocked checkpoint cleanup must leave the checkpoint and fork recoverable",
+        workspaceForkResultMatchesRequest(
+          forkRequest,
+          forkAfterCleanupWhileForked,
+        ) &&
+        deepEqual(
+          forkAfterCleanupWhileForked.environment,
+          createdFork.environment,
+        ),
+      "checkpoint cleanup while a fork lives must leave the fork recoverable",
       checked,
     );
     checked.push(
-      checkpointDeletedWhileForked
-        ? "cleanup-independent-fork"
-        : "cleanup-dependency-order",
+      forksHoldCopies ? "cleanup-independent-fork" : "cleanup-dependency-order",
     );
 
     const forkCleanupRequest = {
@@ -298,7 +306,7 @@ export async function runWorkspaceBranchingConformance(
     );
     assert(
       checkpointCleanup.status ===
-        (checkpointDeletedWhileForked ? "already_absent" : "deleted") &&
+        (forksHoldCopies ? "already_absent" : "deleted") &&
         workspaceCleanupAcknowledgementMatches(
           checkpointCleanupRequest,
           checkpointCleanup,

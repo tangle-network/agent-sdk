@@ -676,9 +676,8 @@ async function listAllSandboxChildren(
 /**
  * Read every account child that carries a fork marker this source produced.
  *
- * The scan is the shared front half of fork recovery and cleanup. It returns
- * undefined when the inventory itself cannot be trusted, so both callers fail
- * closed on the same condition.
+ * The scan is the front half of fork recovery. It returns undefined when the
+ * inventory itself cannot be trusted, so recovery fails closed.
  */
 async function listMarkedForkChildren(
   client: SandboxClientLike,

@@ -560,6 +560,7 @@ describe("runWorkspaceBranchingConformance", () => {
     const report = await runWorkspaceBranchingConformance({
       name: "in-memory copying port",
       operations: inMemoryWorkspaceBranching({ forks: "copies" }),
+      forks: "copies",
       checkpointRequest: {
         ...material,
         idempotencyKey: "checkpoint-fork-copies",
@@ -578,6 +579,7 @@ describe("runWorkspaceBranchingConformance", () => {
       runWorkspaceBranchingConformance({
         name: "in-memory port that loses forks",
         operations: inMemoryWorkspaceBranching({ forks: "lost-with-checkpoint" }),
+        forks: "copies",
         checkpointRequest: {
           ...material,
           idempotencyKey: "checkpoint-fork-lost",
@@ -585,7 +587,31 @@ describe("runWorkspaceBranchingConformance", () => {
         },
         forkRequest: workspaceForkRequest,
       }),
-    ).rejects.toThrow(/deleting a checkpoint must leave its fork recoverable/);
+    ).rejects.toThrow(/must leave the fork recoverable/);
+  });
+
+  it("holds each port to the fork model it declares", async () => {
+    const run = (name: string, forks: "dependent" | "copies", declared: "dependent" | "copies") => {
+      const material = { source: copySource(`run-declared-${name}`), name: "source boundary" };
+      return runWorkspaceBranchingConformance({
+        name,
+        operations: inMemoryWorkspaceBranching({ forks }),
+        checkpointRequest: {
+          ...material,
+          idempotencyKey: `checkpoint-declared-${name}`,
+          requestDigest: workspaceCheckpointRequestDigest(material),
+        },
+        forkRequest: workspaceForkRequest,
+        forks: declared,
+      });
+    };
+    // A port with dependent forks that claims copies, and a copying port that claims dependence.
+    await expect(run("dependent-claims-copies", "dependent", "copies")).rejects.toThrow(
+      /must delete the checkpoint while a fork lives/,
+    );
+    await expect(run("copies-claims-dependent", "copies", "dependent")).rejects.toThrow(
+      /must identify a dependent fork/,
+    );
   });
 
   it("deletes a created checkpoint when a later check fails", async () => {

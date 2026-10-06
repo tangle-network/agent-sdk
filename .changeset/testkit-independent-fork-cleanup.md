@@ -2,4 +2,4 @@
 "@tangle-network/agent-provider-testkit": patch
 ---
 
-Workspace branching conformance accepts a provider whose forks hold their own copy of the checkpoint: deleting the checkpoint while a fork lives may succeed, provided the fork stays recoverable. A provider with dependent forks still must answer `in_use`, name the fork and delete nothing.
+Workspace branching conformance takes `forks: "dependent" | "copies"`. With `copies`, deleting the checkpoint while a fork lives must succeed, the checkpoint must no longer be found, and the fork must stay recoverable unchanged. The default, `dependent`, keeps the existing rule: answer `in_use`, name the fork and delete nothing.

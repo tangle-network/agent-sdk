@@ -356,7 +356,9 @@ describe("Tangle workspace branching", () => {
       operations: operations!,
       checkpointRequest: checkpointRequest(),
       forkRequest: (checkpoint) => forkRequest(checkpoint),
+      forks: "copies",
     });
+    expect(result.checked).toContain("cleanup-independent-fork");
     expect(result.checked).toContain("confirmed-cleanup");
   });
 
