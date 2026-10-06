@@ -7,8 +7,6 @@ import {
   terminalSessionUsable,
 } from "@tangle-network/agent-interface";
 import type {
-  AgentInteractiveSessionControlClaim,
-  AgentInteractiveTerminalSession,
   AgentTerminalSession,
   TerminalAttachRequest,
   TerminalAttachResult,
@@ -641,28 +639,6 @@ async function closeQuietly(stream: SandboxTerminalStreamLike): Promise<void> {
     // The attach already failed, and the socket is being abandoned. The
     // caller's failure is reported from the attach result it receives.
   }
-}
-
-/** Close a stream that has not been handed to a caller. */
-export async function closeTangleStreamQuietly(
-  stream: SandboxTerminalStreamLike,
-): Promise<void> {
-  await closeQuietly(stream);
-}
-
-/** Add the exact claim identity without replacing the terminal implementation. */
-export function bindTangleInteractiveControl(
-  session: AgentTerminalSession,
-  control: AgentInteractiveSessionControlClaim,
-): AgentInteractiveTerminalSession {
-  return Object.create(session, {
-    control: {
-      configurable: false,
-      enumerable: true,
-      value: Object.freeze({ ...control }),
-      writable: false,
-    },
-  }) as AgentInteractiveTerminalSession;
 }
 
 function boundedLabel(value: unknown): string | undefined {

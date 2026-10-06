@@ -455,11 +455,3 @@ export function runSnapshot(value: string): CliBridgeRunSnapshot {
     terminal,
   };
 }
-
-export function cancelSnapshot(value: string): CliBridgeRunSnapshot {
-  const parsed = safeJson(value);
-  if (!parsed || !parsed.run || typeof parsed.run !== "object") {
-    throw new Error("cli-bridge cancel returned an invalid snapshot");
-  }
-  return runSnapshot(JSON.stringify(parsed.run));
-}
