@@ -613,38 +613,6 @@ export async function completeForkChild(
   }
 }
 
-export async function findBlockingForks(
-  box: SandboxInstanceLike,
-  client: SandboxClientLike,
-  provider: string,
-  checkpointId: string,
-  signal?: AbortSignal
-): Promise<string[] | undefined> {
-  const candidates = await listMarkedForkChildren(
-    client,
-    box,
-    provider,
-    undefined,
-    signal
-  );
-  if (candidates === undefined) return undefined;
-  const blocking = new Set<string>();
-  for (const { child, marker } of candidates) {
-    if (marker.request.checkpoint.checkpointId !== checkpointId) continue;
-    try {
-      // A candidate that cannot be confirmed leaves the dependency set
-      // unknown, so cleanup must not proceed on a partial answer.
-      if (!(await forkOperationSucceeded(box, marker, signal)))
-        return undefined;
-      blocking.add(child.id);
-    } catch {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-  }
-  return [...blocking].sort();
-}
-
 /**
  * Read the complete account inventory through Sandbox offset pages.
  *
@@ -708,9 +676,8 @@ async function listAllSandboxChildren(
 /**
  * Read every account child that carries a fork marker this source produced.
  *
- * The scan is the shared front half of fork recovery and cleanup. It returns
- * undefined when the inventory itself cannot be trusted, so both callers fail
- * closed on the same condition.
+ * The scan is the front half of fork recovery. It returns undefined when the
+ * inventory itself cannot be trusted, so recovery fails closed.
  */
 async function listMarkedForkChildren(
   client: SandboxClientLike,
