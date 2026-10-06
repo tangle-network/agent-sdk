@@ -18,7 +18,6 @@ import {
   agentInteractiveSessionPromptRequestDigest,
   agentInteractiveSessionStopAcknowledgementMatchesCommand,
   agentInteractiveSessionStopRequestDigest,
-  agentInteractiveSessionRequestDigest,
   agentInteractiveSessionRefMatchesStart,
   agentInteractiveSessionRunRef,
   agentInteractiveSessionStatusMatchesRef,
@@ -216,9 +215,6 @@ describe("exact interactive agent session contract", () => {
     const firstRef = referenceFor();
     const replayRef = referenceFor();
 
-    expect(agentInteractiveSessionRequestDigest(runCoordinates, startInput)).toBe(
-      run.requestDigest,
-    );
     expect(agentInteractiveSessionRunRef(runCoordinates, startInput)).toEqual(run);
     expect(first).toEqual(replay);
     expect(firstRef).toEqual(replayRef);

@@ -28,7 +28,6 @@ import { permissionAnswerSpec } from "./interaction-permissions.js";
 import { validateInteractionAnswer } from "./interaction-answer-validation.js";
 import { validateResolutionForRequest } from "./interaction-resolution-validation.js";
 import {
-  validateAndParseInteractionResponse,
   validateInteractionResponse,
   validateInteractionResponseCommand,
 } from "./interaction-response-validation.js";
@@ -76,7 +75,6 @@ import {
   boundedEventContentStringSchema,
   boundedJsonSchema,
   boundedStringSchema,
-  nullPrototypeRecord,
 } from "./contract-limits.js";
 import { CanonicalStreamEventSchema } from "./runtime-control.js";
 import {
@@ -215,9 +213,7 @@ describe("interface split leaf modules", () => {
     const cycle: Record<string, unknown> = {};
     cycle.self = cycle;
     expect(isBoundedJsonValue(cycle)).toBe(false);
-    const safe = nullPrototypeRecord({ constructor: "data" });
-    expect(Object.getPrototypeOf(safe)).toBeNull();
-    expect(safe.constructor).toBe("data");
+    const safe = Object.assign(Object.create(null) as object, { constructor: "data" });
     expect(portableWireDigest({ safe })).toMatch(/^sha256:/);
     expect(workspaceWireDigest({ safe })).toMatch(/^sha256:/);
     expect(workspaceWireDigest({ optional: undefined })).toBe(
@@ -375,29 +371,20 @@ describe("interface split leaf modules", () => {
       'field "token" is secret and cannot ride a declined resolution',
       "a declined resolution cannot carry answer fields",
     ]);
-    const parsed = validateAndParseInteractionResponse(interaction, {
-      id: interaction.id,
-      outcome: "accepted",
-      data: { token: "seeded-secret", note: "ok" },
-    });
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) {
-      expect(parsed.response.data?.token).toBe("seeded-secret");
-      expect(JSON.stringify(parsed)).toContain("seeded-secret");
-    }
     const verdict = validateInteractionResponse(interaction, {
       id: interaction.id,
       outcome: "accepted",
       data: { token: "seeded-secret", note: "ok" },
     });
     expect(verdict.ok).toBe(true);
+    if (verdict.ok) expect(verdict.response.data?.token).toBe("seeded-secret");
     expect(JSON.stringify(verdict)).not.toContain("seeded-secret");
     expect(InteractionSecretReferenceSchema.parse({
       kind: "secret_handle",
       handleId: "credential-1",
       oneUse: true,
     })).toMatchObject({ oneUse: true });
-    const stale = validateAndParseInteractionResponse(interaction, {
+    const stale = validateInteractionResponse(interaction, {
       id: "stale-interaction",
       outcome: "accepted",
       data: { token: "secret" },

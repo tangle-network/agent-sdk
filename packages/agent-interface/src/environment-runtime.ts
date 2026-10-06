@@ -28,8 +28,8 @@ import type { AgentEnvironmentObservation } from "./environment-observation.js";
 import type {
   AgentInteractiveSession,
   AgentInteractiveSessionRef,
-  AgentInteractiveSessionStart,
-} from "./environment-interactive.js";
+} from "./environment-interactive-control.js";
+import type { AgentInteractiveSessionStart } from "./environment-interactive-start.js";
 import type { AgentTerminalSession, TerminalAttachRequest, TerminalAttachResult } from "./environment-terminal.js";
 
 export interface AgentTurnInput {
@@ -327,11 +327,6 @@ export interface AgentSession {
  * whose creation it cannot prove, because another caller can hold it.
  */
 export type AgentEnvironmentCreation = "created" | "replayed";
-
-export const AgentEnvironmentCreationSchema = z.enum([
-  "created",
-  "replayed",
-]) satisfies z.ZodType<AgentEnvironmentCreation>;
 
 export interface AgentEnvironment {
   readonly id: string;
@@ -920,7 +915,7 @@ export interface AgentEnvironmentCreateIdempotencyRecord<T> {
  * prototype members in a copy and is rejected.
  * @internal
  */
-export function replayedAgentEnvironmentView<T extends object>(
+function replayedAgentEnvironmentView<T extends object>(
   environment: T,
 ): T {
   const prototype = Object.getPrototypeOf(environment) as unknown;

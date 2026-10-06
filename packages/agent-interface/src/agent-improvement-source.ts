@@ -95,8 +95,6 @@ export const agentSourceLicenseSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
-export type AgentSourceLicense = z.infer<typeof agentSourceLicenseSchema>;
-
 /**
  * One content transition applied while importing a source.
  *
@@ -115,10 +113,6 @@ export const agentSourceTransformationSchema = z
     outputDigest: sha256DigestSchema,
   })
   .strict();
-
-export type AgentSourceTransformation = z.infer<
-  typeof agentSourceTransformationSchema
->;
 
 /**
  * Stable reference for the state from which an improvement candidate was made.

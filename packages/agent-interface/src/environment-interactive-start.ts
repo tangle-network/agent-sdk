@@ -61,7 +61,7 @@ export type AgentInteractiveSessionStartInput = Omit<
 >;
 
 /** Digest the exact process-start request independently of its derived run id. */
-export function agentInteractiveSessionRequestDigest(
+function agentInteractiveSessionRequestDigest(
   coordinates: AgentInteractiveSessionRunCoordinates,
   input: AgentInteractiveSessionStartInput,
 ): `sha256:${string}` {

@@ -5,7 +5,6 @@ import type {
   AgentExecutionPreparationReceipt,
   AgentProfile,
   AgentProfileActivationEvidence,
-  AgentWorkspaceExecutionBoundLeaseRecord,
   AgentWorkspaceSealedLeaseRecord,
   AgentWorkspaceSourceSnapshotPolicy,
   Sha256Digest,
@@ -16,16 +15,15 @@ import {
   agentExecutionPreparationAxisResultSchema,
   agentExecutionPreparationReasoningEffortSchema,
   agentExecutionPreparationReceiptSchema,
+  AgentExecutionPreparationValidationError,
   agentProfileSchema,
   buildAgentExecutionPreparationReceipt,
   buildAgentWorkspaceLeaseRecord,
   canonicalAgentProfileDigest,
-  canonicalCandidateDigest,
   defineAgentProfilePublicConfig,
   defineAgentProfileSecretRef,
   profileMaterializationAxes,
   profileMaterializationRequests,
-  validateAgentExecutionPreparationReceipt,
 } from "./index.js";
 
 const sha = (digit: string): Sha256Digest =>
@@ -42,7 +40,6 @@ interface WorkspaceLeaseFixtureOptions {
   leaseId?: string;
   profileActivationDigest?: Sha256Digest;
   preparedWorkspaceDigest?: Sha256Digest;
-  executionPreparationDigest?: Sha256Digest;
   policy?: AgentWorkspaceSourceSnapshotPolicy;
   expiresAtMs?: number;
 }
@@ -75,21 +72,6 @@ function sealedWorkspaceLease(
     phase: "workspace-sealed",
     preparedWorkspaceDigest: options.preparedWorkspaceDigest ?? sha("9"),
     profileActivationDigest: options.profileActivationDigest ?? sha("3"),
-    cleanupAttempts: 0,
-  });
-}
-
-function boundWorkspaceLease(
-  receipt: AgentExecutionPreparationReceipt,
-  options: WorkspaceLeaseFixtureOptions = {},
-): AgentWorkspaceExecutionBoundLeaseRecord {
-  return buildAgentWorkspaceLeaseRecord({
-    ...workspaceLeaseFixtureBase(options),
-    phase: "execution-bound",
-    preparedWorkspaceDigest: options.preparedWorkspaceDigest ?? sha("9"),
-    profileActivationDigest: options.profileActivationDigest ?? sha("3"),
-    executionPreparationDigest:
-      options.executionPreparationDigest ?? receipt.digest,
     cleanupAttempts: 0,
   });
 }
@@ -157,6 +139,17 @@ function coverage(
   }));
 }
 
+const workerProfile: AgentProfile = {
+  name: "worker",
+  model: {
+    default: "openai/gpt-5.4",
+    provider: "openai",
+    reasoningEffort: "high",
+  },
+  harness: "codex",
+  tools: { shell: true, web: false },
+};
+
 function buildReceipt(options: {
   authoredProfile?: AgentProfile;
   effectiveProfile?: AgentProfile;
@@ -168,17 +161,9 @@ function buildReceipt(options: {
   };
   workspaceLease?: AgentWorkspaceSealedLeaseRecord;
   profileActivation?: Pick<AgentProfileActivationEvidence, "digest">;
+  nowMs?: number;
 } = {}): AgentExecutionPreparationReceipt {
-  const authoredProfile = options.authoredProfile ?? {
-    name: "worker",
-    model: {
-      default: "openai/gpt-5.4",
-      provider: "openai",
-      reasoningEffort: "high",
-    },
-    harness: "codex",
-    tools: { shell: true, web: false },
-  };
+  const authoredProfile = options.authoredProfile ?? workerProfile;
   const effectiveProfile = options.effectiveProfile ?? authoredProfile;
   return buildAgentExecutionPreparationReceipt({
     preparationId: "prep-1",
@@ -204,42 +189,19 @@ function buildReceipt(options: {
     executionPlanDigest: sha("4"),
     materializer: { name: "agent-profile-materialize", version: "0.9.3" },
     expiresAtMs: 2_000,
-    nowMs: 1_000,
+    nowMs: options.nowMs ?? 1_000,
   });
 }
 
-function rehash(
-  receipt: AgentExecutionPreparationReceipt,
-  replacement: Partial<AgentExecutionPreparationReceipt>,
-): AgentExecutionPreparationReceipt {
-  const { digest: _digest, ...material } = { ...receipt, ...replacement };
-  return {
-    ...material,
-    digest: canonicalCandidateDigest(material),
-  } as AgentExecutionPreparationReceipt;
-}
-
-function validationOptions(receipt: AgentExecutionPreparationReceipt) {
-  const authoredProfile: AgentProfile = {
-    name: "worker",
-    model: {
-      default: "openai/gpt-5.4",
-      provider: "openai",
-      reasoningEffort: "high",
-    },
-    harness: "codex",
-    tools: { shell: true, web: false },
-  };
-  return {
-    receipt,
-    requestDigest: sha("1"),
-    authoredProfile,
-    effectiveProfile: authoredProfile,
-    executionPlanDigest: sha("4"),
-    profileActivation: { digest: sha("3") },
-    workspaceLease: boundWorkspaceLease(receipt),
-    nowMs: 1_000,
-  };
+/** The issue codes a build refusal reports, or none when the build succeeds. */
+function refusalCodes(build: () => unknown): string[] {
+  try {
+    build();
+    return [];
+  } catch (error) {
+    if (!(error instanceof AgentExecutionPreparationValidationError)) throw error;
+    return error.issues.map((issue) => issue.code);
+  }
 }
 
 describe("profile materialization leaves", () => {
@@ -619,7 +581,7 @@ describe("AgentExecutionPreparationReceipt", () => {
     ).toEqual(["modelDefault", "modelProvider", "harness"]);
   });
 
-  it("builds from a sealed lease and validates only after execution binding", () => {
+  it("builds from a sealed lease", () => {
     const receipt = buildReceipt();
 
     expect(agentExecutionPreparationReceiptSchema.parse(receipt)).toEqual(receipt);
@@ -649,28 +611,17 @@ describe("AgentExecutionPreparationReceipt", () => {
     expect(receipt).not.toHaveProperty("executionPlan");
     expect(receipt.workspace).not.toHaveProperty("root");
     expect(receipt.workspace).not.toHaveProperty("ownerToken");
-    expect(validateAgentExecutionPreparationReceipt(validationOptions(receipt))).toMatchObject({
-      ok: true,
-      issues: [],
-    });
   });
 
   it("rejects missing and unrequested profile coverage", () => {
-    const receipt = buildReceipt();
-    const missing = rehash(receipt, {
-      axisResults: receipt.axisResults.filter(
-        (result) => result.path !== "/tools/shell",
+    const requested = coverage(workerProfile);
+    expect(
+      refusalCodes(() =>
+        buildReceipt({
+          axisResults: requested.filter((result) => result.path !== "/tools/shell"),
+        }),
       ),
-    });
-    const missingValidation = validateAgentExecutionPreparationReceipt(
-      validationOptions(missing),
-    );
-    expect(missingValidation.ok).toBe(false);
-    if (!missingValidation.ok) {
-      expect(missingValidation.issues.map((issue) => issue.code)).toContain(
-        "missing-coverage",
-      );
-    }
+    ).toContain("missing-coverage");
 
     const extra: AgentExecutionPreparationAxisResult = {
       axis: "metadata",
@@ -679,55 +630,28 @@ describe("AgentExecutionPreparationReceipt", () => {
       owner: "runtime",
       mechanism: "runtime-metadata",
     };
-    const unrequested = rehash(receipt, {
-      axisResults: [...receipt.axisResults, extra],
-    });
-    const extraValidation = validateAgentExecutionPreparationReceipt(
-      validationOptions(unrequested),
-    );
-    expect(extraValidation.ok).toBe(false);
-    if (!extraValidation.ok) {
-      expect(extraValidation.issues.map((issue) => issue.code)).toContain(
-        "unrequested-coverage",
-      );
-    }
+    expect(
+      refusalCodes(() => buildReceipt({ axisResults: [...requested, extra] })),
+    ).toContain("unrequested-coverage");
   });
 
   it("rejects duplicate and conflicting coverage after resolving an omitted path", () => {
-    const receipt = buildReceipt();
-    const name = receipt.axisResults.find((result) => result.axis === "name")!;
+    const requested = coverage(workerProfile);
+    const name = requested.find((result) => result.axis === "name")!;
     const pathless = { ...name };
     delete pathless.path;
-    const duplicate = rehash(receipt, {
-      axisResults: [pathless, ...receipt.axisResults],
-    });
-    const duplicateValidation = validateAgentExecutionPreparationReceipt(
-      validationOptions(duplicate),
+    expect(() => buildReceipt({ axisResults: [pathless, ...requested] })).toThrow(
+      "duplicate profile axis/path result",
     );
-    expect(duplicateValidation.ok).toBe(false);
-    if (!duplicateValidation.ok) {
-      expect(duplicateValidation.issues.map((issue) => issue.code)).toContain(
-        "duplicate-coverage",
-      );
-    }
 
     const conflictingPathless: AgentExecutionPreparationAxisResult = {
       ...pathless,
       disposition: "overridden",
       reason: "different value",
     };
-    const conflicting = rehash(receipt, {
-      axisResults: [conflictingPathless, ...receipt.axisResults],
-    });
-    const conflictingValidation = validateAgentExecutionPreparationReceipt(
-      validationOptions(conflicting),
-    );
-    expect(conflictingValidation.ok).toBe(false);
-    if (!conflictingValidation.ok) {
-      expect(conflictingValidation.issues.map((issue) => issue.code)).toContain(
-        "conflicting-coverage",
-      );
-    }
+    expect(() =>
+      buildReceipt({ axisResults: [conflictingPathless, ...requested] }),
+    ).toThrow("conflicting profile axis/path results");
   });
 
   it("refuses unsupported strict profiles and permits only explicit partial profiles", () => {
@@ -877,7 +801,7 @@ describe("AgentExecutionPreparationReceipt", () => {
     ).toBe(false);
   });
 
-  it("detects self-digest tampering and externally rebound request digests", () => {
+  it("detects self-digest tampering", () => {
     const receipt = buildReceipt();
     expect(
       agentExecutionPreparationReceiptSchema.safeParse({
@@ -885,77 +809,9 @@ describe("AgentExecutionPreparationReceipt", () => {
         backend: "different-backend",
       }).success,
     ).toBe(false);
-
-    const rebound = rehash(receipt, { requestDigest: sha("9") });
-    const validation = validateAgentExecutionPreparationReceipt(
-      validationOptions(rebound),
-    );
-    expect(validation.ok).toBe(false);
-    if (!validation.ok) {
-      expect(validation.issues).toContainEqual(
-        expect.objectContaining({ code: "digest-mismatch" }),
-      );
-    }
-
-    const workspaceRebind = validateAgentExecutionPreparationReceipt({
-      ...validationOptions(receipt),
-      workspaceLease: boundWorkspaceLease(receipt, {
-        preparedWorkspaceDigest: sha("0"),
-      }),
-    });
-    expect(workspaceRebind.ok).toBe(false);
-    if (!workspaceRebind.ok) {
-      expect(workspaceRebind.issues).toContainEqual(
-        expect.objectContaining({
-          code: "expectation-mismatch",
-          message: "prepared workspace snapshot does not match the prepared execution",
-        }),
-      );
-    }
   });
 
-  it("requires the receipt digest to be written into the bound lease before compute", () => {
-    const receipt = buildReceipt();
-    const unbound = validateAgentExecutionPreparationReceipt({
-      ...validationOptions(receipt),
-      workspaceLease: sealedWorkspaceLease() as unknown as AgentWorkspaceExecutionBoundLeaseRecord,
-    });
-    expect(unbound).toMatchObject({
-      ok: false,
-      issues: [expect.objectContaining({ code: "workspace-not-execution-bound" })],
-    });
-
-    const wrongReceipt = validateAgentExecutionPreparationReceipt({
-      ...validationOptions(receipt),
-      workspaceLease: boundWorkspaceLease(receipt, {
-        executionPreparationDigest: sha("0"),
-      }),
-    });
-    expect(wrongReceipt).toMatchObject({
-      ok: false,
-      issues: [expect.objectContaining({ code: "execution-binding-mismatch" })],
-    });
-  });
-
-  it("binds snapshot policy and refuses a preparation that outlives its lease", () => {
-    const receipt = buildReceipt();
-    const policyRebind = validateAgentExecutionPreparationReceipt({
-      ...validationOptions(receipt),
-      workspaceLease: boundWorkspaceLease(receipt, {
-        policy: { ...sourceSnapshotPolicy, version: 2 },
-      }),
-    });
-    expect(policyRebind.ok).toBe(false);
-    if (!policyRebind.ok) {
-      expect(policyRebind.issues).toContainEqual(
-        expect.objectContaining({
-          code: "expectation-mismatch",
-          message:
-            "source snapshot policy version does not match the prepared execution",
-        }),
-      );
-    }
-
+  it("refuses a preparation that outlives its lease", () => {
     expect(() =>
       buildReceipt({
         workspaceLease: sealedWorkspaceLease({ expiresAtMs: 1_500 }),
@@ -964,17 +820,9 @@ describe("AgentExecutionPreparationReceipt", () => {
   });
 
   it("refuses an expired preparation before compute", () => {
-    const receipt = buildReceipt();
-    const validation = validateAgentExecutionPreparationReceipt({
-      ...validationOptions(receipt),
-      nowMs: receipt.expiresAtMs,
-    });
-    expect(validation.ok).toBe(false);
-    if (!validation.ok) {
-      expect(validation.issues).toContainEqual(
-        expect.objectContaining({ code: "expired" }),
-      );
-    }
+    expect(refusalCodes(() => buildReceipt({ nowMs: 2_000 }))).toContain(
+      "expired",
+    );
   });
 
   it("binds the existing candidate activation evidence core without weakening it", () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import type { AgentCandidateExecutionLimits } from "./agent-candidate.js";
 import {
-  assertAgentExecutionWithinLimits,
+  refineAgentExecutionWithinLimits,
   type AgentExecutionLimitObservation,
 } from "./agent-execution-limits.js";
 
@@ -46,44 +48,60 @@ const overLimitCases: [string, ObservationOverride][] = [
   ["costUsd", { usage: { costUsdNanos: 6 } }],
 ];
 
+/** The issue messages a receipt schema reports for this execution. */
+function violations(
+  frozen: AgentCandidateExecutionLimits,
+  facts: AgentExecutionLimitObservation,
+): string {
+  const result = z
+    .unknown()
+    .superRefine((_value, ctx) =>
+      refineAgentExecutionWithinLimits(frozen, facts, ctx),
+    )
+    .safeParse(null);
+  return result.success
+    ? ""
+    : result.error.issues.map((issue) => issue.message).join("; ");
+}
+
 describe("execution limits", () => {
   it("accepts execution facts exactly at every frozen limit", () => {
-    expect(() => assertAgentExecutionWithinLimits(limits, observation())).not.toThrow();
+    expect(violations(limits, observation())).toBe("");
   });
 
   it("accepts an exact nanodollar limit despite binary floating-point rounding", () => {
     const current = observation();
-    expect(() =>
-      assertAgentExecutionWithinLimits(
+    expect(
+      violations(
         { ...limits, maxCostUsd: 0.000000015 },
         { ...current, usage: { ...current.usage, costUsdNanos: 15 } },
       ),
-    ).not.toThrow();
+    ).toBe("");
   });
 
   it("does not round a fractional nanodollar limit up", () => {
     const current = observation();
-    expect(() =>
-      assertAgentExecutionWithinLimits(
+    expect(
+      violations(
         { ...limits, maxCostUsd: 0.0000000146 },
         { ...current, usage: { ...current.usage, costUsdNanos: 15 } },
       ),
-    ).toThrow("costUsd");
+    ).toContain("costUsd");
   });
 
   it("rejects an aggregate overflow even when each token channel fits", () => {
     const current = observation();
-    expect(() =>
-      assertAgentExecutionWithinLimits(
+    expect(
+      violations(
         { ...limits, maxTotalTokens: 17 },
         current,
       ),
-    ).toThrow("totalTokens");
+    ).toContain("totalTokens");
   });
 
   it("does not require an aggregate limit for older limit records", () => {
     const { maxTotalTokens: _maxTotalTokens, ...legacyLimits } = limits;
-    expect(() => assertAgentExecutionWithinLimits(legacyLimits, observation())).not.toThrow();
+    expect(violations(legacyLimits, observation())).toBe("");
   });
 
   it.each(overLimitCases)(
@@ -96,7 +114,7 @@ describe("execution limits", () => {
         usage: { ...current.usage, ...(override.usage ?? {}) },
       };
 
-      expect(() => assertAgentExecutionWithinLimits(limits, candidate)).toThrow(label);
+      expect(violations(limits, candidate)).toContain(label);
     },
   );
 });

@@ -8,7 +8,7 @@ import {
   AGENT_WORKSPACE_LEASE_PHASES,
   agentWorkspaceLeaseRecordSchema,
   buildAgentWorkspaceLeaseRecord,
-  canonicalAgentWorkspaceLeaseRecordDigest,
+  canonicalCandidateDigest,
 } from "./index.js";
 
 const sha = (digit: string): Sha256Digest =>
@@ -93,9 +93,7 @@ describe("AgentWorkspaceLeaseRecord", () => {
       const record = buildAgentWorkspaceLeaseRecord(input);
 
       expect(agentWorkspaceLeaseRecordSchema.parse(record)).toEqual(record);
-      expect(record.digest).toBe(
-        canonicalAgentWorkspaceLeaseRecordDigest(input),
-      );
+      expect(record.digest).toBe(canonicalCandidateDigest(input));
       expect(record.phase).toBe(phase);
       expect(record).not.toHaveProperty("ownerToken");
       expect(record).not.toHaveProperty("ownerTokenDigest");

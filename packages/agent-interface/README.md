@@ -19,27 +19,7 @@ materialization receipts. The function does not load resources or estimate token
 Its coverage explicitly leaves tokenization, materialization, and observed use unassessed.
 A capability declaration is not evidence that it was delivered, opened, or applied.
 
-## Agent instances
-
-`AgentProfile` describes behavior. `AgentInstanceSpec` describes one optional managed Agent inside an existing execution environment. The environment remains the computer and security boundary, so it may host zero, one, or many Agent instances.
-
-```ts
-import type { AgentInstanceSpec } from "@tangle-network/agent-interface/agent-instance";
-
-const planner = {
-  id: "planner",
-  profile: {
-    name: "planner",
-    harness: "opencode",
-    prompt: { systemPrompt: "Plan before editing." },
-  },
-  workspace: { mode: "shared" },
-} satisfies AgentInstanceSpec;
-```
-
-The portable contract owns only inline profile and harness selection, shared or isolated workspace intent, public lifecycle state, a provider-sanitized failure summary, and idempotent stop shapes. Credentials, HTTP routes, process identifiers, placement, billing, snapshots, local resource controls, grants, and fencing remain provider-private.
-
-`shared` means ordinary same-computer file visibility. It is not automatic merge behavior or tenant isolation. `isolated` asks the provider for a private writable view and explicit inspect or commit behavior. Providers must reject unsatisfied machine requirements rather than silently replacing or migrating a live environment.
+## Workspace paths
 
 `WorkspaceRequest.cwd` is an explicitly based path reference.
 Use `base: "repository"` for a portable repository-relative POSIX path.
@@ -51,8 +31,6 @@ Providers advertise accepted path bases under `AgentEnvironmentCapabilities.work
 To migrate a string cwd, wrap it in the base that owns its path.
 Use the repository base for Tangle and other portable workspace providers.
 Use the host base for CLI Bridge native process paths.
-
-The public `AgentInstanceRecord` contains a credential-free profile identity, not the full profile or provider request. Existing session APIs can implement this contract without a new service: one instance maps to one managed session, compatible sessions may reuse a backend process, and stop maps to idempotent session deletion or process release.
 
 ## Durable runs, interactions, and context
 

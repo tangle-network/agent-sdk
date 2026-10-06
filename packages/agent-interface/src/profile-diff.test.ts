@@ -6,7 +6,6 @@ import {
   changedAgentProfileAxes,
   defineAgentProfileDiff,
   diffAgentProfiles,
-  pruneAgentProfileDiff,
 } from "./profile-diff.js";
 import {
   defineInlineResource,
@@ -424,7 +423,7 @@ describe("AgentProfileDiff", () => {
     expect(profile.hooks?.preFinish).toHaveLength(1);
   });
 
-  it("reports and prunes changed axes for causal ablations", () => {
+  it("reports changed axes for causal ablations", () => {
     const diff = defineAgentProfileDiff({
       kind: "agent-profile-diff",
       set: {
@@ -435,12 +434,6 @@ describe("AgentProfileDiff", () => {
     });
 
     expect(changedAgentProfileAxes(diff)).toEqual(["model", "prompt", "resources"]);
-
-    const pruned = pruneAgentProfileDiff(diff, ["resources"]);
-    expect(changedAgentProfileAxes(pruned)).toEqual(["model", "prompt"]);
-    expect(applyAgentProfileDiff(baseProfile, pruned).resources?.skills?.map((s) => s.name)).toEqual([
-      "read-state",
-    ]);
   });
 
   it("reports explicit empty identity values as changes", () => {
@@ -553,30 +546,5 @@ describe("AgentProfileDiff", () => {
     });
 
     expect(profile.harness).toBeUndefined();
-  });
-
-  it("prunes harness set and removal without changing other axes", () => {
-    const diff = defineAgentProfileDiff({
-      kind: "agent-profile-diff",
-      set: {
-        harness: "codex",
-        tools: { shell: true },
-      },
-      remove: { harness: true },
-    });
-
-    const pruned = pruneAgentProfileDiff(diff, ["harness"]);
-
-    const profile = applyAgentProfileDiff(baseProfile, pruned);
-    const toolsOnlyControl = applyAgentProfileDiff(baseProfile, {
-      kind: "agent-profile-diff",
-      set: { tools: { shell: true } },
-    });
-
-    expect(pruned.set).not.toHaveProperty("harness");
-    expect(pruned.remove).toBeUndefined();
-    expect(changedAgentProfileAxes(pruned)).toEqual(["tools"]);
-    expect(profile.harness).toBe("claude-code");
-    expect(profile).toEqual(toolsOnlyControl);
   });
 });

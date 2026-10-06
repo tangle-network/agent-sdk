@@ -4,10 +4,7 @@ import {
   mergeAgentProfiles,
   type AgentProfile,
 } from "./agent-profile.js";
-import {
-  applyAgentProfileDiff,
-  pruneAgentProfileDiff,
-} from "./profile-diff.js";
+import { applyAgentProfileDiff } from "./profile-diff.js";
 import { canonicalCandidateJson } from "./agent-candidate-schema-common.js";
 
 /**
@@ -163,19 +160,5 @@ describe("profile helpers omit unset optional keys", () => {
         resources: { failOnError: true },
       }),
     );
-  });
-
-  it("prunes a diff by dropping the axis rather than blanking it", () => {
-    const pruned = pruneAgentProfileDiff(
-      {
-        kind: "agent-profile-diff",
-        set: { harness: "codex" },
-        remove: { tools: true },
-      },
-      ["harness", "tools"],
-    );
-
-    expect(undefinedKeyPaths(pruned)).toEqual([]);
-    expect(pruned).toStrictEqual({ kind: "agent-profile-diff" });
   });
 });

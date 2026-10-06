@@ -4,7 +4,6 @@ import {
   AgentEnvironmentObservationSchema,
   SafeEndpointSchema,
   agentEnvironmentObservationIdentityMatches,
-  assertObservationCredentialFree,
   observationContainsCredential,
   observationOf,
   type AgentEnvironmentObservation,
@@ -223,8 +222,6 @@ describe("observationContainsCredential", () => {
     expect(observationContainsCredential({ inputTokens: 10, outputTokens: 5 })).toBe(false);
     expect(observationContainsCredential({ sessionId: "s", kind: "sandbox" })).toBe(false);
     expect(observationContainsCredential(makeObservation())).toBe(false);
-    expect(() => assertObservationCredentialFree(makeObservation())).not.toThrow();
-    expect(() => assertObservationCredentialFree({ secret: "x" })).toThrow();
   });
 });
 
