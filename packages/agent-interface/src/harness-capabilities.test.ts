@@ -107,7 +107,7 @@ describe("harness ↔ model compatibility", () => {
       allowedProviders: ["anthropic"],
     });
     expect(support.supported === false && support.message).toBe(
-      "Harness claude-code runs only anthropic models; zai/glm-5.3 is a zai model. " +
+      "Harness claude-code runs only anthropic models, not zai/glm-5.3 (provider zai). " +
         "Choose a model whose id starts with anthropic/, or a harness that runs zai models, such as opencode.",
     );
   });

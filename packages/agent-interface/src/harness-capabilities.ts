@@ -204,8 +204,8 @@ export function harnessModelSupport(
       provider,
       allowedProviders,
       message:
-        `Harness ${harness} runs only ${allowedProviders.join(" or ")} models; ` +
-        `${model} is a ${provider} model. Choose a model whose id starts with ` +
+        `Harness ${harness} runs only ${allowedProviders.join(" or ")} models, ` +
+        `not ${model} (provider ${provider}). Choose a model whose id starts with ` +
         `${allowedProviders.map((p) => `${p}/`).join(" or ")}, or a harness that runs ` +
         `${provider} models, such as opencode.`,
     };
