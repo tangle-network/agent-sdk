@@ -229,6 +229,7 @@ describe("AgentProfileDiff", () => {
           prompt: true,
           model: true,
           harness: true,
+          seats: true,
           permissions: true,
           tools: true,
           mcp: true,

@@ -587,7 +587,7 @@ export const agentProfileSchema = z
   })
   .superRefine((profile, context) => {
     validateNestedRecordKeys(profile, context, [], new Set<object>());
-    if (profile.seats) {
+    if (profile.seats?.length) {
       const first = profile.seats[0]!;
       if (first.harness !== profile.harness || first.provider !== profile.model?.provider ||
           first.model !== profile.model?.default) {
