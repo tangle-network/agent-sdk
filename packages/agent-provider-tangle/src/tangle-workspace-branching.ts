@@ -193,6 +193,19 @@ export function createTangleWorkspaceBranching(
   };
 
   /** The fork equivalent of {@link resolveCheckpoint}. */
+  const resolveLocalFork = (
+    request: Pick<WorkspaceForkRequest, "idempotencyKey" | "requestDigest">
+  ): Resolved<ForkRecord> => {
+    const local = forks.get(request.idempotencyKey);
+    if (!local) return { state: "absent" };
+    return local.request.requestDigest === request.requestDigest
+      ? { state: "known", record: local }
+      : {
+          state: "conflict",
+          existingRequestDigest: local.request.requestDigest,
+        };
+  };
+
   const resolveFork = async (
     request: Pick<WorkspaceForkRequest, "idempotencyKey" | "requestDigest">,
     signal?: AbortSignal
@@ -533,7 +546,16 @@ export function createTangleWorkspaceBranching(
         false
       );
     }
-    const known = await resolveFork(request, operation?.signal);
+    // A key this handle has not recorded is created again with the same key: Sandbox applies the
+    // key and replays the child it already created for it. Searching the account for the key's
+    // child first paged every sandbox in the account, which timed out or repeated rows on an
+    // account with thousands of them, so a fork answered unknown (agent-sdk#439 removed the same
+    // scan from deleteCheckpoint). This provider cannot create a confidential fork, only recover
+    // one, so that request still searches; lookupFork does too, for a key it must recover.
+    const known =
+      request.confidential?.requested === true
+        ? await resolveFork(request, operation?.signal)
+        : resolveLocalFork(request);
     if (known.state === "conflict") {
       return forkConflict(request, known.existingRequestDigest);
     }
