@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 3.1.0
+
+### Minor Changes
+
+- e31f38b: Add an ordered, validated subscription seat chain to AgentProfile for explicit cross-provider continuation.
+
 ## 3.0.0
 
 ### Major Changes
