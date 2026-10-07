@@ -196,6 +196,10 @@ export interface AgentProfileSeat {
   model: string;
   /** Select all eligible accounts in account-manager order, or one named account. */
   selector: { kind: "all-eligible" } | { kind: "seat"; id: string };
+  /** Replace the profile-level native tool map for this stage; `{}` clears it. */
+  tools?: Record<string, boolean>;
+  /** Replace the profile-level permission map for this stage; `{}` clears it. */
+  permissions?: Record<string, AgentProfilePermission>;
 }
 
 /**

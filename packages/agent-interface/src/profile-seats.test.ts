@@ -39,4 +39,24 @@ describe("AgentProfile.seats", () => {
     expect(agentProfileSchema.safeParse({ ...profile, seats: [profile.seats[0], { ...profile.seats[1], harness: "nanoclaw" }] }).success).toBe(false);
     expect(agentProfileSchema.safeParse({ ...profile, prompt: { appendSystemPrompt: "extra" } }).success).toBe(false);
   });
+
+  it("allows explicit stage tool replacement without changing the first stage", () => {
+    const withControls = {
+      ...profile,
+      tools: { Bash: true, Write: true },
+      seats: [
+        { ...profile.seats[0], tools: { Bash: true, Write: true } },
+        { ...profile.seats[1], tools: {}, permissions: {} },
+      ],
+    };
+    expect(agentProfileSchema.safeParse(withControls).success).toBe(true);
+    expect(agentProfileSchema.safeParse({
+      ...withControls,
+      seats: [{ ...withControls.seats[0], tools: {} }, withControls.seats[1]],
+    }).success).toBe(false);
+    expect(agentProfileSchema.safeParse({
+      ...withControls,
+      seats: [withControls.seats[0], { ...withControls.seats[1], tools: { Bash: true } }],
+    }).success).toBe(true);
+  });
 });
