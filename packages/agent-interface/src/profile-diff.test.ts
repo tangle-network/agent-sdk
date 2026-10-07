@@ -78,6 +78,11 @@ const profileFieldCases = {
   prompt: { prompt: { systemPrompt: "Measure, then answer." } },
   model: { model: { reasoningEffort: "high" } },
   harness: { harness: "codex" },
+  seats: {
+    harness: "codex",
+    model: { provider: "openai", default: "openai/gpt-6-sol" },
+    seats: [{ harness: "codex", provider: "openai", model: "openai/gpt-6-sol", selector: { kind: "all-eligible" } }],
+  },
   permissions: { permissions: { shell: "allow" } },
   tools: { tools: { shell: true } },
   mcp: {
@@ -133,6 +138,7 @@ const expectedAxisByProfileField = {
   prompt: "prompt",
   model: "model",
   harness: "harness",
+  seats: "seats",
   permissions: "permissions",
   tools: "tools",
   mcp: "mcp",
@@ -188,9 +194,9 @@ describe("AgentProfileDiff", () => {
       const changed = new Set(diffs.flatMap(changedAgentProfileAxes));
 
       expect(diffs.length, field).toBe(2);
-      expect(changed, field).toEqual(
-        new Set([expectedAxisByProfileField[field as keyof AgentProfile]]),
-      );
+      expect(changed, field).toEqual(field === "seats"
+        ? new Set(["harness", "model", "seats"])
+        : new Set([expectedAxisByProfileField[field as keyof AgentProfile]]));
       expect(applyProfileDiffs({}, diffs), field).toEqual(candidate);
     }
   });
@@ -223,6 +229,7 @@ describe("AgentProfileDiff", () => {
           prompt: true,
           model: true,
           harness: true,
+          seats: true,
           permissions: true,
           tools: true,
           mcp: true,

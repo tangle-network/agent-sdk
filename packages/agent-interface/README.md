@@ -5,6 +5,23 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+## Authored subscription seats
+
+`AgentProfile.seats` is an optional ordered chain for continuing one logical agent
+across subscriptions. Each stage pins a harness, provider, model, and account
+selector. `all-eligible` lets the account manager choose each available seat in
+its own order; `seat` names one account. The first stage must equal the profile's
+top-level `harness`, `model.provider`, and `model.default`, so the initial run
+cannot silently change its authored model. The profile's reasoning effort and
+system prompt intent must be supported by every stage. The executor must check
+the remaining profile capabilities and resolve seats before spend.
+
+An omitted `seats` field preserves the legacy single-provider policy. For each
+segment, the executor keeps the authored profile for identity and builds a
+provider-facing projection without `seats`, setting its top-level harness and
+model to the selected stage. A cross-provider continuation requires an explicit
+stage in the authored chain.
+
 ## Profile measurements
 
 `measureAgentProfile(profile)` returns the canonical profile digest and JSON byte size,

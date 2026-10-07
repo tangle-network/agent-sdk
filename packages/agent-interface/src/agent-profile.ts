@@ -186,6 +186,18 @@ export interface AgentProfileModelHints {
   metadata?: Record<string, unknown>;
 }
 
+/** An authored subscription choice. The executor resolves account availability at run time. */
+export interface AgentProfileSeat {
+  /** Exact harness to use for this segment. */
+  harness: HarnessType;
+  /** Provider that must serve `model`; a different provider requires another stage. */
+  provider: string;
+  /** Exact model requested from this provider. */
+  model: string;
+  /** Select all eligible accounts in account-manager order, or one named account. */
+  selector: { kind: "all-eligible" } | { kind: "seat"; id: string };
+}
+
 /**
  * Prompt shaping for an agent.
  *
@@ -495,6 +507,12 @@ export interface AgentProfile {
    * loop optimize harness routing as a first-class lever.
    */
   harness?: HarnessType;
+  /**
+   * Ordered, authored subscription chain for one logical agent. The first
+   * stage must match `harness`, `model.provider`, and `model.default` above.
+   * Omission preserves the existing single-provider execution policy.
+   */
+  seats?: AgentProfileSeat[];
   permissions?: Record<string, AgentProfilePermission>;
   tools?: Record<string, boolean>;
   mcp?: Record<string, AgentProfileMcpServer>;

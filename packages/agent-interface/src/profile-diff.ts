@@ -14,6 +14,7 @@ const agentProfileDiffPropertyAxes = [
   "prompt",
   "model",
   "harness",
+  "seats",
   "permissions",
   "tools",
   "mcp",
@@ -64,6 +65,7 @@ export interface AgentProfileDiffRemoval {
   prompt?: true | AgentProfilePromptRemoval;
   model?: AgentProfileRemoveList;
   harness?: true;
+  seats?: true;
   permissions?: AgentProfileRemoveList;
   tools?: AgentProfileRemoveList;
   mcp?: AgentProfileRemoveList;
@@ -412,6 +414,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
     setOrDelete(next, "model", removeKeys(next.model, remove.model));
   }
   if (remove.harness !== undefined) delete next.harness;
+  if (remove.seats !== undefined) delete next.seats;
   if (remove.permissions !== undefined) {
     setOrDelete(
       next,

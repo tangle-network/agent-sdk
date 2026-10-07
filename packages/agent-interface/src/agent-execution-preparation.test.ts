@@ -205,10 +205,10 @@ function refusalCodes(build: () => unknown): string[] {
 }
 
 describe("profile materialization leaves", () => {
-  it("enumerates every one of the canonical AgentProfile leaves", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(33);
+  it("enumerates canonical leaves, including optional seat policy", () => {
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(34);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
-      AGENT_PROFILE_MATERIALIZATION_AXES,
+      AGENT_PROFILE_MATERIALIZATION_AXES.filter((axis) => axis !== "seats"),
     );
   });
 
