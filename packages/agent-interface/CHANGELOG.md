@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 3.1.1
+
+### Patch Changes
+
+- 48dfe97: Allow explicit per-seat tool and permission replacement maps for cross-harness continuation.
+
 ## 3.1.0
 
 ### Minor Changes
