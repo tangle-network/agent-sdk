@@ -229,13 +229,18 @@ export async function sandboxInstanceAsEnvironment(
     let selectedReference = nativeReference;
     // Exact reads retain the admitted execution. A new operation obtains a new durable
     // account-owner binding; retries of that operation present the same key after restart.
-    // Per-turn account selection exists for Claude setup tokens, whose named-grant continuation
-    // Sandbox proves. Other harnesses keep the account selected at creation, whose admission
-    // already covered the run deadline.
-    if (!replay && request?.resolveModelCredentials !== undefined && harness === "claude-code") {
-      if (!deployment.claudeTokenContinuations || box.grantNativeCredential === undefined ||
-          nativeReference.format !== "token") {
-        throw new Error("Tangle fresh subscription turns require proven Claude token continuation and named-grant support");
+    // Native subscription turns can change accounts only when the serving image proves
+    // a named grant that preserves this harness's private session HOME.
+    if (!replay && request?.resolveModelCredentials !== undefined &&
+        (harness === "claude-code" || harness === "codex")) {
+      const supported = harness === "claude-code"
+        ? deployment.claudeTokenContinuations && nativeReference.format === "token"
+        : deployment.codexCredentialContinuations &&
+          (nativeReference.format === "bundle" || nativeReference.format === "files");
+      if (!supported || box.grantNativeCredential === undefined) {
+        throw new Error(harness === "claude-code"
+          ? "Tangle fresh subscription turns require proven Claude token continuation and named-grant support"
+          : "Tangle fresh subscription turns require proven Codex credential continuation and named-grant support");
       }
       const profile = backend?.profile;
       if (profile === undefined || profileCredentialSource(profile) !== "subscription") {
@@ -259,8 +264,11 @@ export async function sandboxInstanceAsEnvironment(
         }))),
         input.signal,
       ));
-      if (selected === undefined || !("cliAuth" in selected) || selected.cliAuth.format !== "token") {
-        throw new Error("Tangle subscription turn resolver must select a stored Claude token reference");
+      if (selected === undefined || !("cliAuth" in selected) ||
+          (harness === "claude-code"
+            ? selected.cliAuth.format !== "token"
+            : selected.cliAuth.format !== "bundle" && selected.cliAuth.format !== "files")) {
+        throw new Error(`Tangle subscription turn resolver must select a stored ${harness} native reference`);
       }
       selectedReference = selected.cliAuth;
       assertCliAuthReferenceSupported(harness, { ...model, cliAuth: selectedReference });

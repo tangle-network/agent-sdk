@@ -21,7 +21,7 @@ const turn = (): AgentTurnInput => ({
   providerOptions: { backend: { profile, model: { authMode: "oauth" } } },
 });
 
-function setup(rotation = false) {
+function setup(rotation = false, codexRotation = false) {
   const grants: Array<{ harness: string; cliAuth: { account: string; secretEnv: string; format: string } }> = [];
   const calls: { operation: string; options: PromptOptions | undefined }[] = [];
   const creates: CreateSandboxOptions[] = [];
@@ -51,7 +51,7 @@ function setup(rotation = false) {
             },
           };
         },
-      }, { ...RETAINED_DEPLOYMENT_DOCUMENT, cliAuthReferences: true, claudeTokenContinuations: rotation });
+      }, { ...RETAINED_DEPLOYMENT_DOCUMENT, cliAuthReferences: true, claudeTokenContinuations: rotation, codexCredentialContinuations: codexRotation });
       boxes.set(box.id, box);
       return box;
     },
@@ -61,6 +61,51 @@ function setup(rotation = false) {
 }
 
 describe("selected native credential on Provider turns", () => {
+  it("grants a selected Codex bundle before continuing the same native session", async () => {
+    const f = setup(false, true);
+    const codexProfile = {
+      ...profile,
+      harness: "codex" as const,
+      model: { provider: "openai", default: "gpt-6-sol", metadata: { credentialSource: "subscription" } },
+    };
+    const first = { account: "first", secretEnv: "FIRST_BUNDLE", format: "bundle" as const };
+    const second = { account: "second", secretEnv: "SECOND_BUNDLE", format: "bundle" as const };
+    const resolve = vi.fn(async (input: { metadata?: Record<string, unknown> }) => ({
+      cliAuth: input.metadata?.nativeCredentialTurn ? second : first,
+    }));
+    const provider = createTangleProvider({ client: f.client, modelCredentials: resolve });
+    const env = await provider.create({ profile: codexProfile, idempotencyKey: "codex-native" });
+    await env.dispatch!({
+      prompt: "Continue", turnId: "codex-turn-two", sessionId: "retained-codex-session",
+      providerOptions: { backend: { profile: codexProfile, model: { authMode: "oauth" } } },
+    });
+    expect(f.creates).toHaveLength(1);
+    expect(f.grants).toEqual([{ harness: "codex", cliAuth: second }]);
+    expect(f.calls[0]?.options?.backend?.model?.cliAuth).toEqual(second);
+    expect(f.calls[0]?.options?.sessionId).toBe("retained-codex-session");
+  });
+
+  it("refuses Codex turn selection when the deployed image has no Codex grant", async () => {
+    const f = setup(false, false);
+    const codexProfile = {
+      ...profile,
+      harness: "codex" as const,
+      model: { provider: "openai", default: "gpt-6-sol", metadata: { credentialSource: "subscription" } },
+    };
+    const resolve = vi.fn(async () => ({
+      cliAuth: { account: "first", secretEnv: "FIRST_BUNDLE", format: "bundle" as const },
+    }));
+    const env = await createTangleProvider({ client: f.client, modelCredentials: resolve })
+      .create({ profile: codexProfile, idempotencyKey: "codex-native" });
+    await expect(env.dispatch!({
+      prompt: "Continue", turnId: "codex-turn-two", sessionId: "retained-codex-session",
+      providerOptions: { backend: { profile: codexProfile, model: { authMode: "oauth" } } },
+    })).rejects.toThrow("proven Codex credential continuation");
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(f.grants).toHaveLength(0);
+    expect(f.calls).toHaveLength(0);
+  });
+
   it("binds the selected reference before Runtime mints the initial retained control reference", async () => {
     const fixture = setup();
     const provider = createTangleProvider({ client: fixture.client, modelCredentials: { cliAuth } });
