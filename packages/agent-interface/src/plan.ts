@@ -1,13 +1,5 @@
 import { z } from "zod";
 
-/** Harnesses with an enforceable durable-plan continuation contract. */
-export const PlanProviderKindSchema = z.enum([
-  "claude-code",
-  "codex",
-  "opencode",
-]);
-export type PlanProviderKind = z.infer<typeof PlanProviderKindSchema>;
-
 /**
  * Credential-free provider correlation committed with the plan. This union is
  * deliberately closed: adding plan support for another harness requires an
@@ -64,7 +56,6 @@ export const PlanDecisionSchema = z.discriminatedUnion("outcome", [
     feedback: z.string().trim().min(1),
   }).strict(),
 ]);
-export type PlanDecision = z.infer<typeof PlanDecisionSchema>;
 
 /**
  * Typed server-originated continuation. Adapters consume this instead of

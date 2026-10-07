@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AgentEnvironmentCapabilitiesSchema,
-  AgentEnvironmentCreationSchema,
   AgentEnvironmentEgressPolicySchema,
   AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,
@@ -9,7 +8,6 @@ import {
   agentNativeContextContinuationResultMatchesRequest,
   agentEnvironmentCreateInputDigest,
   createAgentEnvironmentWithIdempotency,
-  replayedAgentEnvironmentView,
 } from "./environment-provider.js";
 import type {
   AgentEnvironmentCreateIdempotencyRecord,
@@ -332,7 +330,7 @@ describe("generic environment create idempotency", () => {
     expect(records.size).toBe(0);
   });
 
-  it("refuses a replayed view of a class instance", () => {
+  it("refuses to replay a class instance and replays a null-prototype object", async () => {
     class Environment {
       readonly id = "environment-1";
       readonly creation = "created" as const;
@@ -340,24 +338,26 @@ describe("generic environment create idempotency", () => {
         return Promise.resolve(this.id);
       }
     }
-    expect(() => replayedAgentEnvironmentView(new Environment())).toThrow(
-      /plain object environment/,
-    );
-    expect(
-      replayedAgentEnvironmentView(
-        Object.assign(Object.create(null) as object, { id: "environment-1" }),
-      ),
-    ).toEqual({ id: "environment-1", creation: "replayed" });
-  });
-});
+    const classRecords = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<Environment>
+    >();
+    const createClass = async () => new Environment();
+    await createAgentEnvironmentWithIdempotency(classRecords, input, createClass);
+    await expect(
+      createAgentEnvironmentWithIdempotency(classRecords, input, createClass),
+    ).rejects.toThrow(/plain object environment/);
 
-describe("AgentEnvironmentCreationSchema", () => {
-  it("accepts the two provable verdicts and rejects every other value", () => {
-    expect(AgentEnvironmentCreationSchema.parse("created")).toBe("created");
-    expect(AgentEnvironmentCreationSchema.parse("replayed")).toBe("replayed");
-    for (const invalid of ["unknown", "", "CREATED", undefined, null, true]) {
-      expect(() => AgentEnvironmentCreationSchema.parse(invalid)).toThrow();
-    }
+    const plainRecords = new Map<
+      string,
+      AgentEnvironmentCreateIdempotencyRecord<object>
+    >();
+    const createPlain = async () =>
+      Object.assign(Object.create(null) as object, { id: "environment-1" });
+    await createAgentEnvironmentWithIdempotency(plainRecords, input, createPlain);
+    expect(
+      await createAgentEnvironmentWithIdempotency(plainRecords, input, createPlain),
+    ).toEqual({ id: "environment-1", creation: "replayed" });
   });
 });
 

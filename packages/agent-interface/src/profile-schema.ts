@@ -4,6 +4,7 @@ import {
   TRAINED_MODEL_PREFIX,
   trainedModelIdForArtifact,
   type AgentProfile,
+  type AgentProfileSeat,
   type AgentProfileMetadata,
   type AgentProfileTraining,
   type AgentTrainingReceipt,
@@ -24,6 +25,15 @@ import {
   looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
+import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
+import {
+  harnessHonorsEffort,
+  harnessHonorsModel,
+  harnessModelSupport,
+  harnessReasoningEfforts,
+  harnessSystemPromptIntents,
+  resolveModelProvider,
+} from "./harness-capabilities.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
@@ -193,6 +203,19 @@ export const agentProfileModelHintsBaseSchema = z.strictObject({
 
 export const agentProfileModelHintsSchema =
   agentProfileModelHintsBaseSchema.superRefine(enforceModelTokenBounds);
+
+/** Ordered account selection policy, without credentials or ambient model defaults. */
+export const agentProfileSeatSchema = z.strictObject({
+  harness: harnessTypeSchema,
+  provider: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  model: z.string().min(1).refine((value) => value.trim() === value, "model must be canonical"),
+  selector: z.union([
+    z.strictObject({ kind: z.literal("all-eligible") }),
+    z.strictObject({ kind: z.literal("seat"), id: z.string().min(1).refine((value) => value.trim() === value, "seat id must be canonical") }),
+  ]),
+  tools: ownPropertyRecordSchema(z.boolean()).optional(),
+  permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
+}) satisfies z.ZodType<AgentProfileSeat>;
 
 /**
  * Replacement and addition are separate, independently optional fields, and the
@@ -423,6 +446,7 @@ export const agentProfileDiffRemovalSchema = z.strictObject({
     .optional(),
   model: removeListSchema.optional(),
   harness: z.literal(true).optional(),
+  seats: z.literal(true).optional(),
   permissions: removeListSchema.optional(),
   tools: removeListSchema.optional(),
   mcp: removeListSchema.optional(),
@@ -547,6 +571,7 @@ export const agentProfileSchema = z
     prompt: agentProfilePromptSchema.optional(),
     model: agentProfileModelHintsSchema.optional(),
     harness: harnessTypeSchema.optional(),
+    seats: z.array(agentProfileSeatSchema).nonempty().optional(),
     permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
     tools: ownPropertyRecordSchema(z.boolean()).optional(),
     mcp: ownPropertyRecordSchema(agentProfileMcpServerSchema).optional(),
@@ -565,6 +590,46 @@ export const agentProfileSchema = z
   })
   .superRefine((profile, context) => {
     validateNestedRecordKeys(profile, context, [], new Set<object>());
+    if (profile.seats?.length) {
+      const first = profile.seats[0]!;
+      if (first.harness !== profile.harness || first.provider !== profile.model?.provider ||
+          first.model !== profile.model?.default) {
+        context.addIssue({ code: "custom", path: ["seats", 0], message: "first seat must match profile harness, model.provider, and model.default" });
+      }
+      if (first.tools !== undefined &&
+          canonicalAgentProfileJson(first.tools) !== canonicalAgentProfileJson(profile.tools)) {
+        context.addIssue({ code: "custom", path: ["seats", 0, "tools"], message: "first seat tools must match profile tools" });
+      }
+      if (first.permissions !== undefined &&
+          canonicalAgentProfileJson(first.permissions) !== canonicalAgentProfileJson(profile.permissions)) {
+        context.addIssue({ code: "custom", path: ["seats", 0, "permissions"], message: "first seat permissions must match profile permissions" });
+      }
+      for (const [index, seat] of profile.seats.entries()) {
+        const provider = resolveModelProvider(seat.model);
+        if (provider !== seat.provider) {
+          context.addIssue({ code: "custom", path: ["seats", index, "provider"], message: "seat provider must match the model provider" });
+        }
+        if (!harnessHonorsModel(seat.harness)) {
+          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness does not honor an exact model choice" });
+        }
+        const support = harnessModelSupport(seat.harness, seat.model, { reasoningEffort: profile.model?.reasoningEffort });
+        if (!support.supported) {
+          context.addIssue({ code: "custom", path: ["seats", index, "model"], message: support.message });
+        }
+        const effort = profile.model?.reasoningEffort;
+        if (effort !== undefined && (!harnessHonorsEffort(seat.harness) ||
+            !harnessReasoningEfforts(seat.harness).includes(effort))) {
+          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot honor profile reasoning effort" });
+        }
+        const prompt = harnessSystemPromptIntents(seat.harness);
+        if (profile.prompt?.systemPrompt !== undefined && !prompt.replace) {
+          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot replace the system prompt" });
+        }
+        if (profile.prompt?.appendSystemPrompt !== undefined && !prompt.append) {
+          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot append the system prompt" });
+        }
+      }
+    }
     const training = agentProfileTrainingSchema.safeParse(profile.metadata?.training);
     if (profile.model?.default?.startsWith(TRAINED_MODEL_PREFIX) && !training.success) {
       context.addIssue({ code: "custom", path: ["metadata", "training"], message: "trained model requires a checkpoint receipt" });

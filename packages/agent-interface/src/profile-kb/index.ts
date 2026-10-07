@@ -44,17 +44,6 @@ export {
  */
 export const PROFILE_KB_SOURCES = ["harness", "model", "learning"] as const;
 
-/** Date of the latest source audit; individual historical observations retain their own dates. */
-export const PROFILE_KB_CHECKED_AT = "2026-10-04";
-
-/** Find a harness entry by its {@link HarnessType}. */
-export function findProfileKbHarness(
-  harness: HarnessType | string | undefined,
-): ProfileKbHarness | undefined {
-  if (!harness) return undefined;
-  return profileKbHarnesses.find((entry) => entry.id === harness);
-}
-
 /*
  * Composition reads a frozen snapshot taken at load, never the exported
  * records. A consumer that edits an exported entry therefore cannot change
@@ -88,29 +77,6 @@ const modelIndex: ReadonlyMap<string, number> = (() => {
   });
   return index;
 })();
-
-/**
- * Find a model entry by id or alias.
- *
- * Accepts the spellings harnesses and routers use: a provider prefix
- * (`anthropic/claude-opus-5-5`), a route prefix
- * (`pi/tangle-router/deepseek/deepseek-v4.1-flash`), and a trailing `:suffix`
- * such as pi's thinking level or a router's `:batch`. A different version is a
- * different model and never matches.
- */
-export function findProfileKbModel(
-  model: string | undefined,
-): ProfileKbModel | undefined {
-  // Public lookups search the exported records as they are now; composition
-  // alone reads the frozen snapshot, so neither can desynchronize the other.
-  return matchModelName(model, (candidate) =>
-    profileKbModels.find((entry) =>
-      [entry.id, ...entry.aliases].some(
-        (name) => name.toLowerCase() === candidate,
-      ),
-    ),
-  );
-}
 
 /**
  * Try the name as given, then without each leading `provider/` or route
@@ -167,7 +133,7 @@ export interface ProfileKbSelection {
  * model's, then any reproduced platform learnings for either. Unknown names
  * contribute nothing.
  */
-export function profileKbGuidance(
+function profileKbGuidance(
   selection: ProfileKbSelection,
 ): AgentProfileGuidanceBlock[] {
   const harness = selection.harness

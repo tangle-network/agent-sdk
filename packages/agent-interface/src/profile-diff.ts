@@ -14,6 +14,7 @@ const agentProfileDiffPropertyAxes = [
   "prompt",
   "model",
   "harness",
+  "seats",
   "permissions",
   "tools",
   "mcp",
@@ -64,6 +65,7 @@ export interface AgentProfileDiffRemoval {
   prompt?: true | AgentProfilePromptRemoval;
   model?: AgentProfileRemoveList;
   harness?: true;
+  seats?: true;
   permissions?: AgentProfileRemoveList;
   tools?: AgentProfileRemoveList;
   mcp?: AgentProfileRemoveList;
@@ -412,6 +414,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
     setOrDelete(next, "model", removeKeys(next.model, remove.model));
   }
   if (remove.harness !== undefined) delete next.harness;
+  if (remove.seats !== undefined) delete next.seats;
   if (remove.permissions !== undefined) {
     setOrDelete(
       next,
@@ -517,47 +520,4 @@ export function changedAgentProfileAxes(diff: AgentProfileDiff): AgentProfileDif
     }
   }
   return [...axes].sort();
-}
-
-export function pruneAgentProfileDiff(
-  diff: AgentProfileDiff,
-  axesToRemove: readonly AgentProfileDiffAxis[],
-): AgentProfileDiff {
-  const removeSet = new Set(axesToRemove);
-  const set = diff.set ? { ...diff.set } : undefined;
-  const remove = diff.remove ? { ...diff.remove } : undefined;
-
-  if (removeSet.has("identity") && set) {
-    delete set.name;
-    delete set.description;
-    delete set.version;
-    delete set.tags;
-  }
-  if (removeSet.has("identity") && remove) {
-    delete remove.identity;
-    delete remove.tags;
-  }
-
-  for (const axis of agentProfileDiffPropertyAxes) {
-    if (!removeSet.has(axis)) continue;
-    if (set) delete set[axis];
-    if (remove) delete remove[axis];
-  }
-
-  const pruned: AgentProfileDiff = { ...diff };
-  setOrDelete(
-    pruned,
-    "set",
-    set && Object.values(set).some((value) => value !== undefined)
-      ? set
-      : undefined,
-  );
-  setOrDelete(
-    pruned,
-    "remove",
-    remove && Object.values(remove).some((value) => value !== undefined)
-      ? remove
-      : undefined,
-  );
-  return pruned;
 }

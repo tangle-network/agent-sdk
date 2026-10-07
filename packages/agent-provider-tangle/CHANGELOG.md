@@ -1,5 +1,30 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.6.5
+
+### Patch Changes
+
+- 5102476: `fork` no longer pages the whole account to look for a child of a key the handle has not recorded. It creates with the same idempotency key, and Sandbox replays the child it already created for that key. On an account with thousands of sandboxes the search timed out or repeated rows, so a fork answered `unknown`. The same search was removed from `deleteCheckpoint` in #439. A confidential fork, which this provider can only recover, and `lookupFork` still search.
+
+## 3.6.4
+
+### Patch Changes
+
+- Updated dependencies [d3c2f9b]
+  - @tangle-network/agent-interface@3.0.0
+
+## 3.6.3
+
+### Patch Changes
+
+- ec1038a: Workspace evidence capture no longer lists every directory below a credential directory. It records the directory as excluded and accounts for its subtree with one complete usage scan, so the inventory still reconciles with the workspace totals. On a served Sandbox workspace a capture fell from 288 list requests and 82–87 s to 13 list and 5 usage requests and 6–7 s, with identical totals.
+
+## 3.6.2
+
+### Patch Changes
+
+- 427a991: Delete a workspace checkpoint without scanning the account's sandbox inventory. A child created from a checkpoint holds a full restore of it, so deleting the checkpoint does not change the child; only Sandbox's last-resort sidecar recreation still names it, and that replay then fails with `SNAPSHOT_NOT_FOUND` (agent-dev-container#9388). The scan paged a listing Sandbox rebuilds on every page; on a busy account it failed, deletion was never attempted, and Runtime kept the source sandbox running after its run settled.
+
 ## 3.6.1
 
 ### Patch Changes

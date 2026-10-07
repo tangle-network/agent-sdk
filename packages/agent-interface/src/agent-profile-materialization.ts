@@ -27,6 +27,7 @@ export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "modelMaxTotalOutputTokens",
   "modelMetadata",
   "harness",
+  "seats",
   "permissions",
   "tools",
   "mcp",
@@ -67,6 +68,7 @@ const profileProperties = [
   "prompt",
   "model",
   "harness",
+  "seats",
   "permissions",
   "tools",
   "mcp",
@@ -136,6 +138,7 @@ const AXIS_DESCRIPTORS = [
     value: (profile) => profile.model?.[property as keyof AgentProfileModelHints],
   })),
   { axis: "harness", rootPath: "/harness", value: (profile) => profile.harness },
+  { axis: "seats", rootPath: "/seats", value: (profile) => profile.seats },
   {
     axis: "permissions",
     rootPath: "/permissions",

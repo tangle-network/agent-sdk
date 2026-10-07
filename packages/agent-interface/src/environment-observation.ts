@@ -5,27 +5,6 @@ import {
 } from "./contract-limits.js";
 import type { TokenUsage } from "./execution-types.js";
 
-/**
- * Freshness discriminator for one observed value. A missing value never reads
- * as a measured zero: a value exists only on `known` and `stale`, so the
- * absence of a number is always visible as `unavailable`, `redacted`, or
- * `unknown`.
- */
-export type ObservationState =
-  | "known"
-  | "stale"
-  | "unavailable"
-  | "redacted"
-  | "unknown";
-
-export const ObservationStateSchema = z.enum([
-  "known",
-  "stale",
-  "unavailable",
-  "redacted",
-  "unknown",
-]);
-
 /** How a known or stale value was obtained, and when. */
 export interface ObservationProvenance {
   origin: "measured" | "reported" | "estimated";
@@ -239,7 +218,6 @@ export const AccountUsageSchema = z.strictObject({
     }),
   ).optional(),
 });
-export type AccountUsage = z.infer<typeof AccountUsageSchema>;
 
 /**
  * Optional normalized observation of one execution environment.
@@ -384,11 +362,4 @@ export function observationContainsCredential(value: unknown): boolean {
     }
   }
   return false;
-}
-
-/** Throw when an observation payload carries a credential. */
-export function assertObservationCredentialFree(value: unknown): void {
-  if (observationContainsCredential(value)) {
-    throw new Error("observation payload must not carry a credential");
-  }
 }

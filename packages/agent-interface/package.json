@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-interface",
-  "version": "2.19.0",
+  "version": "3.1.1",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",
@@ -15,10 +15,6 @@
       "import": "./dist/environment-provider.js",
       "types": "./src/environment-provider.ts"
     },
-    "./environment-interactive": {
-      "import": "./dist/environment-interactive.js",
-      "types": "./src/environment-interactive.ts"
-    },
     "./environment-interactive-control": {
       "import": "./dist/environment-interactive-control.js",
       "types": "./src/environment-interactive-control.ts"
@@ -26,10 +22,6 @@
     "./profile": {
       "import": "./dist/agent-profile.js",
       "types": "./src/agent-profile.ts"
-    },
-    "./agent-instance": {
-      "import": "./dist/agent-instance.js",
-      "types": "./src/agent-instance.ts"
     },
     "./profile-snapshot": {
       "import": "./dist/agent-profile-snapshot.js",
@@ -81,11 +73,6 @@
         "types": "./dist/environment-provider.d.ts",
         "default": "./dist/environment-provider.js"
       },
-      "./environment-interactive": {
-        "import": "./dist/environment-interactive.js",
-        "types": "./dist/environment-interactive.d.ts",
-        "default": "./dist/environment-interactive.js"
-      },
       "./environment-interactive-control": {
         "import": "./dist/environment-interactive-control.js",
         "types": "./dist/environment-interactive-control.d.ts",
@@ -95,11 +82,6 @@
         "import": "./dist/agent-profile.js",
         "types": "./dist/agent-profile.d.ts",
         "default": "./dist/agent-profile.js"
-      },
-      "./agent-instance": {
-        "import": "./dist/agent-instance.js",
-        "types": "./dist/agent-instance.d.ts",
-        "default": "./dist/agent-instance.js"
       },
       "./profile-snapshot": {
         "import": "./dist/agent-profile-snapshot.js",

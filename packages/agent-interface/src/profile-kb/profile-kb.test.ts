@@ -7,15 +7,11 @@ import { canonicalAgentProfileDigest as canonicalProfileDigest } from "../agent-
 import { harnessTypeSchema } from "../harness.js";
 import { agentProfileSchema } from "../profile-schema.js";
 import {
-  findProfileKbHarness,
-  findProfileKbModel,
   profileKbDiscrepancies,
-  profileKbGuidance,
   profileKbHarnesses,
   profileKbLearnings,
   profileKbModels,
   PROFILE_KB_SOURCES,
-  type ProfileKbModel,
   withProfileKb,
 } from "./index.js";
 
@@ -85,8 +81,8 @@ describe("snapshot isolation", () => {
       model: { default: "claude-opus-5-5" },
     };
     const before = withProfileKb(profile);
-    const model = findProfileKbModel("claude-opus-5-5")!;
-    const harness = findProfileKbHarness("claude-code")!;
+    const model = profileKbModels.find((entry) => entry.id === "claude-opus-5-5")!;
+    const harness = profileKbHarnesses.find((entry) => entry.id === "claude-code")!;
     const savedPrompt = [...model.prompt];
     const savedName = harness.name;
     const savedId = harness.id;
@@ -95,7 +91,6 @@ describe("snapshot isolation", () => {
       harness.name = "Edited";
       harness.id = "codex";
       expect(withProfileKb(profile)).toEqual(before);
-      expect(findProfileKbModel("claude-opus-5-5")).toBe(model);
     } finally {
       model.prompt.splice(0, model.prompt.length, ...savedPrompt);
       harness.name = savedName;
@@ -104,40 +99,34 @@ describe("snapshot isolation", () => {
   });
 });
 
+/** The model whose guidance `withProfileKb` composes for a model name. */
+function composedModel(name: string | undefined): string | undefined {
+  const composed = withProfileKb({
+    harness: "claude-code",
+    ...(name === undefined ? {} : { model: { default: name } }),
+  });
+  return composed.prompt?.appendSystemPrompt?.match(
+    /source="model" id="([^"]+)"/,
+  )?.[1];
+}
+
 describe("model lookup", () => {
-  it("resolves vendor ids, router ids, route prefixes, and suffixes", () => {
-    expect(findProfileKbModel("claude-opus-5-5")?.id).toBe("claude-opus-5-5");
-    expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe(
+  it("resolves vendor ids, aliases, route prefixes, and suffixes", () => {
+    for (const name of [
       "claude-opus-5-5",
-    );
-    expect(findProfileKbModel("claude-haiku-4-5-20251001")?.id).toBe(
-      "claude-haiku-4-5",
-    );
-    expect(
-      findProfileKbModel("pi/tangle-router/deepseek/deepseek-v4.1-flash")?.id,
-    ).toBe("deepseek-v4.1-flash");
-    expect(findProfileKbModel("deepseek-flash")?.id).toBe(
-      "deepseek-v4.1-flash",
-    );
-    expect(findProfileKbModel("kimi-code/k3")?.id).toBe("kimi-k3");
-    expect(findProfileKbModel("zai-coding-plan/glm-5.3:high")?.id).toBe(
-      "glm-5.3",
-    );
-    expect(findProfileKbModel("openai/gpt-5.6-sol:batch")?.id).toBe(
-      "gpt-5.6-sol",
-    );
-    expect(findProfileKbModel("anthropic/claude-sonnet-5-5")?.id).toBe(
-      "claude-sonnet-5-5",
-    );
-    expect(findProfileKbModel("openai/gpt-6.1-sol")?.id).toBe("gpt-6.1-sol");
+      "anthropic/claude-opus-5-5",
+      "anthropic.claude-opus-5-5",
+      "pi/tangle-router/anthropic/claude-opus-5-5",
+      "claude-opus-5-5:high",
+    ]) {
+      expect(composedModel(name), name).toBe("claude-opus-5-5");
+    }
   });
 
   it("never matches a different version", () => {
-    expect(findProfileKbModel("glm-5.2")).toBeUndefined();
-    expect(findProfileKbModel("claude-opus-5")).toBeUndefined();
-    expect(findProfileKbModel("gpt-5.5")).toBeUndefined();
-    expect(findProfileKbModel("deepseek-v4-flash")).toBeUndefined();
-    expect(findProfileKbModel(undefined)).toBeUndefined();
+    expect(composedModel("claude-opus-5")).toBeUndefined();
+    expect(composedModel("claude-opus-5-6")).toBeUndefined();
+    expect(composedModel(undefined)).toBeUndefined();
   });
 });
 
@@ -235,9 +224,12 @@ describe("withProfileKb", () => {
       model: { default: "deepseek/deepseek-v4.1-flash" },
       prompt: { instructions: ["Keep the caller's instructions."] },
     };
-    expect(findProfileKbHarness("pi")?.operator.length).toBeGreaterThan(0);
     expect(
-      findProfileKbModel(profile.model?.default)?.operator.length,
+      profileKbHarnesses.find((entry) => entry.id === "pi")?.operator.length,
+    ).toBeGreaterThan(0);
+    expect(
+      profileKbModels.find((entry) => entry.id === "deepseek-v4.1-flash")
+        ?.operator.length,
     ).toBeGreaterThan(0);
     expect(withProfileKb(profile)).toEqual(profile);
   });
@@ -455,20 +447,6 @@ describe("guidance ownership", () => {
     ).toBeUndefined();
   });
 
-  it("finds records by id after a consumer reorders the exported arrays", () => {
-    const models = profileKbModels as ProfileKbModel[];
-    const saved = [...models];
-    try {
-      models.reverse();
-      expect(findProfileKbModel("glm-5.3")?.id).toBe("glm-5.3");
-      expect(findProfileKbModel("anthropic/claude-opus-5-5")?.id).toBe(
-        "claude-opus-5-5",
-      );
-    } finally {
-      models.splice(0, models.length, ...saved);
-    }
-  });
-
   it("replaces a layer's earlier blocks when that layer recomposes", () => {
     const first = composeAgentProfileGuidance({}, [team], "appendSystemPrompt");
     const second = composeAgentProfileGuidance(
@@ -565,9 +543,8 @@ describe("composeAgentProfileGuidance", () => {
     );
   });
 
-  it("returns no blocks for unknown selections", () => {
-    expect(profileKbGuidance({ harness: "amp", model: "amp-model" })).toEqual(
-      [],
-    );
+  it("composes nothing for unknown selections", () => {
+    const profile: AgentProfile = { harness: "amp", model: { default: "amp-model" } };
+    expect(withProfileKb(profile)).toEqual(profile);
   });
 });

@@ -28,14 +28,12 @@ export {
   EnvironmentLifecycleSchema,
   ModelUsageSchema,
   ObservationProvenanceSchema,
-  ObservationStateSchema,
   PlacementDescriptorSchema,
   ProviderIdentitySchema,
   ResourceProfileSchema,
   ResourceUseSampleSchema,
   SafeEndpointSchema,
   agentEnvironmentObservationIdentityMatches,
-  assertObservationCredentialFree,
   observationContainsCredential,
   observationOf,
   AgentInteractiveSessionAttachSchema,
@@ -57,14 +55,11 @@ export {
   agentInteractiveSessionPromptRequestDigest,
   agentInteractiveSessionStopAcknowledgementMatchesCommand,
   agentInteractiveSessionStopRequestDigest,
-  agentInteractiveSessionRequestDigest,
   agentInteractiveSessionRefMatchesStart,
   agentInteractiveSessionRunRef,
   agentInteractiveSessionStatusMatchesRef,
   exactAgentInteractiveSessionStart,
-  AgentEnvironmentCreationSchema,
   createAgentEnvironmentWithIdempotency,
-  replayedAgentEnvironmentView,
   canonicalWorkspaceCwd,
   MAX_WORKSPACE_CWD_LENGTH,
   workspaceCwdSchema,
@@ -106,14 +101,12 @@ export * from "./agent-profile-improvement.js";
 export * from "./agent-profile-improvement-schema.js";
 export * from "./agent-execution-limits.js";
 export * from "./agent-profile.js";
-export * from "./agent-instance.js";
 export * from "./agent-profile-snapshot.js";
 export * from "./agent-profile-activation.js";
 export * from "./agent-profile-materialization.js";
 export * from "./agent-profile-measurements.js";
 export * from "./agent-execution-preparation.js";
 export * from "./agent-workspace-lease.js";
-export * from "./certified-context.js";
 export * from "./deep-freeze.js";
 export * from "./profile-diff.js";
 export * from "./harness.js";

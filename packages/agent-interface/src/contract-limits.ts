@@ -329,14 +329,3 @@ export function assertBoundedSerializedJson(value: string): void {
     throw new Error("serialized contract material exceeds its byte bound");
   }
 }
-
-/** Copy arbitrary metadata into a map that cannot inherit prototype keys. */
-export function nullPrototypeRecord<T>(value: Record<string, T>): Record<string, T> {
-  const result: Record<string, T> = Object.create(null) as Record<string, T>;
-  for (const key of Object.keys(value)) result[key] = value[key] as T;
-  return result;
-}
-
-export function hasOwn(value: object, key: PropertyKey): boolean {
-  return Object.prototype.hasOwnProperty.call(value, key);
-}

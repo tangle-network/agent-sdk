@@ -5,6 +5,30 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+## Authored subscription seats
+
+`AgentProfile.seats` is an optional ordered chain for continuing one logical agent
+across subscriptions. Each stage pins a harness, provider, model, and account
+selector. `all-eligible` lets the account manager choose each available seat in
+its own order; `seat` names one account. The first stage must equal the profile's
+top-level `harness`, `model.provider`, and `model.default`, so the initial run
+cannot silently change its authored model. The profile's reasoning effort and
+system prompt intent must be supported by every stage. The executor must check
+the remaining profile capabilities and resolve seats before spend.
+
+An omitted `seats` field preserves the legacy single-provider policy. For each
+segment, the executor keeps the authored profile for identity and builds a
+provider-facing projection without `seats`, setting its top-level harness and
+model to the selected stage. A cross-provider continuation requires an explicit
+stage in the authored chain.
+
+Each later stage may replace the profile-level `tools` and `permissions` maps.
+An explicit `{}` removes those profile-level controls for that stage; an omitted
+map inherits them. If the first stage names a map, it must equal the top-level
+map. The executor projects the selected maps before materialization and must
+refuse a stage whose native harness cannot honor them. A missing grant map does
+not prove which built-in tools the harness actually exposes.
+
 ## Profile measurements
 
 `measureAgentProfile(profile)` returns the canonical profile digest and JSON byte size,
@@ -19,27 +43,7 @@ materialization receipts. The function does not load resources or estimate token
 Its coverage explicitly leaves tokenization, materialization, and observed use unassessed.
 A capability declaration is not evidence that it was delivered, opened, or applied.
 
-## Agent instances
-
-`AgentProfile` describes behavior. `AgentInstanceSpec` describes one optional managed Agent inside an existing execution environment. The environment remains the computer and security boundary, so it may host zero, one, or many Agent instances.
-
-```ts
-import type { AgentInstanceSpec } from "@tangle-network/agent-interface/agent-instance";
-
-const planner = {
-  id: "planner",
-  profile: {
-    name: "planner",
-    harness: "opencode",
-    prompt: { systemPrompt: "Plan before editing." },
-  },
-  workspace: { mode: "shared" },
-} satisfies AgentInstanceSpec;
-```
-
-The portable contract owns only inline profile and harness selection, shared or isolated workspace intent, public lifecycle state, a provider-sanitized failure summary, and idempotent stop shapes. Credentials, HTTP routes, process identifiers, placement, billing, snapshots, local resource controls, grants, and fencing remain provider-private.
-
-`shared` means ordinary same-computer file visibility. It is not automatic merge behavior or tenant isolation. `isolated` asks the provider for a private writable view and explicit inspect or commit behavior. Providers must reject unsatisfied machine requirements rather than silently replacing or migrating a live environment.
+## Workspace paths
 
 `WorkspaceRequest.cwd` is an explicitly based path reference.
 Use `base: "repository"` for a portable repository-relative POSIX path.
@@ -51,8 +55,6 @@ Providers advertise accepted path bases under `AgentEnvironmentCapabilities.work
 To migrate a string cwd, wrap it in the base that owns its path.
 Use the repository base for Tangle and other portable workspace providers.
 Use the host base for CLI Bridge native process paths.
-
-The public `AgentInstanceRecord` contains a credential-free profile identity, not the full profile or provider request. Existing session APIs can implement this contract without a new service: one instance maps to one managed session, compatible sessions may reuse a backend process, and stop maps to idempotent session deletion or process release.
 
 ## Durable runs, interactions, and context
 
@@ -116,6 +118,7 @@ Providers that support recoverable workspace copies expose `workspaceBranching` 
 Checkpoint and fork requests bind an idempotency key to a canonical request digest.
 Every returned resource repeats and validates that identity, lookups recover remote success after caller restart, changed-input key reuse returns a conflict, and cleanup binds its acknowledgement to the exact provider and target.
 A checkpoint with dependent forks returns `in_use` plus the blocking environment identifiers and remains recoverable until those forks are destroyed.
+A provider whose forks hold their own copy of the checkpoint deletes it without waiting for them.
 The older `checkpoint()` and `fork()` methods remain source-compatible for providers that have not yet implemented recovery semantics, but clients must not present them as durable workspace branching.
 
 `CreateAgentEnvironmentInput.idempotencyKey` makes generic environment creation one retry-safe operation.

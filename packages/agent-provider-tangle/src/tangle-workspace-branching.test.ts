@@ -356,7 +356,9 @@ describe("Tangle workspace branching", () => {
       operations: operations!,
       checkpointRequest: checkpointRequest(),
       forkRequest: (checkpoint) => forkRequest(checkpoint),
+      forks: "copies",
     });
+    expect(result.checked).toContain("cleanup-independent-fork");
     expect(result.checked).toContain("confirmed-cleanup");
   });
 
@@ -754,6 +756,74 @@ describe("Tangle workspace branching", () => {
     expect(replay).toMatchObject({ status: "unknown", retryable: true });
     expect(deleteCalls).toBe(0);
     expect(await client.get!(child.id)).not.toBeNull();
+  });
+
+  it("forks a checkpoint without reading the account inventory, and a recreated handle replays the child", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+
+    // A busy account's listing fails or repeats rows; a fork must not need it.
+    let listed = 0;
+    client.list = async () => {
+      listed += 1;
+      throw new Error("account inventory unavailable");
+    };
+    const request = forkRequest(checkpoint.checkpoint);
+    const created = await operations!.fork(request);
+    expect(created.status).toBe("created");
+    if (created.status !== "created") throw new Error("fork failed");
+
+    // A coordinator that restarted holds a new handle; Sandbox replays the key's child.
+    const restarted = createTangleWorkspaceBranching({ box, client, provider });
+    const replayed = await restarted!.fork(request);
+    expect(replayed).toMatchObject({
+      status: "replayed",
+      environment: { environmentId: created.environment.environmentId },
+    });
+    expect(listed).toBe(0);
+  });
+
+  it("deletes a checkpoint without reading the account inventory, while its child lives", async () => {
+    const { box, client } = createFakeSandbox();
+    const operations = createTangleWorkspaceBranching({ box, client, provider });
+    const checkpoint = await operations!.checkpoint(checkpointRequest());
+    if (checkpoint.status !== "created")
+      throw new Error("checkpoint setup failed");
+    const created = await operations!.fork(forkRequest(checkpoint.checkpoint));
+    if (created.status !== "created") throw new Error("fork setup failed");
+
+    // A busy account's listing fails or repeats rows; deletion must not need it.
+    let listed = 0;
+    client.list = async () => {
+      listed += 1;
+      throw new Error("account inventory unavailable");
+    };
+    const material = {
+      kind: "checkpoint" as const,
+      targetId: checkpoint.checkpoint.checkpointId,
+      provider,
+    };
+    const cleanup: WorkspaceCleanupRequest & { kind: "checkpoint" } = {
+      ...material,
+      operationId: "cleanup-checkpoint-with-live-child",
+      requestDigest: workspaceCleanupRequestDigest(material),
+    };
+    await expect(operations!.deleteCheckpoint(cleanup)).resolves.toMatchObject({
+      status: "deleted",
+    });
+    expect(listed).toBe(0);
+    expect(
+      (await box.listSnapshots!()).some(
+        (snapshot) => snapshot.snapshotId === checkpoint.checkpoint.checkpointId
+      )
+    ).toBe(false);
+    expect(await client.get!(created.environment.environmentId)).not.toBeNull();
+    await expect(operations!.deleteCheckpoint(cleanup)).resolves.toMatchObject({
+      status: "already_absent",
+    });
   });
 
   it("uses the reconstructed fork child for replay cleanup", async () => {

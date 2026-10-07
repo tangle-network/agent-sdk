@@ -208,7 +208,6 @@ export const InteractionFieldTypeSchema = z.enum([
   "select",
   "secret",
 ]);
-export type InteractionFieldType = z.infer<typeof InteractionFieldTypeSchema>;
 
 /** Scope at which an accepted answer may be reused by an explicit policy. */
 export const InteractionResponseScopeSchema = z.enum([

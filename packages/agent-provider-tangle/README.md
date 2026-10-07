@@ -54,6 +54,7 @@ Evidence capture retains full workspace files that exceed the Sandbox JSON read 
 This requires a Sandbox SDK whose filesystem advertises `supportsBoundedDownload`.
 Capture verifies the downloaded size and SHA-256 receipt before adding bytes to the archive.
 Aggregate limits, credential exclusions, and exact native-session proof remain enforced.
+Capture lists no directory below a credential directory such as `.opencode` or `.config`: it records the directory as excluded and accounts for its subtree with one complete usage scan, so the workspace totals still reconcile.
 An unsupported downloader or incomplete transfer fails capture and preserves the source environment.
 
 ## Named model credentials at creation
@@ -447,8 +448,12 @@ metadata so a fresh process can recover the exact interface digest.
 Snapshot-created children are validated through the marker and complete
 account inventory, while legacy fork markers also require the Sandbox fork
 ledger to report a settled success.
-Checkpoint deletion reports `in_use` with every verified child that still
-references it; delete the child first, then retry checkpoint deletion.
+Checkpoint deletion reads only the source's own snapshots. A child created
+from a checkpoint holds a full restore of it in its own volume, so deleting the
+checkpoint neither waits for nor changes its children. One Sandbox path still
+names the checkpoint after create: last-resort sidecar recreation replays the
+child's original create request, and once the checkpoint is deleted that replay
+fails with `SNAPSHOT_NOT_FOUND` (agent-dev-container#9388).
 The adapter never treats an SDK response without an explicit idempotency or
 deletion outcome as success.
 

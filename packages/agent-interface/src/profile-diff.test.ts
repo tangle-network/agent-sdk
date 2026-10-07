@@ -6,7 +6,6 @@ import {
   changedAgentProfileAxes,
   defineAgentProfileDiff,
   diffAgentProfiles,
-  pruneAgentProfileDiff,
 } from "./profile-diff.js";
 import {
   defineInlineResource,
@@ -79,6 +78,11 @@ const profileFieldCases = {
   prompt: { prompt: { systemPrompt: "Measure, then answer." } },
   model: { model: { reasoningEffort: "high" } },
   harness: { harness: "codex" },
+  seats: {
+    harness: "codex",
+    model: { provider: "openai", default: "openai/gpt-6-sol" },
+    seats: [{ harness: "codex", provider: "openai", model: "openai/gpt-6-sol", selector: { kind: "all-eligible" } }],
+  },
   permissions: { permissions: { shell: "allow" } },
   tools: { tools: { shell: true } },
   mcp: {
@@ -134,6 +138,7 @@ const expectedAxisByProfileField = {
   prompt: "prompt",
   model: "model",
   harness: "harness",
+  seats: "seats",
   permissions: "permissions",
   tools: "tools",
   mcp: "mcp",
@@ -189,9 +194,9 @@ describe("AgentProfileDiff", () => {
       const changed = new Set(diffs.flatMap(changedAgentProfileAxes));
 
       expect(diffs.length, field).toBe(2);
-      expect(changed, field).toEqual(
-        new Set([expectedAxisByProfileField[field as keyof AgentProfile]]),
-      );
+      expect(changed, field).toEqual(field === "seats"
+        ? new Set(["harness", "model", "seats"])
+        : new Set([expectedAxisByProfileField[field as keyof AgentProfile]]));
       expect(applyProfileDiffs({}, diffs), field).toEqual(candidate);
     }
   });
@@ -224,6 +229,7 @@ describe("AgentProfileDiff", () => {
           prompt: true,
           model: true,
           harness: true,
+          seats: true,
           permissions: true,
           tools: true,
           mcp: true,
@@ -424,7 +430,7 @@ describe("AgentProfileDiff", () => {
     expect(profile.hooks?.preFinish).toHaveLength(1);
   });
 
-  it("reports and prunes changed axes for causal ablations", () => {
+  it("reports changed axes for causal ablations", () => {
     const diff = defineAgentProfileDiff({
       kind: "agent-profile-diff",
       set: {
@@ -435,12 +441,6 @@ describe("AgentProfileDiff", () => {
     });
 
     expect(changedAgentProfileAxes(diff)).toEqual(["model", "prompt", "resources"]);
-
-    const pruned = pruneAgentProfileDiff(diff, ["resources"]);
-    expect(changedAgentProfileAxes(pruned)).toEqual(["model", "prompt"]);
-    expect(applyAgentProfileDiff(baseProfile, pruned).resources?.skills?.map((s) => s.name)).toEqual([
-      "read-state",
-    ]);
   });
 
   it("reports explicit empty identity values as changes", () => {
@@ -553,30 +553,5 @@ describe("AgentProfileDiff", () => {
     });
 
     expect(profile.harness).toBeUndefined();
-  });
-
-  it("prunes harness set and removal without changing other axes", () => {
-    const diff = defineAgentProfileDiff({
-      kind: "agent-profile-diff",
-      set: {
-        harness: "codex",
-        tools: { shell: true },
-      },
-      remove: { harness: true },
-    });
-
-    const pruned = pruneAgentProfileDiff(diff, ["harness"]);
-
-    const profile = applyAgentProfileDiff(baseProfile, pruned);
-    const toolsOnlyControl = applyAgentProfileDiff(baseProfile, {
-      kind: "agent-profile-diff",
-      set: { tools: { shell: true } },
-    });
-
-    expect(pruned.set).not.toHaveProperty("harness");
-    expect(pruned.remove).toBeUndefined();
-    expect(changedAgentProfileAxes(pruned)).toEqual(["tools"]);
-    expect(profile.harness).toBe("claude-code");
-    expect(profile).toEqual(toolsOnlyControl);
   });
 });

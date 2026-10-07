@@ -1,5 +1,56 @@
 # @tangle-network/agent-interface
 
+## 3.1.1
+
+### Patch Changes
+
+- 48dfe97: Allow explicit per-seat tool and permission replacement maps for cross-harness continuation.
+
+## 3.1.0
+
+### Minor Changes
+
+- e31f38b: Add an ordered, validated subscription seat chain to AgentProfile for explicit cross-provider continuation.
+
+## 3.0.0
+
+### Major Changes
+
+- d3c2f9b: Delete exports that no consumer imports.
+  
+  A search of every checkout and every GitHub repository that depends on this package found no import of the names below, so 3.0.0 removes them. Every remaining export is unchanged, and no remaining type changed shape. A consumer that imports none of these names upgrades by changing its range to `^3.0.0`.
+  
+  Removed subpaths: `./agent-instance` and `./environment-interactive`. The interactive-session schemas stay on the root, `./environment-provider` and `./environment-interactive-control`.
+  
+  Removed modules and their exports:
+  
+  - The agent-instance contract: `AgentInstance*` types, `agentInstance*Schema`, `AGENT_INSTANCE_STATUSES`, `AGENT_INSTANCE_WORKSPACE_MODES`.
+  - Certified context: `CertifiedContext*` types, `certifiedContext*Schema`, `certifiedContextContentHash`, `certifiedContextEntryContentHash`, `parseCertifiedContext`.
+  - Generic run control: `AgentRunControlRequest`, `AgentRunControlRequestMaterial`, `AgentRunControlAction`, `AgentRunControlAcknowledgement`, `AgentRunControlRequestSchema`, `AgentRunControlAcknowledgementSchema`, `agentRunControlRequestDigest`, `agentRunControlAcknowledgementMatchesRequest`. Run cancellation is unchanged.
+  
+  Removed helpers and schemas:
+  
+  - `validateAgentExecutionPreparationReceipt`, `assertAgentExecutionPreparationReceipt`, `ValidateAgentExecutionPreparationReceiptOptions`. `buildAgentExecutionPreparationReceipt` still validates every receipt it builds; the `execution-binding-mismatch` issue code is gone with the validator that emitted it.
+  - `assertAgentExecutionWithinLimits`, `agentExecutionLimitObservationSchema`. `refineAgentExecutionWithinLimits` is unchanged.
+  - `canonicalAgentWorkspaceLeaseRecordDigest` and the lease request and per-phase record aliases (`AgentWorkspaceLeaseAuthorization`, `AgentWorkspaceSealRequest`, `AgentWorkspaceExecutionBindingRequest`, `AgentWorkspaceLeaseRenewalRequest`, `AgentWorkspaceCopyReadyLeaseRecord`, `AgentWorkspaceDestroyingLeaseRecord`, `AgentWorkspaceCleanupFailedLeaseRecord`, `AgentWorkspaceDestroyedLeaseRecord`).
+  - `validateAndParseInteractionResponse`, `interactionResponseIsValid`. Use `validateInteractionResponse`.
+  - `assertObservationCredentialFree`, `ObservationState`, `ObservationStateSchema`, `AccountUsage`. Use `observationContainsCredential`.
+  - `pruneAgentProfileDiff`, `isInputTextPart`, `isInputFilePart`, `isInputImagePart`, `PlanProviderKind`, `PlanProviderKindSchema`, `PlanDecision`, `InteractionFieldType`, `AgentSourceLicense`, `AgentSourceTransformation`, `AgentEnvironmentCreationSchema`.
+  - `findProfileKbHarness`, `findProfileKbModel`, `profileKbGuidance`, `PROFILE_KB_CHECKED_AT`. `withProfileKb` and the exported knowledge-base records are unchanged.
+  - Module-internal helpers that were exported by accident: `replayedAgentEnvironmentView`, `agentInteractiveSessionRequestDigest`, `confidentialTeeMatchesRequest`, `validateEmbeddedArtifact`.
+
+## 2.20.1
+
+### Patch Changes
+
+- ad39a25: Word the provider-lock refusal without an article that is wrong for most provider names: "Harness claude-code runs only anthropic models, not zai/glm-5.3 (provider zai)."
+
+## 2.20.0
+
+### Minor Changes
+
+- 363fc8e: Resolve bare catalog model ids through their provider family before the harness provider lock applies, so claude-code no longer accepts glm-5.3. Add harnessModelSupport, which returns the refusal message, and harnessModelExclusions, the pi pairs measured to fail on production on 2026-10-05 (Anthropic models and GPT-5.6 Luna with a reasoning effort, Gemini 3.8 Flash always). harnessSupportsModel accepts the run reasoning effort.
+
 ## 2.19.0
 
 ### Minor Changes

@@ -6,7 +6,6 @@ import {
   type InteractionResponse,
   type InteractionResponseCommand,
 } from "./interaction-envelope.js";
-import { type InteractionValidation } from "./interaction-answer-validation.js";
 import { RESERVED_INTERACTION_FIELD_NAMES } from "./interaction-fields.js";
 import { validateResolutionForRequest } from "./interaction-resolution-validation.js";
 
@@ -112,23 +111,4 @@ export function validateInteractionResponseCommand(
     return { ok: false, errors: ["response command binding is stale"] };
   }
   return validateInteractionResponse(parsedRequest.data, parsedCommand.data.response);
-}
-
-/** Parse and return the safe response for callers that need an enumerable result. */
-export function validateAndParseInteractionResponse(
-  request: InteractionRequest,
-  response: unknown,
-): InteractionResponseValidation {
-  const result = validateInteractionResponse(request, response);
-  if (!result.ok) return result;
-  return { ok: true, response: result.response };
-}
-
-/** Verdict-only form for callers that never forward the value. */
-export function interactionResponseIsValid(
-  request: InteractionRequest,
-  response: unknown,
-): InteractionValidation {
-  const result = validateInteractionResponse(request, response);
-  return result.ok ? { ok: true } : { ok: false, errors: result.errors };
 }

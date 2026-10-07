@@ -11,7 +11,7 @@
     "check-types": "pnpm -r check-types",
     "test": "pnpm -r test",
     "changeset": "changeset",
-    "changeset:version": "changeset version && node scripts/sync-trace-contract-version.mjs && pnpm install --lockfile-only",
+    "changeset:version": "node scripts/raise-zero-major-dependents.mjs && changeset version && node scripts/sync-trace-contract-version.mjs && pnpm install --lockfile-only",
     "changeset:publish": "changeset publish"
   },
   "devDependencies": {
