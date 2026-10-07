@@ -11,6 +11,8 @@ import type { CreateSandboxOptions } from "@tangle-network/sandbox";
 import type { CreateAgentEnvironmentInput, WorkspaceCheckpointRef } from "@tangle-network/agent-interface";
 import { describe, expect, it } from "vitest";
 import { createTangleProvider, type SandboxInstanceLike } from "./index.js";
+import { NATIVE_RESUME_CHECKPOINT_METADATA_KEY } from "./tangle-create-options.js";
+import { promptOptionsFromTurnInput } from "./tangle-prompt.js";
 
 const digest = (fill: string) => `sha256:${fill.repeat(64)}` as const;
 
@@ -71,6 +73,28 @@ describe("Tangle create from a workspace checkpoint", () => {
     expect(creates[0]?.fromSnapshot).toBe("snap-1898a9bf44f5");
     expect(creates[0]?.fromSandboxId).toBe("sandbox-lost-box");
     expect(creates[0]?.env).toEqual({ RUN: "continued" });
+    expect(creates[0]?.metadata?.[NATIVE_RESUME_CHECKPOINT_METADATA_KEY]).toBe(checkpoint().checkpointId);
+  });
+
+  it("does not let a caller claim a restored checkpoint in metadata", async () => {
+    const { provider, creates } = capturingProvider();
+    await expect(provider.create({
+      profile: { name: "director" },
+      metadata: { [NATIVE_RESUME_CHECKPOINT_METADATA_KEY]: checkpoint().checkpointId },
+    })).rejects.toThrow(/owns the native resume checkpoint metadata/);
+    expect(creates).toHaveLength(0);
+  });
+
+  it("carries the exact native resume coordinate to Sandbox prompt options", () => {
+    const nativeResume = {
+      harness: "claude-code" as const,
+      nativeSessionId: "native-session-1",
+      sourceCheckpointId: checkpoint().checkpointId,
+    };
+    expect(promptOptionsFromTurnInput(
+      { prompt: "Continue", nativeResume },
+      { provider: "tangle-sandbox", environmentId: "sandbox-replacement" },
+    )).toMatchObject({ nativeResume });
   });
 
   it("sends no restore fields without a checkpoint", async () => {

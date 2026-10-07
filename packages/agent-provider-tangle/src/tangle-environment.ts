@@ -1,6 +1,6 @@
 import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
 import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
-import { captureModelCredentials } from "./tangle-create-options.js";
+import { captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY } from "./tangle-create-options.js";
 import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import type {
@@ -188,6 +188,16 @@ export async function sandboxInstanceAsEnvironment(
   const usageLog = createExecutionUsageLog();
   const assertCaptureInput = (input: AgentTurnInput): void => {
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
+    if (input.nativeResume !== undefined) {
+      const checkpointId = box.metadata?.[NATIVE_RESUME_CHECKPOINT_METADATA_KEY];
+      const harness = backend?.type ?? backend?.profile?.harness;
+      if (checkpointId !== input.nativeResume.sourceCheckpointId ||
+          harness !== input.nativeResume.harness ||
+          (backend?.profile?.harness !== undefined && backend.profile.harness !== harness) ||
+          nativeReference === undefined || boundCredentialSource !== "subscription") {
+        throw new Error("Tangle native resume requires the exact restored checkpoint, harness, and selected subscription credential");
+      }
+    }
     const turnSource = backend?.profile === undefined ? undefined : profileCredentialSource(backend.profile);
     if (turnSource !== undefined && turnSource !== boundCredentialSource) {
       throw new Error("Tangle turn credential source differs from its environment; create a separate environment for that profile");

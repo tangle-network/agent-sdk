@@ -101,6 +101,7 @@ export function promptOptionsFromTurnInput(
   return {
     ...(sessionId ? { sessionId } : {}),
     ...(input.model ? { model: input.model } : {}),
+    ...(input.nativeResume === undefined ? {} : { nativeResume: input.nativeResume }),
     ...(backend === undefined ? {} : { backend }),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.context ? { context: input.context } : {}),

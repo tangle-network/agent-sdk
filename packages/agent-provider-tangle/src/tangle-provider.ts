@@ -25,7 +25,7 @@ import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
-import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
+import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -210,8 +210,13 @@ export function createTangleProvider(
       ) {
         throw new Error("Tangle mapped create options must preserve the workspace checkpoint");
       }
+      if (createOptions.metadata?.[NATIVE_RESUME_CHECKPOINT_METADATA_KEY] !== checkpoint.checkpointId) {
+        throw new Error("Tangle mapped create options must preserve the native resume checkpoint binding");
+      }
     } else if (createOptions.fromSnapshot !== undefined || createOptions.fromSandboxId !== undefined) {
       throw new Error("Tangle mapped create options restore a snapshot the create input did not name");
+    } else if (createOptions.metadata?.[NATIVE_RESUME_CHECKPOINT_METADATA_KEY] !== undefined) {
+      throw new Error("Tangle mapped create options claim a native resume checkpoint without a restore");
     }
     if (input.runtimeAttachments !== undefined &&
       (createOptions.backend?.runtimeAttachments === undefined ||
