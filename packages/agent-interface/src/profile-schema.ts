@@ -25,6 +25,7 @@ import {
   looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
+import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 import {
   harnessHonorsEffort,
   harnessHonorsModel,
@@ -212,6 +213,8 @@ export const agentProfileSeatSchema = z.strictObject({
     z.strictObject({ kind: z.literal("all-eligible") }),
     z.strictObject({ kind: z.literal("seat"), id: z.string().min(1).refine((value) => value.trim() === value, "seat id must be canonical") }),
   ]),
+  tools: ownPropertyRecordSchema(z.boolean()).optional(),
+  permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
 }) satisfies z.ZodType<AgentProfileSeat>;
 
 /**
@@ -592,6 +595,14 @@ export const agentProfileSchema = z
       if (first.harness !== profile.harness || first.provider !== profile.model?.provider ||
           first.model !== profile.model?.default) {
         context.addIssue({ code: "custom", path: ["seats", 0], message: "first seat must match profile harness, model.provider, and model.default" });
+      }
+      if (first.tools !== undefined &&
+          canonicalAgentProfileJson(first.tools) !== canonicalAgentProfileJson(profile.tools)) {
+        context.addIssue({ code: "custom", path: ["seats", 0, "tools"], message: "first seat tools must match profile tools" });
+      }
+      if (first.permissions !== undefined &&
+          canonicalAgentProfileJson(first.permissions) !== canonicalAgentProfileJson(profile.permissions)) {
+        context.addIssue({ code: "custom", path: ["seats", 0, "permissions"], message: "first seat permissions must match profile permissions" });
       }
       for (const [index, seat] of profile.seats.entries()) {
         const provider = resolveModelProvider(seat.model);

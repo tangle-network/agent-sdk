@@ -22,6 +22,13 @@ provider-facing projection without `seats`, setting its top-level harness and
 model to the selected stage. A cross-provider continuation requires an explicit
 stage in the authored chain.
 
+Each later stage may replace the profile-level `tools` and `permissions` maps.
+An explicit `{}` removes those profile-level controls for that stage; an omitted
+map inherits them. If the first stage names a map, it must equal the top-level
+map. The executor projects the selected maps before materialization and must
+refuse a stage whose native harness cannot honor them. A missing grant map does
+not prove which built-in tools the harness actually exposes.
+
 ## Profile measurements
 
 `measureAgentProfile(profile)` returns the canonical profile digest and JSON byte size,
