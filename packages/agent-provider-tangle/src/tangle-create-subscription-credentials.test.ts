@@ -27,6 +27,41 @@ function setup() {
 }
 
 describe("Tangle per-profile subscription creation", () => {
+  it("binds native resume to the restored checkpoint and credential after reconnect", async () => {
+    const turns: unknown[] = [];
+    let metadata: Record<string, unknown> | undefined;
+    const box = {
+      id: "restored-seat", status: "running", get metadata() { return metadata; },
+      backend: { status: async () => ({ type: "claude-code" }) },
+      capabilities: async () => ({ cliAuthReferences: true }),
+      async *streamPrompt(_prompt: unknown, options: unknown) { turns.push(options); },
+    };
+    const provider = createTangleProvider({
+      client: {
+        async create(options?: CreateSandboxOptions) { metadata = options?.metadata; return box; },
+        async get() { return box; },
+      },
+      modelCredentials: native,
+    });
+    const checkpoint = {
+      checkpointId: "checkpoint-1", provider: "tangle-sandbox",
+      source: { runId: "run-1", provider: "tangle-sandbox", environmentId: "old-seat", sessionId: "session-1", executionId: "execution-1", requestDigest: `sha256:${"a".repeat(64)}` as const },
+      idempotencyKey: "checkpoint-request-1", requestDigest: `sha256:${"b".repeat(64)}` as const,
+      createdAt: "2026-10-07T00:00:00.000Z",
+    };
+    const environment = await provider.create({ profile, workspace: { checkpoint } });
+    const resumed = await provider.get?.(environment.id);
+    if (!resumed) throw new Error("Expected restored environment");
+    const nativeResume = { harness: "claude-code" as const, nativeSessionId: "native-1", sourceCheckpointId: checkpoint.checkpointId };
+    for await (const _event of resumed.stream({ prompt: "Continue", profile, nativeResume })) {}
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ nativeResume });
+    await expect((async () => {
+      for await (const _event of resumed.stream({ prompt: "Wrong snapshot", profile, nativeResume: { ...nativeResume, sourceCheckpointId: "different" } })) {}
+    })()).rejects.toThrow(/exact restored checkpoint/);
+    expect(turns).toHaveLength(1);
+  });
+
   it.each(["resolver", "static"] as const)("routes mixed roots and recursive children from each exact profile (%s)", async (configuration) => {
     const { creates, client } = setup();
     const managed = { name: "router", harness: "opencode" as const, model: { provider: "router", default: "fixture-router", metadata: { credentialSource: "managed", authored: true } } };

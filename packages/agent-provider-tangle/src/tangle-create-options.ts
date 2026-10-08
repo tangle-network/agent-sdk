@@ -32,6 +32,9 @@ import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 import type { TangleModelCredentials } from "./tangle-types.js";
 
+/** Immutable create evidence used to bind a later native resume to its restored snapshot. */
+export const NATIVE_RESUME_CHECKPOINT_METADATA_KEY = "tangleNativeResumeCheckpointId";
+
 export function captureModelCredentials(
   value: TangleModelCredentials | undefined,
 ): TangleModelCredentials | undefined {
@@ -112,9 +115,19 @@ export function sandboxOptionsFromCreateInput(
   if (recordsCredential && Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
     throw new Error("Tangle credential selection owns metadata.modelCredentials");
   }
-  const metadata = recordsCredential
-    ? { ...input.metadata, modelCredentials }
-    : input.metadata;
+  if (Object.hasOwn(input.metadata ?? {}, NATIVE_RESUME_CHECKPOINT_METADATA_KEY)) {
+    throw new Error("Tangle owns the native resume checkpoint metadata");
+  }
+  const metadata = {
+    ...input.metadata,
+    ...(recordsCredential ? { modelCredentials } : {}),
+    ...(workspace.checkpoint === undefined ? {} : {
+      [NATIVE_RESUME_CHECKPOINT_METADATA_KEY]: boundedIdentifier(
+        workspace.checkpoint.checkpointId,
+        "Tangle native resume checkpoint id",
+      ),
+    }),
+  };
   if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
     throw new Error("Tangle create providerOptions are not supported");
   }
@@ -169,7 +182,7 @@ export function sandboxOptionsFromCreateInput(
     ...(Array.isArray(secrets) ? { secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
-    ...(metadata ? { metadata } : {}),
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {

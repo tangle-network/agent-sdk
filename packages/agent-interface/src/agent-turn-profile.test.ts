@@ -32,4 +32,11 @@ describe("typed turn profile", () => {
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues.some(issue => issue.path[0] === "profile")).toBe(true);
   });
+
+  it("accepts only an exact native resume coordinate", () => {
+    const nativeResume = { harness: "claude-code", nativeSessionId: "native-1", sourceCheckpointId: "checkpoint-1" };
+    expect(AgentTurnInputSchema.parse({ prompt: "Continue", nativeResume }).nativeResume).toEqual(nativeResume);
+    expect(AgentTurnInputSchema.safeParse({ prompt: "Continue", nativeResume: { ...nativeResume, harness: "opencode" } }).success).toBe(false);
+    expect(AgentTurnInputSchema.safeParse({ prompt: "Continue", nativeResume: { ...nativeResume, ignored: true } }).success).toBe(false);
+  });
 });

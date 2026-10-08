@@ -50,6 +50,12 @@ export interface AgentTurnInput {
   contextTransfer?: ContextTransferRequest;
   /** Verified same-session continuation; never carries duplicate history. */
   nativeContinuation?: NativeContextContinuationRequest;
+  /** Resume an exact native Claude or Codex conversation inside a restored workspace. */
+  nativeResume?: {
+    harness: "claude-code" | "codex";
+    nativeSessionId: string;
+    sourceCheckpointId: string;
+  };
   context?: Record<string, unknown>;
   /** Interaction kinds the provider may originate for this turn. */
   interactions?: RequestedInteractions;
@@ -76,6 +82,11 @@ export const AgentTurnInputSchema = z.strictObject({
   controlRef: AgentRunControlRefSchema.optional(),
   contextTransfer: ContextTransferRequestSchema.optional(),
   nativeContinuation: NativeContextContinuationRequestSchema.optional(),
+  nativeResume: z.strictObject({
+    harness: z.enum(["claude-code", "codex"]),
+    nativeSessionId: boundedIdentifierSchema,
+    sourceCheckpointId: boundedIdentifierSchema,
+  }).optional(),
   context: boundedJsonRecordSchema.optional(),
   interactions: RequestedInteractionsSchema.optional(),
   signal: z.custom<AbortSignal>().optional(),
