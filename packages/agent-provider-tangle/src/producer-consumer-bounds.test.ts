@@ -8,6 +8,7 @@ import {
   CONTRACT_MAX_STRING_LENGTH,
 } from "@tangle-network/agent-interface";
 import { describe, expect, it } from "vitest";
+import { MAX_METADATA_BYTES, MAX_RECORD_BYTES } from "./tangle-evidence-native-files.js";
 
 /**
  * The seam between what the Sandbox SDK WRITES and what this provider ACCEPTS.
@@ -63,6 +64,14 @@ interface Seam {
 }
 
 const SEAMS: readonly Seam[] = [
+  {
+    producer: "MAX_METADATA",
+    consumer: { name: "MAX_METADATA_BYTES", value: MAX_METADATA_BYTES },
+  },
+  {
+    producer: "MAX_RECORD",
+    consumer: { name: "MAX_RECORD_BYTES", value: MAX_RECORD_BYTES },
+  },
   {
     producer: "MAX_SERIALIZED_TOOL_VALUE_BYTES",
     consumer: { name: "CONTRACT_MAX_JSON_BYTES", value: CONTRACT_MAX_JSON_BYTES },
