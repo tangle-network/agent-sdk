@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { SandboxEvent } from "@tangle-network/sandbox";
+import { deriveAgentRunOutcome } from "@tangle-network/sandbox/runtime";
 import { AgentTurnResultSchema, type AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
 import { isBoundedEventContentJson } from "@tangle-network/agent-interface";
 import { describe, expect, it } from "vitest";
@@ -189,5 +190,53 @@ describe("public session updates and private native observations", () => {
   });
   it("refuses a private identity event on the public transport", () => {
     expect(() => environmentEventFromSandboxEvent({ type: "native.session.observed", data: { provider: "claude-code", nativeSessionId: "provider-conversation", executionId: "execution-1", sessionId: "session-1" } }, bound)).toThrow(/private native identity/);
+  });
+});
+
+
+describe("terminal approval through the public provider stream", () => {
+  const approval = { approvalId: "approval-1", connectionId: "connection-1", message: "Approve this action" };
+  const tool = {
+    toolName: "send_email", isError: true,
+    input: { body: "x".repeat(5 * 1024 * 1024) },
+    result: { code: "HUB_APPROVAL_REQUIRED", message: approval.message,
+      details: { approval: { id: approval.approvalId, connectionId: approval.connectionId } } },
+  };
+  async function delivered(data: Record<string, unknown>): Promise<AgentEnvironmentEvent[]> {
+    const provider = createTangleProvider({ client: { async create() {
+      return { id: "approval-fixture", status: "running", async *streamPrompt() {
+        yield { type: "done", id: "terminal-approval", data };
+      } };
+    } } });
+    const environment = await provider.create({ profile: { name: "approval-fixture" } });
+    const events: AgentEnvironmentEvent[] = [];
+    for await (const event of environment.stream({ prompt: "request approval" })) events.push(event);
+    return events;
+  }
+
+  it.each([false, true])("preserves bounded approval while projecting nested=%s tool history", async (nested) => {
+    const history = { toolInvocations: [tool] };
+    const events = await delivered({ outcome: { type: "completed" }, status: "blocked_on_approval", success: false,
+      ...(nested ? { result: history } : history) });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.data.approval).toEqual(approval);
+    expect(JSON.stringify(events).length).toBeLessThan(4096);
+    expect(deriveAgentRunOutcome(events.map((event) => ({ type: event.type, data: event.data })) as SandboxEvent[]))
+      .toMatchObject({ success: false, status: "blocked_on_approval", approval });
+    expect(tool.input.body.length).toBe(5 * 1024 * 1024);
+  });
+
+  it("does not retain the original terminal payload after normalizing a summary", async () => {
+    const events = await delivered({ outcome: { type: "completed" },
+      approval: { ...approval, message: " ".repeat(5 * 1024 * 1024) + approval.message } });
+    expect(events[0]?.data.approval).toEqual(approval);
+    expect(events[0]).not.toHaveProperty("providerEvent");
+    expect(JSON.stringify(events).length).toBeLessThan(4096);
+  });
+
+  it("rejects conflicting approval identities even without tool history", async () => {
+    await expect(delivered({ outcome: { type: "completed" }, approval,
+      result: { approval: { ...approval, approvalId: "different" } } }))
+      .rejects.toThrow(/malformed or conflicting/);
   });
 });

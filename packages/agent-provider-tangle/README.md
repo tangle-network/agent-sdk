@@ -1,8 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.58.7 <1.0.0`.
-The floor includes native credential reference validation, per-container capability parsing, and runtime MCP transport.
+The Sandbox peer range is `>=0.60.27 <1.0.0`; the minimum version exports the shared terminal projection.
+
+Terminal `result` and `done` events use the Sandbox SDK's `projectAgentTerminalRecord` summary. Cumulative tool history stays in native evidence; bounded approval identity survives projection, and malformed or conflicting approval sources fail closed. Terminal events omit the duplicate raw `providerEvent` payload.
+
+Per-turn backend options use the SDK's `normalizeRuntimeBackendConfig` for current model/auth fields and turn-scoped `runtimeSecrets`. Unknown options remain rejected, and native credentials still require the exact profile's subscription intent. Retained request identity excludes credential values, matching Sandbox message admission; Sandbox separately keys the executing backend by secret values so rotation cannot reuse stale authority.
 
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
 They remain separate from the authored profile and its digest.

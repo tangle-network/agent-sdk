@@ -1,3 +1,5 @@
+import { normalizeRuntimeBackendConfig } from "@tangle-network/sandbox";
+import { projectAgentTerminalRecord } from "@tangle-network/sandbox/runtime";
 import {
   assertCliAuthReferenceSupported,
   cliAuthReferenceSchema,
@@ -125,22 +127,6 @@ export function promptOptionsFromTurnInput(
  */
 const SANDBOX_BACKEND_FIELD_LIST = [
   "runtimeAttachments",
-  "type",
-  "profile",
-  "model",
-  "server",
-  "interactions",
-  "metadata",
-] as const;
-
-const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
-
-// Sandbox 0.60.22 also declares these fields directly on BackendConfig. Runtime
-// currently sends model routing through the nested model block, where this
-// adapter validates the seat reference and its exact profile together. Refuse
-// the flat spellings and runtime secret values until that boundary is adapted;
-// a field this adapter ignores must never be silently dropped on the wire.
-const UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST = [
   "runtimeSecrets",
   "modelId",
   "provider",
@@ -152,7 +138,15 @@ const UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST = [
   "cliAuth",
   "authMode",
   "authFiles",
+  "type",
+  "profile",
+  "model",
+  "server",
+  "interactions",
+  "metadata",
 ] as const;
+
+const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
 
 /**
  * The `BackendConfig["model"]` fields the Sandbox prompt options declare.
@@ -189,10 +183,10 @@ type Exhaustive<T extends never> = T;
 type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
 
 type UncoveredBackendField = Exhaustive<
-  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number] | (typeof UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST)[number]>
+  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number]>
 >;
 type StaleBackendField = Exhaustive<
-  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number] | (typeof UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
+  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
 >;
 type UncoveredBackendModelField = Exhaustive<
   Exclude<
@@ -258,8 +252,18 @@ export function backendFromTurnProviderOptions(
 }
 
 function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
-  const present = plainRecord(value, "Tangle prompt backend options");
-  assertDeclaredFields(present, SANDBOX_BACKEND_FIELDS, "Tangle prompt backend options");
+  const source = plainRecord(value, "Tangle prompt backend options");
+  assertDeclaredFields(source, SANDBOX_BACKEND_FIELDS, "Tangle prompt backend options");
+  // Normalization can omit falsy nested values or replace them with flat fields.
+  // Reject malformed declarations before that loses the caller's input.
+  for (const field of ["model", "server"] as const) {
+    if (source[field] !== undefined) {
+      plainRecord(source[field], `Tangle prompt backend ${field} options`);
+    }
+  }
+  const present = normalizeRuntimeBackendConfig(source as Partial<BackendConfig>, {
+    allowRuntimeSecrets: true,
+  }) ?? {};
   const backend = {
     ...(present.type === undefined
       ? {}
@@ -299,6 +303,9 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       throw new Error("Tangle prompt cliAuth must use the exact profile harness");
     }
     assertCliAuthReferenceSupported(backend.type, backend.model as SandboxBackendModel);
+  }
+  if (present.runtimeSecrets !== undefined) {
+    Object.assign(backend, { runtimeSecrets: present.runtimeSecrets });
   }
   if (present.runtimeAttachments !== undefined) {
     Object.assign(backend, {
@@ -522,11 +529,15 @@ export function backendRequestIdentity(
   backend: SandboxPromptBackend | undefined,
 ): Record<string, unknown> | undefined {
   if (backend === undefined) return undefined;
-  const model = backend.model;
-  if (model === undefined) return { ...backend };
+  const normalized = (normalizeRuntimeBackendConfig(backend, { allowRuntimeSecrets: true }) ?? {}) as SandboxPromptBackend;
+  // Sandbox message admission omits turn-only credentials from request identity;
+  // the SDK/sidecar independently keys the executing backend by their values.
+  const { runtimeSecrets: _runtimeSecrets, ...identity } = normalized;
+  const model = normalized.model;
+  if (model === undefined) return identity;
   const { apiKey: _apiKey, authFiles, ...rest } = model;
   return {
-    ...backend,
+    ...identity,
     model: {
       ...rest,
       ...(authFiles === undefined
@@ -635,16 +646,6 @@ const SANDBOX_OPTIONAL_RESULT_FIELDS = new Set([
   "costUsd",
 ]);
 
-/**
- * Completion is a bounded summary; cumulative tool history is retained separately.
- * The native session evidence owns the original arguments and outputs. Never
- * truncate that history or require the whole conversation to fit one event.
- */
-export function sandboxTerminalProjection(record: Record<string, unknown>): Record<string, unknown> {
-  const { toolInvocations: _toolInvocations, ...terminal } = record;
-  return terminal;
-}
-
 export function validatedSandboxPromptResult(
   result: PromptResult,
 ): ValidatedSandboxPromptResult {
@@ -663,7 +664,7 @@ export function validatedSandboxPromptResult(
   // The Sandbox SDK materializes absent optional response fields as
   // `undefined`. They were absent on the JSON wire and must stay absent in the
   // provider-neutral result before the strict JSON check runs.
-  const record = sandboxTerminalProjection(Object.fromEntries(
+  const record = projectAgentTerminalRecord(Object.fromEntries(
     Object.entries(source).filter(
       ([field, value]) =>
         value !== undefined || !SANDBOX_OPTIONAL_RESULT_FIELDS.has(field),

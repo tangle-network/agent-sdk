@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-tangle",
-  "version": "3.6.5",
+  "version": "3.6.6",
   "description": "AgentEnvironmentProvider adapter for Tangle sandboxes",
   "type": "module",
   "license": "MIT",
@@ -150,7 +150,7 @@
     "@tangle-network/agent-interface": "^3.0.0"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.58.7 <1.0.0"
+    "@tangle-network/sandbox": ">=0.60.27 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
@@ -160,7 +160,7 @@
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.292.3",
-    "@tangle-network/sandbox": "0.60.22",
+    "@tangle-network/sandbox": "0.60.27",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"
