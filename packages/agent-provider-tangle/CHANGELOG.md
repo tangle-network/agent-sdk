@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.6.7
+
+### Patch Changes
+
+- f25f004: Carry an exact native session resume request through a restored, subscription-backed Tangle environment and refuse mismatched checkpoint or harness bindings before dispatch.
+- Updated dependencies [f25f004]
+  - @tangle-network/agent-interface@3.1.2
+
 ## 3.6.6
 
 ### Patch Changes
