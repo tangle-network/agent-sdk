@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.6.8
+
+### Patch Changes
+
+- 1bb1a95: Pass the configured Sandbox readiness timeout to the create request so cold image pulls can finish before the provider waits for a running environment.
+
 ## 3.6.7
 
 ### Patch Changes
