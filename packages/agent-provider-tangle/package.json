@@ -160,7 +160,7 @@
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@tangle-network/agent-runtime": "0.292.3",
-    "@tangle-network/sandbox": "0.58.7",
+    "@tangle-network/sandbox": "0.60.22",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"

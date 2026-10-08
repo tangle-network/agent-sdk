@@ -86,6 +86,21 @@ describe("Tangle per-turn backend options", () => {
     ).toThrow(/backend options are not supported: sudo/);
   });
 
+  it("refuses new flat routing and secret fields before dispatch", () => {
+    for (const backend of [
+      { modelId: "gpt-6-sol" },
+      { cliAuth: { account: "other-seat", secretEnv: "OTHER_SEAT", format: "bundle" } },
+      { runtimeSecrets: { TOKEN: "private-fixture" } },
+    ]) {
+      expect(() =>
+        promptOptionsFromTurnInput(
+          { prompt: "run", providerOptions: { backend } },
+          target,
+        ),
+      ).toThrow(/backend options are not supported:/);
+    }
+  });
+
   it("refuses a backend model field the Sandbox prompt does not declare", () => {
     expect(() =>
       promptOptionsFromTurnInput(

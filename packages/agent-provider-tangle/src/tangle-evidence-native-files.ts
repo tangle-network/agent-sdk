@@ -23,8 +23,10 @@ export interface PreparedNativeEvidence {
   remove(): Promise<void>;
 }
 const MAX_ENTRIES = 100_000;
-const MAX_METADATA_BYTES = 32 * 1024 * 1024;
-const MAX_RECORD_BYTES = 16 * 1024 * 1024;
+// Match the shipped Sandbox archive reader: a valid producer manifest or NDJSON
+// record must not be rejected after capture solely by this consumer's bound.
+export const MAX_METADATA_BYTES = 64 * 1024 * 1024;
+export const MAX_RECORD_BYTES = 16 * 1024 * 1024;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Tangle native export metadata is malformed");

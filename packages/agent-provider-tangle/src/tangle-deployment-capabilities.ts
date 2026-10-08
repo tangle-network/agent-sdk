@@ -18,6 +18,7 @@ export interface DeploymentCapabilitySupport {
   /** The selected runtime explicitly supports named native credential references. */
   readonly cliAuthReferences: boolean;
   readonly claudeTokenContinuations: boolean;
+  readonly codexCredentialContinuations: boolean;
   /**
    * Run requests carry the caller's exact `runControlRef`, and admission
    * echoes the executionId. Detached dispatch needs both: it sends the
@@ -52,6 +53,7 @@ export interface DeploymentCapabilitySupport {
 export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
   cliAuthReferences: false,
   claudeTokenContinuations: false,
+  codexCredentialContinuations: false,
   exactDispatch: false,
   canonicalCancellation: false,
   eventReplay: false,
@@ -78,6 +80,7 @@ export const UNPROVEN_DEPLOYMENT: DeploymentCapabilitySupport = {
 export const ADAPTER_CEILING_DEPLOYMENT: DeploymentCapabilitySupport = {
   cliAuthReferences: true,
   claudeTokenContinuations: true,
+  codexCredentialContinuations: true,
   exactDispatch: true,
   canonicalCancellation: true,
   eventReplay: true,
@@ -97,6 +100,7 @@ export function deploymentCapabilitySupport(
   return {
     cliAuthReferences: document.cliAuthReferences === true,
     claudeTokenContinuations: document.claudeTokenContinuations === true,
+    codexCredentialContinuations: document.codexCredentialContinuations === true,
     exactDispatch:
       document.dispatch?.runControlRef === true &&
       document.dispatch?.executionIdOnAdmission === true,
