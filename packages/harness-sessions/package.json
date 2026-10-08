@@ -1,7 +1,6 @@
 {
   "name": "@tangle-network/harness-sessions",
   "version": "0.1.0",
-  "private": true,
   "description": "One reader for every coding-agent harness's native session (Claude Code, Codex, OpenCode, Pi): store layouts, a normalized session with messages, tool calls, served models, usage and ending errors, and projections to chat messages, OTLP spans and turns",
   "type": "module",
   "sideEffects": false,

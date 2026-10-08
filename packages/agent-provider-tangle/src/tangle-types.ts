@@ -148,6 +148,7 @@ export interface SandboxRuntimeCapabilityDocument {
   /** The selected runtime resolves stored-secret native authentication references. */
   cliAuthReferences?: boolean;
   claudeTokenContinuations?: boolean;
+  codexCredentialContinuations?: boolean;
   nativeSessionCaptureVersion?: number;
   nativeSessionCaptureHarnesses?: readonly string[];
   agentInterface?: string;
@@ -504,7 +505,7 @@ export interface SandboxInstanceLike {
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
   /** Owner-authorized named grant; material never crosses this consumer boundary. */
   grantNativeCredential?(
-    grant: { harness: "claude-code"; cliAuth: CliAuthReference },
+    grant: { harness: "claude-code" | "codex"; cliAuth: CliAuthReference },
     options?: { signal?: AbortSignal },
   ): Promise<void>;
   read?(

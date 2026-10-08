@@ -670,6 +670,7 @@ describe("Tangle deployment capability discovery", () => {
     expect(deploymentCapabilitySupport(PUBLISHED_DOCUMENT_AS_READ)).toEqual({
       cliAuthReferences: false,
       claudeTokenContinuations: false,
+      codexCredentialContinuations: false,
       exactDispatch: true,
       canonicalCancellation: true,
       eventReplay: true,
