@@ -247,7 +247,7 @@ export function createTangleProvider(
     }
     const createPromise = options.client.create(
       createOptions,
-      input.signal ? { signal: input.signal } : undefined,
+      { timeoutMs: readyTimeoutMs, ...(input.signal ? { signal: input.signal } : {}) },
     );
     let box: Awaited<typeof createPromise>;
     try {

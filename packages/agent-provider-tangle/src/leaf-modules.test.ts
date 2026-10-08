@@ -204,7 +204,7 @@ describe("Tangle split leaf modules", () => {
       expect.objectContaining({
         backend: expect.objectContaining({ type: "codex" }),
       }),
-      undefined,
+      expect.anything(),
     );
     expect(create).toHaveBeenCalledOnce();
   });
