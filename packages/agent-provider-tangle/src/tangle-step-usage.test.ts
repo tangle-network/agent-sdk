@@ -149,11 +149,11 @@ describe("in-flight OpenCode step usage", () => {
         ["result", s19Receipt, "cumulative"],
         ["done", s19Receipt, "cumulative"],
       ]);
-      // Only step frames gain usage, and every frame keeps its recorded payload.
+      // Step frames keep raw payloads; terminal frames carry their bounded summary.
       expect(events.filter((event) => event.usage !== undefined)).toHaveLength(5);
       events.forEach((event, index) => {
         const source = s19[index];
-        if ((source?.type === "result" || source?.type === "done") && Object.hasOwn(source.data, "toolInvocations")) {
+        if (source?.type === "result" || source?.type === "done") {
           expect(event.providerEvent).toBeUndefined();
           expect(event.data.executionId).toBe(source.data.executionId);
           expect(event.data).not.toHaveProperty("toolInvocations");

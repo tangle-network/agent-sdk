@@ -132,6 +132,10 @@ describe("producer/consumer bound seam", () => {
     // Limits that bound the SDK's own behaviour rather than a value it hands us. They cross no
     // seam, so pairing them would be noise; anything else must be decided.
     const internal = new Set([
+      // Raw evidence archive parser ceilings: native files are consumed through
+      // the evidence download path, never as one normalized stream event.
+      "MAX_METADATA",
+      "MAX_RECORD",
       "MAX_CONCURRENT_ARTIFACT_READS",
       "MAX_CONCURRENT_DRIVE_TURNS",
       "MAX_RECONNECT_ATTEMPTS",
