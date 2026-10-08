@@ -245,7 +245,7 @@ So `create()` can return a sandbox that reports `running` while the platform sti
 
 Composing an environment also reads the sandbox's deployment capability document once, and a sandbox that is not yet running cannot answer that read, so an environment composed during provisioning would claim nothing for the rest of its life.
 
-`readyTimeoutMs` bounds the wait and defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS` (120 seconds, the Sandbox SDK's own default).
+`readyTimeoutMs` bounds both the Sandbox creation request, including a cold image pull, and the subsequent wait for `running`. It defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS` (120 seconds).
 
 ```ts
 const provider = createTangleProvider({

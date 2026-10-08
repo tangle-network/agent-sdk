@@ -107,18 +107,20 @@ describe("Tangle create readiness", () => {
     await expect(creating).resolves.toMatchObject({ id: "sbx-starting" });
   });
 
-  it("carries the configured ready timeout to the platform wait", async () => {
+  it("carries the configured ready timeout to creation and the platform wait", async () => {
     const box = startingBox();
     box.waitFor = vi.fn(async () => {
       box.status = "running";
     });
+    const create = vi.fn(async () => box);
     const provider = createTangleProvider({
-      client: clientFor(box),
+      client: clientFor(box, { create }),
       readyTimeoutMs: 5_000,
     });
 
     await provider.create({ profile: { name: "worker" } });
 
+    expect(create).toHaveBeenCalledWith(expect.anything(), { timeoutMs: 5_000 });
     expect(box.waitFor).toHaveBeenCalledWith(
       "running",
       expect.objectContaining({ timeoutMs: 5_000 }),
