@@ -68,6 +68,61 @@ describe("Tangle per-turn backend options", () => {
     expect(recorded[0]?.backend).toEqual(SEAT_BACKEND);
   });
 
+  it("normalizes current model fields and delivers turn-scoped secrets through the SDK boundary", async () => {
+    const recorded: PromptOptions[] = [];
+    const provider = createTangleProvider({ client: { async create() { return recordingBox(recorded); } } });
+    const environment = await provider.create({ profile: { name: "worker" } });
+    const backend = { type: "opencode", modelId: "glm-5.2", provider: "zai",
+      apiKey: "model-key-private", runtimeSecrets: { TURN_AUTH: "turn-secret-private" } };
+    for await (const _event of environment.stream({ prompt: "run", providerOptions: { backend } })) {}
+    expect(recorded[0]?.backend).toEqual({ type: "opencode", model: {
+      model: backend.modelId, provider: backend.provider, apiKey: backend.apiKey,
+    }, runtimeSecrets: backend.runtimeSecrets });
+    const identity = backendRequestIdentity(recorded[0]?.backend);
+    expect(identity).not.toHaveProperty("runtimeSecrets");
+    expect(JSON.stringify(identity)).not.toMatch(/model-key-private|turn-secret-private/);
+    expect(backendRequestIdentity({ ...recorded[0]?.backend, runtimeSecrets: { TURN_AUTH: "rotated" } })).toEqual(identity);
+  });
+
+  it("rejects conflicting flat and nested routing and malformed scoped secrets", () => {
+    for (const backend of [
+      { modelId: "model-a", model: { model: "model-b" } },
+      { apiKey: "flat-private", model: { apiKey: "nested-private" } },
+      { runtimeSecrets: { TURN_AUTH: 7 } },
+    ]) {
+      expect(() => promptOptionsFromTurnInput({ prompt: "run", providerOptions: { backend } }, target)).toThrow();
+    }
+  });
+
+  it("rejects malformed nested options before normalization can omit them", () => {
+    for (const field of ["model", "server"]) {
+      for (const value of [null, false, 0, "", []]) {
+        expect(() => promptOptionsFromTurnInput({
+          prompt: "run", providerOptions: { backend: { [field]: value } },
+        }, target)).toThrow(/must be a JSON object/);
+      }
+    }
+    expect(() => promptOptionsFromTurnInput({
+      prompt: "run", providerOptions: { backend: { modelId: "model-a", model: null } },
+    }, target)).toThrow(/must be a JSON object/);
+  });
+
+  it("keeps an empty backend valid through prompt and request identity normalization", () => {
+    const options = promptOptionsFromTurnInput(
+      { prompt: "run", providerOptions: { backend: {} } },
+      target,
+    );
+    expect(options.backend).toEqual({});
+    expect(backendRequestIdentity(options.backend)).toEqual({});
+  });
+
+  it("preserves managed-profile credential refusal for current flat fields", () => {
+    expect(() => promptOptionsFromTurnInput({ prompt: "run", providerOptions: { backend: {
+      type: "opencode", profile: { name: "managed", model: { provider: "zai", default: "glm-5.2", metadata: { credentialSource: "managed" } } },
+      authMode: "oauth", authFiles: SEAT_BACKEND.model.authFiles,
+    } } }, target)).toThrow(/managed profile cannot receive native subscription credentials/);
+  });
+
   it("refuses a provider option the Sandbox prompt does not declare", () => {
     expect(() =>
       promptOptionsFromTurnInput(
@@ -84,21 +139,6 @@ describe("Tangle per-turn backend options", () => {
         target,
       ),
     ).toThrow(/backend options are not supported: sudo/);
-  });
-
-  it("refuses new flat routing and secret fields before dispatch", () => {
-    for (const backend of [
-      { modelId: "gpt-6-sol" },
-      { cliAuth: { account: "other-seat", secretEnv: "OTHER_SEAT", format: "bundle" } },
-      { runtimeSecrets: { TOKEN: "private-fixture" } },
-    ]) {
-      expect(() =>
-        promptOptionsFromTurnInput(
-          { prompt: "run", providerOptions: { backend } },
-          target,
-        ),
-      ).toThrow(/backend options are not supported:/);
-    }
   });
 
   it("refuses a backend model field the Sandbox prompt does not declare", () => {
