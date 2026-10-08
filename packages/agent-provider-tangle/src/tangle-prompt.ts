@@ -114,7 +114,7 @@ export function promptOptionsFromTurnInput(
 }
 
 /**
- * The `BackendConfig` fields the Sandbox prompt options declare.
+ * The `BackendConfig` fields this adapter forwards to Sandbox prompt options.
  *
  * A turn may carry any of them and nothing else. An undeclared field is
  * refused instead of forwarded, because the SDK drops what it does not
@@ -133,6 +133,25 @@ const SANDBOX_BACKEND_FIELD_LIST = [
 ] as const;
 
 const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
+
+// Sandbox 0.60.22 also declares these fields directly on BackendConfig. Runtime
+// currently sends model routing through the nested model block, where this
+// adapter validates the seat reference and its exact profile together. Refuse
+// the flat spellings and runtime secret values until that boundary is adapted;
+// a field this adapter ignores must never be silently dropped on the wire.
+const UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST = [
+  "runtimeSecrets",
+  "modelId",
+  "provider",
+  "apiKey",
+  "baseUrl",
+  "maxThinkingTokens",
+  "mode",
+  "apiKeyEnv",
+  "cliAuth",
+  "authMode",
+  "authFiles",
+] as const;
 
 /**
  * The `BackendConfig["model"]` fields the Sandbox prompt options declare.
@@ -159,7 +178,7 @@ const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(
 );
 
 /**
- * The two lists above are the SDK's field sets, restated as values because a
+ * These lists cover the SDK's field sets, restated as values because a
  * TypeScript type cannot be read at run time. This pin keeps them exact in
  * both directions: a field the SDK adds, renames, or removes fails the build
  * here rather than reaching a caller as a wrong refusal or a silent drop.
@@ -169,10 +188,10 @@ type Exhaustive<T extends never> = T;
 type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
 
 type UncoveredBackendField = Exhaustive<
-  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number]>
+  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number] | (typeof UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST)[number]>
 >;
 type StaleBackendField = Exhaustive<
-  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
+  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number] | (typeof UNSUPPORTED_SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
 >;
 type UncoveredBackendModelField = Exhaustive<
   Exclude<
