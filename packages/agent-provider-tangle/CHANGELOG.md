@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.6.6
+
+### Patch Changes
+
+- dbf0f9e: Preserve bounded Hub approval evidence through the Sandbox-owned terminal projection and omit original terminal payloads from normalized events. Accept current Sandbox backend fields through its canonical normalizer, while preserving native credential intent and excluding turn-only secret values from retained request identity.
+- 6846aef: Grant selected Codex native credentials before a retained subscription turn when the serving Sandbox image proves Codex continuation support.
+
 ## 3.6.5
 
 ### Patch Changes
