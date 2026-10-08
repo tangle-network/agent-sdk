@@ -871,8 +871,9 @@ export interface TangleProviderOptions {
   mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
   /**
-   * How long the Sandbox creation request and subsequent wait for `running`
-   * may each take. Defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS`, exported
+   * Passed to the HTTP Sandbox creation request and the subsequent wait for
+   * `running`. A client that ignores create request options keeps its own
+   * create timeout. Defaults to `DEFAULT_TANGLE_READY_TIMEOUT_MS`, exported
    * from this package (120 seconds).
    */
   readyTimeoutMs?: number;
