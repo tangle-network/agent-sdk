@@ -403,10 +403,12 @@ export function createTangleProvider(
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
             if (options.requireNativeSessionCapture) {
-              requireNativeCaptureProof(box);
               // Native capture admits only the backend the live container reports, so a
-              // suspended sandbox must run again before anything can reconnect to it.
+              // suspended sandbox must run again before anything can reconnect to it. A stopped
+              // sandbox has no container and so no capture proof; the proof is required of the
+              // container the resume produced.
               await resumeForReconnect(box, options.client, readyTimeoutMs, operation?.signal);
+              requireNativeCaptureProof(box);
             }
             let backendType: string | undefined;
             let backendReadError: unknown;

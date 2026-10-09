@@ -52,7 +52,9 @@ function suspendableSandbox() {
         id: "sbx-root",
         status: "running",
         metadata: options.metadata,
-        captureProof: () => proof(container),
+        // A stopped sandbox has no current container, so the platform reports no capture proof:
+        // measured on sandbox-1f6fa252d3ea (2026-10-09, status stopped, captureProof null).
+        captureProof: () => (box.status === "running" ? proof(container) : null),
         createReceipt: () => ({ outcome: "created", idempotencyKeyApplied: true, captureProof: proof("a") }),
         backend: {
           status: async () => {
@@ -117,6 +119,23 @@ describe("Tangle reconnect after the platform suspended a retained sandbox", () 
     await reconnectRetainedRun({ provider, controlRef: started.controlRef });
     expect(fixture.counts.resumes).toBe(1);
     expect(fixture.counts.dispatches).toBe(1);
+  });
+
+  it("resumes a stopped sandbox before requiring its current container proof", async () => {
+    // Discovery run terraform-dc-build-20261009g-fork (provider 3.6.8): the root sandbox stopped,
+    // and every reconnect for two hours refused "Tangle native session capture has no verified
+    // current container proof" because get() demanded the proof before its own resume ran.
+    const fixture = suspendableSandbox();
+    const provider = createTangleProvider({ client: fixture.client, requireNativeSessionCapture: true });
+    const environment = await provider.create({ profile });
+    fixture.suspend();
+    const box = (await fixture.client.get(environment.id))!;
+    expect(box.captureProof?.()).toBeNull();
+
+    const reconnected = await provider.get!(environment.id);
+    expect(reconnected).not.toBeNull();
+    expect(fixture.counts.resumes).toBe(1);
+    expect(box.captureProof?.()).toMatchObject({ containerId: "e".repeat(64) });
   });
 
   it("keeps the backend read's own failure as the cause while the box is still suspending", async () => {
