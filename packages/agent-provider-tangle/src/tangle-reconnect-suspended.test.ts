@@ -133,6 +133,27 @@ describe("Tangle reconnect after the platform suspended a retained sandbox", () 
     expect(fixture.counts.resumes).toBe(0);
   });
 
+  it("waits for a running sandbox's filesystem incarnation before native reconnect", async () => {
+    const fixture = suspendableSandbox();
+    const provider = createTangleProvider({ client: fixture.client, requireNativeSessionCapture: true });
+    const environment = await provider.create({ profile });
+    const box = (await fixture.client.get(environment.id))!;
+    let ready = false;
+    let waits = 0;
+    box.backend = {
+      status: async () => {
+        if (!ready) throw http(409, "Sandbox filesystem incarnation is not ready");
+        return { type: "claude-code" };
+      },
+    };
+    box.waitFor = async () => { waits++; ready = true; };
+
+    const reconnected = await provider.get!(environment.id);
+    expect(reconnected).not.toBeNull();
+    expect(waits).toBe(1);
+    expect(fixture.counts.resumes).toBe(0);
+  });
+
   it("refuses a stopped sandbox the linked client cannot resume", async () => {
     const fixture = suspendableSandbox();
     const provider = createTangleProvider({ client: fixture.client, requireNativeSessionCapture: true });

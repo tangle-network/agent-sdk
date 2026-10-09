@@ -523,7 +523,7 @@ export function createTangleProvider(
 }
 
 /**
- * Bring a suspended sandbox back before a reconnect reads its container.
+ * Wait for a usable sandbox before a reconnect reads its container.
  *
  * The platform suspends a sandbox after its idle timeout (30 minutes by
  * default) and nothing resumes it on access. A root turn stalled on an
@@ -532,6 +532,9 @@ export function createTangleProvider(
  * the driver exhausts its attempts. After the resume the sidecar reports the
  * interrupted execution as a terminal failure, so the caller settles that
  * execution and replaces it once instead of dispatching beside it.
+ * A box can also report running while its replacement filesystem incarnation
+ * is still becoming ready. The same SDK wait closes that gap before backend
+ * status is read.
  */
 async function resumeForReconnect(
   box: SandboxInstanceLike,
@@ -539,7 +542,9 @@ async function resumeForReconnect(
   timeoutMs: number,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  if (box.status === "running") return;
+  // A running lifecycle status can precede the filesystem incarnation and
+  // selected backend becoming readable after a container restart. The SDK's
+  // waitFor("running") also waits for that incarnation to be ready.
   if (box.status === "stopped") {
     if (!box.resume) {
       throw new Error(`Tangle sandbox ${box.id} is stopped and the linked client cannot resume it`);
