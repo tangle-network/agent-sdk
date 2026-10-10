@@ -50,6 +50,10 @@
     "./profile-kb": {
       "import": "./dist/profile-kb/index.js",
       "types": "./src/profile-kb/index.ts"
+    },
+    "./learning-state": {
+      "import": "./dist/learning-state.js",
+      "types": "./src/learning-state.ts"
     }
   },
   "repository": {
@@ -117,6 +121,11 @@
         "import": "./dist/profile-kb/index.js",
         "types": "./dist/profile-kb/index.d.ts",
         "default": "./dist/profile-kb/index.js"
+      },
+      "./learning-state": {
+        "import": "./dist/learning-state.js",
+        "types": "./dist/learning-state.d.ts",
+        "default": "./dist/learning-state.js"
       }
     }
   },
