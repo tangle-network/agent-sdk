@@ -323,3 +323,70 @@ Adapters emit `native.session.observed` with `provider` and `nativeSessionId` af
 The execution owner binds the observation to its execution and keeps it private.
 Public `session.updated` events retain their resume-key semantics and do not establish native identity.
 Native identity does not establish artifact capture completeness.
+
+### Optional native learning state interchange
+
+`@tangle-network/agent-interface/learning-state` describes an **opt-in** boundary
+between a host's existing durable state owner and one explicitly configured
+harness adapter. Native harness memory stays the default. This module creates no
+store, tools, provider connection, profile fields, or automatic synchronization.
+Hindsight memory branches and QMD source snapshots keep their existing
+`agent-knowledge` owners and references; do not copy their facts into a second
+file database to satisfy this contract.
+
+`AgentLearningIdentity` names an authenticated workspace, stable state, and
+personal member/agent or shared group/agent scope. A thread, native session,
+profile revision, or authority digest is not that identity. The host derives it
+from authenticated context and verifies the persisted root/volume binding;
+passing schema validation does not authorize access. Session and turn IDs belong
+in invocation provenance. Two turns need immutable per-turn state pins plus the
+state owner's lease or compare-and-swap, not an uncoordinated shared writable home.
+
+`AgentLearningManifest` references the existing owner's exact revision and
+content digest. The `files` field is only a bounded, protected-home-compatible
+text exchange subset: `USER.md` preferences, `MEMORY.md` facts,
+`memory/YYYY-MM-DD.md` notes, and `skills/<slug>/SKILL.md` procedure sources. These
+are interchange names, never a claim about a harness's actual native paths or a
+universal memory model. An adapter must explicitly map and verify this subset.
+A native-only adapter may leave `files` empty and preserve opaque native state
+references instead. Opaque references must resolve privately to verified bytes;
+they must not contain paths, credentials, or access tokens.
+
+A manifest digest uses the existing canonical candidate JSON/SHA-256 primitives.
+Inventory order is immaterial; exact text, provenance, scope and owner revision
+are bound. Content digests establish bytes, not factual truth or authorization.
+Imported content retains `source.trust: 'untrusted'`. Skill text may be retained
+and exposed as personal context under the caller's existing policy; this never
+automatically activates executable resources, expands permissions, or promotes a
+shared skill catalog. Those effects remain behind the existing profile/authority
+and promotion gates.
+
+`AgentLearningExport` binds one idempotent operation to the exact immutable base
+digest, harness, and adapter ID/revision. Files are explicit observed deltas;
+omission is not deletion, and `content: null` is a tombstone. The durable owner
+must retain deletion evidence or refuse a tombstone it cannot persist. Retrying
+an operation requires the same bytes and digest. A three-way merge may retain
+unrelated concurrent edits; edit/edit or edit/delete collisions must be explicit,
+never last-writer-wins. Apply with CAS against the latest owner revision, record
+the durable receipt through the existing owner's transaction/journal, then
+publish success. A plan or local checkpoint is not a remote durability receipt.
+Rollback creates a new guarded revision; historical pins remain immutable.
+
+#### Adding a harness adapter
+
+1. Declare exact harness and adapter ID/revision. Import and export kinds are
+   separate explicit lists. Missing support is refused; a new harness inherits
+   no learning capability from its session, filesystem, or skill support.
+2. Bind authenticated stable identity to actual retained storage. Define native
+   scope, lease/exclusive-access rules, resume, relocation and cleanup behavior.
+   Keep native-only state intact without exporting the whole home or credentials.
+3. Prefer native preservation. Add portable mappings only when intentionally
+   configured and lossless for the declared subset. State which native data is
+   opaque or unsupported; do not pretend every harness field maps one-to-one.
+4. Exercise a real filesystem fixture across write, session restart and restored
+   root; cover stale CAS, concurrent edits, explicit deletion, replay, conflict,
+   rollback, malformed/oversized input, symlinks and cross-scope isolation.
+5. Bind `nativeState.conformanceDigest` to retained evidence and label
+   `qualification: 'fixture'` or `'native-binary'` honestly. A fixture is not proof
+   of an external CLI binary or deployed volume. Complete native-binary and
+   deployment qualification before advertising those stronger guarantees.
