@@ -16,21 +16,23 @@ import {
 
 /**
  * Sandbox started nothing for this dispatch: it reported `dispatched: false`
- * and named another execution that it considers active in the session.
+ * and named another execution that owns the session or turn. That execution
+ * can be in flight, or a completed turn cached under the same turn id.
  *
  * The request was refused before it ran, so there is nothing to reconcile.
- * A retry of the same request gets the same answer until that execution ends.
+ * A retry of the same request gets the same answer while that owner holds.
  */
 export class TangleDispatchNotAdmittedError extends Error {
   readonly code = "DISPATCH_NOT_ADMITTED" as const;
   readonly sessionId: string;
   readonly requestedExecutionId: string;
+  /** The execution that Sandbox named as the owner of the session or turn. */
   readonly activeExecutionId: string;
 
   constructor(sessionId: string, requestedExecutionId: string, activeExecutionId: string) {
     super(
       "sandbox dispatch returned an execution id different from the requested run: " +
-        "the session reports another active execution and nothing was dispatched",
+        "another execution owns the session or turn and nothing was dispatched",
     );
     this.name = "TangleDispatchNotAdmittedError";
     this.sessionId = sessionId;

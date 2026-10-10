@@ -706,11 +706,15 @@ describe("Tangle retained control", () => {
     );
   });
 
-  it("types a dispatch that the sandbox did not admit because another execution is active", async () => {
-    // The Sandbox SDK answers this way when its session record names a live
-    // execution: the earlier execution id, dispatched: false, and no run
-    // reference, because it sent no request.
-    const activeExecutionId = "execution-still-active";
+  it.each([
+    // The session record names an execution in flight.
+    { owner: "in-flight execution", status: "running", alreadyExisted: true },
+    // The turn id hit the completed-turn cache with a different request.
+    { owner: "completed cached turn", status: "completed", alreadyExisted: false },
+  ])("types a dispatch that the sandbox did not admit: $owner", async (answer) => {
+    // Both Sandbox SDK answers carry the owner's execution id, dispatched:
+    // false, and no run reference, because Sandbox sent no request.
+    const activeExecutionId = "execution-that-owns-the-session";
     const interrupt = vi.fn(async () => ({ cancelled: true }));
     const box: SandboxInstanceLike = retainedDeployment({
       id: "sbx-dispatch-not-admitted",
@@ -718,8 +722,8 @@ describe("Tangle retained control", () => {
       dispatchPrompt: async (_message, options) => ({
         sessionId: options?.sessionId,
         executionId: activeExecutionId,
-        status: "running",
-        alreadyExisted: true,
+        status: answer.status,
+        alreadyExisted: answer.alreadyExisted,
         dispatched: false,
       }),
       session: (sessionId) => ({
