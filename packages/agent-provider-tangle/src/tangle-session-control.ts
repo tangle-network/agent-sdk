@@ -14,6 +14,31 @@ import {
   boundedIdentifier,
 } from "./tangle-contract-safety.js";
 
+/**
+ * Sandbox started nothing for this dispatch: it reported `dispatched: false`
+ * and named another execution that it considers active in the session.
+ *
+ * The request was refused before it ran, so there is nothing to reconcile.
+ * A retry of the same request gets the same answer until that execution ends.
+ */
+export class TangleDispatchNotAdmittedError extends Error {
+  readonly code = "DISPATCH_NOT_ADMITTED" as const;
+  readonly sessionId: string;
+  readonly requestedExecutionId: string;
+  readonly activeExecutionId: string;
+
+  constructor(sessionId: string, requestedExecutionId: string, activeExecutionId: string) {
+    super(
+      "sandbox dispatch returned an execution id different from the requested run: " +
+        "the session reports another active execution and nothing was dispatched",
+    );
+    this.name = "TangleDispatchNotAdmittedError";
+    this.sessionId = sessionId;
+    this.requestedExecutionId = requestedExecutionId;
+    this.activeExecutionId = activeExecutionId;
+  }
+}
+
 export function sessionRefFromSandboxDispatch(
   dispatched: unknown,
   providerName: string,
@@ -48,6 +73,10 @@ export function sessionRefFromSandboxDispatch(
     expectedExecutionId !== undefined &&
     executionId !== expectedExecutionId
   ) {
+    if (record.dispatched === false) {
+      boundedIdentifier(executionId, "Tangle active execution id");
+      throw new TangleDispatchNotAdmittedError(id, expectedExecutionId, executionId);
+    }
     throw new Error(
       "sandbox dispatch returned an execution id different from the requested run",
     );
