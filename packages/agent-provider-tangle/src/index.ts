@@ -8,6 +8,7 @@ export {
 export type { JsonBoundRule, JsonBoundViolation } from "./tangle-contract-safety.js";
 export * from "./tangle-types.js";
 export { createTangleProvider } from "./tangle-provider.js";
+export { TangleDispatchNotAdmittedError } from "./tangle-session-control.js";
 export { captureTangleEnvironmentEvidence, captureTangleSandboxEvidence } from "./tangle-evidence.js";
 export type { TangleEnvironmentEvidence, TangleEnvironmentEvidenceOptions, TangleSandboxEvidenceOptions } from "./tangle-evidence.js";
 export { DEFAULT_TANGLE_READY_TIMEOUT_MS } from "./tangle-readiness.js";

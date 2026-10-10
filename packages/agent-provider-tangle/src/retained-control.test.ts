@@ -18,6 +18,7 @@ import {
   type SandboxClientLike,
   type SandboxInstanceLike,
   type SandboxSessionLike,
+  TangleDispatchNotAdmittedError,
 } from "./index.js";
 import type { PromptOptions, PromptResult } from "@tangle-network/sandbox";
 import { sessionPromptRequestDigest } from "./tangle-environment-control.js";
@@ -703,6 +704,59 @@ describe("Tangle retained control", () => {
     ).rejects.toThrow(
       /sandbox dispatch returned an execution id different from the requested run/,
     );
+  });
+
+  it.each([
+    // The session record names an execution in flight.
+    { owner: "in-flight execution", status: "running", alreadyExisted: true },
+    // The turn id hit the completed-turn cache with a different request.
+    { owner: "completed cached turn", status: "completed", alreadyExisted: false },
+  ])("types a dispatch that the sandbox did not admit: $owner", async (answer) => {
+    // Both Sandbox SDK answers carry the owner's execution id, dispatched:
+    // false, and no run reference, because Sandbox sent no request.
+    const activeExecutionId = "execution-that-owns-the-session";
+    const interrupt = vi.fn(async () => ({ cancelled: true }));
+    const box: SandboxInstanceLike = retainedDeployment({
+      id: "sbx-dispatch-not-admitted",
+      async *streamPrompt() {},
+      dispatchPrompt: async (_message, options) => ({
+        sessionId: options?.sessionId,
+        executionId: activeExecutionId,
+        status: answer.status,
+        alreadyExisted: answer.alreadyExisted,
+        dispatched: false,
+      }),
+      session: (sessionId) => ({
+        ...retainedSessionHandle(sessionId),
+        interrupt,
+      }),
+    });
+    const provider = createTangleProvider({
+      client: { create: async () => box },
+    });
+    const environment = await provider.create({ profile: { name: "worker" } });
+
+    const refusal = await environment.dispatch!({
+      prompt: "next turn",
+      turnId: "turn-after-active",
+      detach: true,
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(TangleDispatchNotAdmittedError);
+    expect(refusal).toMatchObject({
+      name: "TangleDispatchNotAdmittedError",
+      code: "DISPATCH_NOT_ADMITTED",
+      activeExecutionId,
+      requestedExecutionId: expect.any(String),
+    });
+    expect((refusal as TangleDispatchNotAdmittedError).requestedExecutionId).not.toBe(
+      activeExecutionId,
+    );
+    expect((refusal as { status?: unknown }).status).toBeUndefined();
+    // Nothing was started for this request, so nothing is interrupted.
+    expect(interrupt).not.toHaveBeenCalled();
   });
 
   it("keeps detached cloud work alive when stream or dispatch callers abort", async () => {
