@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 3.6.11
+
+### Patch Changes
+
+- 26296aa: Throw `TangleDispatchNotAdmittedError` (code `DISPATCH_NOT_ADMITTED`) when Sandbox answers a dispatch with `dispatched: false` and a different execution id, which means another execution owns the session or turn. The error carries `sessionId`, `requestedExecutionId` and `activeExecutionId`. Nothing ran for the request, so a caller can treat it as a refusal before admission instead of an execution of unknown state. A different execution id from a dispatch that ran still throws the untyped error.
+
 ## 3.6.10
 
 ### Patch Changes
