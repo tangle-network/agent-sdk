@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 3.2.0
+
+### Minor Changes
+
+- 2ea5923: Add opt-in native learning identity, capability, opaque state reference and bounded text interchange contracts. Keep native memory/provider owners and AgentProfile unchanged; bind exports to immutable bases and exact adapter revisions, preserve tombstones and untrusted provenance, and document new-harness conformance requirements.
+
 ## 3.1.2
 
 ### Patch Changes
