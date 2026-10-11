@@ -5,6 +5,7 @@ import {
   agentNativeContextContinuationResultMatchesRequest,
 } from "./environment-runtime.js";
 import {
+  ContextTransferReceiptSchema,
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextContinuationAcknowledgementSchema,
@@ -788,7 +789,7 @@ describe("provider-issued context transfer destinations", () => {
       acceptance: { planDigest: plan.digest, acceptedAt: "2026-08-01T20:01:00.000Z", acceptedBy: "user" as const },
     };
     const request = ContextTransferRequestSchema.parse({ ...material, requestDigest: contextTransferRequestDigest(material) });
-    const receipt = ContextTransferResultSchema.parse({
+    const receipt = ContextTransferReceiptSchema.parse({
       status: "accepted", operationId: request.operationId, requestDigest: request.requestDigest,
       planDigest: plan.digest, contextDigest: plan.context.digest,
       source: plan.source.source, destination: plan.destination,
