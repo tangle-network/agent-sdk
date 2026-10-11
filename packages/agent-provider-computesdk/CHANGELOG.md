@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-computesdk
 
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies [b0eec83]
+  - @tangle-network/agent-interface@4.0.0
+
 ## 1.0.3
 
 ### Patch Changes
