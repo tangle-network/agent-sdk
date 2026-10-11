@@ -153,6 +153,7 @@ describe("createDaytonaProvider", () => {
     const sandbox = { id: "recorded-id", state: "started", process: { executeCommand }, refreshData: vi.fn(async () => { sandbox.state = "stopped"; }) };
     const provider = createDaytonaProvider({ daytona: { create: vi.fn(), get: async () => sandbox } });
     const recovered = (await provider.get!(sandbox.id))!;
+    await expect(recovered.status()).resolves.toBe("stopped");
     await expect(recovered.exec!("run")).rejects.toThrow(/cannot execute while stopped/);
     expect(sandbox.refreshData).toHaveBeenCalledTimes(1);
     expect(executeCommand).not.toHaveBeenCalled();
@@ -171,10 +172,12 @@ describe("createDaytonaProvider", () => {
 
   it("passes cwd, environment, and seconds to the documented Daytona execution API", async () => {
     const executeCommand = vi.fn(async () => ({ exitCode: 0, result: "ok" }));
-    const provider = createDaytonaProvider({ daytona: { create: vi.fn(), get: async () => ({ id: "recorded-id", state: "started", process: { executeCommand } }) } });
+    const refreshData = vi.fn();
+    const provider = createDaytonaProvider({ daytona: { create: vi.fn(), get: async () => ({ id: "recorded-id", state: "started", process: { executeCommand }, refreshData }) } });
     const recovered = (await provider.get!("recorded-id"))!;
     await expect(recovered.exec!("run", { cwd: "/work", env: { MODE: "test" }, timeoutMs: 1500 })).resolves.toMatchObject({ exitCode: 0, stdout: "ok" });
     expect(executeCommand).toHaveBeenCalledWith("run", "/work", { MODE: "test" }, 1.5);
+    expect(refreshData).not.toHaveBeenCalled();
   });
 
   it("never reports destruction by stopping a retained resource", async () => {

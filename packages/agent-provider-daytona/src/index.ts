@@ -174,7 +174,8 @@ function daytonaSandboxAsEnvironment(
     },
     async exec(command: string, request?: ExecRequest): Promise<ExecResult> {
       request?.signal?.throwIfAborted();
-      const status = await environment.status({ signal: request?.signal });
+      assertSandboxIdentity(sandbox, id);
+      const status = daytonaStatus(sandbox.state);
       if (status !== "running") {
         throw new Error(`Daytona sandbox cannot execute while ${status}; resume the recorded sandbox through Daytona`);
       }
