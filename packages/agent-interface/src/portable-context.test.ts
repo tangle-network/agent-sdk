@@ -773,7 +773,7 @@ describe("native continuation boundary", () => {
 describe("provider-issued context transfer destinations", () => {
   const profile = { name: "portable-agent", harness: "codex" as const };
   function unboundPlan() {
-    const original = contextPlan();
+    const { digest: _digest, ...original } = contextPlan();
     const { environmentId: _environmentId, ...destination } = original.destination;
     const material = { ...original, destination: { ...destination, profileDigest: canonicalAgentProfileDigest(profile) } };
     return { ...material, digest: portableContextPlanDigest(material) };
