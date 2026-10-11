@@ -62,7 +62,8 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
     const sandbox = await daytona.create(
       options.mapCreateInput?.(input) ?? daytonaCreateParams(input),
     );
-    if (daytonaStatus(sandbox.state) !== "running") {
+    const initialStatus = daytonaStatus(sandbox.state);
+    if (initialStatus === "pending" || initialStatus === "provisioning") {
       await sandbox.waitUntilStarted?.();
     }
     if (daytonaStatus(sandbox.state) !== "running") {
@@ -86,7 +87,7 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
     async get(id, request) {
       request?.signal?.throwIfAborted();
       const daytona = await resolveDaytona(options);
-      if (!daytona.get) return null;
+      if (!daytona.get) throw new Error("Daytona client does not expose a sandbox lookup API");
       try {
         const sandbox = await daytona.get(id);
         request?.signal?.throwIfAborted();

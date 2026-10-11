@@ -103,6 +103,7 @@ describe("createDaytonaProvider", () => {
       await expect(provider.get!("recorded-id")).rejects.toBe(error);
     }
     expect(create).not.toHaveBeenCalled();
+    await expect(createDaytonaProvider({ daytona: { create } }).get!("recorded-id")).rejects.toThrow(/does not expose a sandbox lookup API/);
   });
 
   it("honors recovery cancellation before and after the read", async () => {
@@ -130,6 +131,9 @@ describe("createDaytonaProvider", () => {
       const candidate = createDaytonaProvider({ daytona: { create: async () => ({ id: "unready-id", state }) } });
       await expect(candidate.create({ profile: "worker" })).rejects.toThrow(/did not return a running sandbox/);
     }
+    const waitUntilStarted = vi.fn();
+    await expect(createDaytonaProvider({ daytona: { create: async () => ({ id: "failed-id", state: "error", waitUntilStarted }) } }).create({ profile: "worker" })).rejects.toThrow(/did not return a running sandbox/);
+    expect(waitUntilStarted).not.toHaveBeenCalled();
   });
 
   it.each([
