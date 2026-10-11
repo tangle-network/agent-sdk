@@ -9,6 +9,7 @@ import type {
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
+  AgentEnvironmentStatus,
   AgentEnvironmentSummary,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
@@ -32,6 +33,8 @@ export interface DaytonaSandboxLike {
   sandboxId?: string;
   instance?: { id?: string };
   state?: string;
+  refreshData?(): Promise<void>;
+  waitUntilStarted?(timeout?: number): Promise<void>;
   process?: Record<string, unknown>;
   fs?: Record<string, unknown>;
   fileSystem?: Record<string, unknown>;
@@ -59,7 +62,14 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
     const sandbox = await daytona.create(
       options.mapCreateInput?.(input) ?? daytonaCreateParams(input),
     );
-    return daytonaSandboxAsEnvironment(options, name, sandbox);
+    const initialStatus = daytonaStatus(sandbox.state);
+    if (initialStatus === "pending" || initialStatus === "provisioning") {
+      await sandbox.waitUntilStarted?.();
+    }
+    if (daytonaStatus(sandbox.state) !== "running") {
+      throw new Error(`Daytona create did not return a running sandbox: ${sandbox.state ?? "unknown"}`);
+    }
+    return { ...daytonaSandboxAsEnvironment(options, name, sandbox), creation: "created" };
   };
   return {
     name,
@@ -74,10 +84,22 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
       }
       return createEnvironment(input);
     },
-    async get(id) {
+    async get(id, request) {
+      request?.signal?.throwIfAborted();
       const daytona = await resolveDaytona(options);
-      if (!daytona.get) return null;
-      return daytonaSandboxAsEnvironment(options, name, await daytona.get(id));
+      if (!daytona.get) throw new Error("Daytona client does not expose a sandbox lookup API");
+      try {
+        const sandbox = await daytona.get(id);
+        request?.signal?.throwIfAborted();
+        // Daytona accepts a name as well as an ID. Recovery must never adopt
+        // another sandbox after a name was reused or the source disappeared.
+        assertSandboxIdentity(sandbox, id);
+        return daytonaSandboxAsEnvironment(options, name, sandbox);
+      } catch (error) {
+        request?.signal?.throwIfAborted();
+        if (isDaytonaNotFound(error)) return null;
+        throw error;
+      }
     },
     async list(query?: AgentEnvironmentQuery): Promise<AgentEnvironmentSummary[]> {
       const daytona = await resolveDaytona(options);
@@ -87,7 +109,7 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
       return sandboxes.map((sandbox) => ({
         id: sandboxId(sandbox),
         provider: name,
-        status: sandbox.state === "stopped" ? "stopped" : "running",
+        status: daytonaStatus(sandbox.state),
       }));
     },
   };
@@ -111,10 +133,26 @@ function daytonaSandboxAsEnvironment(
   sandbox: DaytonaSandboxLike,
 ): AgentEnvironment {
   const id = sandboxId(sandbox);
+  const refresh = async (request?: { signal?: AbortSignal }): Promise<void> => {
+    request?.signal?.throwIfAborted();
+    await sandbox.refreshData?.();
+    request?.signal?.throwIfAborted();
+    assertSandboxIdentity(sandbox, id);
+  };
   const environment: AgentEnvironment = {
     id,
     provider: providerName,
-    status: async () => (sandbox.state === "stopped" ? "stopped" : "running"),
+    async status(request) {
+      try {
+        await refresh(request);
+        return daytonaStatus(sandbox.state);
+      } catch (error) {
+        request?.signal?.throwIfAborted();
+        if (isDaytonaNotFound(error)) return "expired";
+        throw error;
+      }
+    },
+    refresh,
     stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
       return commandTurnEvents({
         input,
@@ -135,19 +173,33 @@ function daytonaSandboxAsEnvironment(
       await callFirst(fs, ["writeFile", "uploadFile"], [path, content], [content, path]);
     },
     async exec(command: string, request?: ExecRequest): Promise<ExecResult> {
+      request?.signal?.throwIfAborted();
+      assertSandboxIdentity(sandbox, id);
+      const status = daytonaStatus(sandbox.state);
+      if (status !== "running") {
+        throw new Error(`Daytona sandbox cannot execute while ${status}; resume the recorded sandbox through Daytona`);
+      }
       const proc = processApi(sandbox);
-      const result = await callFirst(
-        proc,
-        ["executeCommand", "execute", "exec", "run"],
-        [command, { cwd: request?.cwd, timeoutMs: request?.timeoutMs, env: request?.env, signal: request?.signal }],
-      );
-      return execResultFromUnknown(result, "Daytona sandbox process execution");
+      const result = typeof proc.executeCommand === "function"
+        ? await proc.executeCommand.call(proc, command, request?.cwd, request?.env, request?.timeoutMs === undefined ? undefined : request.timeoutMs / 1000)
+        : await callFirst(proc, ["execute", "exec", "run"], [command, request]);
+      // The published SDK returns captured output as `result`.
+      const normalized = result && typeof result === "object" && "result" in result && typeof result.result === "string"
+        ? { ...result, stdout: "stdout" in result ? result.stdout : result.result }
+        : result;
+      return execResultFromUnknown(normalized, "Daytona sandbox process execution");
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "daytona" } }),
-    async destroy(): Promise<void> {
-      if (sandbox.delete) await sandbox.delete();
-      else if (sandbox.remove) await sandbox.remove();
-      else await sandbox.stop?.();
+    async destroy(request): Promise<void> {
+      request?.signal?.throwIfAborted();
+      assertSandboxIdentity(sandbox, id);
+      try {
+        if (sandbox.delete) await sandbox.delete();
+        else if (sandbox.remove) await sandbox.remove();
+        else throw new Error("Daytona sandbox does not expose a delete API");
+      } catch (error) {
+        if (!isDaytonaNotFound(error)) throw error;
+      }
     },
   };
   return environment;
@@ -200,6 +252,43 @@ function sandboxId(sandbox: DaytonaSandboxLike): string {
   const id = sandbox.id ?? sandbox.sandboxId ?? sandbox.instance?.id;
   if (!id) throw new Error("Daytona sandbox returned no id");
   return id;
+}
+
+function assertSandboxIdentity(sandbox: DaytonaSandboxLike, expectedId: string): void {
+  if (sandboxId(sandbox) !== expectedId) {
+    throw new Error("Daytona sandbox identity does not match the recorded environment ID");
+  }
+}
+
+function isDaytonaNotFound(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "statusCode" in error && error.statusCode === 404);
+}
+
+function daytonaStatus(state?: string): AgentEnvironmentStatus {
+  switch (state) {
+    case "started": return "running";
+    case "stopped":
+    case "paused":
+    case "archived": return "stopped";
+    case "error":
+    case "build_failed": return "failed";
+    case "destroyed": return "expired";
+    case "pending_build": return "pending";
+    case "creating":
+    case "restoring":
+    case "destroying":
+    case "starting":
+    case "stopping":
+    case "building_snapshot":
+    case "pulling_snapshot":
+    case "archiving":
+    case "resizing":
+    case "snapshotting":
+    case "forking":
+    case "pausing":
+    case "resuming": return "provisioning";
+    default: return "unknown";
+  }
 }
 
 function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
