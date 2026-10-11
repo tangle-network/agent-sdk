@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentProfileDigest } from "./agent-profile-canonical.js";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
