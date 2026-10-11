@@ -1,5 +1,5 @@
 ---
-"@tangle-network/agent-interface": minor
+"@tangle-network/agent-interface": major
 "@tangle-network/agent-provider-cli-bridge": patch
 ---
 
