@@ -267,4 +267,42 @@ describe("CLI Bridge portable context", () => {
       true,
     )).toThrow(/targets another destination/);
   });
+  it.each(["stream", "dispatch", "prompt"] as const)("refuses an unbound transfer on another environment before %s admission", async (surface) => {
+    const original = request();
+    const { digest: _digest, ...planMaterial } = original.plan;
+    const { environmentId: _environmentId, ...destination } = planMaterial.destination;
+    const material = { ...planMaterial, destination };
+    const plan = { ...material, digest: portableContextPlanDigest(material) };
+    const transferMaterial = { operationId: original.operationId, plan, profile,
+      acceptance: { ...original.acceptance, planDigest: plan.digest } };
+    const transfer = ContextTransferRequestSchema.parse({ ...transferMaterial,
+      requestDigest: contextTransferRequestDigest(transferMaterial) });
+    const boundReceipt = { ...receipt(transfer, "replayed"), environmentId: "actual-bound-environment" };
+    const posts: string[] = [];
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local",
+      defaultModel: "codex/gpt-5.6", capabilities: defaultCliBridgeCapabilities("codex"),
+      fetch: async (url, init) => {
+        if (init?.method === "POST") {
+          posts.push(String(url));
+          return Response.json({ error: "unexpected runner admission" }, { status: 400 });
+        }
+        if (String(url).includes("/v1/context-transfers/")) return Response.json(boundReceipt);
+        if (String(url).includes("/v1/capabilities")) return Response.json(defaultCliBridgeCapabilities("codex"));
+        return Response.json({ error: "no run was admitted" }, { status: 404 });
+      },
+    });
+    const environment = await provider.create({ profile, backend: "codex", requestedId: "wrong-environment" });
+    const turn = { prompt: "continue", turnId: "wrong-target-turn", sessionId: destination.sessionId,
+      executionId: destination.executionId, contextTransfer: transfer };
+    let failure: unknown;
+    try {
+      if (surface === "dispatch") await environment.dispatch!(turn);
+      else if (surface === "prompt") await environment.session!(destination.sessionId).prompt(turn);
+      else for await (const _event of environment.stream(turn)) { /* consume the public stream */ }
+    } catch (error) { failure = error; }
+    expect(posts).toEqual([]);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/portable context.*another environment/);
+  });
+
 });
