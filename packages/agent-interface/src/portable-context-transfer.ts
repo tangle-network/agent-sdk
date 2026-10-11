@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { agentProfileSchema } from "./profile-schema.js";
-import { canonicalAgentProfileDigest } from "./agent-profile-canonical.js";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import type { AgentProfile } from "./agent-profile.js";
 import { ResourceRequestSchema, WorkspaceRequestSchema, type ResourceRequest, type WorkspaceRequest } from "./environment-requests.js";
 import type { Sha256Digest } from "./agent-candidate.js";
