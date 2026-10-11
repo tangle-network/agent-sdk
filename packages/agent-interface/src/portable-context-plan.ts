@@ -12,28 +12,18 @@ import {
 import { boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { PortableConversationContextSchema, type PortableConversationContext } from "./portable-context-base.js";
 
-export interface PortableContextDestination {
-  runner: string;
-  provider: string;
-  /** Omitted when the provider allocates the environment after acceptance. */
-  environmentId?: string;
-  sessionId: string;
-  runId: string;
-  executionId: string;
-  model?: string;
-  profileDigest: Sha256Digest;
-}
-
 export const PortableContextDestinationSchema = z.strictObject({
   runner: idSchema,
   provider: idSchema,
+  /** Omitted when the provider allocates the environment after acceptance. */
   environmentId: idSchema.optional(),
   sessionId: idSchema,
   runId: idSchema,
   executionId: idSchema,
   model: idSchema.optional(),
   profileDigest: sha256DigestSchema,
-}) satisfies z.ZodType<PortableContextDestination>;
+});
+export type PortableContextDestination = z.infer<typeof PortableContextDestinationSchema>;
 
 export interface PortableContextPartPlan {
   partIndex: number;

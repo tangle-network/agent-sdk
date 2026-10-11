@@ -86,6 +86,7 @@ export async function* streamTrackedCliBridgeTurn(
   let admitted = false;
   let admissionValidated = false;
   try {
+    await confirmCliBridgeContextTransfer(options, originalTurn, run, signal);
     if (useNativeInteractions) {
       await beginCliBridgeNativeTurn(
         options,
@@ -134,7 +135,6 @@ export async function* streamTrackedCliBridgeTurn(
         yield event;
       }
     }
-    await confirmCliBridgeContextTransfer(options, originalTurn, run, signal);
     drained = true;
     if (runs.get(run.id) === run) runs.delete(run.id);
   } catch (error) {
@@ -209,6 +209,7 @@ export async function dispatchCliBridgeTurn(
   let accepted = false;
   let responseBody: AsyncIterable<Uint8Array> | undefined;
   try {
+    await confirmCliBridgeContextTransfer(options, prepared.turn, run, signal);
     if (useNativeInteractions) {
       await beginCliBridgeNativeTurn(
         options,
@@ -257,7 +258,6 @@ export async function dispatchCliBridgeTurn(
     }
     const controlRef = exactControlRefForRun(run, providerName);
     run.controlRef = controlRef;
-    await confirmCliBridgeContextTransfer(options, prepared.turn, run, signal);
     if (responseBody) {
       await detachCliBridgeReader(responseBody);
       responseBody = undefined;
@@ -321,7 +321,11 @@ async function confirmCliBridgeContextTransfer(
     transfer === undefined ||
     (transfer.status !== "accepted" && transfer.status !== "replayed")
   ) {
-    throw new Error("cli-bridge did not confirm admitted portable context");
+    throw new CliBridgeRequestRejectedError(409, "cli-bridge did not confirm admitted portable context");
+  }
+  if (transfer.environmentId !== run.environmentId || transfer.sessionId !== run.sessionId ||
+      transfer.runId !== run.id || transfer.executionId !== run.executionId) {
+    throw new CliBridgeRequestRejectedError(409, "cli-bridge portable context belongs to another environment or run");
   }
   run.contextTransferReceipt = transfer;
 }
