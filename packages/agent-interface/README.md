@@ -102,6 +102,8 @@ Partial input or output always requires explicit user or policy acceptance, even
 `ContextTransferRequest` binds an operation identifier to that accepted plan, while `ContextTransferResult` distinguishes first admission, exact replay, changed-input conflict, and unknown transport outcome.
 `contextTransferResultMatchesRequest()` checks the operation identifier and request digest for every outcome before a caller accepts, retries, or reports it.
 Its successful receipt repeats the exact destination and carries the provider's session-creation operation and timestamp, identifying the one fresh provider session that admitted the context.
+An accepted destination may omit `environmentId` when the provider allocates that identity. The receipt preserves the original destination and binds its actual fresh `environmentId`; a prebound destination still requires exact equality. Unbound creation requires the inline `profile` with its accepted canonical digest. Optional `workspace` and `resources` inputs are frozen into the transfer request digest, so changed retries conflict.
+
 Providers expose this operation through `AgentEnvironmentProvider.contextTransfer`.
 They advertise `contextTransfer` only when transfer, retry idempotency, and lookup are all durable.
 An accepted destination can set `CreateAgentEnvironmentInput.requestedId` to bind environment creation to its exact identifier.

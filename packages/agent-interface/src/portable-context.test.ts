@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
 } from "./environment-runtime.js";
 import {
+  ContextTransferReceiptSchema,
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextContinuationAcknowledgementSchema,
@@ -358,7 +360,7 @@ describe("portable context plan and transfer", () => {
       source: plan.source.source,
       destination: plan.destination,
       provider: "cli-bridge",
-      environmentId: plan.destination.environmentId,
+      environmentId: plan.destination.environmentId!,
       sessionId: plan.destination.sessionId,
       runId: plan.destination.runId,
       executionId: plan.destination.executionId,
@@ -765,5 +767,44 @@ describe("native continuation boundary", () => {
         message: "network error",
       }),
     ).toThrow(/retry is safe/);
+  });
+});
+
+
+describe("provider-issued context transfer destinations", () => {
+  const profile = { name: "portable-agent", harness: "codex" as const };
+  function unboundPlan() {
+    const { digest: _digest, ...original } = contextPlan();
+    const { environmentId: _environmentId, ...destination } = original.destination;
+    const material = { ...original, destination: { ...destination, profileDigest: canonicalAgentProfileDigest(profile) } };
+    return { ...material, digest: portableContextPlanDigest(material) };
+  }
+
+  it("binds an actual environment without rewriting the accepted destination", () => {
+    const plan = unboundPlan();
+    expect(PortableContextPlanSchema.safeParse(plan).success).toBe(true);
+    const material = {
+      operationId: "create-and-transfer", plan, profile,
+      workspace: { repoUrl: "https://example.com/repository.git", gitRef: "0123456789abcdef" },
+      acceptance: { planDigest: plan.digest, acceptedAt: "2026-08-01T20:01:00.000Z", acceptedBy: "user" as const },
+    };
+    const request = ContextTransferRequestSchema.parse({ ...material, requestDigest: contextTransferRequestDigest(material) });
+    const receipt = ContextTransferReceiptSchema.parse({
+      status: "accepted", operationId: request.operationId, requestDigest: request.requestDigest,
+      planDigest: plan.digest, contextDigest: plan.context.digest,
+      source: plan.source.source, destination: plan.destination,
+      provider: plan.destination.provider, environmentId: "actual-sandbox-id",
+      sessionId: plan.destination.sessionId, runId: plan.destination.runId,
+      executionId: plan.destination.executionId, sessionCreatedForOperationId: request.operationId,
+      sessionCreatedAt: "2026-08-01T20:01:00.500Z", admittedAt: "2026-08-01T20:01:01.000Z",
+      transferredMessageIds: ["message-1"], omittedMessageIds: ["message-2"],
+    });
+    expect(contextTransferResultMatchesRequest(request, receipt)).toBe(true);
+    expect(contextTransferResultMatchesRequest(request, { ...receipt, environmentId: plan.source.source.environmentId })).toBe(false);
+    expect(contextTransferResultMatchesRequest(request, { ...receipt, destination: { ...plan.destination, environmentId: "actual-sandbox-id" } })).toBe(false);
+    expect(ContextTransferRequestSchema.safeParse({ ...request, profile: { ...profile, name: "changed" } }).success).toBe(false);
+    expect(ContextTransferRequestSchema.safeParse({ ...request, workspace: { ...material.workspace, gitRef: "different-ref" } }).success).toBe(false);
+    const { profile: _profile, ...missingProfile } = request;
+    expect(ContextTransferRequestSchema.safeParse(missingProfile).success).toBe(false);
   });
 });

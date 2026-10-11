@@ -384,7 +384,7 @@ function contextTransferResponder(counters: {
           source: request.plan.source.source,
           destination: request.plan.destination,
           provider: request.plan.destination.provider,
-          environmentId: request.plan.destination.environmentId,
+          environmentId: request.plan.destination.environmentId!,
           sessionId: request.plan.destination.sessionId,
           runId: request.plan.destination.runId,
           executionId: request.plan.destination.executionId,

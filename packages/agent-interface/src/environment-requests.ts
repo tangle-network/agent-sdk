@@ -150,6 +150,15 @@ export interface ResourceRequest {
   providerOptions?: Record<string, unknown>;
 }
 
+/** The resource request used by environment creation and accepted transfers. */
+export const ResourceRequestSchema = z.strictObject({
+  cpu: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  memoryMb: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  diskMb: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  gpu: boundedIdentifierSchema.optional(),
+  providerOptions: boundedJsonRecordSchema.optional(),
+}) satisfies z.ZodType<ResourceRequest>;
+
 export interface AgentEnvironmentQuery {
   name?: string;
   metadata?: Record<string, unknown>;

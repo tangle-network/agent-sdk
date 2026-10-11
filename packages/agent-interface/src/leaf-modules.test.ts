@@ -452,7 +452,7 @@ describe("interface split leaf modules", () => {
       source: source.source,
       destination,
       provider: destination.provider,
-      environmentId: destination.environmentId,
+      environmentId: destination.environmentId!,
       sessionId: destination.sessionId,
       runId: destination.runId,
       executionId: destination.executionId,

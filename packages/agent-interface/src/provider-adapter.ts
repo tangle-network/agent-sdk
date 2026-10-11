@@ -20,12 +20,21 @@ import type {
   McpStatusResponse,
 } from "./mcp.js";
 import type { StreamEvent } from "./stream-events.js";
+import type { ContextTransferRequest } from "./portable-context.js";
+
+/** Fresh runner session creation with an accepted portable history. */
+export type SdkCreateSessionOptions = {
+  workspaceRoot?: string;
+  sessionId?: string;
+  /** Preserve the typed history and refuse every unsupported part. */
+  contextTransfer?: ContextTransferRequest;
+};
 
 export interface SdkProviderAdapter {
   readonly provider: string;
   getCapabilities(): BackendCapabilities;
   initialize(config: ProviderConfig): Promise<void>;
-  createSession?(options?: { workspaceRoot?: string }): Promise<string>;
+  createSession?(options?: SdkCreateSessionOptions): Promise<string>;
   forkSession?(options: {
     sessionId: string;
     messageId?: string;

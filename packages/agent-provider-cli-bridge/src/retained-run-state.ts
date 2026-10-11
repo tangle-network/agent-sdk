@@ -170,7 +170,7 @@ export function prepareCliBridgeRun(
   if (
     destination !== undefined &&
     (destination.provider !== providerName ||
-      destination.environmentId !== environmentId ||
+      (destination.environmentId !== undefined && destination.environmentId !== environmentId) ||
       destination.sessionId !== sessionId ||
       destination.executionId !== executionId)
   ) {

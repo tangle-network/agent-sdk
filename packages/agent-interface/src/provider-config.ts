@@ -1,3 +1,5 @@
+import type { InputPart } from "./parts.js";
+
 export type BackendCapabilities = {
   streaming: boolean;
   toolUse: boolean;
@@ -5,6 +7,8 @@ export type BackendCapabilities = {
   multimodal: boolean;
   contextWindow: number;
   interactions?: string[];
+  /** Native typed history import implemented by this runner. */
+  contextTransfer?: { parts: Array<InputPart["type"]> };
 };
 
 export type ProviderCapabilities = {

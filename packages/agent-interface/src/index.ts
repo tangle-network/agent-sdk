@@ -65,6 +65,7 @@ export {
   workspaceCwdSchema,
   workspaceCwdPathForBase,
   WorkspaceRequestSchema,
+  ResourceRequestSchema,
   TerminalAttachRequestSchema,
   TerminalAttachResultSchema,
   TerminalDetachAckSchema,
