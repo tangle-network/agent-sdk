@@ -493,6 +493,8 @@ export interface AgentEnvironmentCapabilities {
    * exactly that, instead of advertising an egress mode it does not accept.
    */
   create?: {
+    /** The provider durably binds keyed create input and can reconstruct it after restart. */
+    durableIdempotency?: boolean;
     /**
      * Egress modes create accepts, each named once. A mode absent here is refused, never weakened
      * or widened. Absent altogether means create does not read
@@ -624,6 +626,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
           .min(1)
           .max(CONTRACT_MAX_ARRAY_LENGTH)
           .optional(),
+        durableIdempotency: z.boolean().optional(),
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
         workspaceCheckpoint: z.boolean().optional(),
@@ -748,6 +751,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
     const create = capabilities.create;
     if (create !== undefined) {
       if (
+        create.durableIdempotency === undefined &&
         create.egress === undefined &&
         create.billingOwner === undefined &&
         create.runtimeAttachments === undefined &&
