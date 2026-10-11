@@ -181,7 +181,11 @@ function daytonaSandboxAsEnvironment(
       const result = typeof proc.executeCommand === "function"
         ? await proc.executeCommand.call(proc, command, request?.cwd, request?.env, request?.timeoutMs === undefined ? undefined : request.timeoutMs / 1000)
         : await callFirst(proc, ["execute", "exec", "run"], [command, request]);
-      return execResultFromUnknown(result, "Daytona sandbox process execution");
+      // The published SDK returns captured output as `result`.
+      const normalized = result && typeof result === "object" && "result" in result && typeof result.result === "string"
+        ? { ...result, stdout: "stdout" in result ? result.stdout : result.result }
+        : result;
+      return execResultFromUnknown(normalized, "Daytona sandbox process execution");
     },
     placement: async (): Promise<PlacementInfo> => ({ kind: "provider", machineId: id, providerMetadata: { provider: "daytona" } }),
     async destroy(request): Promise<void> {
