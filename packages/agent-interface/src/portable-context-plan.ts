@@ -15,7 +15,8 @@ import { PortableConversationContextSchema, type PortableConversationContext } f
 export interface PortableContextDestination {
   runner: string;
   provider: string;
-  environmentId: string;
+  /** Omitted when the provider allocates the environment after acceptance. */
+  environmentId?: string;
   sessionId: string;
   runId: string;
   executionId: string;
@@ -26,7 +27,7 @@ export interface PortableContextDestination {
 export const PortableContextDestinationSchema = z.strictObject({
   runner: idSchema,
   provider: idSchema,
-  environmentId: idSchema,
+  environmentId: idSchema.optional(),
   sessionId: idSchema,
   runId: idSchema,
   executionId: idSchema,

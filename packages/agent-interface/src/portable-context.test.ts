@@ -359,7 +359,7 @@ describe("portable context plan and transfer", () => {
       source: plan.source.source,
       destination: plan.destination,
       provider: "cli-bridge",
-      environmentId: plan.destination.environmentId,
+      environmentId: plan.destination.environmentId!,
       sessionId: plan.destination.sessionId,
       runId: plan.destination.runId,
       executionId: plan.destination.executionId,

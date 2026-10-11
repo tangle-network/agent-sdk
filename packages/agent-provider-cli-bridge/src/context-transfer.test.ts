@@ -89,7 +89,7 @@ function receipt(
     source: transfer.plan.source.source,
     destination: transfer.plan.destination,
     provider: transfer.plan.destination.provider,
-    environmentId: transfer.plan.destination.environmentId,
+    environmentId: transfer.plan.destination.environmentId!,
     sessionId: transfer.plan.destination.sessionId,
     runId: transfer.plan.destination.runId,
     executionId: transfer.plan.destination.executionId,
@@ -184,10 +184,10 @@ describe("CLI Bridge portable context", () => {
     const environment = await provider.create({
       profile,
       backend: "codex",
-      requestedId: transfer.plan.destination.environmentId,
+      requestedId: transfer.plan.destination.environmentId!,
       idempotencyKey: transfer.operationId,
     });
-    expect(environment.id).toBe(transfer.plan.destination.environmentId);
+    expect(environment.id).toBe(transfer.plan.destination.environmentId!);
 
     const prepared = prepareCliBridgeRun(
       { baseUrl: "http://bridge.local", defaultModel: "codex/gpt-5.6" },
@@ -205,20 +205,20 @@ describe("CLI Bridge portable context", () => {
     );
     expect(prepared.run).toMatchObject({
       id: transfer.plan.destination.runId,
-      environmentId: transfer.plan.destination.environmentId,
+      environmentId: transfer.plan.destination.environmentId!,
       sessionId: transfer.plan.destination.sessionId,
       executionId: transfer.plan.destination.executionId,
     });
     expect(JSON.parse(prepared.run.requestBody)).toMatchObject({
       run_id: transfer.plan.destination.runId,
-      environment_id: transfer.plan.destination.environmentId,
+      environment_id: transfer.plan.destination.environmentId!,
       session_id: transfer.plan.destination.sessionId,
       execution_id: transfer.plan.destination.executionId,
       context_transfer: transfer,
     });
     expect(toRetainedTurnBody(prepared.turn, prepared.run, "cli-bridge")).toMatchObject({
       run_id: transfer.plan.destination.runId,
-      environment_id: transfer.plan.destination.environmentId,
+      environment_id: transfer.plan.destination.environmentId!,
       context_transfer: transfer,
     });
   });
@@ -235,9 +235,9 @@ describe("CLI Bridge portable context", () => {
       },
     });
 
-    const environment = await provider.get?.(transfer.plan.destination.environmentId);
+    const environment = await provider.get?.(transfer.plan.destination.environmentId!);
     expect(environment).toMatchObject({
-      id: transfer.plan.destination.environmentId,
+      id: transfer.plan.destination.environmentId!,
       provider: "cli-bridge",
     });
     expect(environment?.capabilities?.contextTransfer).toEqual({
@@ -263,7 +263,7 @@ describe("CLI Bridge portable context", () => {
         contextTransfer: transfer,
       },
       "cli-bridge",
-      transfer.plan.destination.environmentId,
+      transfer.plan.destination.environmentId!,
       true,
     )).toThrow(/targets another destination/);
   });

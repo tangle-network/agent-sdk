@@ -1,4 +1,8 @@
 import { z } from "zod";
+import { agentProfileSchema } from "./profile-schema.js";
+import { canonicalAgentProfileDigest } from "./agent-profile-canonical.js";
+import type { AgentProfile } from "./agent-profile.js";
+import { ResourceRequestSchema, WorkspaceRequestSchema, type ResourceRequest, type WorkspaceRequest } from "./environment-requests.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import {
   boundedStringSchema,
@@ -27,12 +31,18 @@ export interface ContextTransferRequestMaterial {
   operationId: string;
   plan: PortableContextPlan;
   acceptance: ContextPlanAcceptance;
+  profile?: AgentProfile;
+  workspace?: WorkspaceRequest;
+  resources?: ResourceRequest;
 }
 
 const ContextTransferRequestMaterialSchema = z.strictObject({
   operationId: idSchema,
   plan: PortableContextPlanSchema,
   acceptance: ContextPlanAcceptanceSchema,
+  profile: agentProfileSchema.optional(),
+  workspace: WorkspaceRequestSchema.optional(),
+  resources: ResourceRequestSchema.optional(),
 });
 
 export function contextTransferRequestDigest(
@@ -43,6 +53,9 @@ export function contextTransferRequestDigest(
     operationId: parsed.operationId,
     planDigest: parsed.plan.digest,
     acceptance: parsed.acceptance,
+    ...(parsed.profile === undefined ? {} : { profileDigest: canonicalAgentProfileDigest(parsed.profile) }),
+    ...(parsed.workspace === undefined ? {} : { workspace: parsed.workspace }),
+    ...(parsed.resources === undefined ? {} : { resources: parsed.resources }),
   });
 }
 
@@ -52,8 +65,20 @@ export const ContextTransferRequestSchema = z
     requestDigest: sha256DigestSchema,
     plan: PortableContextPlanSchema,
     acceptance: ContextPlanAcceptanceSchema,
+    profile: agentProfileSchema.optional(),
+    workspace: WorkspaceRequestSchema.optional(),
+    resources: ResourceRequestSchema.optional(),
   })
   .superRefine((request, refinement) => {
+    if (request.plan.destination.environmentId === undefined && request.profile === undefined) {
+      refinement.addIssue({ code: "custom", path: ["profile"], message: "an unbound destination requires its exact profile" });
+    }
+    if (request.profile !== undefined && canonicalAgentProfileDigest(request.profile) !== request.plan.destination.profileDigest) {
+      refinement.addIssue({ code: "custom", path: ["profile"], message: "profile digest must match the accepted destination" });
+    }
+    if (request.profile?.harness !== undefined && request.profile.harness !== request.plan.destination.runner) {
+      refinement.addIssue({ code: "custom", path: ["profile", "harness"], message: "profile harness must match the accepted destination runner" });
+    }
     if (request.acceptance.planDigest !== request.plan.digest) {
       refinement.addIssue({
         code: "custom",
@@ -67,6 +92,9 @@ export const ContextTransferRequestSchema = z
         operationId: request.operationId,
         plan: request.plan,
         acceptance: request.acceptance,
+        ...(request.profile === undefined ? {} : { profile: request.profile }),
+        ...(request.workspace === undefined ? {} : { workspace: request.workspace }),
+        ...(request.resources === undefined ? {} : { resources: request.resources }),
       })
     ) {
       refinement.addIssue({
@@ -185,7 +213,7 @@ export function contextTransferReceiptMatches(
     wireDigest(exactReceipt.source) === wireDigest(source.source) &&
     wireDigest(exactReceipt.destination) === wireDigest(destination) &&
     exactReceipt.provider === destination.provider &&
-    exactReceipt.environmentId === destination.environmentId &&
+    (destination.environmentId === undefined || exactReceipt.environmentId === destination.environmentId) &&
     exactReceipt.sessionId === destination.sessionId &&
     exactReceipt.runId === destination.runId &&
     exactReceipt.executionId === destination.executionId &&
