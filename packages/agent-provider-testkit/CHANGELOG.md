@@ -1,5 +1,21 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.11.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/agent-core` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-daytona` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-e2b` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-testkit` depends on the breaking release of `@tangle-network/agent-interface`.
+
+### Patch Changes
+
+- Updated dependencies [b0eec83]
+  - @tangle-network/agent-interface@4.0.0
+
 ## 0.10.2
 
 ### Patch Changes

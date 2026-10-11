@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 4.0.0
+
+### Major Changes
+
+- b0eec83: Allow accepted context-transfer plans to leave provider-allocated environment identity unbound until the exact receipt. Bind the profile, workspace and resources to the transfer request digest. Runner session creation carries the caller session identifier and canonical accepted transfer request.
+
 ## 3.2.0
 
 ### Minor Changes

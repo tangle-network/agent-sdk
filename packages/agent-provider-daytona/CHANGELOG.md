@@ -1,5 +1,22 @@
 # @tangle-network/agent-provider-daytona
 
+## 0.5.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/agent-core` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-daytona` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-e2b` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-testkit` depends on the breaking release of `@tangle-network/agent-interface`.
+
+### Patch Changes
+
+- abbceb9: Recover only an exact recorded sandbox ID after adapter reconstruction. Map missing resources and lifecycle states without creating replacements, require running create results, pass documented SDK execution arguments, and refuse stop-only destruction. Durable keyed creation remains unsupported.
+- Updated dependencies [b0eec83]
+  - @tangle-network/agent-interface@4.0.0
+
 ## 0.4.5
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 1.1.3
+
+### Patch Changes
+
+- b0eec83: Allow accepted context-transfer plans to leave provider-allocated environment identity unbound until the exact receipt. Bind the profile, workspace and resources to the transfer request digest. Runner session creation carries the caller session identifier and canonical accepted transfer request.
+- Updated dependencies [b0eec83]
+  - @tangle-network/agent-interface@4.0.0
+
 ## 1.1.2
 
 ### Patch Changes
