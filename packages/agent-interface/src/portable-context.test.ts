@@ -21,6 +21,7 @@ import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
   portableContextPlanDigest,
+  portableContextTransferPlanDigest,
   PortableContextTransferPlanSchema,
   portableContextPlanRequestDigest,
   portableContextPlanResultMatchesRequest,
@@ -199,8 +200,10 @@ describe("portable context plan and transfer", () => {
     expect(request.plan.context.messages[0]!.parts).toEqual([source.messages[0]!.parts[1], summary]);
     const tamperedContext = { ...request.plan.context, messages: [{ ...request.plan.context.messages[0]!, parts: [{ type: "text", text: "forged" }, summary] }] };
     const { digest: _contextDigest, ...changedMaterial } = tamperedContext;
-    expect(PortableContextTransferPlanSchema.safeParse({ ...request.plan,
-      context: { ...changedMaterial, digest: portableConversationContextDigest(changedMaterial) } }).success).toBe(false);
+    const { digest: _planDigest, ...transferMaterial } = request.plan;
+    const forged = { ...transferMaterial, context: { ...changedMaterial, digest: portableConversationContextDigest(changedMaterial) } };
+    expect(PortableContextTransferPlanSchema.safeParse({ ...forged,
+      digest: portableContextTransferPlanDigest(forged) }).success).toBe(false);
   });
 
   it("binds every inclusion and omission to one canonical plan digest", () => {
