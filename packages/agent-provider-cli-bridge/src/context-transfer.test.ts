@@ -106,9 +106,15 @@ function receipt(
 }
 
 describe("CLI Bridge portable context", () => {
-  function attachmentRequest(): ContextTransferRequest {
+  function attachmentRequest(selectedProfile: AgentProfile = profile): ContextTransferRequest {
     const { requestDigest: _digest, ...material } = request();
-    return createContextTransferRequest({ ...material, profile });
+    const { digest: _planDigest, ...base } = material.plan;
+    const planMaterial = { ...base, destination: { ...base.destination,
+      profileDigest: canonicalAgentProfileDigest(selectedProfile),
+      model: selectedProfile.model?.default ?? base.destination.model } };
+    const plan = { ...planMaterial, digest: portableContextTransferPlanDigest(planMaterial) };
+    return createContextTransferRequest({ ...material, plan, profile: selectedProfile,
+      acceptance: { ...material.acceptance, planDigest: plan.digest } });
   }
 
   function attachmentCapabilities() {
@@ -117,10 +123,14 @@ describe("CLI Bridge portable context", () => {
       contextTransfer: { ...capabilities.contextTransfer, attach: true } });
   }
 
-  it("reconstructs the accepted dispatch route without create or another environment lookup", async () => {
-    const transfer = attachmentRequest();
+  it.each([
+    { selectedProfile: profile, factoryModel: undefined, expectedModel: "codex/gpt-5.6" },
+    { selectedProfile: { ...profile, model: { provider: "openai", default: "gpt-5.6" } },
+      factoryModel: "codex/another-model", expectedModel: "codex/openai/gpt-5.6" },
+  ])("reconstructs the accepted $expectedModel route without create or another environment lookup", async ({ selectedProfile, factoryModel, expectedModel }) => {
+    const transfer = attachmentRequest(selectedProfile);
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
-    const providerOptions = { baseUrl: "http://bridge.local", capabilities: attachmentCapabilities(),
+    const providerOptions = { baseUrl: "http://bridge.local", capabilities: attachmentCapabilities(), defaultModel: factoryModel,
       fetch: async (url: string | URL | Request, init?: RequestInit) => {
         calls.push({ method: init?.method ?? "GET", url: String(url),
           ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
@@ -146,11 +156,29 @@ describe("CLI Bridge portable context", () => {
     const posts = calls.filter((call) => call.method === "POST");
     expect(posts).toHaveLength(2);
     expect(posts.every((call) => call.url.endsWith("/v1/chat/completions"))).toBe(true);
-    expect(posts[0]!.body).toMatchObject({ agent_profile: profile, context_transfer: transfer,
+    expect(posts[0]!.body).toMatchObject({ agent_profile: selectedProfile, model: expectedModel, context_transfer: transfer,
       environment_id: transfer.plan.destination.environmentId, session_id: transfer.plan.destination.sessionId,
       run_id: transfer.plan.destination.runId, execution_id: transfer.plan.destination.executionId });
     expect(calls.filter((call) => call.method === "GET").every((call) =>
       call.url.includes(`/v1/context-transfers/${transfer.operationId}?request_digest=`))).toBe(true);
+  });
+
+  it.each(["stream", "dispatch", "prompt"] as const)("binds the accepted model without retainedControl before %s effects", async (surface) => {
+    const transfer = attachmentRequest();
+    let posts = 0;
+    const { retainedControl: _retained, ...capabilities } = attachmentCapabilities();
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", capabilities,
+      fetch: async (_url, init) => { if (init?.method === "POST") posts++; return Response.json(receipt(transfer, "replayed")); } });
+    const environment = await provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer });
+    const input = { prompt: "continue", turnId: "first-turn", contextTransfer: transfer, model: "another-model",
+      sessionId: transfer.plan.destination.sessionId, executionId: transfer.plan.destination.executionId };
+    const attempt = async () => {
+      if (surface === "dispatch") await environment!.dispatch!(input);
+      else if (surface === "prompt") await environment!.session!(input.sessionId).prompt(input);
+      else for await (const _event of environment!.stream(input)) { /* drain */ }
+    };
+    await expect(attempt()).rejects.toThrow(/environment model/);
+    expect(posts).toBe(0);
   });
 
   it.each(["stream", "dispatch", "prompt"] as const)("refuses replacement or missing accepted context before %s effects", async (surface) => {

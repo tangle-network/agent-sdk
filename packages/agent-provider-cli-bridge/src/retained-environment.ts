@@ -134,7 +134,7 @@ export function createCliBridgeEnvironment(
     assertCliBridgeTurnAllowed(args.allowDispatch, "environment.stream()");
     if (
       args.selectedModel !== undefined &&
-      args.capabilities.retainedControl !== undefined
+      (args.capabilities.retainedControl !== undefined || args.acceptedContextTransfer !== undefined)
     ) {
       assertCliBridgeTurnModel(
         options,
@@ -190,7 +190,7 @@ export function createCliBridgeEnvironment(
       assertCliBridgeTurnAllowed(args.allowDispatch, "environment.dispatch()");
       if (
         args.selectedModel !== undefined &&
-        args.capabilities.retainedControl !== undefined
+        (args.capabilities.retainedControl !== undefined || args.acceptedContextTransfer !== undefined)
       ) {
         assertCliBridgeTurnModel(
           options,
@@ -447,7 +447,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
       }
       if (
         args.selectedModel !== undefined &&
-        args.capabilities.retainedControl !== undefined
+        (args.capabilities.retainedControl !== undefined || args.acceptedContextTransfer !== undefined)
       ) {
         assertCliBridgeTurnModel(
           args.options,

@@ -18,7 +18,6 @@ import {
   snapshotAgentProfile,
   deepFreeze,
   ContextTransferReceiptSchema,
-  type ContextTransferRequest,
   WorkspaceRequestSchema,
   workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface";
@@ -214,7 +213,13 @@ export function createCliBridgeProvider(
           throw new Error("CLI Bridge attachment targets another provider or environment");
         }
         const backend = destination.runner;
-        const model = acceptedDestinationModel(accepted);
+        const environmentInput: CreateAgentEnvironmentInput = { profile: snapshotAgentProfile(accepted.profile), backend,
+          ...(accepted.workspace === undefined ? {} : { workspace: accepted.workspace }),
+          ...(accepted.resources === undefined ? {} : { resources: accepted.resources }),
+          idempotencyKey: accepted.operationId };
+        const model = resolveBridgeModel({ ...options, defaultModel: undefined }, environmentInput,
+          { model: destination.model ?? accepted.profile.model?.default ?? backend }, accepted.profile);
+        const attachedOptions = { ...options, defaultModel: model };
         const capabilities = await resolveCapabilities(backend, model, true, true);
         if (capabilities.contextTransfer?.attach !== true) throw new Error("CLI Bridge context transfer attachment is unsupported by the selected deployment");
         const transfer = await lookupCliBridgeContext(options, accepted, operation.signal);
@@ -223,11 +228,7 @@ export function createCliBridgeProvider(
         }
         operation.signal?.throwIfAborted();
         return createCliBridgeEnvironment({
-          options, providerName: name, environmentId: id,
-          environmentInput: { profile: snapshotAgentProfile(accepted.profile), backend,
-            ...(accepted.workspace === undefined ? {} : { workspace: accepted.workspace }),
-            ...(accepted.resources === undefined ? {} : { resources: accepted.resources }),
-            idempotencyKey: accepted.operationId },
+          options: attachedOptions, providerName: name, environmentId: id, environmentInput,
           allowDispatch: true, cancelRunsOnDestroy: false, capabilities,
           selectedBackend: backend, selectedModel: model,
           acceptedContextTransfer: accepted,
@@ -268,12 +269,6 @@ export function createCliBridgeProvider(
       });
     },
   };
-}
-
-function acceptedDestinationModel(request: ContextTransferRequest): string {
-  const { runner, model } = request.plan.destination;
-  return model === undefined || model === runner || model.startsWith(`${runner}/`)
-    ? model ?? runner : `${runner}/${model}`;
 }
 
 function withoutRemoteRetainedCapabilities(
