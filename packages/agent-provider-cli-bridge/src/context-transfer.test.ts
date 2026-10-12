@@ -194,8 +194,8 @@ describe("CLI Bridge portable context", () => {
         if (init?.method === "POST") posts++;
         if (kind === "missing") return new Response("{}", { status: 404 });
         return Response.json(kind === "other-environment" ? { ...receipt(transfer, "replayed"), environmentId: "wrong-environment" }
-          : { status: "uncertain", operationId: transfer.operationId, requestDigest: transfer.requestDigest,
-            message: "native acknowledgment lost" });
+          : { status: "unknown", operationId: transfer.operationId, requestDigest: transfer.requestDigest,
+            message: "native acknowledgment lost", retryable: true });
       } });
     await expect(provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer })).rejects.toThrow(/receipt/);
     expect(posts).toBe(0);
@@ -376,6 +376,7 @@ describe("CLI Bridge portable context", () => {
       freshSession: true,
       requestIdempotency: true,
       lookup: true,
+      attach: true,
     });
     expect(urls).toEqual([
       `http://bridge.local/v1/context-transfer-environments/${transfer.plan.destination.environmentId}`,

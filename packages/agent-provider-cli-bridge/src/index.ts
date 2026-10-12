@@ -1,6 +1,7 @@
 import {
   agentEnvironmentCreateInputDigest,
   createAgentEnvironmentWithIdempotency,
+  AgentEnvironmentGetOptionsSchema,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   AgentEnvironment,
@@ -15,6 +16,9 @@ import {
   harnessTypeSchema,
   harnessSystemPromptIntents,
   snapshotAgentProfile,
+  deepFreeze,
+  ContextTransferReceiptSchema,
+  type ContextTransferRequest,
   WorkspaceRequestSchema,
   workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface";
@@ -35,6 +39,7 @@ import {
 import {
   createCliBridgeContextTransfer,
   lookupCliBridgeContextByEnvironment,
+  lookupCliBridgeContext,
 } from "./context-transfer.js";
 import {
   assertCliBridgeProviderOptions,
@@ -198,9 +203,40 @@ export function createCliBridgeProvider(
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
+      const operation = AgentEnvironmentGetOptionsSchema.parse(getOptions ?? {});
+      operation.signal?.throwIfAborted();
+      const accepted = operation.contextTransfer;
+      if (accepted !== undefined) {
+        if (accepted.profile === undefined) throw new Error("CLI Bridge attachment requires the accepted exact profile");
+        if (accepted.workspace?.snapshot !== undefined) throw new Error("CLI Bridge provider does not support portable workspace snapshots");
+        const destination = accepted.plan.destination;
+        if (destination.provider !== name || (destination.environmentId !== undefined && destination.environmentId !== id)) {
+          throw new Error("CLI Bridge attachment targets another provider or environment");
+        }
+        const backend = destination.runner;
+        const model = acceptedDestinationModel(accepted);
+        const capabilities = await resolveCapabilities(backend, model, true, true);
+        if (capabilities.contextTransfer?.attach !== true) throw new Error("CLI Bridge context transfer attachment is unsupported by the selected deployment");
+        const transfer = await lookupCliBridgeContext(options, accepted, operation.signal);
+        if (transfer === undefined || (transfer.status !== "accepted" && transfer.status !== "replayed") || transfer.environmentId !== id) {
+          throw new Error("CLI Bridge attachment requires an available exact transfer receipt");
+        }
+        operation.signal?.throwIfAborted();
+        return createCliBridgeEnvironment({
+          options, providerName: name, environmentId: id,
+          environmentInput: { profile: snapshotAgentProfile(accepted.profile), backend,
+            ...(accepted.workspace === undefined ? {} : { workspace: accepted.workspace }),
+            ...(accepted.resources === undefined ? {} : { resources: accepted.resources }),
+            idempotencyKey: accepted.operationId },
+          allowDispatch: true, cancelRunsOnDestroy: false, capabilities,
+          selectedBackend: backend, selectedModel: model,
+          acceptedContextTransfer: accepted,
+          contextTransferReceipt: deepFreeze(ContextTransferReceiptSchema.parse(transfer)),
+        });
+      }
       const ownedRoute = optionalCliBridgeEnvironmentRoute(id);
       const transfer = ownedRoute === undefined
-        ? await lookupCliBridgeContextByEnvironment(options, id, getOptions?.signal)
+        ? await lookupCliBridgeContextByEnvironment(options, id, operation.signal)
         : undefined;
       const backend = ownedRoute?.backend ?? transfer?.destination.runner;
       const destinationModel = transfer?.destination.model;
@@ -232,6 +268,12 @@ export function createCliBridgeProvider(
       });
     },
   };
+}
+
+function acceptedDestinationModel(request: ContextTransferRequest): string {
+  const { runner, model } = request.plan.destination;
+  return model === undefined || model === runner || model.startsWith(`${runner}/`)
+    ? model ?? runner : `${runner}/${model}`;
 }
 
 function withoutRemoteRetainedCapabilities(
@@ -318,6 +360,7 @@ export function defaultCliBridgeCapabilities(
       freshSession: true,
       requestIdempotency: true,
       lookup: true,
+      attach: true,
     },
     ...(harness === "pi"
       ? {

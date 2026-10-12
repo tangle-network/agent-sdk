@@ -52,6 +52,14 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("createTangleProvider", () => {
+  it("refuses context attachment before credentials or remote lookup", async () => {
+    const get = vi.fn(async () => { throw new Error("unexpected lookup"); });
+    const credentials = vi.fn(async () => { throw new Error("unexpected credential resolution"); });
+    const provider = createTangleProvider({ client: { create: vi.fn(), get }, modelCredentials: credentials });
+    await expect(provider.get!("destination", { contextTransfer: {} as never })).rejects.toThrow(/context transfer attachment is not qualified/);
+    expect(get).not.toHaveBeenCalled();
+    expect(credentials).not.toHaveBeenCalled();
+  });
   it("refuses portable workspace snapshots before effects after reconstruction", async () => {
     let effects = 0;
     const report = await runWorkspaceSnapshotConformance({

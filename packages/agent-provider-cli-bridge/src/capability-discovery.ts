@@ -115,6 +115,8 @@ export function narrowCliBridgeCapabilities(
           freshSession: true,
           requestIdempotency: true,
           lookup: true,
+          ...(adapter.contextTransfer.attach === true && reported.contextTransfer.attach === true
+            ? { attach: true } : {}),
         }
       : undefined;
   const sessions = {

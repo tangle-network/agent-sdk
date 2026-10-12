@@ -3,6 +3,12 @@ import { runAgentEnvironmentProviderConformance, runWorkspaceSnapshotConformance
 import { createDaytonaProvider, type DaytonaLike, type DaytonaSandboxLike } from "./index.js";
 
 describe("createDaytonaProvider", () => {
+  it("refuses context attachment before remote lookup", async () => {
+    const get = vi.fn(async () => ({ id: "destination", state: "started" }));
+    const provider = createDaytonaProvider({ daytona: { create: vi.fn(), get } });
+    await expect(provider.get!("destination", { contextTransfer: {} as never })).rejects.toThrow(/context transfer attachment/);
+    expect(get).not.toHaveBeenCalled();
+  });
   it("refuses portable workspace snapshots before effects after reconstruction", async () => {
     let effects = 0;
     const report = await runWorkspaceSnapshotConformance({

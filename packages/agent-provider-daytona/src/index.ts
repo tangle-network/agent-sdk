@@ -54,6 +54,9 @@ export interface DaytonaProviderOptions {
 }
 
 export function createDaytonaProvider(options: DaytonaProviderOptions = {}): AgentEnvironmentProvider {
+  if (options.capabilities?.contextTransfer?.attach === true) {
+    throw new Error("Daytona provider does not support context transfer attachment");
+  }
   const name = options.name ?? "daytona";
   if (options.capabilities?.create?.workspaceSnapshot === true) {
     throw new Error("Daytona provider does not support portable workspace snapshots");
@@ -91,6 +94,7 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
       return createEnvironment(input);
     },
     async get(id, request) {
+      if (request?.contextTransfer !== undefined) throw new Error("Daytona provider does not support context transfer attachment");
       request?.signal?.throwIfAborted();
       const daytona = await resolveDaytona(options);
       if (!daytona.get) throw new Error("Daytona client does not expose a sandbox lookup API");

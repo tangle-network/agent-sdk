@@ -6,6 +6,7 @@ import { canonicalCandidateDigest, deepFreeze, harnessTypeSchema } from "@tangle
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
+  AgentEnvironmentGetOptions,
   AgentEnvironmentCreateIdempotencyRecord,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
@@ -94,6 +95,9 @@ export function createTangleProvider(
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
     if (configured.create?.workspaceSnapshot === true) {
       throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
+    }
+    if (configured.contextTransfer?.attach === true) {
+      throw new Error("Tangle context transfer attachment is not qualified by this receiver deployment");
     }
     if (!exactProcess && configured.exactProcess) {
       throw new Error(
@@ -400,7 +404,10 @@ export function createTangleProvider(
     },
     ...(options.client.get
       ? {
-          async get(id: string, operation?: { signal?: AbortSignal }): Promise<AgentEnvironment | null> {
+          async get(id: string, operation?: AgentEnvironmentGetOptions): Promise<AgentEnvironment | null> {
+            if (operation?.contextTransfer !== undefined) {
+              throw new Error("Tangle context transfer attachment is not qualified by this receiver deployment");
+            }
             assertProviderOperationOptions(operation, "Tangle get");
             boundedIdentifier(id, "Tangle environment id");
             await resolveCapabilities();

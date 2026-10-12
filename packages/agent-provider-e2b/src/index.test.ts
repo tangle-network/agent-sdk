@@ -3,6 +3,13 @@ import { runAgentEnvironmentProviderConformance, runWorkspaceSnapshotConformance
 import { createE2BProvider, type E2BSandboxClass } from "./index.js";
 
 describe("createE2BProvider", () => {
+  it("refuses context attachment before connecting", async () => {
+    let connects = 0;
+    const provider = createE2BProvider({ Sandbox: { create: async () => { throw new Error("unexpected create"); },
+      connect: async () => { connects++; throw new Error("unexpected connect"); } } });
+    await expect(provider.get!("destination", { contextTransfer: {} as never })).rejects.toThrow(/context transfer attachment/);
+    expect(connects).toBe(0);
+  });
   it("refuses portable workspace snapshots before effects after reconstruction", async () => {
     let effects = 0;
     const report = await runWorkspaceSnapshotConformance({

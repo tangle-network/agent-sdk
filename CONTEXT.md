@@ -9,3 +9,5 @@
 **Workspace snapshot reference.** `AgentWorkspaceSnapshotRef` identifies a canonical Runtime manifest and archive through authorized closed artifact references. Its source binding names the existing lease, allocation and snapshot policy. It carries no file bytes or manifest material. The manifest digest describes files; the separate archive digest also binds Git HEAD and the index. Avoid treating a provider-native checkpoint ID or a policy descriptor as transferable bytes.
 
 **Qualified snapshot receiver.** A deployed receiver that authorizes snapshot artifacts, verifies their exact bytes and bounded canonical structure, and restores into a fresh owned destination before agent admission. Only such a receiver advertises `create.workspaceSnapshot`.
+
+**Transfer attachment.** Reconstruction of the destination already admitted by an exact context transfer. `provider.get(id, { contextTransfer })` verifies its durable receipt, returns that receipt on the environment, and enables only the accepted first turn. It never allocates or replaces an environment. Avoid treating ordinary lookup or a repeated create as attachment.

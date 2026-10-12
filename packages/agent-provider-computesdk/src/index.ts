@@ -8,6 +8,7 @@ import {
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
+  AgentEnvironmentGetOptions,
   AgentEnvironmentEvent,
   AgentEnvironmentProvider,
   AgentEnvironmentQuery,
@@ -55,6 +56,9 @@ export interface ComputeSdkProviderOptions {
 }
 
 export function createComputeSdkProvider(options: ComputeSdkProviderOptions): AgentEnvironmentProvider {
+  if (options.capabilities?.contextTransfer?.attach === true) {
+    throw new Error("ComputeSDK provider does not support context transfer attachment");
+  }
   const name = options.name ?? "computesdk";
   if (options.capabilities?.create?.workspaceSnapshot === true) {
     throw new Error("ComputeSDK provider does not support portable workspace snapshots");
@@ -86,7 +90,9 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
     },
     ...(options.compute.sandbox.getById
       ? {
-          async get(id: string): Promise<AgentEnvironment | null> {
+          async get(id: string, request?: AgentEnvironmentGetOptions): Promise<AgentEnvironment | null> {
+            if (request?.contextTransfer !== undefined) throw new Error("ComputeSDK provider does not support context transfer attachment");
+            request?.signal?.throwIfAborted();
             const sandbox = await options.compute.sandbox.getById?.(id);
             return sandbox ? computeSandboxAsEnvironment(options, name, sandbox) : null;
           },

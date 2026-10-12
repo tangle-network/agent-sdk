@@ -14,6 +14,8 @@ import type {
   AgentRunCancellationAcknowledgement,
   AgentRunControlRef,
   TokenUsage,
+  ContextTransferRequest,
+  ContextTransferReceipt,
 } from "@tangle-network/agent-interface";
 import type {
   AgentNativeContextContinuationOptions,
@@ -62,6 +64,8 @@ import { createCliBridgeTransport } from "./transport.js";
 import type { CliBridgeTransport } from "./transport.js";
 
 export interface CreateCliBridgeEnvironmentArgs {
+  readonly acceptedContextTransfer?: ContextTransferRequest;
+  readonly contextTransferReceipt?: ContextTransferReceipt;
   readonly options: CliBridgeProviderOptions;
   readonly providerName: string;
   readonly environmentInput: CreateAgentEnvironmentInput;
@@ -147,6 +151,7 @@ export function createCliBridgeEnvironment(
       providerName,
       environmentId,
       useNativeInteractions,
+      args.acceptedContextTransfer,
     );
     // A streamed run reports usage across its events, so the totals are summed
     // here and recorded as one execution's measurement.
@@ -173,6 +178,7 @@ export function createCliBridgeEnvironment(
     provider: providerName,
     ...(args.creation === undefined ? {} : { creation: args.creation }),
     capabilities: args.capabilities,
+    ...(args.contextTransferReceipt === undefined ? {} : { contextTransferReceipt: args.contextTransferReceipt }),
     ...(environmentInput.name ? { name: environmentInput.name } : {}),
     status: async (statusOptions) => {
       statusOptions?.signal?.throwIfAborted();
@@ -201,6 +207,7 @@ export function createCliBridgeEnvironment(
         providerName,
         environmentId,
         useNativeInteractions,
+        args.acceptedContextTransfer,
       );
       return dispatchCliBridgeTurn(
         options,
@@ -235,6 +242,7 @@ export function createCliBridgeEnvironment(
         interactionsEnabled: respondToInteraction !== undefined,
         useNativeInteractions,
         selectedModel: args.selectedModel,
+        acceptedContextTransfer: args.acceptedContextTransfer,
       });
     },
     ...(respondToInteraction ? { respondToInteraction } : {}),
@@ -310,6 +318,7 @@ export function createCliBridgeEnvironment(
 }
 
 interface CreateCliBridgeSessionArgs {
+  readonly acceptedContextTransfer?: ContextTransferRequest;
   readonly id: string;
   readonly providerName: string;
   readonly options: CliBridgeProviderOptions;
@@ -458,6 +467,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.providerName,
         args.environmentId,
         args.useNativeInteractions,
+        args.acceptedContextTransfer,
       );
       const result = await collectCliBridgeTurnResult(
         streamTrackedCliBridgeTurn(

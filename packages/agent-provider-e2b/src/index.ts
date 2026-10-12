@@ -45,6 +45,9 @@ export interface E2BProviderOptions {
 }
 
 export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnvironmentProvider {
+  if (options.capabilities?.contextTransfer?.attach === true) {
+    throw new Error("E2B provider does not support context transfer attachment");
+  }
   const name = options.name ?? "e2b";
   if (options.capabilities?.create?.workspaceSnapshot === true) {
     throw new Error("E2B provider does not support portable workspace snapshots");
@@ -75,7 +78,9 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
       }
       return createEnvironment(input);
     },
-    async get(id) {
+    async get(id, request) {
+      if (request?.contextTransfer !== undefined) throw new Error("E2B provider does not support context transfer attachment");
+      request?.signal?.throwIfAborted();
       const Sandbox = options.Sandbox ?? (await loadE2BSandbox());
       if (!Sandbox.connect) return null;
       const sandbox = await Sandbox.connect(id, options.apiKey ? { apiKey: options.apiKey } : undefined);

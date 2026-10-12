@@ -6,6 +6,15 @@ import {
 } from "./index.js";
 
 describe("createComputeSdkProvider", () => {
+  it("refuses context attachment before remote lookup", async () => {
+    let gets = 0;
+    const provider = createComputeSdkProvider({ compute: { sandbox: {
+      create: async () => { throw new Error("unexpected create"); },
+      getById: async () => { gets++; throw new Error("unexpected lookup"); },
+    } } });
+    await expect(provider.get!("destination", { contextTransfer: {} as never })).rejects.toThrow(/context transfer attachment/);
+    expect(gets).toBe(0);
+  });
   it("refuses portable workspace snapshots before effects after reconstruction", async () => {
     let effects = 0;
     const report = await runWorkspaceSnapshotConformance({
