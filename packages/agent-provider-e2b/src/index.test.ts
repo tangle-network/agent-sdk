@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
+import { runAgentEnvironmentProviderConformance, runWorkspaceSnapshotConformance } from "@tangle-network/agent-provider-testkit";
 import { createE2BProvider, type E2BSandboxClass } from "./index.js";
 
 describe("createE2BProvider", () => {
+  it("refuses portable workspace snapshots before effects after reconstruction", async () => {
+    let effects = 0;
+    const report = await runWorkspaceSnapshotConformance({
+      name: "e2b",
+      createProvider: () => createE2BProvider({ Sandbox: { create: async () => { effects++; throw new Error("unexpected create"); } } }),
+      effectCount: () => effects,
+    });
+    expect(report.checked).toContain("workspace-snapshot-zero-effects");
+    expect(effects).toBe(0);
+  });
+
   it("refuses keyed creates before remote effects across restart and lost acknowledgements", async () => {
     let creates = 0;
     let loseAcknowledgement = false;

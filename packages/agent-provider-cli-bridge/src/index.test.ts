@@ -14,11 +14,23 @@ import {
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
 import { describe, expect, it } from "vitest";
+import { runWorkspaceSnapshotConformance } from "@tangle-network/agent-provider-testkit";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
 import { toChatCompletionsBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
+  it("refuses portable workspace snapshots before discovery or dispatch after reconstruction", async () => {
+    let effects = 0;
+    const report = await runWorkspaceSnapshotConformance({
+      name: "cli-bridge",
+      createProvider: () => createCliBridgeProvider({ baseUrl: "http://bridge.local", fetch: async () => { effects++; throw new Error("unexpected network"); } }),
+      effectCount: () => effects,
+    });
+    expect(report.checked).toContain("workspace-snapshot-zero-effects");
+    expect(effects).toBe(0);
+  });
+
   it("refuses runtime attachments before capability discovery or environment creation", async () => {
     let calls = 0;
     const provider = createCliBridgeProvider({

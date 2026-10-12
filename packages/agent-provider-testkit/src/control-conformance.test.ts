@@ -35,6 +35,7 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   runAgentEnvironmentProviderConformance,
+  runWorkspaceSnapshotConformance,
   runInteractionResponseConformance,
   runPortableContextConformance,
   runSessionReplayConformance,
@@ -944,6 +945,37 @@ function workspaceForkRequest(checkpoint: WorkspaceCheckpointRef) {
 }
 
 describe("capability denial", () => {
+  it("detects a receiver that silently ignores a portable snapshot", async () => {
+    let cleaned = 0;
+    const provider: AgentEnvironmentProvider = {
+      name: "silent-snapshot",
+      capabilities: () => disabledCapabilities(),
+      async create() { return { id: "wrongly-created", provider: "silent-snapshot", status: async () => "running", async *stream() {}, destroy: async () => { cleaned++; } }; },
+    };
+    await expect(runWorkspaceSnapshotConformance({ name: provider.name, createProvider: () => provider })).rejects.toThrow(/must be refused explicitly/);
+    expect(cleaned).toBe(1);
+  });
+
+  it("detects effects before an unsupported snapshot refusal", async () => {
+    let effects = 0;
+    const provider: AgentEnvironmentProvider = {
+      name: "late-snapshot-refusal",
+      capabilities: () => disabledCapabilities(),
+      async create() { effects++; throw new Error("portable workspace snapshots are unsupported"); },
+    };
+    await expect(runWorkspaceSnapshotConformance({ name: provider.name, createProvider: () => provider, effectCount: () => effects })).rejects.toThrow(/caused credentials, allocation or admission effects/);
+    expect(effects).toBe(2);
+  });
+
+  it("requires a real restore fixture when snapshot support is advertised", async () => {
+    const provider: AgentEnvironmentProvider = {
+      name: "unqualified-snapshot",
+      capabilities: () => ({ ...disabledCapabilities(), create: { workspaceSnapshot: true } }),
+      async create() { throw new Error("must not create"); },
+    };
+    await expect(runWorkspaceSnapshotConformance({ name: provider.name, createProvider: () => provider })).rejects.toThrow(/requires a restore fixture and verification/);
+  });
+
   it("rejects malformed capabilities before creating an environment", async () => {
     let createCalls = 0;
     const provider: AgentEnvironmentProvider = {
@@ -1628,8 +1660,10 @@ function conformanceCreate(
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
-  return (input: CreateAgentEnvironmentInput) =>
-    createAgentEnvironmentWithIdempotency(records, input, create);
+  return (input: CreateAgentEnvironmentInput) => {
+    if (input.workspace?.snapshot !== undefined) throw new Error("Fake provider does not support portable workspace snapshots");
+    return createAgentEnvironmentWithIdempotency(records, input, create);
+  };
 }
 
 function disabledCapabilities() {

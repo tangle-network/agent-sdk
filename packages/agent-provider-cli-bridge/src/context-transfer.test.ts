@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createContextTransferRequest,
   canonicalAgentProfileDigest,
+  agentWorkspaceSnapshotRefDigest,
   portableContextPlanDigest,
   portableContextTransferPlanDigest,
   portableConversationContextDigest,
@@ -104,6 +105,24 @@ function receipt(
 }
 
 describe("CLI Bridge portable context", () => {
+  it("refuses an unqualified portable workspace before transfer transport", async () => {
+    let effects = 0;
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", fetch: async () => { effects++; throw new Error("unexpected transport"); } });
+    const base = request();
+    const hash = (value: string) => `sha256:${value.repeat(64)}` as const;
+    const ref = (value: string) => ({ locator: { kind: "private-cas" as const, namespace: "transfer-fixture", digest: hash(value) }, sha256: hash(value), byteLength: 128 });
+    const snapshot = {
+      kind: "agent-candidate-workspace-snapshot" as const, digest: hash("a"), manifest: ref("a"), archive: ref("b"),
+      source: { leaseId: "source-lease", leaseRecordDigest: hash("c"), workspace: { provider: "source", root: "/workspace/source", identityDigest: hash("d") }, sourceSnapshotDigest: hash("e"), sourceSnapshotPolicy: { kind: "provider-declared" as const, name: "fixture", version: 1, digest: hash("f") } },
+    };
+    const { digest: _oldDigest, ...planMaterial } = base.plan;
+    const boundMaterial = { ...planMaterial, destination: { ...base.plan.destination, workspaceSnapshotDigest: agentWorkspaceSnapshotRefDigest(snapshot) } };
+    const plan = { ...boundMaterial, digest: portableContextTransferPlanDigest(boundMaterial) };
+    const transfer = createContextTransferRequest({ operationId: base.operationId, plan, acceptance: { ...base.acceptance, planDigest: plan.digest }, workspace: { snapshot } });
+    await expect(provider.contextTransfer!.transfer(transfer)).rejects.toThrow(/does not support portable workspace snapshots/);
+    expect(effects).toBe(0);
+  });
+
   it("sends selected bytes and commitments through the actual SDK transport", async () => {
     const transfer = request(true);
     let body: string | undefined;

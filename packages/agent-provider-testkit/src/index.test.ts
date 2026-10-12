@@ -139,6 +139,7 @@ function fakeProvider(
       confidential: false,
     }),
     create(input) {
+      if (input.workspace?.snapshot !== undefined) throw new Error("Fake provider does not support portable workspace snapshots");
       return createAgentEnvironmentWithIdempotency(
         createRecords,
         input,

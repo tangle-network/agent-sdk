@@ -84,6 +84,7 @@
     "undici": "catalog:"
   },
   "devDependencies": {
+    "@tangle-network/agent-provider-testkit": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "7.0.2",
     "vitest": "catalog:"

@@ -81,6 +81,7 @@ export * from "./plan.js";
 export * from "./runtime-control.js";
 export * from "./portable-context.js";
 export * from "./workspace-branching.js";
+export * from "./workspace-snapshot.js";
 export * from "./interaction.js";
 export * from "./agent-candidate.js";
 export * from "./agent-candidate-schema.js";

@@ -45,6 +45,10 @@ A capability declaration is not evidence that it was delivered, opened, or appli
 
 ## Workspace paths
 
+`WorkspaceRequest.snapshot` restores a portable workspace through closed content-addressed manifest and archive references. It includes the source lease and policy identities, and carries no inline file bytes. The accepted request binds both artifact hashes, because the archive also identifies Git HEAD and staged state. A snapshot cannot be combined with `repoUrl`, `gitRef` or a provider-native `checkpoint`; its `cwd` uses the repository base.
+
+Only a qualified deployed receiver advertises `create.workspaceSnapshot`. It authorizes and verifies artifacts, enforces archive limits, and finishes restoration into a fresh owned destination before accepting a turn. An unsupported adapter refuses before credentials, provisioning or native admission. Hashes and public lease identities do not grant artifact access or workspace control.
+
 `WorkspaceRequest.cwd` is an explicitly based path reference.
 Use `base: "repository"` for a portable repository-relative POSIX path.
 Use `base: "host"` for a provider-owned native host path.

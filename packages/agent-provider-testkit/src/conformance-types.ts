@@ -43,6 +43,8 @@ export interface ProviderConformanceOptions {
   keyedCreate?: "required" | "unsupported";
   requireUsage?: boolean;
   requireDispatch?: boolean;
+  /** Required for a provider advertising portable snapshot restoration. */
+  workspaceSnapshot?: import("./workspace-snapshot-conformance.js").WorkspaceSnapshotConformanceOptions["snapshot"];
 }
 
 export interface ProviderConformanceReport {

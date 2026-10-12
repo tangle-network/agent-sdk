@@ -7,6 +7,7 @@ import type {
   ProviderConformanceReport,
 } from "./conformance-types.js";
 import { assert, checkCapabilityExposure, checkWorkspace, collect, environmentCapabilityDocument, isTerminalEvent, withEnvironmentCleanup } from "./conformance-helpers.js";
+import { runWorkspaceSnapshotConformance } from "./workspace-snapshot-conformance.js";
 
 export async function runAgentEnvironmentProviderConformance(
   options: ProviderConformanceOptions,
@@ -241,6 +242,14 @@ export async function runAgentEnvironmentProviderConformance(
 
     await checkWorkspace(environment, environmentCapabilities, checked);
     checked.push("capability-denial");
+
+    const snapshotChecks = await runWorkspaceSnapshotConformance({
+      name: options.name,
+      createProvider: options.createProvider,
+      createInput: options.createInput,
+      ...(options.workspaceSnapshot === undefined ? {} : { snapshot: options.workspaceSnapshot }),
+    });
+    checked.push(...snapshotChecks.checked);
 
     return {
       provider: provider.name,

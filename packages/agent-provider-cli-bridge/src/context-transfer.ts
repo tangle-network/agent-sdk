@@ -34,6 +34,9 @@ export async function transferCliBridgeContext(
   signal?: AbortSignal,
 ): Promise<ContextTransferResult> {
   const exact = ContextTransferRequestSchema.parse(request);
+  if (exact.workspace?.snapshot !== undefined) {
+    throw new Error("CLI Bridge provider does not support portable workspace snapshots");
+  }
   const transport = createCliBridgeTransport(options);
   try {
     const response = await transport.fetch(

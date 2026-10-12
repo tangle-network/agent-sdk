@@ -18,6 +18,7 @@ import {
 } from "./portable-context-plan.js";
 import { PortableContextTransferPlanSchema, projectPortableContextPlan, type PortableContextTransferPlan } from "./portable-context-plan-wire.js";
 import { idSchema, sha256DigestSchema, wireDigest } from "./portable-context-shared.js";
+import { agentWorkspaceSnapshotRefDigest } from "./workspace-snapshot.js";
 
 export const ContextPlanAcceptanceSchema = z.strictObject({
   planDigest: sha256DigestSchema,
@@ -78,6 +79,11 @@ export const ContextTransferRequestSchema = z
     resources: ResourceRequestSchema.optional(),
   })
   .superRefine((request, refinement) => {
+    const snapshot = request.workspace?.snapshot;
+    if (snapshot === undefined ? request.plan.destination.workspaceSnapshotDigest !== undefined :
+      request.plan.destination.workspaceSnapshotDigest !== agentWorkspaceSnapshotRefDigest(snapshot)) {
+      refinement.addIssue({ code: "custom", path: ["plan", "destination", "workspaceSnapshotDigest"], message: "accepted workspace snapshot digest must match the exact transfer snapshot" });
+    }
     if (request.plan.destination.environmentId === undefined && request.profile === undefined) {
       refinement.addIssue({ code: "custom", path: ["profile"], message: "an unbound destination requires its exact profile" });
     }

@@ -56,6 +56,9 @@ export interface ComputeSdkProviderOptions {
 
 export function createComputeSdkProvider(options: ComputeSdkProviderOptions): AgentEnvironmentProvider {
   const name = options.name ?? "computesdk";
+  if (options.capabilities?.create?.workspaceSnapshot === true) {
+    throw new Error("ComputeSDK provider does not support portable workspace snapshots");
+  }
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -70,6 +73,9 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
     capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.workspace?.snapshot !== undefined) {
+        throw new Error("ComputeSDK provider does not support portable workspace snapshots");
+      }
       if (input.runtimeAttachments !== undefined) {
         throw new Error("ComputeSDK provider does not support runtime MCP attachments");
       }

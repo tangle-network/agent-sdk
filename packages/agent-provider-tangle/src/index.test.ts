@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   runAgentEnvironmentProviderConformance,
+  runWorkspaceSnapshotConformance,
   runAgentExactProcessProviderLifecycleChecks,
 } from "@tangle-network/agent-provider-testkit";
 import type {
@@ -51,6 +52,17 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("createTangleProvider", () => {
+  it("refuses portable workspace snapshots before effects after reconstruction", async () => {
+    let effects = 0;
+    const report = await runWorkspaceSnapshotConformance({
+      name: "tangle",
+      createProvider: () => createTangleProvider({ client: { create: async () => { effects++; throw new Error("unexpected create"); } }, modelCredentials: async () => { effects++; throw new Error("unexpected credentials"); } }),
+      effectCount: () => effects,
+    });
+    expect(report.checked).toContain("workspace-snapshot-zero-effects");
+    expect(effects).toBe(0);
+  });
+
   it("refuses to advertise exact processes without the exact adapter", async () => {
     const provider = createTangleProvider({
       client: {

@@ -46,6 +46,9 @@ export interface E2BProviderOptions {
 
 export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "e2b";
+  if (options.capabilities?.create?.workspaceSnapshot === true) {
+    throw new Error("E2B provider does not support portable workspace snapshots");
+  }
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -61,6 +64,9 @@ export function createE2BProvider(options: E2BProviderOptions = {}): AgentEnviro
     capabilities: () => options.capabilities ?? defaultE2BCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.workspace?.snapshot !== undefined) {
+        throw new Error("E2B provider does not support portable workspace snapshots");
+      }
       if (input.runtimeAttachments !== undefined) {
         throw new Error("E2B provider does not support runtime MCP attachments");
       }
