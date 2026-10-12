@@ -136,9 +136,11 @@ describe("CLI Bridge portable context", () => {
           ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
         if (init?.method === "POST") return new Response("data: [DONE]\n\n", { headers: {
           "content-type": "text/event-stream", "x-run-id": transfer.plan.destination.runId,
-          "x-session-id": transfer.plan.destination.sessionId,
-          "x-execution-id": transfer.plan.destination.executionId,
-          "x-request-digest": `sha256:${"e".repeat(64)}`,
+          "x-run-provider": transfer.plan.destination.provider,
+          "x-run-environment-id": transfer.plan.destination.environmentId!,
+          "x-run-session-id": transfer.plan.destination.sessionId,
+          "x-run-execution-id": transfer.plan.destination.executionId,
+          "x-run-request-digest": `sha256:${"e".repeat(64)}`,
         } });
         return Response.json(receipt(transfer, "replayed"));
       } };
