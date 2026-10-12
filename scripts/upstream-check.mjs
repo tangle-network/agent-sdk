@@ -104,10 +104,10 @@ const BEHAVIORAL = {
     packages: ["@tangle-network/agent-interface"],
     files: ["portable-context.test.ts", "control-conformance.test.ts"],
     pattern:
-      "matches a fresh-session receipt exactly|rejects duplicate message identities|runPortableContextConformance",
-    minTests: 3,
+      "keeps omitted message bytes|projects selected and transformed parts|matches a fresh-session receipt exactly|rejects duplicate message identities|runPortableContextConformance",
+    minTests: 5,
     summary:
-      "Packed portable-context receipt identity contract plus the packed portable-context conformance suite.",
+      "Packed selected-content privacy, part commitments, receipt identity, and portable-context conformance.",
   },
 };
 

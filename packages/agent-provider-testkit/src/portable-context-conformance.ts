@@ -13,6 +13,7 @@ import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
   portableContextPlanResultMatchesRequest,
+  projectPortableContextPlan,
 } from "@tangle-network/agent-interface";
 import {
   AgentNativeContextContinuationResultSchema,
@@ -100,6 +101,7 @@ export async function runPortableContextConformance(
   const mismatchedTransfer = {
     requestDigest: contextTransferRequestDigest(mismatchedTransferMaterial),
     ...mismatchedTransferMaterial,
+    plan: projectPortableContextPlan(result.plan),
   };
   assert(
     !ContextTransferRequestSchema.safeParse(mismatchedTransfer).success,
