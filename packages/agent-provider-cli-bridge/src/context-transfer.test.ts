@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  ContextTransferRequestSchema,
+  createContextTransferRequest,
   canonicalAgentProfileDigest,
-  contextTransferRequestDigest,
   portableContextPlanDigest,
+  portableContextTransferPlanDigest,
   portableConversationContextDigest,
   type AgentProfile,
   type ContextTransferRequest,
@@ -15,7 +15,7 @@ import { toRetainedTurnBody } from "./wire.js";
 
 const profile: AgentProfile = { name: "destination", harness: "codex" };
 
-function request(): ContextTransferRequest {
+function request(omitPrivate = false): ContextTransferRequest {
   const contextMaterial = {
     source: {
       runId: "run-source",
@@ -30,18 +30,22 @@ function request(): ContextTransferRequest {
     messages: [{
       id: "message-source",
       role: "user" as const,
-      parts: [{ type: "text" as const, text: "portable marker" }],
+      parts: [{ type: "text" as const, text: "portable marker" },
+        ...(omitPrivate ? [{ type: "reasoning" as const, text: "private transport sentinel" }] : [])],
       timestamp: "2026-08-01T20:00:00.000Z",
     }],
     attachments: [],
   };
-  const context = {
+  const source = {
     ...contextMaterial,
     digest: portableConversationContextDigest(contextMaterial),
   };
+  const selectedMaterial = { ...contextMaterial, completeness: omitPrivate ? "partial" as const : "complete" as const,
+    messages: contextMaterial.messages.map((message) => ({ ...message, parts: [message.parts[0]!] })) };
+  const context = { ...selectedMaterial, digest: portableConversationContextDigest(selectedMaterial) };
   const planMaterial = {
     planId: "plan-transfer",
-    source: context,
+    source,
     destination: {
       runner: "codex",
       provider: "cli-bridge",
@@ -55,10 +59,11 @@ function request(): ContextTransferRequest {
     messages: [{
       messageId: "message-source",
       action: "include" as const,
-      parts: [{ partIndex: 0, action: "include" as const }],
+      parts: [{ partIndex: 0, action: "include" as const },
+        ...(omitPrivate ? [{ partIndex: 1, action: "omit" as const, reason: "private transport explanation sentinel" }] : [])],
     }],
     context,
-    requiresAcceptance: false,
+    requiresAcceptance: omitPrivate,
   };
   const plan = { ...planMaterial, digest: portableContextPlanDigest(planMaterial) };
   const material = {
@@ -67,13 +72,10 @@ function request(): ContextTransferRequest {
     acceptance: {
       planDigest: plan.digest,
       acceptedAt: "2026-08-01T20:00:01.000Z",
-      acceptedBy: "system" as const,
+      acceptedBy: omitPrivate ? "user" as const : "system" as const,
     },
   };
-  return ContextTransferRequestSchema.parse({
-    ...material,
-    requestDigest: contextTransferRequestDigest(material),
-  });
+  return createContextTransferRequest(material);
 }
 
 function receipt(
@@ -102,6 +104,21 @@ function receipt(
 }
 
 describe("CLI Bridge portable context", () => {
+  it("sends selected bytes and commitments through the actual SDK transport", async () => {
+    const transfer = request(true);
+    let body: string | undefined;
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local",
+      fetch: async (_url, init) => {
+        body = String(init?.body);
+        return Response.json(receipt(transfer, "accepted"));
+      } });
+    await expect(provider.contextTransfer!.transfer(transfer)).resolves.toEqual(receipt(transfer, "accepted"));
+    expect(body).toContain("portable marker");
+    expect(body).not.toContain("private transport sentinel");
+    expect(body).not.toContain("private transport explanation sentinel");
+    expect(JSON.parse(body!)).toEqual(transfer);
+  });
+
   it("does not advertise transfer until the exact Bridge route confirms it", async () => {
     let called = false;
     const provider = createCliBridgeProvider({
@@ -272,11 +289,10 @@ describe("CLI Bridge portable context", () => {
     const { digest: _digest, ...planMaterial } = original.plan;
     const { environmentId: _environmentId, ...destination } = planMaterial.destination;
     const material = { ...planMaterial, destination };
-    const plan = { ...material, digest: portableContextPlanDigest(material) };
+    const plan = { ...material, digest: portableContextTransferPlanDigest(material) };
     const transferMaterial = { operationId: original.operationId, plan, profile,
       acceptance: { ...original.acceptance, planDigest: plan.digest } };
-    const transfer = ContextTransferRequestSchema.parse({ ...transferMaterial,
-      requestDigest: contextTransferRequestDigest(transferMaterial) });
+    const transfer = createContextTransferRequest(transferMaterial);
     const boundReceipt = { ...receipt(transfer, "replayed"), environmentId: "actual-bound-environment" };
     const posts: string[] = [];
     const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local",

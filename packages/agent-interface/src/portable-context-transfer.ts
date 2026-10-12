@@ -16,6 +16,7 @@ import {
   PortableContextPlanSchema,
   type PortableContextPlan,
 } from "./portable-context-plan.js";
+import { PortableContextTransferPlanSchema, projectPortableContextPlan, type PortableContextTransferPlan } from "./portable-context-plan-wire.js";
 import { idSchema, sha256DigestSchema, wireDigest } from "./portable-context-shared.js";
 
 export const ContextPlanAcceptanceSchema = z.strictObject({
@@ -29,7 +30,7 @@ export type ContextPlanAcceptance = z.infer<
 
 export interface ContextTransferRequestMaterial {
   operationId: string;
-  plan: PortableContextPlan;
+  plan: PortableContextPlan | PortableContextTransferPlan;
   acceptance: ContextPlanAcceptance;
   profile?: AgentProfile;
   workspace?: WorkspaceRequest;
@@ -38,7 +39,7 @@ export interface ContextTransferRequestMaterial {
 
 const ContextTransferRequestMaterialSchema = z.strictObject({
   operationId: idSchema,
-  plan: PortableContextPlanSchema,
+  plan: z.union([PortableContextTransferPlanSchema, PortableContextPlanSchema]),
   acceptance: ContextPlanAcceptanceSchema,
   profile: agentProfileSchema.optional(),
   workspace: WorkspaceRequestSchema.optional(),
@@ -59,11 +60,18 @@ export function contextTransferRequestDigest(
   });
 }
 
+/** Validate the complete local plan, then create the selected-content destination request. */
+export function createContextTransferRequest(material: ContextTransferRequestMaterial): ContextTransferRequest {
+  const exact = ContextTransferRequestMaterialSchema.parse(material);
+  const plan = "kind" in exact.plan ? exact.plan : projectPortableContextPlan(exact.plan);
+  return ContextTransferRequestSchema.parse({ ...exact, plan, requestDigest: contextTransferRequestDigest(exact) });
+}
+
 export const ContextTransferRequestSchema = z
   .strictObject({
     operationId: idSchema,
     requestDigest: sha256DigestSchema,
-    plan: PortableContextPlanSchema,
+    plan: PortableContextTransferPlanSchema,
     acceptance: ContextPlanAcceptanceSchema,
     profile: agentProfileSchema.optional(),
     workspace: WorkspaceRequestSchema.optional(),

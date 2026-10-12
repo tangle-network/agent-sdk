@@ -1,4 +1,5 @@
 import {
+  createContextTransferRequest,
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextBoundaryProofSchema,
@@ -12,6 +13,7 @@ import {
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
   portableContextPlanResultMatchesRequest,
+  projectPortableContextPlan,
 } from "@tangle-network/agent-interface";
 import {
   AgentNativeContextContinuationResultSchema,
@@ -99,6 +101,7 @@ export async function runPortableContextConformance(
   const mismatchedTransfer = {
     requestDigest: contextTransferRequestDigest(mismatchedTransferMaterial),
     ...mismatchedTransferMaterial,
+    plan: projectPortableContextPlan(result.plan),
   };
   assert(
     !ContextTransferRequestSchema.safeParse(mismatchedTransfer).success,
@@ -117,10 +120,7 @@ export async function runPortableContextConformance(
       acceptedBy: "user" as const,
     },
   };
-  const transferRequest = ContextTransferRequestSchema.parse({
-    requestDigest: contextTransferRequestDigest(transferMaterial),
-    ...transferMaterial,
-  });
+  const transferRequest = createContextTransferRequest(transferMaterial);
   const receipt = ContextTransferResultSchema.parse(
     await options.transfer(transferRequest),
   );
@@ -161,10 +161,7 @@ export async function runPortableContextConformance(
     ...transferMaterial,
     acceptance: { ...transferMaterial.acceptance, acceptedBy: "policy" as const },
   };
-  const changedTransfer = ContextTransferRequestSchema.parse({
-    requestDigest: contextTransferRequestDigest(changedTransferMaterial),
-    ...changedTransferMaterial,
-  });
+  const changedTransfer = createContextTransferRequest(changedTransferMaterial);
   const transferConflict = ContextTransferResultSchema.parse(
     await options.transfer(changedTransfer),
   );

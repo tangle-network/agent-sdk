@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentProfileDigest } from "./index.js";
+import { canonicalAgentProfileDigest, canonicalCandidateDigest as wireDigest } from "./index.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
 } from "./environment-runtime.js";
 import {
   ContextTransferReceiptSchema,
+  createContextTransferRequest,
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextContinuationAcknowledgementSchema,
@@ -16,11 +17,12 @@ import {
   PortableConversationContextSchema,
   contextTransferReceiptMatches,
   contextTransferResultMatchesRequest,
-  contextTransferRequestDigest,
   nativeContextContinuationAcknowledgementMatches,
   nativeContextContinuationRequestDigest,
   nativeContextContinuationTurnDigest,
   portableContextPlanDigest,
+  portableContextTransferPlanDigest,
+  PortableContextTransferPlanSchema,
   portableContextPlanRequestDigest,
   portableContextPlanResultMatchesRequest,
   portableConversationContextDigest,
@@ -142,6 +144,70 @@ describe("portable conversation context", () => {
 });
 
 describe("portable context plan and transfer", () => {
+  it("keeps omitted message bytes out of the canonical transfer wire", () => {
+    const plan = contextPlan();
+    const material = {
+      operationId: "selected-content-only",
+      plan,
+      acceptance: {
+        planDigest: plan.digest,
+        acceptedAt: "2026-08-01T20:01:00.000Z",
+        acceptedBy: "user" as const,
+      },
+    };
+    const request = createContextTransferRequest(material);
+    expect(JSON.stringify(request)).not.toContain("private runner state");
+    expect(JSON.stringify(request)).not.toContain(wireDigest(source.messages[1]!.parts[0]));
+    expect(request.plan.source.messages[1]!.parts).toEqual([null]);
+    expect(JSON.stringify(request)).toContain("Investigate the failure.");
+    expect(request.plan.digest).toBe(plan.digest);
+    expect(ContextTransferRequestSchema.safeParse({ ...material, requestDigest: request.requestDigest }).success).toBe(false);
+    expect(PortableContextTransferPlanSchema.parse(JSON.parse(JSON.stringify(request.plan)))).toEqual(request.plan);
+    expect(PortableContextTransferPlanSchema.safeParse({ ...request.plan,
+      destination: { ...request.plan.destination, sessionId: "changed" } }).success).toBe(false);
+    expect(plan.source.messages[1]!.parts[0]).toEqual({ type: "reasoning", text: "private runner state" });
+  });
+
+  it("projects selected and transformed parts with attachment indexes into the selected message", () => {
+    const original = contextPlan();
+    const sourceMaterial = {
+      ...original.source,
+      messages: [{ ...original.source.messages[0]!, parts: [
+        { type: "text", text: "omitted text sentinel" },
+        { type: "file", filename: "selected.txt", content: "selected file" },
+        { type: "reasoning", text: "omitted reasoning sentinel" },
+      ] }],
+      attachments: [{ messageId: "message-1", partIndex: 1, digest: `sha256:${"c".repeat(64)}` as const, name: "selected.txt" }],
+    };
+    const { digest: _sourceDigest, ...sourceBytes } = sourceMaterial;
+    const source = { ...sourceBytes, digest: portableConversationContextDigest(sourceBytes) };
+    const summary = { type: "text" as const, text: "selected summary" };
+    const contextMaterial = { source: source.source, completeness: "partial" as const,
+      messages: [{ ...source.messages[0]!, parts: [source.messages[0]!.parts[1], summary] }],
+      attachments: source.attachments.map((item) => ({ ...item, partIndex: 0 })) };
+    const context = { ...contextMaterial, digest: portableConversationContextDigest(contextMaterial) };
+    const { digest: _digest, ...material } = original;
+    const local = { ...material, source, context, messages: [{ messageId: "message-1", action: "include" as const,
+      parts: [{ partIndex: 0, action: "omit" as const, reason: "omitted explanation sentinel" },
+        { partIndex: 1, action: "include" as const },
+        { partIndex: 2, action: "transform" as const, reason: "private transform explanation sentinel", output: summary }] }] };
+    const plan = PortableContextPlanSchema.parse({ ...local, digest: portableContextPlanDigest(local) });
+    const request = createContextTransferRequest({ operationId: "mixed-part-transfer", plan,
+      acceptance: { planDigest: plan.digest, acceptedAt: "2026-08-01T20:01:00.000Z", acceptedBy: "user" } });
+    const wire = JSON.stringify(request);
+    for (const hidden of ["omitted text sentinel", "omitted reasoning sentinel", "omitted explanation sentinel", "private transform explanation sentinel"]) {
+      expect(wire).not.toContain(hidden);
+    }
+    expect(request.plan.context.attachments[0]!.partIndex).toBe(0);
+    expect(request.plan.context.messages[0]!.parts).toEqual([source.messages[0]!.parts[1], summary]);
+    const tamperedContext = { ...request.plan.context, messages: [{ ...request.plan.context.messages[0]!, parts: [{ type: "text", text: "forged" }, summary] }] };
+    const { digest: _contextDigest, ...changedMaterial } = tamperedContext;
+    const { digest: _planDigest, ...transferMaterial } = request.plan;
+    const forged = { ...transferMaterial, context: { ...changedMaterial, digest: portableConversationContextDigest(changedMaterial) } };
+    expect(PortableContextTransferPlanSchema.safeParse({ ...forged,
+      digest: portableContextTransferPlanDigest(forged) }).success).toBe(false);
+  });
+
   it("binds every inclusion and omission to one canonical plan digest", () => {
     const plan = contextPlan();
     expect(PortableContextPlanSchema.parse(plan)).toEqual(plan);
@@ -295,10 +361,7 @@ describe("portable context plan and transfer", () => {
       },
     };
     expect(() =>
-      ContextTransferRequestSchema.parse({
-        requestDigest: contextTransferRequestDigest(transferMaterial),
-        ...transferMaterial,
-      }),
+      createContextTransferRequest(transferMaterial),
     ).toThrow(/requires user or policy acceptance/);
   });
 
@@ -314,10 +377,7 @@ describe("portable context plan and transfer", () => {
       },
     };
     expect(() =>
-      ContextTransferRequestSchema.parse({
-        requestDigest: contextTransferRequestDigest(systemMaterial),
-        ...systemMaterial,
-      }),
+      createContextTransferRequest(systemMaterial),
     ).toThrow(/requires user or policy acceptance/);
     const mismatchMaterial = {
       operationId: "transfer-1",
@@ -329,10 +389,7 @@ describe("portable context plan and transfer", () => {
       },
     };
     expect(() =>
-      ContextTransferRequestSchema.parse({
-        requestDigest: contextTransferRequestDigest(mismatchMaterial),
-        ...mismatchMaterial,
-      }),
+      createContextTransferRequest(mismatchMaterial),
     ).toThrow(/must match/);
   });
 
@@ -347,10 +404,7 @@ describe("portable context plan and transfer", () => {
         acceptedBy: "user" as const,
       },
     };
-    const request = ContextTransferRequestSchema.parse({
-      requestDigest: contextTransferRequestDigest(material),
-      ...material,
-    });
+    const request = createContextTransferRequest(material);
     const receipt: ContextTransferReceipt = {
       status: "accepted",
       operationId: request.operationId,
@@ -475,10 +529,7 @@ describe("portable context plan and transfer", () => {
           acceptedBy: "user" as const,
         },
       };
-      const request = ContextTransferRequestSchema.parse({
-        requestDigest: contextTransferRequestDigest(material),
-        ...material,
-      });
+      const request = createContextTransferRequest(material);
       const result = ContextTransferResultSchema.parse({
         status,
         operationId: request.operationId,
@@ -788,7 +839,7 @@ describe("provider-issued context transfer destinations", () => {
       workspace: { repoUrl: "https://example.com/repository.git", gitRef: "0123456789abcdef" },
       acceptance: { planDigest: plan.digest, acceptedAt: "2026-08-01T20:01:00.000Z", acceptedBy: "user" as const },
     };
-    const request = ContextTransferRequestSchema.parse({ ...material, requestDigest: contextTransferRequestDigest(material) });
+    const request = createContextTransferRequest(material);
     const receipt = ContextTransferReceiptSchema.parse({
       status: "accepted", operationId: request.operationId, requestDigest: request.requestDigest,
       planDigest: plan.digest, contextDigest: plan.context.digest,
