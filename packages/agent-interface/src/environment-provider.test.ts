@@ -462,7 +462,7 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     ).toThrow(/retained control for early admission/);
   });
 
-  it("advertises context transfer only with every durable admission guarantee", () => {
+  it("advertises fresh context transfer only with every durable admission guarantee", () => {
     const contextTransfer = {
       freshSession: true,
       requestIdempotency: true,
@@ -471,12 +471,47 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     expect(
       AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities, contextTransfer }),
     ).toMatchObject({ contextTransfer });
-    for (const field of Object.keys(contextTransfer) as Array<keyof typeof contextTransfer>) {
+    for (const field of ["requestIdempotency", "lookup"] as const) {
       expect(() => AgentEnvironmentCapabilitiesSchema.parse({
         ...capabilities,
         contextTransfer: { ...contextTransfer, [field]: false },
-      })).toThrow(/fresh-session admission, request idempotency, and lookup together/);
+      })).toThrow(/requires durable lookup/);
     }
+  });
+
+  it("advertises durable lookup independently of fresh admission and retained model controls", () => {
+    const contextTransfer = { freshSession: false, requestIdempotency: false, lookup: true };
+    expect(AgentEnvironmentCapabilitiesSchema.parse({
+      ...capabilities,
+      contextTransfer,
+      retainedControl: undefined,
+      nativeContinuation: undefined,
+      sessions: { continue: false, list: false, messages: false },
+      streaming: { live: false, replay: false, detach: false, turnIdempotency: false },
+    }).contextTransfer).toEqual(contextTransfer);
+    for (const flag of ["attach", "workspaceSnapshot"] as const) {
+      expect(() => AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities,
+        contextTransfer: { ...contextTransfer, [flag]: true },
+      })).toThrow(/fresh-session admission and request idempotency together/);
+    }
+    expect(() => AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities,
+      contextTransfer: { ...contextTransfer, lookup: false },
+    })).toThrow(/requires durable lookup/);
+  });
+
+  it("keeps transfer snapshot support independent from ordinary create", () => {
+    for (const workspaceSnapshot of [undefined, false, true]) {
+      const contextTransfer = { freshSession: true, requestIdempotency: true, lookup: true,
+        ...(workspaceSnapshot === undefined ? {} : { workspaceSnapshot }) };
+      const parsed = AgentEnvironmentCapabilitiesSchema.parse({
+        ...capabilities, contextTransfer, create: { workspaceSnapshot: false },
+      });
+      expect(parsed.contextTransfer).toEqual(contextTransfer);
+      expect(parsed.create?.workspaceSnapshot).toBe(false);
+    }
+    expect(() => AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities,
+      contextTransfer: { freshSession: true, requestIdempotency: true, lookup: true, workspaceSnapshot: "yes" },
+    })).toThrow();
   });
 
   it("advertises retained run control only with every identity guarantee", () => {

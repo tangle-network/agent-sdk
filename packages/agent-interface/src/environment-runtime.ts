@@ -5,7 +5,7 @@ import {
   canonicalCandidateDigest,
   canonicalCandidateJson,
 } from "./agent-candidate-schema-common.js";
-import type { Sha256Digest } from "./agent-candidate.js";
+import type { AgentCandidateArtifactPort, Sha256Digest } from "./agent-candidate.js";
 import type { AgentProfile, AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import type { InputPart } from "./parts.js";
@@ -446,13 +446,15 @@ export interface AgentEnvironmentCapabilities {
     /** The provider exposes the exact continued run before terminal output. */
     admissionControl?: boolean;
   };
-  /** Present only when fresh-session portable context transfer is durable. */
+  /** Durable portable-context lookup and independently qualified fresh-session admission. */
   contextTransfer?: {
     freshSession: boolean;
     requestIdempotency: boolean;
     lookup: boolean;
     /** get(id, { contextTransfer }) verifies the durable receipt and enables only its first turn. */
     attach?: boolean;
+    /** Restores accepted snapshot refs before native admission. Absent or false means unsupported. */
+    workspaceSnapshot?: boolean;
   };
   /** Absent when the provider cannot originate or answer interactions. */
   interactions?: InteractionCapabilities;
@@ -590,6 +592,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         requestIdempotency: z.boolean(),
         lookup: z.boolean(),
         attach: z.boolean().optional(),
+        workspaceSnapshot: z.boolean().optional(),
       })
       .optional(),
     interactions: InteractionCapabilitiesSchema.optional(),
@@ -717,17 +720,19 @@ export const AgentEnvironmentCapabilitiesSchema = z
         message: "native continuation requires retained control for early admission",
       });
     }
+    const contextTransfer = capabilities.contextTransfer;
     if (
-      capabilities.contextTransfer !== undefined &&
-      (!capabilities.contextTransfer.freshSession ||
-        !capabilities.contextTransfer.requestIdempotency ||
-        !capabilities.contextTransfer.lookup)
+      contextTransfer !== undefined &&
+      (!contextTransfer.lookup ||
+        (contextTransfer.freshSession && !contextTransfer.requestIdempotency) ||
+        ((contextTransfer.attach === true || contextTransfer.workspaceSnapshot === true) &&
+          (!contextTransfer.freshSession || !contextTransfer.requestIdempotency)))
     ) {
       refinement.addIssue({
         code: "custom",
         path: ["contextTransfer"],
         message:
-          "context transfer requires fresh-session admission, request idempotency, and lookup together",
+          "context transfer requires durable lookup; fresh admission, attachment, and snapshot transfer require fresh-session admission and request idempotency together",
       });
     }
     const durableBranching = [
@@ -1079,7 +1084,11 @@ export interface AgentEnvironmentProvider {
 export interface AgentContextTransferProvider {
   transfer(
     request: ContextTransferRequest,
-    options?: { signal?: AbortSignal },
+    options?: {
+      signal?: AbortSignal;
+      /** Authorized source artifacts for this attempt; never part of the accepted wire request. */
+      artifacts?: AgentCandidateArtifactPort;
+    },
   ): Promise<ContextTransferResult>;
   lookup(
     request: ContextTransferRequest,

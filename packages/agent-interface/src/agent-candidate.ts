@@ -66,6 +66,21 @@ export interface AgentCandidateArtifactRef {
   byteLength: number;
 }
 
+/** Reads one content-addressed object through an authorized closed-locator resolver. */
+export interface AgentCandidateArtifactPort {
+  read(ref: AgentCandidateArtifactRef): Promise<Uint8Array>;
+  /** Stream an artifact without materializing its complete contents. */
+  readStream?(
+    ref: AgentCandidateArtifactRef,
+    options?: { signal?: AbortSignal },
+  ): AsyncIterable<Uint8Array>;
+  /** Find an already stored object by its exact content digest and length. */
+  locate?(
+    object: Pick<AgentCandidateArtifactRef, "sha256" | "byteLength">,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentCandidateArtifactRef | undefined>;
+}
+
 /** Bytes embedded directly in a candidate manifest. */
 export interface AgentCandidateEmbeddedArtifact {
   encoding: "base64";
