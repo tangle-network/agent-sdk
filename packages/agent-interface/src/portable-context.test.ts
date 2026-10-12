@@ -142,6 +142,27 @@ describe("portable conversation context", () => {
 });
 
 describe("portable context plan and transfer", () => {
+  it("keeps omitted message bytes out of the canonical transfer wire", () => {
+    const plan = contextPlan();
+    const material = {
+      operationId: "selected-content-only",
+      plan,
+      acceptance: {
+        planDigest: plan.digest,
+        acceptedAt: "2026-08-01T20:01:00.000Z",
+        acceptedBy: "user" as const,
+      },
+    };
+    const request = ContextTransferRequestSchema.parse({
+      ...material,
+      requestDigest: contextTransferRequestDigest(material),
+    });
+    expect(JSON.stringify(request)).not.toContain("private runner state");
+    expect(JSON.stringify(request)).toContain("Investigate the failure.");
+    expect(request.plan.digest).toBe(plan.digest);
+    expect(plan.source.messages[1]!.parts[0]).toEqual({ type: "reasoning", text: "private runner state" });
+  });
+
   it("binds every inclusion and omission to one canonical plan digest", () => {
     const plan = contextPlan();
     expect(PortableContextPlanSchema.parse(plan)).toEqual(plan);
