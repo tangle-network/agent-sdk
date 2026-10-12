@@ -8,23 +8,20 @@ import { idSchema, InputPartSchema, sameStringSet, sha256DigestSchema, wireDiges
 const partDecisionSchema = z.strictObject({
   partIndex: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   action: z.enum(["include", "transform", "omit"]),
-  reasonDigest: sha256DigestSchema.optional(),
   outputDigest: sha256DigestSchema.optional(),
 }).superRefine((part, refinement) => {
-  if ((part.action === "transform") !== (part.outputDigest !== undefined) ||
-    (part.action !== "include" && part.reasonDigest === undefined)) {
-    refinement.addIssue({ code: "custom", message: "transformed parts require output and reason commitments; omitted parts require a reason" });
+  if ((part.action === "transform") !== (part.outputDigest !== undefined)) {
+    refinement.addIssue({ code: "custom", message: "only transformed parts require an output commitment" });
   }
 });
 
 const messageDecisionSchema = z.strictObject({
   messageId: idSchema,
   action: z.enum(["include", "omit"]),
-  reasonDigest: sha256DigestSchema.optional(),
   parts: z.array(partDecisionSchema).max(CONTRACT_MAX_ARRAY_LENGTH),
 }).superRefine((message, refinement) => {
-  if (message.action === "omit" && (message.reasonDigest === undefined || message.parts.some((part) => part.action !== "omit"))) {
-    refinement.addIssue({ code: "custom", message: "omitted messages require a reason and must omit every part" });
+  if (message.action === "omit" && message.parts.some((part) => part.action !== "omit")) {
+    refinement.addIssue({ code: "custom", message: "omitted messages must omit every part" });
   }
 });
 
@@ -32,14 +29,15 @@ const messageDecisionSchema = z.strictObject({
 export const PortableContextTransferPlanSchema = z.strictObject({
   kind: z.literal("portable-context-transfer-plan"),
   planId: idSchema,
+  reviewDigest: sha256DigestSchema,
   source: z.strictObject({
     source: PortableContextSourceBoundarySchema,
     digest: sha256DigestSchema,
     completeness: z.enum(["complete", "partial"]),
     messages: z.array(z.strictObject({
       messageId: idSchema,
-      metadataDigest: sha256DigestSchema,
-      parts: z.array(sha256DigestSchema).max(CONTRACT_MAX_ARRAY_LENGTH),
+      metadataDigest: sha256DigestSchema.optional(),
+      parts: z.array(sha256DigestSchema.nullable()).max(CONTRACT_MAX_ARRAY_LENGTH),
     })).max(CONTRACT_MAX_ARRAY_LENGTH),
     attachments: z.array(z.strictObject({
       messageId: idSchema,
@@ -71,6 +69,10 @@ export const PortableContextTransferPlanSchema = z.strictObject({
       invalid("each source part requires exactly one transfer decision");
       continue;
     }
+    if ((decision.action === "include") !== (source.metadataDigest !== undefined) ||
+      ordered.some((part) => (decision.action === "include" && part.action === "include") !== (source.parts[part.partIndex] !== null))) {
+      invalid("only selected source parts and metadata may carry individual commitments");
+    }
     if (decision.action === "omit") continue;
     outputIds.push(source.messageId);
     const output = plan.context.messages.find((message) => message.id === source.messageId);
@@ -97,7 +99,10 @@ export const PortableContextTransferPlanSchema = z.strictObject({
     const decision = plan.messages.find((item) => item.messageId === attachment.messageId)!;
     const retained = [...decision.parts].sort((a, b) => a.partIndex - b.partIndex).filter((part) => part.action !== "omit");
     const outputIndex = retained.findIndex((part) => part.partIndex === attachment.partIndex);
-    if (decision.action !== "include" || retained[outputIndex]?.action !== "include") continue;
+    if (decision.action !== "include" || retained[outputIndex]?.action !== "include") {
+      invalid("only selected source attachments may carry individual commitments");
+      continue;
+    }
     const selected = plan.context.attachments.find((item) => item.messageId === attachment.messageId && item.partIndex === outputIndex && wireDigest({ ...item, partIndex: attachment.partIndex }) === attachment.digest);
     if (selected === undefined) invalid("selected attachment must match its source commitment");
     else expectedAttachments.push(selected);

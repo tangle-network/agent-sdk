@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentProfileDigest } from "./index.js";
+import { canonicalAgentProfileDigest, wireDigest } from "./index.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
@@ -157,6 +157,8 @@ describe("portable context plan and transfer", () => {
     };
     const request = createContextTransferRequest(material);
     expect(JSON.stringify(request)).not.toContain("private runner state");
+    expect(JSON.stringify(request)).not.toContain(wireDigest(source.messages[1]!.parts[0]));
+    expect(request.plan.source.messages[1]!.parts).toEqual([null]);
     expect(JSON.stringify(request)).toContain("Investigate the failure.");
     expect(request.plan.digest).toBe(plan.digest);
     expect(ContextTransferRequestSchema.safeParse({ ...material, requestDigest: request.requestDigest }).success).toBe(false);

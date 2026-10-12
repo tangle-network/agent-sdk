@@ -12,16 +12,24 @@ export function portableContextPlanCommitmentMaterial(plan: PortableContextPlanM
   return {
     kind: "portable-context-transfer-plan" as const,
     planId: plan.planId,
+    reviewDigest: wireDigest({ source: plan.source, messages: plan.messages }),
     source: {
       source: plan.source.source,
       digest: plan.source.digest,
       completeness: plan.source.completeness,
-      messages: plan.source.messages.map((message) => ({
-        messageId: message.id,
-        metadataDigest: portableContextMessageMetadataDigest(message),
-        parts: message.parts.map((part) => wireDigest(part)),
-      })),
-      attachments: plan.source.attachments.map((attachment) => ({
+      messages: plan.source.messages.map((message) => {
+        const decision = plan.messages.find((item) => item.messageId === message.id);
+        return {
+          messageId: message.id,
+          ...(decision?.action === "include" ? { metadataDigest: portableContextMessageMetadataDigest(message) } : {}),
+          parts: message.parts.map((part, partIndex) => decision?.action === "include" &&
+            decision.parts.find((item) => item.partIndex === partIndex)?.action === "include" ? wireDigest(part) : null),
+        };
+      }),
+      attachments: plan.source.attachments.filter((attachment) => {
+        const decision = plan.messages.find((item) => item.messageId === attachment.messageId);
+        return decision?.action === "include" && decision.parts.find((part) => part.partIndex === attachment.partIndex)?.action === "include";
+      }).map((attachment) => ({
         messageId: attachment.messageId,
         partIndex: attachment.partIndex,
         digest: wireDigest(attachment),
@@ -31,11 +39,9 @@ export function portableContextPlanCommitmentMaterial(plan: PortableContextPlanM
     messages: plan.messages.map((message) => ({
       messageId: message.messageId,
       action: message.action,
-      ...(message.reason === undefined ? {} : { reasonDigest: wireDigest(message.reason) }),
       parts: message.parts.map((part) => ({
         partIndex: part.partIndex,
         action: part.action,
-        ...(part.reason === undefined ? {} : { reasonDigest: wireDigest(part.reason) }),
         ...(part.output === undefined ? {} : { outputDigest: wireDigest(part.output) }),
       })),
     })),
