@@ -23,6 +23,8 @@ export const PortableContextDestinationSchema = z.strictObject({
   executionId: idSchema,
   model: idSchema.optional(),
   profileDigest: sha256DigestSchema,
+  /** Complete portable workspace reference approved with this destination. */
+  workspaceSnapshotDigest: sha256DigestSchema.optional(),
 });
 export type PortableContextDestination = z.infer<typeof PortableContextDestinationSchema>;
 

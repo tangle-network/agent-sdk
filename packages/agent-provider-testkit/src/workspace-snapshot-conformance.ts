@@ -1,6 +1,7 @@
 import type { AgentWorkspaceSnapshotRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment, AgentEnvironmentProvider, CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import { AgentEnvironmentCapabilitiesSchema, WorkspaceRequestSchema } from "@tangle-network/agent-interface/environment-provider";
+import { withEnvironmentCleanup } from "./conformance-helpers.js";
 
 export interface WorkspaceSnapshotConformanceOptions {
   name: string;
@@ -22,20 +23,20 @@ export async function runWorkspaceSnapshotConformance(options: WorkspaceSnapshot
   const input: CreateAgentEnvironmentInput = {
     profile: { name: `${options.name}-workspace-snapshot` },
     ...options.createInput,
-    workspace: WorkspaceRequestSchema.parse({ ...options.createInput?.workspace, snapshot: options.snapshot?.request ?? refusalFixture() }),
+    workspace: options.snapshot === undefined ? { snapshot: refusalFixture() } :
+      WorkspaceRequestSchema.parse({ ...options.createInput?.workspace, snapshot: options.snapshot.request }),
   };
   // A different unsupported field must not make a provider look snapshot-safe.
   delete input.idempotencyKey;
   if (capabilities.create?.workspaceSnapshot === true) {
-    if (options.snapshot === undefined) throw new Error("workspace snapshot capability requires a restore fixture and verification");
+    const fixture = options.snapshot;
+    if (fixture === undefined) throw new Error("workspace snapshot capability requires a restore fixture and verification");
     const environment = await provider.create(input);
-    try {
+    return withEnvironmentCleanup(environment, [], async () => {
       if (await environment.status() !== "running") throw new Error("workspace snapshot receiver returned before it was ready");
-      await options.snapshot.verify(environment);
-    } finally {
-      await environment.destroy?.();
-    }
-    return { checked: ["workspace-snapshot-restore"] };
+      await fixture.verify(environment);
+      return { checked: ["workspace-snapshot-restore"] };
+    });
   }
   const before = await options.effectCount?.();
   for (const candidate of [provider, await options.createProvider()]) {

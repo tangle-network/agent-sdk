@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AgentCandidateArtifactRef, Sha256Digest } from "./agent-candidate.js";
 import { agentCandidateArtifactRefSchema } from "./agent-candidate-artifact-schema.js";
-import { sha256DigestSchema } from "./agent-candidate-schema-common.js";
+import { canonicalCandidateDigest, sha256DigestSchema } from "./agent-candidate-schema-common.js";
 import {
   agentWorkspaceAllocationIdentitySchema,
   type AgentWorkspaceLeaseRecord,
@@ -55,3 +55,8 @@ export const AgentWorkspaceSnapshotRefSchema = z.strictObject({
     ctx.addIssue({ code: "custom", path: ["manifest", "sha256"], message: "workspace digest must equal the canonical manifest hash" });
   }
 }) satisfies z.ZodType<AgentWorkspaceSnapshotRef>;
+
+/** Acceptance identity of the complete reference, including Git archive and source binding. */
+export function agentWorkspaceSnapshotRefDigest(snapshot: AgentWorkspaceSnapshotRef): Sha256Digest {
+  return canonicalCandidateDigest(AgentWorkspaceSnapshotRefSchema.parse(snapshot));
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createContextTransferRequest,
   canonicalAgentProfileDigest,
+  agentWorkspaceSnapshotRefDigest,
   portableContextPlanDigest,
   portableContextTransferPlanDigest,
   portableConversationContextDigest,
@@ -114,7 +115,10 @@ describe("CLI Bridge portable context", () => {
       kind: "agent-candidate-workspace-snapshot" as const, digest: hash("a"), manifest: ref("a"), archive: ref("b"),
       source: { leaseId: "source-lease", leaseRecordDigest: hash("c"), workspace: { provider: "source", root: "/workspace/source", identityDigest: hash("d") }, sourceSnapshotDigest: hash("e"), sourceSnapshotPolicy: { kind: "provider-declared" as const, name: "fixture", version: 1, digest: hash("f") } },
     };
-    const transfer = createContextTransferRequest({ operationId: base.operationId, plan: base.plan, acceptance: base.acceptance, workspace: { snapshot } });
+    const { digest: _oldDigest, ...planMaterial } = base.plan;
+    const boundMaterial = { ...planMaterial, destination: { ...base.plan.destination, workspaceSnapshotDigest: agentWorkspaceSnapshotRefDigest(snapshot) } };
+    const plan = { ...boundMaterial, digest: portableContextTransferPlanDigest(boundMaterial) };
+    const transfer = createContextTransferRequest({ operationId: base.operationId, plan, acceptance: { ...base.acceptance, planDigest: plan.digest }, workspace: { snapshot } });
     await expect(provider.contextTransfer!.transfer(transfer)).rejects.toThrow(/does not support portable workspace snapshots/);
     expect(effects).toBe(0);
   });

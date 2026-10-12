@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentProfileDigest, canonicalCandidateDigest as wireDigest } from "./index.js";
+import { canonicalAgentProfileDigest, canonicalCandidateDigest as wireDigest, agentWorkspaceSnapshotRefDigest } from "./index.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
@@ -391,6 +391,33 @@ describe("portable context plan and transfer", () => {
     expect(() =>
       createContextTransferRequest(mismatchMaterial),
     ).toThrow(/must match/);
+  });
+
+  it("requires acceptance of exact workspace refs and rejects changed staged archive identity", () => {
+    const plan = contextPlan();
+    const hash = (value: string) => `sha256:${value.repeat(64)}` as const;
+    const ref = (value: string) => ({ locator: { kind: "private-cas" as const, namespace: "transfer-workspace", digest: hash(value) }, sha256: hash(value), byteLength: 128 });
+    const snapshot = {
+      kind: "agent-candidate-workspace-snapshot" as const, digest: hash("a"), manifest: ref("a"), archive: ref("b"),
+      source: { leaseId: "source-lease", leaseRecordDigest: hash("c"), workspace: { provider: "source", root: "/workspace/source", identityDigest: hash("d") }, sourceSnapshotDigest: hash("e"), sourceSnapshotPolicy: { kind: "provider-declared" as const, name: "fixture", version: 1, digest: hash("f") } },
+    };
+    const material = {
+      operationId: "workspace-transfer", plan, workspace: { snapshot },
+      acceptance: { planDigest: plan.digest, acceptedAt: "2026-08-01T20:01:00.000Z", acceptedBy: "user" as const },
+    };
+    expect(() => createContextTransferRequest(material)).toThrow(/accepted workspace snapshot digest/);
+    const { digest: _oldDigest, ...planMaterial } = plan;
+    const boundMaterial = { ...planMaterial, destination: { ...plan.destination, workspaceSnapshotDigest: agentWorkspaceSnapshotRefDigest(snapshot) } };
+    const boundPlan = { ...boundMaterial, digest: portableContextPlanDigest(boundMaterial) };
+    const accepted = { ...material, plan: boundPlan, acceptance: { ...material.acceptance, planDigest: boundPlan.digest } };
+    const request = createContextTransferRequest(accepted);
+    expect(request.plan.destination.workspaceSnapshotDigest).toBe(agentWorkspaceSnapshotRefDigest(snapshot));
+    expect(boundPlan.digest).not.toBe(plan.digest);
+    // File manifest stays identical while staged/HEAD archive state changes. Recomputing the
+    // request hash must not permit it to replace the workspace the user accepted.
+    expect(() => createContextTransferRequest({ ...accepted, workspace: { snapshot: { ...snapshot, archive: ref("c") } } })).toThrow(/accepted workspace snapshot digest/);
+    const { workspace: _workspace, ...withoutWorkspace } = accepted;
+    expect(() => createContextTransferRequest(withoutWorkspace)).toThrow(/accepted workspace snapshot digest/);
   });
 
   it("matches a fresh-session receipt exactly to the accepted plan", () => {
