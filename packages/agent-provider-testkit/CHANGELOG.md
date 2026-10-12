@@ -1,5 +1,21 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.12.0
+
+### Minor Changes
+
+- 5f55bcd: Add reference-only portable workspace snapshots to the existing workspace request and an explicit create capability. Requests bind both canonical file manifests and archives, including Git state, to the existing public source lease and policy identities. Embedded file bytes and competing workspace sources are refused.
+  
+  Adapters without a qualified receiver refuse the request before credentials, allocation or native admission. Provider conformance checks that refusal after reconstruction and requires a restore fixture for advertised support. This contract does not claim a live provider restore until its deployed receiver is qualified.
+- b8f79b3: Keep complete context plans local. Transfer only selected typed content and hash commitments, and verify the same accepted plan digest at the destination. Use `createContextTransferRequest` to project a local plan into the new wire contract. The plan digest algorithm and transfer plan shape change; receivers and consumers must upgrade together, with explicit recovery for earlier operation records.
+
+### Patch Changes
+
+- Updated dependencies [66b02e3]
+- Updated dependencies [5f55bcd]
+- Updated dependencies [b8f79b3]
+  - @tangle-network/agent-interface@5.0.0
+
 ## 0.11.0
 
 ### Minor Changes

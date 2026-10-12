@@ -1,5 +1,18 @@
 # @tangle-network/agent-core
 
+## 0.12.0
+
+### Minor Changes
+
+- b8f79b3: Keep complete context plans local. Transfer only selected typed content and hash commitments, and verify the same accepted plan digest at the destination. Use `createContextTransferRequest` to project a local plan into the new wire contract. The plan digest algorithm and transfer plan shape change; receivers and consumers must upgrade together, with explicit recovery for earlier operation records.
+
+### Patch Changes
+
+- Updated dependencies [66b02e3]
+- Updated dependencies [5f55bcd]
+- Updated dependencies [b8f79b3]
+  - @tangle-network/agent-interface@5.0.0
+
 ## 0.11.0
 
 ### Minor Changes
