@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentProfileDigest, wireDigest } from "./index.js";
+import { canonicalAgentProfileDigest, canonicalCandidateDigest as wireDigest } from "./index.js";
 import {
   AgentNativeContextContinuationResultSchema,
   agentNativeContextContinuationResultMatchesRequest,
