@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.1.0
+
+### Minor Changes
+
+- 8c45b71: Expose the shared authorized candidate artifact reader for context-transfer attempts. Allow durable read-only context-transfer lookup independently of fresh admission, and declare transfer-only workspace snapshot support separately from ordinary create. Fresh admission, attachment, and snapshot transfer retain their required idempotency and lookup guarantees.
+
 ## 5.0.0
 
 ### Major Changes
