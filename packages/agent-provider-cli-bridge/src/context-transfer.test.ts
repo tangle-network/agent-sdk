@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  ContextTransferRequestSchema,
+  createContextTransferRequest,
   canonicalAgentProfileDigest,
-  contextTransferRequestDigest,
   portableContextPlanDigest,
+  portableContextTransferPlanDigest,
   portableConversationContextDigest,
   type AgentProfile,
   type ContextTransferRequest,
@@ -70,10 +70,7 @@ function request(): ContextTransferRequest {
       acceptedBy: "system" as const,
     },
   };
-  return ContextTransferRequestSchema.parse({
-    ...material,
-    requestDigest: contextTransferRequestDigest(material),
-  });
+  return createContextTransferRequest(material);
 }
 
 function receipt(
@@ -272,11 +269,10 @@ describe("CLI Bridge portable context", () => {
     const { digest: _digest, ...planMaterial } = original.plan;
     const { environmentId: _environmentId, ...destination } = planMaterial.destination;
     const material = { ...planMaterial, destination };
-    const plan = { ...material, digest: portableContextPlanDigest(material) };
+    const plan = { ...material, digest: portableContextTransferPlanDigest(material) };
     const transferMaterial = { operationId: original.operationId, plan, profile,
       acceptance: { ...original.acceptance, planDigest: plan.digest } };
-    const transfer = ContextTransferRequestSchema.parse({ ...transferMaterial,
-      requestDigest: contextTransferRequestDigest(transferMaterial) });
+    const transfer = createContextTransferRequest(transferMaterial);
     const boundReceipt = { ...receipt(transfer, "replayed"), environmentId: "actual-bound-environment" };
     const posts: string[] = [];
     const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local",

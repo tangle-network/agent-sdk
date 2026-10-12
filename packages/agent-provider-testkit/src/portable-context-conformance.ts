@@ -1,4 +1,5 @@
 import {
+  createContextTransferRequest,
   ContextTransferRequestSchema,
   ContextTransferResultSchema,
   NativeContextBoundaryProofSchema,
@@ -117,10 +118,7 @@ export async function runPortableContextConformance(
       acceptedBy: "user" as const,
     },
   };
-  const transferRequest = ContextTransferRequestSchema.parse({
-    requestDigest: contextTransferRequestDigest(transferMaterial),
-    ...transferMaterial,
-  });
+  const transferRequest = createContextTransferRequest(transferMaterial);
   const receipt = ContextTransferResultSchema.parse(
     await options.transfer(transferRequest),
   );
@@ -161,10 +159,7 @@ export async function runPortableContextConformance(
     ...transferMaterial,
     acceptance: { ...transferMaterial.acceptance, acceptedBy: "policy" as const },
   };
-  const changedTransfer = ContextTransferRequestSchema.parse({
-    requestDigest: contextTransferRequestDigest(changedTransferMaterial),
-    ...changedTransferMaterial,
-  });
+  const changedTransfer = createContextTransferRequest(changedTransferMaterial);
   const transferConflict = ContextTransferResultSchema.parse(
     await options.transfer(changedTransfer),
   );

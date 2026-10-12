@@ -63,9 +63,8 @@ import {
 import { isBoundedEventContentJson, isBoundedJsonValue } from "./contract-limits.js";
 import {
   ContextTransferReceiptSchema,
-  ContextTransferRequestSchema,
+  createContextTransferRequest,
   contextTransferReceiptMatches,
-  contextTransferRequestDigest,
   type ContextTransferReceipt,
 } from "./portable-context-transfer.js";
 import {
@@ -439,10 +438,7 @@ describe("interface split leaf modules", () => {
         acceptedBy: "user" as const,
       },
     };
-    const transfer = ContextTransferRequestSchema.parse({
-      ...transferMaterial,
-      requestDigest: contextTransferRequestDigest(transferMaterial),
-    });
+    const transfer = createContextTransferRequest(transferMaterial);
     const receipt: ContextTransferReceipt = {
       status: "accepted",
       operationId: transfer.operationId,
