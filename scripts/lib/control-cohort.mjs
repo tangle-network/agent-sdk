@@ -28,6 +28,7 @@ export const interfaceTests = [
   "portable-context.test.ts",
   "runtime-control.test.ts",
   "workspace-branching.test.ts",
+  "workspace-snapshot.test.ts",
 ];
 
 // The testkit conformance file and the packed Tangle consumer fixture copied

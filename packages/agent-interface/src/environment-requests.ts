@@ -10,6 +10,7 @@ import type { WorkspaceCwd } from "./workspace-cwd.js";
 import { WorkspaceCheckpointRefSchema, type WorkspaceCheckpointRef } from "./workspace-checkpoint.js";
 
 import type { AgentProfile } from "./agent-profile.js";
+import { AgentWorkspaceSnapshotRefSchema, type AgentWorkspaceSnapshotRef } from "./workspace-snapshot.js";
 
 /** Portable profile reference: inline profile or provider catalog id. */
 export type AgentProfileRef = AgentProfile | string;
@@ -103,6 +104,13 @@ export interface WorkspaceRequest {
    * checkpoint another provider took.
    */
   checkpoint?: WorkspaceCheckpointRef;
+  /**
+   * Restore an accepted portable workspace from authorized immutable artifact references before
+   * create returns. This is independent of provider-native checkpoint IDs. The receiver verifies
+   * manifest, archive, limits and source binding, and publishes into a fresh owned destination.
+   * It refuses an occupied destination without changing it. Requires create.workspaceSnapshot.
+   */
+  snapshot?: AgentWorkspaceSnapshotRef;
   /** Opaque provider-native workspace fields. */
   providerOptions?: Record<string, unknown>;
 }
@@ -116,9 +124,18 @@ export const WorkspaceRequestSchema = z
     gitRef: boundedIdentifierSchema.optional(),
     cwd: workspaceCwdSchema.optional(),
     checkpoint: WorkspaceCheckpointRefSchema.optional(),
+    snapshot: AgentWorkspaceSnapshotRefSchema.optional(),
     providerOptions: boundedJsonRecordSchema.optional(),
   })
   .superRefine((workspace, refinement) => {
+    if (workspace.snapshot !== undefined && (
+      workspace.repoUrl !== undefined || workspace.gitRef !== undefined || workspace.checkpoint !== undefined
+    )) {
+      refinement.addIssue({ code: "custom", path: ["snapshot"], message: "workspace snapshot cannot be combined with another workspace source" });
+    }
+    if (workspace.snapshot !== undefined && workspace.cwd?.base === "host") {
+      refinement.addIssue({ code: "custom", path: ["cwd"], message: "workspace snapshot cwd must be relative to its restored repository" });
+    }
     if (workspace.checkpoint !== undefined && workspace.repoUrl !== undefined) {
       refinement.addIssue({
         code: "custom",

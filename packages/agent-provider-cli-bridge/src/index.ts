@@ -62,6 +62,9 @@ export function createCliBridgeProvider(
   options: CliBridgeProviderOptions,
 ): CliBridgeProvider {
   assertCliBridgeProviderOptions(options);
+  if (options.capabilities?.create?.workspaceSnapshot === true) {
+    throw new Error("CLI Bridge provider does not support portable workspace snapshots");
+  }
   const name = options.name ?? "cli-bridge";
   const createRecords = new Map<
     string,
@@ -118,6 +121,9 @@ export function createCliBridgeProvider(
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    if (input.workspace?.snapshot !== undefined) {
+      throw new Error("CLI Bridge provider does not support portable workspace snapshots");
+    }
     if (input.runtimeAttachments !== undefined) {
       throw new Error("CLI Bridge provider does not support runtime MCP attachments");
     }

@@ -92,6 +92,9 @@ export function createTangleProvider(
         ? await options.capabilities()
         : options.capabilities
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
+    if (configured.create?.workspaceSnapshot === true) {
+      throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
+    }
     if (!exactProcess && configured.exactProcess) {
       throw new Error(
         "Tangle capabilities cannot advertise exactProcess without exactProcess configuration",
@@ -130,6 +133,9 @@ export function createTangleProvider(
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
+    if (input.workspace?.snapshot !== undefined) {
+      throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
+    }
     const parsedWorkspace = assertCreateInputShape(input);
     input.signal?.throwIfAborted();
     assertNoInlineSecretValues(input, parsedWorkspace);

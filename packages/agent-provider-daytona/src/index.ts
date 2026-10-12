@@ -55,6 +55,9 @@ export interface DaytonaProviderOptions {
 
 export function createDaytonaProvider(options: DaytonaProviderOptions = {}): AgentEnvironmentProvider {
   const name = options.name ?? "daytona";
+  if (options.capabilities?.create?.workspaceSnapshot === true) {
+    throw new Error("Daytona provider does not support portable workspace snapshots");
+  }
   const createEnvironment = async (
     input: CreateAgentEnvironmentInput,
   ): Promise<AgentEnvironment> => {
@@ -76,6 +79,9 @@ export function createDaytonaProvider(options: DaytonaProviderOptions = {}): Age
     capabilities: () => options.capabilities ?? defaultDaytonaCapabilities(),
     async create(input) {
       input.signal?.throwIfAborted();
+      if (input.workspace?.snapshot !== undefined) {
+        throw new Error("Daytona provider does not support portable workspace snapshots");
+      }
       if (input.runtimeAttachments !== undefined) {
         throw new Error("Daytona provider does not support runtime MCP attachments");
       }

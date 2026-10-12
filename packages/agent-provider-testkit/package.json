@@ -55,6 +55,8 @@
     "dist/session-replay-conformance.js",
     "dist/workspace-branching-conformance.d.ts",
     "dist/workspace-branching-conformance.js",
+    "dist/workspace-snapshot-conformance.d.ts",
+    "dist/workspace-snapshot-conformance.js",
     "dist/workspace-cleanup-conformance.d.ts",
     "dist/workspace-cleanup-conformance.js",
     "README.md",

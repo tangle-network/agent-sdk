@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { runAgentEnvironmentProviderConformance } from "@tangle-network/agent-provider-testkit";
+import { runAgentEnvironmentProviderConformance, runWorkspaceSnapshotConformance } from "@tangle-network/agent-provider-testkit";
 import {
   createComputeSdkProvider,
   type ComputeSdkLike,
 } from "./index.js";
 
 describe("createComputeSdkProvider", () => {
+  it("refuses portable workspace snapshots before effects after reconstruction", async () => {
+    let effects = 0;
+    const report = await runWorkspaceSnapshotConformance({
+      name: "computesdk",
+      createProvider: () => createComputeSdkProvider({ compute: { sandbox: { create: async () => { effects++; throw new Error("unexpected create"); } } } }),
+      effectCount: () => effects,
+    });
+    expect(report.checked).toContain("workspace-snapshot-zero-effects");
+    expect(effects).toBe(0);
+  });
+
   it("refuses keyed creates before remote effects across restart and lost acknowledgements", async () => {
     let creates = 0;
     let loseAcknowledgement = false;

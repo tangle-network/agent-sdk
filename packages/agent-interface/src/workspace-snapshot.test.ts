@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceRequestSchema } from "./index.js";
+import { WorkspaceRequestSchema, agentEnvironmentCreateInputDigest } from "./index.js";
 
 const digest = (value: string) => `sha256:${value.repeat(64)}` as const;
 const artifact = (value: string) => ({
@@ -50,5 +50,15 @@ describe("portable workspace snapshot", () => {
       { manifest: { ...artifact("a"), byteLength: 0 } },
       { archive: { ...artifact("b"), byteLength: Number.MAX_SAFE_INTEGER + 1 } },
     ]) expect(() => WorkspaceRequestSchema.parse({ snapshot: { ...snapshot, ...patch } })).toThrow();
+  });
+
+  it("binds archive and source policy changes even when file bytes stay identical", () => {
+    const input = { profile: { name: "worker" }, workspace: { snapshot } };
+    const expected = agentEnvironmentCreateInputDigest(input);
+    for (const changed of [
+      { ...snapshot, archive: artifact("c") },
+      { ...snapshot, source: { ...snapshot.source, sourceSnapshotPolicy: { ...snapshot.source.sourceSnapshotPolicy, digest: digest("c") } } },
+      { ...snapshot, source: { ...snapshot.source, workspace: { ...snapshot.source.workspace, identityDigest: digest("c") } } },
+    ]) expect(agentEnvironmentCreateInputDigest({ ...input, workspace: { snapshot: changed } })).not.toBe(expected);
   });
 });

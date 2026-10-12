@@ -513,6 +513,8 @@ export interface AgentEnvironmentCapabilities {
      * including a checkpoint whose source environment is gone. Absent means create refuses one.
      */
     workspaceCheckpoint?: boolean;
+    /** True only when this qualified receiver verifies and restores WorkspaceRequest.snapshot. */
+    workspaceSnapshot?: boolean;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -630,6 +632,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
         workspaceCheckpoint: z.boolean().optional(),
+        workspaceSnapshot: z.boolean().optional(),
       })
       .optional(),
     observation: z
@@ -755,7 +758,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
         create.egress === undefined &&
         create.billingOwner === undefined &&
         create.runtimeAttachments === undefined &&
-        create.workspaceCheckpoint === undefined
+        create.workspaceCheckpoint === undefined &&
+        create.workspaceSnapshot === undefined
       ) {
         refinement.addIssue({
           code: "custom",
