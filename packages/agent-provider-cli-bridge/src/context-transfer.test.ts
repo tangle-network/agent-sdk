@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentEnvironmentCapabilitiesSchema,
   createContextTransferRequest,
   canonicalAgentProfileDigest,
   agentWorkspaceSnapshotRefDigest,
@@ -105,6 +106,131 @@ function receipt(
 }
 
 describe("CLI Bridge portable context", () => {
+  function attachmentRequest(selectedProfile: AgentProfile = profile): ContextTransferRequest {
+    const { requestDigest: _digest, ...material } = request();
+    const { digest: _planDigest, ...base } = material.plan;
+    const planMaterial = { ...base, destination: { ...base.destination,
+      profileDigest: canonicalAgentProfileDigest(selectedProfile),
+      model: selectedProfile.model?.default ?? base.destination.model } };
+    const plan = { ...planMaterial, digest: portableContextTransferPlanDigest(planMaterial) };
+    return createContextTransferRequest({ ...material, plan, profile: selectedProfile,
+      acceptance: { ...material.acceptance, planDigest: plan.digest } });
+  }
+
+  function attachmentCapabilities() {
+    const capabilities = defaultCliBridgeCapabilities("codex");
+    return AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities,
+      contextTransfer: { ...capabilities.contextTransfer, attach: true } });
+  }
+
+  it.each([
+    { selectedProfile: profile, factoryModel: undefined, expectedModel: "codex/gpt-5.6" },
+    { selectedProfile: { ...profile, model: { provider: "openai", default: "gpt-5.6" } },
+      factoryModel: "codex/another-model", expectedModel: "codex/openai/gpt-5.6" },
+  ])("reconstructs the accepted $expectedModel route without create or another environment lookup", async ({ selectedProfile, factoryModel, expectedModel }) => {
+    const transfer = attachmentRequest(selectedProfile);
+    const calls: Array<{ method: string; url: string; body?: unknown }> = [];
+    const providerOptions = { baseUrl: "http://bridge.local", capabilities: attachmentCapabilities(), defaultModel: factoryModel,
+      fetch: async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ method: init?.method ?? "GET", url: String(url),
+          ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
+        if (init?.method === "POST") return new Response("data: [DONE]\n\n", { headers: {
+          "content-type": "text/event-stream", "x-run-id": transfer.plan.destination.runId,
+          "x-run-provider": transfer.plan.destination.provider,
+          "x-run-environment-id": transfer.plan.destination.environmentId!,
+          "x-run-session-id": transfer.plan.destination.sessionId,
+          "x-run-execution-id": transfer.plan.destination.executionId,
+          "x-run-request-digest": `sha256:${"e".repeat(64)}`,
+        } });
+        return Response.json(receipt(transfer, "replayed"));
+      } };
+    for (let restart = 0; restart < 2; restart++) {
+      const provider = createCliBridgeProvider(providerOptions);
+      const environment = await provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer });
+      expect(environment?.creation).toBeUndefined();
+      const ref = await environment!.dispatch!({ prompt: "first turn", turnId: "turn-after-handoff",
+        sessionId: transfer.plan.destination.sessionId, executionId: transfer.plan.destination.executionId,
+        contextTransfer: transfer });
+      expect(ref.controlRef).toMatchObject({ environmentId: environment!.id, runId: transfer.plan.destination.runId,
+        sessionId: transfer.plan.destination.sessionId, executionId: transfer.plan.destination.executionId });
+      await environment!.destroy!();
+    }
+    const posts = calls.filter((call) => call.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts.every((call) => call.url.endsWith("/v1/chat/completions"))).toBe(true);
+    expect(posts[0]!.body).toMatchObject({ agent_profile: selectedProfile, model: expectedModel, context_transfer: transfer,
+      environment_id: transfer.plan.destination.environmentId, session_id: transfer.plan.destination.sessionId,
+      run_id: transfer.plan.destination.runId, execution_id: transfer.plan.destination.executionId });
+    expect(calls.filter((call) => call.method === "GET").every((call) =>
+      call.url.includes(`/v1/context-transfers/${transfer.operationId}?request_digest=`))).toBe(true);
+  });
+
+  it.each(["stream", "dispatch", "prompt"] as const)("binds the accepted model without retainedControl before %s effects", async (surface) => {
+    const transfer = attachmentRequest();
+    let posts = 0;
+    const { retainedControl: _retained, ...capabilities } = attachmentCapabilities();
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", capabilities,
+      fetch: async (_url, init) => { if (init?.method === "POST") posts++; return Response.json(receipt(transfer, "replayed")); } });
+    const environment = await provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer });
+    const input = { prompt: "continue", turnId: "first-turn", contextTransfer: transfer, model: "another-model",
+      sessionId: transfer.plan.destination.sessionId, executionId: transfer.plan.destination.executionId };
+    const attempt = async () => {
+      if (surface === "dispatch") await environment!.dispatch!(input);
+      else if (surface === "prompt") await environment!.session!(input.sessionId).prompt(input);
+      else for await (const _event of environment!.stream(input)) { /* drain */ }
+    };
+    await expect(attempt()).rejects.toThrow(/environment model/);
+    expect(posts).toBe(0);
+  });
+
+  it.each(["stream", "dispatch", "prompt"] as const)("refuses replacement or missing accepted context before %s effects", async (surface) => {
+    const transfer = attachmentRequest();
+    let posts = 0;
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", capabilities: attachmentCapabilities(),
+      fetch: async (_url, init) => { if (init?.method === "POST") posts++; return Response.json(receipt(transfer, "replayed")); } });
+    const environment = await provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer });
+    const { requestDigest: _digest, ...material } = transfer;
+    const replacement = createContextTransferRequest({ ...material, operationId: "another-operation" });
+    for (const contextTransfer of [undefined, replacement]) {
+      const input = { prompt: "continue", turnId: "first-turn", contextTransfer,
+        sessionId: transfer.plan.destination.sessionId, executionId: transfer.plan.destination.executionId };
+      const attempt = async () => {
+        if (surface === "dispatch") await environment!.dispatch!(input);
+        else if (surface === "prompt") await environment!.session!(input.sessionId).prompt(input);
+        else for await (const _event of environment!.stream(input)) { /* drain */ }
+      };
+      await expect(attempt()).rejects.toThrow(/accepted context transfer/);
+    }
+    expect(posts).toBe(0);
+  });
+
+  it("requires an exact profile and qualified attach before any transfer lookup", async () => {
+    let effects = 0;
+    const capabilities = defaultCliBridgeCapabilities("codex");
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local",
+      capabilities: { ...capabilities, contextTransfer: { ...capabilities.contextTransfer!, attach: false } },
+      fetch: async () => { effects++; throw new Error("unexpected transport"); } });
+    await expect(provider.get!(request().plan.destination.environmentId!, { contextTransfer: request() })).rejects.toThrow(/exact profile/);
+    const transfer = attachmentRequest();
+    await expect(provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer })).rejects.toThrow(/attachment/);
+    expect(effects).toBe(0);
+  });
+
+  it.each(["missing", "other-environment", "uncertain"])("does not fall back to create when the attachment receipt is %s", async (kind) => {
+    const transfer = attachmentRequest();
+    let posts = 0;
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", capabilities: attachmentCapabilities(),
+      fetch: async (_url, init) => {
+        if (init?.method === "POST") posts++;
+        if (kind === "missing") return new Response("{}", { status: 404 });
+        return Response.json(kind === "other-environment" ? { ...receipt(transfer, "replayed"), environmentId: "wrong-environment" }
+          : { status: "unknown", operationId: transfer.operationId, requestDigest: transfer.requestDigest,
+            message: "native acknowledgment lost", retryable: true });
+      } });
+    await expect(provider.get!(transfer.plan.destination.environmentId!, { contextTransfer: transfer })).rejects.toThrow(/receipt/);
+    expect(posts).toBe(0);
+  });
+
   it("refuses an unqualified portable workspace before transfer transport", async () => {
     let effects = 0;
     const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", fetch: async () => { effects++; throw new Error("unexpected transport"); } });
@@ -280,6 +406,7 @@ describe("CLI Bridge portable context", () => {
       freshSession: true,
       requestIdempotency: true,
       lookup: true,
+      attach: true,
     });
     expect(urls).toEqual([
       `http://bridge.local/v1/context-transfer-environments/${transfer.plan.destination.environmentId}`,

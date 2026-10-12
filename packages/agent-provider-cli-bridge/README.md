@@ -49,7 +49,7 @@ The lookup returns the server-issued digest only when all five planned coordinat
 
 ## Which call adds a turn
 
-Continuation has two tiers, and the tier depends on whether the environment object came from `create()` or from `get()`.
+Creation, ordinary reconstruction and accepted transfer attachment have different admission authority.
 
 In the process that created the environment, `environment.dispatch()`, `environment.stream()`, and `session.prompt()` all add a turn.
 Passing the same `sessionId` continues the same CLI conversation.
@@ -58,10 +58,11 @@ After `provider.get(environmentId)` reconstructs the environment, only `session.
 It requires the `nativeContinuation` capability, which the provider publishes only for the Pi harness today, and only when the running Bridge proves the same contract.
 The reconstructed environment deliberately refuses every other way to start work: `environment.stream()` and `environment.dispatch()` throw "a reconstructed cli-bridge environment can only control an existing run", and `session.prompt()` throws "a reconstructed cli-bridge session cannot start another turn".
 A reconstructed environment for any other harness therefore controls its existing runs (status, cursor replay, result, cancellation, and interaction responses) but adds no turn.
-Restart-safe continuation for those harnesses needs native sessions in the Bridge server itself, which the Bridge does not have yet; it is tracked in the `drewstone/cli-bridge` repository and cannot be reached from this adapter.
+
+When the exact deployed route confirms `contextTransfer.attach`, `provider.get(environmentId, { contextTransfer: request })` instead attaches the accepted transfer's first turn. The request must carry its exact profile. The adapter looks up the canonical operation, requires an available matching receipt for that environment, and returns it as `environment.contextTransferReceipt`. The resulting `dispatch`, `stream` and `session.prompt` accept only that request and its destination identities. They do not allocate another environment or replace a missing one. Changed context or profile fails before dispatch; a missing or uncertain receipt refuses attachment. Destroying this reconstructed handle closes its readers without canceling the accepted destination's runs.
 
 The capability document keeps `sessions.continue: true` on a reconstructed environment because the Agent Interface couples that flag to `retainedControl`: a document that reports `sessions.continue: false` while keeping retained run control fails `AgentEnvironmentCapabilitiesSchema` with "retained control requires exact run, result, event, cancellation, replay, detach, turn, and session identity together".
-`nativeContinuation` is the flag that states whether a reconstructed environment can add a turn: present means `continueNative` works, absent means no call on that environment starts one.
+`nativeContinuation` states whether an ordinary reconstructed environment supports `continueNative`. It does not authorize the first turn of a separate transfer.
 
 A runtime caller continues a retained run with `RetainedRunHandle.continueNative`, not with `startRetainedRunInEnvironment`.
 `startRetainedRunInEnvironment` requires `provider.list` for its ownership proof, and this provider exposes no `list`; it then calls `environment.dispatch()`, which a reconstructed environment refuses.

@@ -1,6 +1,8 @@
 import {
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
+  canonicalAgentProfileDigest,
+  type ContextTransferRequest,
   type AgentExactRunControlRef,
   type AgentRunControlRef,
   type Sha256Digest,
@@ -154,8 +156,15 @@ export function prepareCliBridgeRun(
   providerName: string,
   environmentId: string,
   requireStableIdentity = false,
+  acceptedContextTransfer?: ContextTransferRequest,
 ): PreparedCliBridgeRun {
   const validatedTurn = AgentTurnInputSchema.parse(originalTurn);
+  if (acceptedContextTransfer !== undefined && (
+    validatedTurn.contextTransfer?.requestDigest !== acceptedContextTransfer.requestDigest ||
+    (validatedTurn.profile !== undefined && canonicalAgentProfileDigest(validatedTurn.profile) !== acceptedContextTransfer.plan.destination.profileDigest)
+  )) {
+    throw new Error("CLI Bridge turn conflicts with its accepted context transfer");
+  }
   if (
     requireStableIdentity &&
     (validatedTurn.turnId === undefined || validatedTurn.executionId === undefined)

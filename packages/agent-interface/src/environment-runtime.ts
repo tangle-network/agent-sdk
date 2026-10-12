@@ -350,6 +350,8 @@ export interface AgentEnvironment {
    * provider cannot prove which outcome happened.
    */
   readonly creation?: AgentEnvironmentCreation;
+  /** Authoritative receipt returned only by a qualified context-transfer attachment. */
+  readonly contextTransferReceipt?: ContextTransferReceipt;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -449,6 +451,8 @@ export interface AgentEnvironmentCapabilities {
     freshSession: boolean;
     requestIdempotency: boolean;
     lookup: boolean;
+    /** get(id, { contextTransfer }) verifies the durable receipt and enables only its first turn. */
+    attach?: boolean;
   };
   /** Absent when the provider cannot originate or answer interactions. */
   interactions?: InteractionCapabilities;
@@ -585,6 +589,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         freshSession: z.boolean(),
         requestIdempotency: z.boolean(),
         lookup: z.boolean(),
+        attach: z.boolean().optional(),
       })
       .optional(),
     interactions: InteractionCapabilitiesSchema.optional(),
@@ -1012,6 +1017,23 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
   }
 }
 
+/** Reconstruct an existing environment; never allocates a replacement. */
+export interface AgentEnvironmentGetOptions {
+  signal?: AbortSignal;
+  /**
+   * Authorize the first turn of an accepted portable transfer. The provider looks up the exact
+   * durable operation and returns its dispatch-capable environment with contextTransferReceipt.
+   * A missing, uncertain, conflicting or unsupported receipt refuses attachment. The request's
+   * exact profile, workspace and resources remain authoritative; ordinary get remains read-only.
+   */
+  contextTransfer?: ContextTransferRequest;
+}
+
+export const AgentEnvironmentGetOptionsSchema = z.strictObject({
+  signal: z.custom<AbortSignal>().optional(),
+  contextTransfer: ContextTransferRequestSchema.optional(),
+}) satisfies z.ZodType<AgentEnvironmentGetOptions>;
+
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
@@ -1049,7 +1071,7 @@ export interface AgentEnvironmentProvider {
    * Without a key, each call may create a fresh environment.
    */
   create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment>;
-  get?(id: string, options?: { signal?: AbortSignal }): Promise<AgentEnvironment | null>;
+  get?(id: string, options?: AgentEnvironmentGetOptions): Promise<AgentEnvironment | null>;
   list?(query?: AgentEnvironmentQuery, options?: { signal?: AbortSignal }): Promise<AgentEnvironmentSummary[]>;
 }
 
