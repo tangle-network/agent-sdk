@@ -20,6 +20,8 @@ await runAgentEnvironmentProviderConformance({
 
 The checks create an environment, prove it is ready, stream one turn, repeat a keyed create with reordered fields, reject changed keyed input, verify terminal completion, exercise declared workspace methods, and destroy the environment.
 
+The base check also runs `runWorkspaceSnapshotConformance()`. A provider without `create.workspaceSnapshot` must explicitly refuse a valid snapshot request after adapter reconstruction. Standalone checks can supply `effectCount` to prove credentials, allocation and admission did not run. An advertised receiver requires `workspaceSnapshot: { request, verify }`; the fixture uses its authorized artifact store, and `verify` must compare restored workspace and Git state through the real receiver. The check destroys only the environment it created. A local fixture proves its tested path, not a deployed provider integration.
+
 The readiness check reads the environment's status before any other call and requires `running`: `create()` must return an environment that can accept a turn.
 It names the one right answer rather than the wrong ones, because a failed or stopped environment is no readier than a provisioning one.
 The first turn then runs immediately after it, before any later call has had time to let a starting environment finish.
