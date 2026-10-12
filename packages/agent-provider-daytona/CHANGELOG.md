@@ -1,5 +1,27 @@
 # @tangle-network/agent-provider-daytona
 
+## 0.6.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/agent-provider-daytona` depends on the breaking release of `@tangle-network/agent-interface`.
+  - `@tangle-network/agent-provider-e2b` depends on the breaking release of `@tangle-network/agent-interface`.
+
+### Patch Changes
+
+- 66b02e3: Allow a qualified provider to reconstruct the existing destination of an accepted context transfer through get, with its authoritative receipt and exact profile, workspace, and resources. The returned handle can admit only that transfer's first turn. Missing or uncertain receipts never fall back to create, and ordinary lookup remains control-only.
+  
+  CLI Bridge requires deployment-confirmed attachment support. Tangle, Daytona, E2B and ComputeSDK refuse attachment before credentials or platform calls until their receivers support it. This change does not establish live provider handoff.
+- 5f55bcd: Add reference-only portable workspace snapshots to the existing workspace request and an explicit create capability. Requests bind both canonical file manifests and archives, including Git state, to the existing public source lease and policy identities. Embedded file bytes and competing workspace sources are refused.
+  
+  Adapters without a qualified receiver refuse the request before credentials, allocation or native admission. Provider conformance checks that refusal after reconstruction and requires a restore fixture for advertised support. This contract does not claim a live provider restore until its deployed receiver is qualified.
+- Updated dependencies [66b02e3]
+- Updated dependencies [5f55bcd]
+- Updated dependencies [b8f79b3]
+  - @tangle-network/agent-interface@5.0.0
+
 ## 0.5.0
 
 ### Minor Changes
