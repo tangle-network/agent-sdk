@@ -11,6 +11,7 @@ import {
 } from "./portable-context-shared.js";
 import { boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { PortableConversationContextSchema, type PortableConversationContext } from "./portable-context-base.js";
+import { portableContextPlanCommitmentMaterial } from "./portable-context-commitments.js";
 
 export const PortableContextDestinationSchema = z.strictObject({
   runner: idSchema,
@@ -106,7 +107,7 @@ export const PortableContextMessagePlanSchema = z
 
 export interface PortableContextPlan {
   planId: string;
-  /** Full immutable source so an executor can verify every decision itself. */
+  /** Full immutable local source for accepting decisions. Never serialize this plan to a destination. */
   source: PortableConversationContext;
   destination: PortableContextDestination;
   messages: PortableContextMessagePlan[];
@@ -132,17 +133,7 @@ export function portableContextPlanDigest(
   plan: PortableContextPlanMaterial,
 ): Sha256Digest {
   const parsed = PortableContextPlanMaterialSchema.parse(plan);
-  return wireDigest({
-    planId: parsed.planId,
-    source: parsed.source,
-    destination: parsed.destination,
-    messages: parsed.messages,
-    context: parsed.context,
-    ...(parsed.estimatedTokens === undefined
-      ? {}
-      : { estimatedTokens: parsed.estimatedTokens }),
-    requiresAcceptance: parsed.requiresAcceptance,
-  });
+  return wireDigest(portableContextPlanCommitmentMaterial(parsed));
 }
 
 export const PortableContextPlanSchema = z
@@ -240,14 +231,17 @@ export const PortableContextPlanSchema = z
       });
     }
 
-    const expectedAttachments = plan.source.attachments.filter((attachment) => {
+    const expectedAttachments = plan.source.attachments.flatMap((attachment) => {
       const message = plan.messages.find(
         (candidate) => candidate.messageId === attachment.messageId,
       );
       const part = message?.parts.find(
         (candidate) => candidate.partIndex === attachment.partIndex,
       );
-      return message?.action === "include" && part?.action === "include";
+      if (message?.action !== "include" || part?.action !== "include") return [];
+      const retained = [...message.parts].sort((left, right) => left.partIndex - right.partIndex)
+        .filter((item) => item.action !== "omit");
+      return [{ ...attachment, partIndex: retained.findIndex((item) => item.partIndex === attachment.partIndex) }];
     });
     if (wireDigest(expectedAttachments) !== wireDigest(plan.context.attachments)) {
       refinement.addIssue({
