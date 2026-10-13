@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { agentProfileDiffSchema, agentProfileSchema } from "./profile-schema.js";
+import {
+  agentProfileDiffSchema,
+  agentProfileSchema,
+} from "./profile-schema.js";
 import {
   applyAgentProfileDiff,
   type AgentProfileDiff,
@@ -46,7 +49,9 @@ const baseProfile: AgentProfile = {
 };
 
 const resourceFieldCases = {
-  knowledge: { knowledge: [{ sourceId: "source-1", generation: `kg_${"a".repeat(64)}` }] },
+  knowledge: {
+    knowledge: [{ sourceId: "source-1", generation: `kg_${"a".repeat(64)}` }],
+  },
   files: {
     files: [
       {
@@ -82,7 +87,14 @@ const profileFieldCases = {
   seats: {
     harness: "codex",
     model: { provider: "openai", default: "openai/gpt-6-sol" },
-    seats: [{ harness: "codex", provider: "openai", model: "openai/gpt-6-sol", selector: { kind: "all-eligible" } }],
+    seats: [
+      {
+        harness: "codex",
+        provider: "openai",
+        model: "openai/gpt-6-sol",
+        selector: { kind: "all-eligible" },
+      },
+    ],
   },
   permissions: { permissions: { shell: "allow" } },
   tools: { tools: { shell: true } },
@@ -151,7 +163,11 @@ const expectedAxisByProfileField = {
   confidential: "confidential",
   metadata: "metadata",
   extensions: "extensions",
-} as const satisfies { [Key in keyof AgentProfile]-?: ReturnType<typeof changedAgentProfileAxes>[number] };
+} as const satisfies {
+  [Key in keyof AgentProfile]-?: ReturnType<
+    typeof changedAgentProfileAxes
+  >[number];
+};
 
 function verifiedProfileDiffs(
   baseline: AgentProfile,
@@ -195,9 +211,11 @@ describe("AgentProfileDiff", () => {
       const changed = new Set(diffs.flatMap(changedAgentProfileAxes));
 
       expect(diffs.length, field).toBe(2);
-      expect(changed, field).toEqual(field === "seats"
-        ? new Set(["harness", "model", "seats"])
-        : new Set([expectedAxisByProfileField[field as keyof AgentProfile]]));
+      expect(changed, field).toEqual(
+        field === "seats"
+          ? new Set(["harness", "model", "seats"])
+          : new Set([expectedAxisByProfileField[field as keyof AgentProfile]]),
+      );
       expect(applyProfileDiffs({}, diffs), field).toEqual(candidate);
     }
   });
@@ -395,7 +413,9 @@ describe("AgentProfileDiff", () => {
               resource: defineInlineResource("policy", "Read, mutate, verify."),
             },
           ],
-          skills: [defineInlineResource("verify-state", "Check state after writes.")],
+          skills: [
+            defineInlineResource("verify-state", "Check state after writes."),
+          ],
         },
         hooks: {
           preFinish: [{ command: "node verify.mjs", blocking: true }],
@@ -438,11 +458,17 @@ describe("AgentProfileDiff", () => {
       set: {
         prompt: { instructions: ["Use evidence first."] },
         model: { reasoningEffort: "medium" },
-        resources: { skills: [defineInlineResource("evidence-first", "Use evidence.")] },
+        resources: {
+          skills: [defineInlineResource("evidence-first", "Use evidence.")],
+        },
       },
     });
 
-    expect(changedAgentProfileAxes(diff)).toEqual(["model", "prompt", "resources"]);
+    expect(changedAgentProfileAxes(diff)).toEqual([
+      "model",
+      "prompt",
+      "resources",
+    ]);
   });
 
   it("reports explicit empty identity values as changes", () => {
@@ -452,9 +478,9 @@ describe("AgentProfileDiff", () => {
       { version: "" },
       { tags: [] },
     ]) {
-      expect(changedAgentProfileAxes({ kind: "agent-profile-diff", set })).toEqual([
-        "identity",
-      ]);
+      expect(
+        changedAgentProfileAxes({ kind: "agent-profile-diff", set }),
+      ).toEqual(["identity"]);
     }
   });
 
@@ -557,4 +583,3 @@ describe("AgentProfileDiff", () => {
     expect(profile.harness).toBeUndefined();
   });
 });
-

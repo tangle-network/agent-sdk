@@ -697,7 +697,8 @@ function mergeKnowledgeRefs(
 ): AgentProfileKnowledgeRef[] | undefined {
   if (!base && !overlay) return undefined;
   const refs = new Map<string, AgentProfileKnowledgeRef>();
-  for (const ref of [...(base ?? []), ...(overlay ?? [])]) refs.set(ref.sourceId, { ...ref });
+  for (const ref of [...(base ?? []), ...(overlay ?? [])])
+    refs.set(ref.sourceId, { ...ref });
   return [...refs.values()];
 }
 
@@ -741,7 +742,10 @@ export function mergeAgentProfiles(
           base?.resources,
           overlay?.resources,
           {
-            knowledge: mergeKnowledgeRefs(base?.resources?.knowledge, overlay?.resources?.knowledge),
+            knowledge: mergeKnowledgeRefs(
+              base?.resources?.knowledge,
+              overlay?.resources?.knowledge,
+            ),
             files: mergeOptionalArrays(
               base?.resources?.files,
               overlay?.resources?.files,
@@ -984,4 +988,3 @@ export function composeAgentProfileGuidance(
   }
   return result;
 }
-

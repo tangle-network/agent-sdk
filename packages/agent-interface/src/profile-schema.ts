@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
-export { agentProfileKnowledgeRefSchema, agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
+export {
+  agentProfileKnowledgeRefSchema,
+  agentProfileKnowledgeRefsSchema,
+} from "./profile-knowledge.js";
 import {
   REASONING_EFFORTS,
   TRAINED_MODEL_PREFIX,
@@ -53,26 +56,28 @@ function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
 ): z.ZodType<Record<string, z.output<ValueSchema>>> {
   return z.preprocess(
     encodeOwnRecordKeys,
-    z.record(
-      z
-        .string()
-        .regex(
-          /^u(?:[0-9a-f]{4})*$/,
-          "record keys must contain valid Unicode",
-        ),
-      valueSchema,
-    ).transform((record) => {
-      const restored: Record<string, z.output<ValueSchema>> = {};
-      for (const [encodedKey, value] of Object.entries(record)) {
-        Object.defineProperty(restored, decodeRecordKey(encodedKey), {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      return restored;
-    }),
+    z
+      .record(
+        z
+          .string()
+          .regex(
+            /^u(?:[0-9a-f]{4})*$/,
+            "record keys must contain valid Unicode",
+          ),
+        valueSchema,
+      )
+      .transform((record) => {
+        const restored: Record<string, z.output<ValueSchema>> = {};
+        for (const [encodedKey, value] of Object.entries(record)) {
+          Object.defineProperty(restored, decodeRecordKey(encodedKey), {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
+        return restored;
+      }),
   ) as z.ZodType<Record<string, z.output<ValueSchema>>>;
 }
 
@@ -145,9 +150,7 @@ export const agentProfileResourcesSchema = z.strictObject({
   skills: z.array(agentProfileResourceRefSchema).optional(),
   agents: z.array(agentProfileResourceRefSchema).optional(),
   commands: z.array(agentProfileResourceRefSchema).optional(),
-  instructions: z
-    .union([z.string(), agentProfileResourceRefSchema])
-    .optional(),
+  instructions: z.union([z.string(), agentProfileResourceRefSchema]).optional(),
   failOnError: z.boolean().optional(),
 });
 
@@ -211,10 +214,19 @@ export const agentProfileModelHintsSchema =
 export const agentProfileSeatSchema = z.strictObject({
   harness: harnessTypeSchema,
   provider: z.string().regex(/^[a-z][a-z0-9-]*$/),
-  model: z.string().min(1).refine((value) => value.trim() === value, "model must be canonical"),
+  model: z
+    .string()
+    .min(1)
+    .refine((value) => value.trim() === value, "model must be canonical"),
   selector: z.union([
     z.strictObject({ kind: z.literal("all-eligible") }),
-    z.strictObject({ kind: z.literal("seat"), id: z.string().min(1).refine((value) => value.trim() === value, "seat id must be canonical") }),
+    z.strictObject({
+      kind: z.literal("seat"),
+      id: z
+        .string()
+        .min(1)
+        .refine((value) => value.trim() === value, "seat id must be canonical"),
+    }),
   ]),
   tools: ownPropertyRecordSchema(z.boolean()).optional(),
   permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
@@ -311,9 +323,8 @@ export const agentProfileEnvironmentSchema = profileConfigRecordSchema(
   environmentNameSchema,
 );
 
-export const agentProfileHeaderSchema = profileConfigRecordSchema(
-  headerNameSchema,
-);
+export const agentProfileHeaderSchema =
+  profileConfigRecordSchema(headerNameSchema);
 
 export const agentSubagentProfileSchema = z.strictObject({
   description: z.string().optional(),
@@ -353,17 +364,19 @@ const nonBlankMcpValueSchema = z
   .string()
   .refine((value) => value.trim().length > 0, "value cannot be blank");
 
-const remoteMcpUrlSchema = nonBlankMcpValueSchema.refine((value) => {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}, "remote MCP url must be an absolute HTTP(S) URL").refine(
-  (value) => !looksLikeCredential(value),
-  "remote MCP url cannot contain credentials or credential-named query parameters",
-);
+const remoteMcpUrlSchema = nonBlankMcpValueSchema
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "remote MCP url must be an absolute HTTP(S) URL")
+  .refine(
+    (value) => !looksLikeCredential(value),
+    "remote MCP url cannot contain credentials or credential-named query parameters",
+  );
 
 const agentProfileLocalMcpServerSchema = z.strictObject({
   transport: z.literal("stdio").optional(),
@@ -466,11 +479,18 @@ export const agentProfileDiffRemovalSchema = z.strictObject({
   extensions: removeListSchema.optional(),
 });
 
-const trainingIdentitySchema = z.string().min(1).max(500).refine(
-  (value) => value.trim() === value && isWellFormedUnicode(value) &&
-    !controlCharacterPattern.test(value) && !looksLikeCredential(value),
-  "training identity must be canonical public text",
-);
+const trainingIdentitySchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) =>
+      value.trim() === value &&
+      isWellFormedUnicode(value) &&
+      !controlCharacterPattern.test(value) &&
+      !looksLikeCredential(value),
+    "training identity must be canonical public text",
+  );
 
 export const agentTrainingTaskSchema = z.strictObject({
   benchmark: trainingIdentitySchema,
@@ -483,72 +503,115 @@ export function agentTrainingTaskKey(task: AgentTrainingTask): string {
   return JSON.stringify([task.benchmark, task.task, task.contentDigest]);
 }
 
-export const agentTrainingDatasetIdentitySchema = z.strictObject({
-  digest: sha256DigestSchema,
-  taskSetDigest: sha256DigestSchema,
-  tasks: z.array(agentTrainingTaskSchema).min(1).max(10_000),
-}).superRefine((dataset, context) => {
-  const keys = dataset.tasks.map(agentTrainingTaskKey);
-  if (keys.some((key, index) => index > 0 && key <= keys[index - 1]!)) {
-    context.addIssue({ code: "custom", path: ["tasks"], message: "training tasks must be sorted and unique" });
-  }
-  if (canonicalCandidateDigest(dataset.tasks) !== dataset.taskSetDigest) {
-    context.addIssue({ code: "custom", path: ["taskSetDigest"], message: "training task inventory digest mismatch" });
-  }
-});
+export const agentTrainingDatasetIdentitySchema = z
+  .strictObject({
+    digest: sha256DigestSchema,
+    taskSetDigest: sha256DigestSchema,
+    tasks: z.array(agentTrainingTaskSchema).min(1).max(10_000),
+  })
+  .superRefine((dataset, context) => {
+    const keys = dataset.tasks.map(agentTrainingTaskKey);
+    if (keys.some((key, index) => index > 0 && key <= keys[index - 1]!)) {
+      context.addIssue({
+        code: "custom",
+        path: ["tasks"],
+        message: "training tasks must be sorted and unique",
+      });
+    }
+    if (canonicalCandidateDigest(dataset.tasks) !== dataset.taskSetDigest) {
+      context.addIssue({
+        code: "custom",
+        path: ["taskSetDigest"],
+        message: "training task inventory digest mismatch",
+      });
+    }
+  });
 
 export const agentTrainingParametersSchema = ownPropertyRecordSchema(
-  z.union([z.string().max(2_048).pipe(publicProfileConfigStringSchema), z.number().finite(), z.boolean(), z.null()]),
+  z.union([
+    z.string().max(2_048).pipe(publicProfileConfigStringSchema),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+  ]),
 ).superRefine((parameters, context) => {
   if (Object.keys(parameters).length > 100) {
-    context.addIssue({ code: "custom", message: "at most 100 public training parameters are allowed" });
+    context.addIssue({
+      code: "custom",
+      message: "at most 100 public training parameters are allowed",
+    });
   }
   for (const name of Object.keys(parameters)) {
-    if (!trainingIdentitySchema.safeParse(name).success || isCredentialBearingProfileConfigName(name)) {
-      context.addIssue({ code: "custom", path: [name], message: "training parameter name must be public and non-credential" });
+    if (
+      !trainingIdentitySchema.safeParse(name).success ||
+      isCredentialBearingProfileConfigName(name)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [name],
+        message: "training parameter name must be public and non-credential",
+      });
     }
   }
 });
 
-export const agentTrainingReceiptSchema = z.strictObject({
-  version: z.literal(1),
-  dataset: agentTrainingDatasetIdentitySchema,
-  parentProfileDigest: sha256DigestSchema,
-  parentReceiptDigest: sha256DigestSchema.nullable(),
-  executionRef: sha256DigestSchema,
-  trainer: z.strictObject({
-    mode: z.enum(["command", "managed"]),
-    id: trainingIdentitySchema,
-    revision: sha256DigestSchema,
-    parameters: agentTrainingParametersSchema,
-  }),
-  checkpoint: z.strictObject({
-    artifactDigest: sha256DigestSchema,
-    artifactBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    routerModelId: trainingIdentitySchema,
-    servingDigest: sha256DigestSchema,
-  }),
-}).superRefine((receipt, context) => {
-  if (receipt.checkpoint.routerModelId !== trainedModelIdForArtifact(receipt.checkpoint.artifactDigest)) {
-    context.addIssue({ code: "custom", path: ["checkpoint", "routerModelId"], message: "trained Router model must be artifact-addressed" });
-  }
-}) satisfies z.ZodType<AgentTrainingReceipt>;
-
-export const agentProfileTrainingSchema = z.strictObject({
-  receipt: agentTrainingReceiptSchema,
-  ancestors: z.array(agentTrainingReceiptSchema).max(8),
-}).superRefine((training, context) => {
-  const chain = [training.receipt, ...training.ancestors];
-  const digests = chain.map(canonicalCandidateDigest);
-  if (new Set(digests).size !== digests.length) {
-    context.addIssue({ code: "custom", message: "training receipt ancestry must not repeat" });
-  }
-  for (let index = 0; index < chain.length; index++) {
-    if (chain[index]!.parentReceiptDigest !== (digests[index + 1] ?? null)) {
-      context.addIssue({ code: "custom", message: "training receipt ancestry is incomplete or has been altered" });
+export const agentTrainingReceiptSchema = z
+  .strictObject({
+    version: z.literal(1),
+    dataset: agentTrainingDatasetIdentitySchema,
+    parentProfileDigest: sha256DigestSchema,
+    parentReceiptDigest: sha256DigestSchema.nullable(),
+    executionRef: sha256DigestSchema,
+    trainer: z.strictObject({
+      mode: z.enum(["command", "managed"]),
+      id: trainingIdentitySchema,
+      revision: sha256DigestSchema,
+      parameters: agentTrainingParametersSchema,
+    }),
+    checkpoint: z.strictObject({
+      artifactDigest: sha256DigestSchema,
+      artifactBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      routerModelId: trainingIdentitySchema,
+      servingDigest: sha256DigestSchema,
+    }),
+  })
+  .superRefine((receipt, context) => {
+    if (
+      receipt.checkpoint.routerModelId !==
+      trainedModelIdForArtifact(receipt.checkpoint.artifactDigest)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["checkpoint", "routerModelId"],
+        message: "trained Router model must be artifact-addressed",
+      });
     }
-  }
-}) satisfies z.ZodType<AgentProfileTraining>;
+  }) satisfies z.ZodType<AgentTrainingReceipt>;
+
+export const agentProfileTrainingSchema = z
+  .strictObject({
+    receipt: agentTrainingReceiptSchema,
+    ancestors: z.array(agentTrainingReceiptSchema).max(8),
+  })
+  .superRefine((training, context) => {
+    const chain = [training.receipt, ...training.ancestors];
+    const digests = chain.map(canonicalCandidateDigest);
+    if (new Set(digests).size !== digests.length) {
+      context.addIssue({
+        code: "custom",
+        message: "training receipt ancestry must not repeat",
+      });
+    }
+    for (let index = 0; index < chain.length; index++) {
+      if (chain[index]!.parentReceiptDigest !== (digests[index + 1] ?? null)) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "training receipt ancestry is incomplete or has been altered",
+        });
+      }
+    }
+  }) satisfies z.ZodType<AgentProfileTraining>;
 
 export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
   ownPropertyRecordSchema(z.unknown()).superRefine((metadata, context) => {
@@ -556,7 +619,11 @@ export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
     const result = agentProfileTrainingSchema.safeParse(metadata.training);
     if (!result.success) {
       for (const issue of result.error.issues) {
-        context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message });
+        context.addIssue({
+          code: "custom",
+          path: ["training", ...issue.path],
+          message: issue.message,
+        });
       }
     }
   });
@@ -576,7 +643,9 @@ export const agentProfileSchema = z
     model: agentProfileModelHintsSchema.optional(),
     harness: harnessTypeSchema.optional(),
     seats: z.array(agentProfileSeatSchema).nonempty().optional(),
-    permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
+    permissions: ownPropertyRecordSchema(
+      agentProfilePermissionSchema,
+    ).optional(),
     tools: ownPropertyRecordSchema(z.boolean()).optional(),
     mcp: ownPropertyRecordSchema(agentProfileMcpServerSchema).optional(),
     connections: z.array(agentProfileConnectionSchema).optional(),
@@ -596,59 +665,139 @@ export const agentProfileSchema = z
     validateNestedRecordKeys(profile, context, [], new Set<object>());
     if (profile.seats?.length) {
       const first = profile.seats[0]!;
-      if (first.harness !== profile.harness || first.provider !== profile.model?.provider ||
-          first.model !== profile.model?.default) {
-        context.addIssue({ code: "custom", path: ["seats", 0], message: "first seat must match profile harness, model.provider, and model.default" });
+      if (
+        first.harness !== profile.harness ||
+        first.provider !== profile.model?.provider ||
+        first.model !== profile.model?.default
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["seats", 0],
+          message:
+            "first seat must match profile harness, model.provider, and model.default",
+        });
       }
-      if (first.tools !== undefined &&
-          canonicalAgentProfileJson(first.tools) !== canonicalAgentProfileJson(profile.tools)) {
-        context.addIssue({ code: "custom", path: ["seats", 0, "tools"], message: "first seat tools must match profile tools" });
+      if (
+        first.tools !== undefined &&
+        canonicalAgentProfileJson(first.tools) !==
+          canonicalAgentProfileJson(profile.tools)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["seats", 0, "tools"],
+          message: "first seat tools must match profile tools",
+        });
       }
-      if (first.permissions !== undefined &&
-          canonicalAgentProfileJson(first.permissions) !== canonicalAgentProfileJson(profile.permissions)) {
-        context.addIssue({ code: "custom", path: ["seats", 0, "permissions"], message: "first seat permissions must match profile permissions" });
+      if (
+        first.permissions !== undefined &&
+        canonicalAgentProfileJson(first.permissions) !==
+          canonicalAgentProfileJson(profile.permissions)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["seats", 0, "permissions"],
+          message: "first seat permissions must match profile permissions",
+        });
       }
       for (const [index, seat] of profile.seats.entries()) {
         const provider = resolveModelProvider(seat.model);
         if (provider !== seat.provider) {
-          context.addIssue({ code: "custom", path: ["seats", index, "provider"], message: "seat provider must match the model provider" });
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "provider"],
+            message: "seat provider must match the model provider",
+          });
         }
         if (!harnessHonorsModel(seat.harness)) {
-          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness does not honor an exact model choice" });
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "harness"],
+            message: "seat harness does not honor an exact model choice",
+          });
         }
-        const support = harnessModelSupport(seat.harness, seat.model, { reasoningEffort: profile.model?.reasoningEffort });
+        const support = harnessModelSupport(seat.harness, seat.model, {
+          reasoningEffort: profile.model?.reasoningEffort,
+        });
         if (!support.supported) {
-          context.addIssue({ code: "custom", path: ["seats", index, "model"], message: support.message });
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "model"],
+            message: support.message,
+          });
         }
         const effort = profile.model?.reasoningEffort;
-        if (effort !== undefined && (!harnessHonorsEffort(seat.harness) ||
-            !harnessReasoningEfforts(seat.harness).includes(effort))) {
-          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot honor profile reasoning effort" });
+        if (
+          effort !== undefined &&
+          (!harnessHonorsEffort(seat.harness) ||
+            !harnessReasoningEfforts(seat.harness).includes(effort))
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "harness"],
+            message: "seat harness cannot honor profile reasoning effort",
+          });
         }
         const prompt = harnessSystemPromptIntents(seat.harness);
         if (profile.prompt?.systemPrompt !== undefined && !prompt.replace) {
-          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot replace the system prompt" });
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "harness"],
+            message: "seat harness cannot replace the system prompt",
+          });
         }
-        if (profile.prompt?.appendSystemPrompt !== undefined && !prompt.append) {
-          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot append the system prompt" });
+        if (
+          profile.prompt?.appendSystemPrompt !== undefined &&
+          !prompt.append
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["seats", index, "harness"],
+            message: "seat harness cannot append the system prompt",
+          });
         }
       }
     }
-    const training = agentProfileTrainingSchema.safeParse(profile.metadata?.training);
-    if (profile.model?.default?.startsWith(TRAINED_MODEL_PREFIX) && !training.success) {
-      context.addIssue({ code: "custom", path: ["metadata", "training"], message: "trained model requires a checkpoint receipt" });
+    const training = agentProfileTrainingSchema.safeParse(
+      profile.metadata?.training,
+    );
+    if (
+      profile.model?.default?.startsWith(TRAINED_MODEL_PREFIX) &&
+      !training.success
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["metadata", "training"],
+        message: "trained model requires a checkpoint receipt",
+      });
     }
     const auxiliaryModels = [
       profile.model?.small,
       ...Object.values(profile.subagents ?? {}).map((agent) => agent.model),
       ...Object.values(profile.modes ?? {}).map((mode) => mode.model),
     ];
-    if (auxiliaryModels.some((model) => model?.startsWith(TRAINED_MODEL_PREFIX) &&
-      (!training.success || model !== training.data.receipt.checkpoint.routerModelId))) {
-      context.addIssue({ code: "custom", message: "trained auxiliary models require the same receipted checkpoint" });
+    if (
+      auxiliaryModels.some(
+        (model) =>
+          model?.startsWith(TRAINED_MODEL_PREFIX) &&
+          (!training.success ||
+            model !== training.data.receipt.checkpoint.routerModelId),
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "trained auxiliary models require the same receipted checkpoint",
+      });
     }
-    if (training.success && profile.model?.default !== training.data.receipt.checkpoint.routerModelId) {
-      context.addIssue({ code: "custom", path: ["model", "default"], message: "trained profile model must equal the receipt's Router model" });
+    if (
+      training.success &&
+      profile.model?.default !== training.data.receipt.checkpoint.routerModelId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["model", "default"],
+        message: "trained profile model must equal the receipt's Router model",
+      });
     }
   });
 
@@ -725,8 +874,8 @@ function validateNestedRecordKeys(
   }
 }
 
-export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObject(
-  {
+export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> =
+  z.strictObject({
     kind: z.literal("agent-profile-diff"),
     id: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
@@ -748,8 +897,7 @@ export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObjec
     set: agentProfileSchema.optional(),
     remove: agentProfileDiffRemovalSchema.optional(),
     metadata: ownPropertyRecordSchema(z.unknown()).optional(),
-  },
-);
+  });
 
 // ── Compile-time drift guard ──────────────────────────────────────────────────
 // The Zod schema and the hand-written {@link AgentProfile} interface must agree in
@@ -808,8 +956,7 @@ export interface Capability {
 }
 
 export const capabilitySchema: z.ZodType<Capability> = z.strictObject({
-    id: z.string().min(1),
-    definition: agentProfileSchema as z.ZodType<AgentProfile>,
-    recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
+  id: z.string().min(1),
+  definition: agentProfileSchema as z.ZodType<AgentProfile>,
+  recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
 });
-

@@ -67,7 +67,6 @@ Keep mounted resources and behavior in this typed field, separate from bounded `
 Providers must honor the profile or refuse it before dispatch; callers must not assume every provider supports per-turn profile changes.
 Provider-specific payload and capability limits still apply.
 
-
 `AgentRunControlRef` identifies a retained run without depending on a live JavaScript object and may carry the provider's admission digest so reconstruction can reject changed-input reuse.
 `RuntimeEventEnvelope` adds stable run, event, sequence, cursor, and timestamp fields around the existing `StreamEvent` union, and its runtime schema validates every canonical event variant.
 The `child-task` event reports one update of a provider-native child task (a subagent, worker, or delegated task) with a stable `childId`, an optional `parentChildId`, a lifecycle status, start and update times, and the runner, model, usage, and terminal reason when the provider reports them.
@@ -153,9 +152,7 @@ pnpm add @tangle-network/agent-interface
 ## Usage
 
 ```ts
-import type {
-  AgentEnvironmentProvider,
-} from "@tangle-network/agent-interface/environment-provider";
+import type { AgentEnvironmentProvider } from "@tangle-network/agent-interface/environment-provider";
 import type {
   BackendCapabilities,
   ProviderCapabilities,
@@ -186,9 +183,21 @@ const provider: AgentEnvironmentProvider = {
       runtimeUpdate: false,
       validation: true,
     },
-    streaming: { live: true, replay: false, detach: false, turnIdempotency: false },
+    streaming: {
+      live: true,
+      replay: false,
+      detach: false,
+      turnIdempotency: false,
+    },
     sessions: { continue: false, list: false, messages: false },
-    workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false },
+    workspace: {
+      read: true,
+      write: true,
+      exec: true,
+      git: false,
+      upload: false,
+      download: false,
+    },
     branching: { checkpoint: false, fork: false },
     placement: false,
     usage: true,
@@ -325,7 +334,6 @@ An absent mode means the aggregation semantics are unknown.
 Materialization receipts cover all three model token ceilings at their exact requested paths.
 A strict profile rejects unsupported ceilings instead of silently accepting them.
 
-
 ### Native session observations
 
 Adapters emit `native.session.observed` with `provider` and `nativeSessionId` after observing the provider conversation identity.
@@ -399,7 +407,6 @@ Rollback creates a new guarded revision; historical pins remain immutable.
    `qualification: 'fixture'` or `'native-binary'` honestly. A fixture is not proof
    of an external CLI binary or deployed volume. Complete native-binary and
    deployment qualification before advertising those stronger guarantees.
-
 
 ### Pinned knowledge sources
 
