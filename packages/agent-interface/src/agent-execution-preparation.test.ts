@@ -105,6 +105,7 @@ const fullProfile: AgentProfile = {
   connections: [{ connectionId: "literature", capabilities: ["search"] }],
   subagents: { critic: { prompt: "Find confounds." } },
   resources: {
+    knowledge: [{ sourceId: "source_1", generation: `kg_${"a".repeat(64)}` }],
     files: [
       {
         path: "inputs/protocol.txt",
@@ -206,7 +207,7 @@ function refusalCodes(build: () => unknown): string[] {
 
 describe("profile materialization leaves", () => {
   it("enumerates canonical leaves, including optional seat policy", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(34);
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(35);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
       AGENT_PROFILE_MATERIALIZATION_AXES.filter((axis) => axis !== "seats"),
     );
@@ -883,3 +884,4 @@ describe("AgentExecutionPreparationReceipt", () => {
     );
   });
 });
+

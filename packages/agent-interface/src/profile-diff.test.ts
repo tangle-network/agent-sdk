@@ -46,6 +46,9 @@ const baseProfile: AgentProfile = {
 };
 
 const resourceFieldCases = {
+  knowledge: {
+    knowledge: [{ sourceId: "source_1", generation: `kg_${"a".repeat(64)}` }],
+  },
   files: {
     files: [
       {
@@ -236,6 +239,7 @@ describe("AgentProfileDiff", () => {
           connections: true,
           subagents: true,
           resources: {
+            knowledge: true,
             files: true,
             tools: true,
             skills: true,
@@ -555,3 +559,4 @@ describe("AgentProfileDiff", () => {
     expect(profile.harness).toBeUndefined();
   });
 });
+

@@ -399,3 +399,19 @@ Rollback creates a new guarded revision; historical pins remain immutable.
    `qualification: 'fixture'` or `'native-binary'` honestly. A fixture is not proof
    of an external CLI binary or deployed volume. Complete native-binary and
    deployment qualification before advertising those stronger guarantees.
+
+
+### Pinned knowledge sources
+
+`AgentProfile.resources.knowledge` carries up to `MAX_PROFILE_KNOWLEDGE_SOURCES`
+immutable `{ sourceId, generation }` Hub references. A generation is an exact
+`kg_` SHA-256 identity, never a mutable `latest` alias. A source may appear only
+once. These references participate in snapshots, candidate identity, profile
+merges/diffs and the `knowledge` materialization axis. An overlay can explicitly
+repin a source; a diff can remove it by source ID.
+
+References contain neither corpus content nor authorization. The execution host
+must validate source ownership and active generation bindings for its own runtime
+before admitting a knowledge tool. A profile copied to another owner does not
+confer access. Hosts unable to resolve the saved pins must fail closed rather than
+inline JSON into instructions, substitute a newer generation or silently omit them.

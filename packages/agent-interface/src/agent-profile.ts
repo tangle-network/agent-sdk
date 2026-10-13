@@ -85,7 +85,18 @@ export interface AgentProfileFileMount {
 /**
  * Provider-neutral resource bundle.
  */
+export const MAX_PROFILE_KNOWLEDGE_SOURCES = 16;
+
+/** Immutable Hub source generation. This is public identity, never retrieval authority. */
+export interface AgentProfileKnowledgeRef {
+  sourceId: string;
+  generation: string;
+}
+
 export interface AgentProfileResources {
+  /** Owner-authorized source generations resolved by the execution host before admission.
+   * Source content and credentials must never be inlined into a profile or prompt. */
+  knowledge?: AgentProfileKnowledgeRef[];
   /**
    * Generic files to materialize into the agent workspace before execution.
    */
@@ -679,6 +690,19 @@ function mergeOptionalArrays<T>(
   return [...(base ?? []), ...(overlay ?? [])];
 }
 
+/** A source has one effective immutable generation; an overlay explicitly repins it. */
+function mergeKnowledgeRefs(
+  base: AgentProfileKnowledgeRef[] | undefined,
+  overlay: AgentProfileKnowledgeRef[] | undefined,
+): AgentProfileKnowledgeRef[] | undefined {
+  if (!base && !overlay) return undefined;
+  const refs = new Map<string, AgentProfileKnowledgeRef>();
+  for (const ref of [...(base ?? []), ...(overlay ?? [])]) {
+    refs.set(ref.sourceId, { ...ref });
+  }
+  return [...refs.values()];
+}
+
 /**
  * Merge two public AgentProfile values.
  *
@@ -719,6 +743,10 @@ export function mergeAgentProfiles(
           base?.resources,
           overlay?.resources,
           {
+            knowledge: mergeKnowledgeRefs(
+              base?.resources?.knowledge,
+              overlay?.resources?.knowledge,
+            ),
             files: mergeOptionalArrays(
               base?.resources?.files,
               overlay?.resources?.files,
@@ -961,3 +989,4 @@ export function composeAgentProfileGuidance(
   }
   return result;
 }
+

@@ -38,6 +38,7 @@ export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "skills",
   "resourceAgents",
   "commands",
+  "knowledge",
   "resourceInstructions",
   "resourceFailOnError",
   "hooks",
@@ -182,6 +183,11 @@ const AXIS_DESCRIPTORS = [
     value: (profile) => profile.resources?.commands,
   },
   {
+    axis: "knowledge",
+    rootPath: "/resources/knowledge",
+    value: (profile) => profile.resources?.knowledge,
+  },
+  {
     axis: "resourceInstructions",
     rootPath: "/resources/instructions",
     value: (profile) => profile.resources?.instructions,
@@ -312,3 +318,4 @@ function visitMaterializationValue(
 function escapeJsonPointerSegment(value: string): string {
   return value.replace(/~/g, "~0").replace(/\//g, "~1");
 }
+

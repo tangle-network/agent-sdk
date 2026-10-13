@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
+export {
+  agentProfileKnowledgeRefSchema,
+  agentProfileKnowledgeRefsSchema,
+} from "./profile-knowledge.js";
 import {
   REASONING_EFFORTS,
   TRAINED_MODEL_PREFIX,
@@ -137,6 +142,7 @@ export const agentProfileFileMountSchema = z.strictObject({
 });
 
 export const agentProfileResourcesSchema = z.strictObject({
+  knowledge: agentProfileKnowledgeRefsSchema.optional(),
   files: z.array(agentProfileFileMountSchema).optional(),
   tools: z.array(agentProfileResourceRefSchema).optional(),
   skills: z.array(agentProfileResourceRefSchema).optional(),
@@ -429,6 +435,7 @@ export const agentProfilePromptRemovalSchema = z.strictObject({
 });
 
 export const agentProfileResourceRemovalSchema = z.strictObject({
+  knowledge: removeListSchema.optional(),
   files: removeListSchema.optional(),
   tools: removeListSchema.optional(),
   skills: removeListSchema.optional(),
@@ -808,3 +815,4 @@ export const capabilitySchema: z.ZodType<Capability> = z.strictObject({
     definition: agentProfileSchema as z.ZodType<AgentProfile>,
     recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
 });
+
