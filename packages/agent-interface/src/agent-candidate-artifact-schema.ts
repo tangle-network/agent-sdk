@@ -27,8 +27,7 @@ import { agentImprovementSourceSchema } from "./agent-improvement-source.js";
 
 const base64Alphabet =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const s3BucketPattern =
-  /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+const s3BucketPattern = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const awsRegionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
 const ipfsCidPattern = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
 const privateCasNamespacePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -109,21 +108,14 @@ export const agentCandidateIpfsLocatorSchema = z
 export const agentCandidatePrivateCasLocatorSchema = z
   .object({
     kind: z.literal("private-cas"),
-    namespace: z
-      .string()
-      .regex(privateCasNamespacePattern)
-      .refine((value) => value !== "." && value !== ".."),
+    namespace: z.string().regex(privateCasNamespacePattern).refine((value) => value !== "." && value !== ".."),
     digest: sha256DigestSchema,
   })
   .strict() satisfies z.ZodType<AgentCandidatePrivateCasLocator>;
 
 export const agentCandidateArtifactLocatorSchema = z.discriminatedUnion(
   "kind",
-  [
-    agentCandidateS3LocatorSchema,
-    agentCandidateIpfsLocatorSchema,
-    agentCandidatePrivateCasLocatorSchema,
-  ],
+  [agentCandidateS3LocatorSchema, agentCandidateIpfsLocatorSchema, agentCandidatePrivateCasLocatorSchema],
 );
 
 export const agentCandidateArtifactRefSchema = z
@@ -134,10 +126,7 @@ export const agentCandidateArtifactRefSchema = z
   })
   .strict()
   .superRefine((artifact, ctx) => {
-    if (
-      artifact.locator.kind === "private-cas" &&
-      artifact.locator.digest !== artifact.sha256
-    ) {
+    if (artifact.locator.kind === "private-cas" && artifact.locator.digest !== artifact.sha256) {
       ctx.addIssue({
         code: "custom",
         path: ["locator", "digest"],
@@ -156,9 +145,7 @@ export const agentCandidateEmbeddedArtifactSchema = z
     byteLength: z.number().int().nonnegative(),
   })
   .strict()
-  .superRefine(
-    validateEmbeddedArtifact,
-  ) satisfies z.ZodType<AgentCandidateEmbeddedArtifact>;
+  .superRefine(validateEmbeddedArtifact) satisfies z.ZodType<AgentCandidateEmbeddedArtifact>;
 
 export const agentCandidateCapturedArtifactSchema = z.union([
   agentCandidateArtifactRefSchema,
@@ -193,8 +180,7 @@ export const agentCandidateWorkspaceManifestMaterialSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["files", index, "path"],
-          message:
-            "workspace manifest paths must be unique and lexicographically sorted",
+          message: "workspace manifest paths must be unique and lexicographically sorted",
         });
       }
     }
@@ -217,14 +203,10 @@ export const agentCandidateWorkspaceSnapshotEvidenceSchema = z
         message: "workspace digest must equal the canonical manifest hash",
       });
     }
-    if (
-      evidence.manifest.byteLength === 0 ||
-      evidence.archive.byteLength === 0
-    ) {
+    if (evidence.manifest.byteLength === 0 || evidence.archive.byteLength === 0) {
       ctx.addIssue({
         code: "custom",
-        message:
-          "workspace evidence requires non-empty manifest and archive bytes",
+        message: "workspace evidence requires non-empty manifest and archive bytes",
       });
     }
   }) satisfies z.ZodType<AgentCandidateWorkspaceSnapshotEvidence>;
@@ -276,10 +258,7 @@ export const agentCandidateInlineResourceSchema = z
   })
   .strict()
   .superRefine((resource, ctx) => {
-    if (
-      new TextEncoder().encode(resource.content).byteLength !==
-      resource.byteLength
-    ) {
+    if (new TextEncoder().encode(resource.content).byteLength !== resource.byteLength) {
       ctx.addIssue({
         code: "custom",
         path: ["byteLength"],
@@ -306,9 +285,7 @@ export const agentCandidateGitHubResourceSchema = z
     source: agentImprovementSourceSchema.optional(),
   })
   .strict()
-  .superRefine(
-    validateResourceSourceDigest,
-  ) satisfies z.ZodType<AgentCandidateGitHubResource>;
+  .superRefine(validateResourceSourceDigest) satisfies z.ZodType<AgentCandidateGitHubResource>;
 
 export const agentCandidateResourceRefSchema = z.discriminatedUnion("kind", [
   agentCandidateInlineResourceSchema,
@@ -337,11 +314,9 @@ export const agentCandidateResourcesSchema = z
     agents: z.array(agentCandidateResourceRefSchema).optional(),
     commands: z.array(agentCandidateResourceRefSchema).optional(),
     instructions: z
-      .union([
-        z.string().refine(isWellFormedUnicode),
-        agentCandidateResourceRefSchema,
-      ])
+      .union([z.string().refine(isWellFormedUnicode), agentCandidateResourceRefSchema])
       .optional(),
     failOnError: z.literal(true),
   })
   .strict() satisfies z.ZodType<AgentCandidateResources>;
+

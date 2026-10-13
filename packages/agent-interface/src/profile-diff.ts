@@ -8,10 +8,7 @@ import { mergeAgentProfiles } from "./agent-profile.js";
 import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 
 type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
-type AgentProfileDiffPropertyAxis = Exclude<
-  keyof AgentProfile,
-  AgentProfileIdentityProperty
->;
+type AgentProfileDiffPropertyAxis = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
 
 const agentProfileDiffPropertyAxes = [
   "prompt",
@@ -103,7 +100,12 @@ export interface AgentProfileDiff {
      * the same member {@link AgentCandidateLineage}`.source` carries, so the two
      * enums name one actor with one word.
      */
-    kind: "trace" | "frontier-author" | "human" | "optimizer" | "compound";
+    kind:
+      | "trace"
+      | "frontier-author"
+      | "human"
+      | "optimizer"
+      | "compound";
     artifacts?: readonly string[];
     notes?: readonly string[];
   };
@@ -126,9 +128,8 @@ type MissingAgentProfilePromptDiffPropertyAxis = Exclude<
   keyof AgentProfilePrompt,
   (typeof agentProfilePromptDiffPropertyAxes)[number]
 >;
-const _agentProfilePromptDiffPropertyAxesAreExhaustive: MissingAgentProfilePromptDiffPropertyAxis extends never
-  ? true
-  : never = true;
+const _agentProfilePromptDiffPropertyAxesAreExhaustive:
+  MissingAgentProfilePromptDiffPropertyAxis extends never ? true : never = true;
 void _agentProfilePromptDiffPropertyAxesAreExhaustive;
 
 const agentProfileResourceDiffPropertyAxes = [
@@ -146,9 +147,8 @@ type MissingAgentProfileResourceDiffPropertyAxis = Exclude<
   keyof AgentProfileResources,
   (typeof agentProfileResourceDiffPropertyAxes)[number]
 >;
-const _agentProfileResourceDiffPropertyAxesAreExhaustive: MissingAgentProfileResourceDiffPropertyAxis extends never
-  ? true
-  : never = true;
+const _agentProfileResourceDiffPropertyAxesAreExhaustive:
+  MissingAgentProfileResourceDiffPropertyAxis extends never ? true : never = true;
 void _agentProfileResourceDiffPropertyAxesAreExhaustive;
 
 /**
@@ -298,9 +298,7 @@ function removeValues(
 }
 
 function resourceName(resource: AgentProfileResourceRef): string | undefined {
-  return resource.kind === "inline"
-    ? resource.name
-    : (resource.name ?? resource.path);
+  return resource.kind === "inline" ? resource.name : resource.name ?? resource.path;
 }
 
 function removeResourceRefs<T extends AgentProfileResourceRef>(
@@ -393,10 +391,7 @@ function setOrDelete<T extends object, K extends keyof T>(
   target[key] = value;
 }
 
-function applyRemoval(
-  profile: AgentProfile,
-  remove?: AgentProfileDiffRemoval,
-): AgentProfile {
+function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): AgentProfile {
   if (!remove) return profile;
   const next: AgentProfile = { ...profile };
 
@@ -446,11 +441,7 @@ function applyRemoval(
     setOrDelete(next, "mcp", removeKeys(next.mcp, remove.mcp));
   }
   if (remove.subagents !== undefined) {
-    setOrDelete(
-      next,
-      "subagents",
-      removeKeys(next.subagents, remove.subagents),
-    );
+    setOrDelete(next, "subagents", removeKeys(next.subagents, remove.subagents));
   }
   if (remove.resources !== undefined) {
     setOrDelete(
@@ -515,9 +506,7 @@ function hasRemovalOperation(value: unknown): boolean {
   return false;
 }
 
-export function changedAgentProfileAxes(
-  diff: AgentProfileDiff,
-): AgentProfileDiffAxis[] {
+export function changedAgentProfileAxes(diff: AgentProfileDiff): AgentProfileDiffAxis[] {
   const axes = new Set<AgentProfileDiffAxis>();
   const set = diff.set;
   if (set) {
@@ -535,10 +524,7 @@ export function changedAgentProfileAxes(
   }
   const remove = diff.remove;
   if (remove) {
-    if (
-      hasRemovalOperation(remove.identity) ||
-      hasRemovalOperation(remove.tags)
-    ) {
+    if (hasRemovalOperation(remove.identity) || hasRemovalOperation(remove.tags)) {
       axes.add("identity");
     }
     for (const axis of agentProfileDiffPropertyAxes) {
@@ -547,3 +533,4 @@ export function changedAgentProfileAxes(
   }
   return [...axes].sort();
 }
+

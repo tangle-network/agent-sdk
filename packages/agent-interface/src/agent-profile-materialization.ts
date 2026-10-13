@@ -63,10 +63,7 @@ export interface AgentProfileMaterializationRequest {
 }
 
 type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
-type AgentProfileProperty = Exclude<
-  keyof AgentProfile,
-  AgentProfileIdentityProperty
->;
+type AgentProfileProperty = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
 
 const profileProperties = [
   "prompt",
@@ -110,10 +107,7 @@ const MODEL_AXES = {
   maxReasoningTokens: "modelMaxReasoningTokens",
   maxTotalOutputTokens: "modelMaxTotalOutputTokens",
   metadata: "modelMetadata",
-} as const satisfies Record<
-  keyof AgentProfileModelHints,
-  AgentProfileMaterializationAxis
->;
+} as const satisfies Record<keyof AgentProfileModelHints, AgentProfileMaterializationAxis>;
 
 const AXIS_DESCRIPTORS = [
   { axis: "name", rootPath: "/name", value: (profile) => profile.name },
@@ -122,11 +116,7 @@ const AXIS_DESCRIPTORS = [
     rootPath: "/description",
     value: (profile) => profile.description,
   },
-  {
-    axis: "version",
-    rootPath: "/version",
-    value: (profile) => profile.version,
-  },
+  { axis: "version", rootPath: "/version", value: (profile) => profile.version },
   { axis: "tags", rootPath: "/tags", value: (profile) => profile.tags },
   {
     axis: "systemPrompt",
@@ -143,19 +133,12 @@ const AXIS_DESCRIPTORS = [
     rootPath: "/prompt/instructions",
     value: (profile) => profile.prompt?.instructions,
   },
-  ...Object.entries(MODEL_AXES).map(
-    ([property, axis]): AxisDescriptor => ({
-      axis,
-      rootPath: `/model/${property}`,
-      value: (profile) =>
-        profile.model?.[property as keyof AgentProfileModelHints],
-    }),
-  ),
-  {
-    axis: "harness",
-    rootPath: "/harness",
-    value: (profile) => profile.harness,
-  },
+  ...Object.entries(MODEL_AXES).map(([property, axis]): AxisDescriptor => ({
+    axis,
+    rootPath: `/model/${property}`,
+    value: (profile) => profile.model?.[property as keyof AgentProfileModelHints],
+  })),
+  { axis: "harness", rootPath: "/harness", value: (profile) => profile.harness },
   { axis: "seats", rootPath: "/seats", value: (profile) => profile.seats },
   {
     axis: "permissions",
@@ -309,16 +292,12 @@ function visitMaterializationValue(
 
   const nextAncestors = [...ancestors, value];
   const entries: Array<readonly [string, unknown]> = Array.isArray(value)
-    ? Array.from(
-        { length: value.length },
-        (_, index) =>
-          [
-            String(index),
-            Object.prototype.hasOwnProperty.call(value, index)
-              ? value[index]
-              : undefined,
-          ] as const,
-      )
+    ? Array.from({ length: value.length }, (_, index) => [
+        String(index),
+        Object.prototype.hasOwnProperty.call(value, index)
+          ? value[index]
+          : undefined,
+      ] as const)
     : Object.entries(value).sort(([left], [right]) =>
         left < right ? -1 : left > right ? 1 : 0,
       );
@@ -339,3 +318,4 @@ function visitMaterializationValue(
 function escapeJsonPointerSegment(value: string): string {
   return value.replace(/~/g, "~0").replace(/\//g, "~1");
 }
+

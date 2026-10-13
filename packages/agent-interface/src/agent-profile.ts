@@ -697,8 +697,9 @@ function mergeKnowledgeRefs(
 ): AgentProfileKnowledgeRef[] | undefined {
   if (!base && !overlay) return undefined;
   const refs = new Map<string, AgentProfileKnowledgeRef>();
-  for (const ref of [...(base ?? []), ...(overlay ?? [])])
+  for (const ref of [...(base ?? []), ...(overlay ?? [])]) {
     refs.set(ref.sourceId, { ...ref });
+  }
   return [...refs.values()];
 }
 
@@ -988,3 +989,4 @@ export function composeAgentProfileGuidance(
   }
   return result;
 }
+

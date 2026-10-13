@@ -151,21 +151,19 @@ const workerProfile: AgentProfile = {
   tools: { shell: true, web: false },
 };
 
-function buildReceipt(
-  options: {
-    authoredProfile?: AgentProfile;
-    effectiveProfile?: AgentProfile;
-    axisResults?: readonly AgentExecutionPreparationAxisResult[];
-    reasoningEffort?: {
-      requested: "high";
-      resolved?: "high" | "medium";
-      fidelity: "exact" | "clamped" | "unsupported";
-    };
-    workspaceLease?: AgentWorkspaceSealedLeaseRecord;
-    profileActivation?: Pick<AgentProfileActivationEvidence, "digest">;
-    nowMs?: number;
-  } = {},
-): AgentExecutionPreparationReceipt {
+function buildReceipt(options: {
+  authoredProfile?: AgentProfile;
+  effectiveProfile?: AgentProfile;
+  axisResults?: readonly AgentExecutionPreparationAxisResult[];
+  reasoningEffort?: {
+    requested: "high";
+    resolved?: "high" | "medium";
+    fidelity: "exact" | "clamped" | "unsupported";
+  };
+  workspaceLease?: AgentWorkspaceSealedLeaseRecord;
+  profileActivation?: Pick<AgentProfileActivationEvidence, "digest">;
+  nowMs?: number;
+} = {}): AgentExecutionPreparationReceipt {
   const authoredProfile = options.authoredProfile ?? workerProfile;
   const effectiveProfile = options.effectiveProfile ?? authoredProfile;
   return buildAgentExecutionPreparationReceipt({
@@ -202,8 +200,7 @@ function refusalCodes(build: () => unknown): string[] {
     build();
     return [];
   } catch (error) {
-    if (!(error instanceof AgentExecutionPreparationValidationError))
-      throw error;
+    if (!(error instanceof AgentExecutionPreparationValidationError)) throw error;
     return error.issues.map((issue) => issue.code);
   }
 }
@@ -229,36 +226,21 @@ describe("profile materialization leaves", () => {
     const axisResults = coverage(authoredProfile);
     expect(axisResults.some((result) => result.path === path)).toBe(true);
     expect(() => buildReceipt({ authoredProfile, axisResults })).not.toThrow();
-    expect(() =>
-      buildReceipt({
-        authoredProfile,
-        axisResults: axisResults.filter((result) => result.path !== path),
-      }),
-    ).toThrow(/missing.*coverage/);
-    expect(() =>
-      buildReceipt({
-        authoredProfile,
-        axisResults: axisResults.map((result) =>
-          result.path === path
-            ? {
-                ...result,
-                disposition: "unsupported",
-                reason: "backend cannot enforce this ceiling",
-              }
-            : result,
-        ),
-      }),
-    ).toThrow(/unsupported/);
-    expect(() =>
-      buildReceipt({
-        authoredProfile,
-        effectiveProfile: {
-          ...authoredProfile,
-          model: { default: "openai/gpt-5.4" },
-        },
-        axisResults,
-      }),
-    ).toThrow(/changed between authored and effective/);
+    expect(() => buildReceipt({
+      authoredProfile,
+      axisResults: axisResults.filter((result) => result.path !== path),
+    })).toThrow(/missing.*coverage/);
+    expect(() => buildReceipt({
+      authoredProfile,
+      axisResults: axisResults.map((result) => result.path === path
+        ? { ...result, disposition: "unsupported", reason: "backend cannot enforce this ceiling" }
+        : result),
+    })).toThrow(/unsupported/);
+    expect(() => buildReceipt({
+      authoredProfile,
+      effectiveProfile: { ...authoredProfile, model: { default: "openai/gpt-5.4" } },
+      axisResults,
+    })).toThrow(/changed between authored and effective/);
   });
 
   it("expands compound axes into every exact requested JSON Pointer", () => {
@@ -603,9 +585,7 @@ describe("AgentExecutionPreparationReceipt", () => {
   it("builds from a sealed lease", () => {
     const receipt = buildReceipt();
 
-    expect(agentExecutionPreparationReceiptSchema.parse(receipt)).toEqual(
-      receipt,
-    );
+    expect(agentExecutionPreparationReceiptSchema.parse(receipt)).toEqual(receipt);
     expect(receipt).toMatchObject({
       kind: "agent-execution-preparation",
       schemaVersion: 1,
@@ -625,9 +605,9 @@ describe("AgentExecutionPreparationReceipt", () => {
         version: "0.9.3",
       },
     });
-    expect(
-      receipt.axisResults.every((result) => result.path !== undefined),
-    ).toBe(true);
+    expect(receipt.axisResults.every((result) => result.path !== undefined)).toBe(
+      true,
+    );
     expect(receipt.executionPlanDigest).toBe(sha("4"));
     expect(receipt).not.toHaveProperty("executionPlan");
     expect(receipt.workspace).not.toHaveProperty("root");
@@ -639,9 +619,7 @@ describe("AgentExecutionPreparationReceipt", () => {
     expect(
       refusalCodes(() =>
         buildReceipt({
-          axisResults: requested.filter(
-            (result) => result.path !== "/tools/shell",
-          ),
+          axisResults: requested.filter((result) => result.path !== "/tools/shell"),
         }),
       ),
     ).toContain("missing-coverage");
@@ -663,9 +641,9 @@ describe("AgentExecutionPreparationReceipt", () => {
     const name = requested.find((result) => result.axis === "name")!;
     const pathless = { ...name };
     delete pathless.path;
-    expect(() =>
-      buildReceipt({ axisResults: [pathless, ...requested] }),
-    ).toThrow("duplicate profile axis/path result");
+    expect(() => buildReceipt({ axisResults: [pathless, ...requested] })).toThrow(
+      "duplicate profile axis/path result",
+    );
 
     const conflictingPathless: AgentExecutionPreparationAxisResult = {
       ...pathless,
@@ -874,9 +852,9 @@ describe("AgentExecutionPreparationReceipt", () => {
     };
     const shared: AgentProfileActivationEvidence = candidateActivation;
 
-    expect(
-      agentCandidateProfileActivationSchema.parse(candidateActivation),
-    ).toEqual(candidateActivation);
+    expect(agentCandidateProfileActivationSchema.parse(candidateActivation)).toEqual(
+      candidateActivation,
+    );
     const profile: AgentProfile = {};
     const receipt = buildAgentExecutionPreparationReceipt({
       preparationId: "candidate-prep",
@@ -906,3 +884,4 @@ describe("AgentExecutionPreparationReceipt", () => {
     );
   });
 });
+
