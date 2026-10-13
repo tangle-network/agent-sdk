@@ -26,7 +26,7 @@ npm install @tangle-network/harness-sessions
 | `opencode` | `opencode.sqlite` | `.local/share/opencode/opencode.db` (shared by every session) | session record (`providerID/modelID`) | per step (`step-finish`) |
 | `pi` | `pi.session-jsonl` | `.pi/agent/sessions/**/*_{id}.jsonl` | session record (`provider/model`) | per assistant message |
 
-Readers for Kimi, Factory, Gemini, Amp, Qwen, Copilot, Forge, Hermes, Prime and OpenClaw are added with the same real-data proof.
+Readers for Kimi, Factory, Gemini, Amp, Qwen, Copilot, Hermes, Prime and OpenClaw are added with the same real-data proof.
 
 ## Use
 
