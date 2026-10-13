@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
 import type {
   AgentCandidateArtifactRef,
   AgentCandidateCapturedArtifact,
@@ -306,6 +307,7 @@ export const agentCandidateFileMountSchema = z
 
 export const agentCandidateResourcesSchema = z
   .object({
+    knowledge: agentProfileKnowledgeRefsSchema.optional(),
     files: z.array(agentCandidateFileMountSchema).optional(),
     tools: z.array(agentCandidateResourceRefSchema).optional(),
     skills: z.array(agentCandidateResourceRefSchema).optional(),
@@ -317,3 +319,4 @@ export const agentCandidateResourcesSchema = z
     failOnError: z.literal(true),
   })
   .strict() satisfies z.ZodType<AgentCandidateResources>;
+

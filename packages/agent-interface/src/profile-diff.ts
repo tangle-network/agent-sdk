@@ -50,6 +50,7 @@ export interface AgentProfilePromptRemoval {
 }
 
 export interface AgentProfileResourceRemoval {
+  knowledge?: AgentProfileRemoveList;
   files?: AgentProfileRemoveList;
   tools?: AgentProfileRemoveList;
   skills?: AgentProfileRemoveList;
@@ -132,6 +133,7 @@ const _agentProfilePromptDiffPropertyAxesAreExhaustive:
 void _agentProfilePromptDiffPropertyAxesAreExhaustive;
 
 const agentProfileResourceDiffPropertyAxes = [
+  "knowledge",
   "files",
   "tools",
   "skills",
@@ -321,6 +323,11 @@ function removeResources(
   if (removal === true) return undefined;
 
   const next: AgentProfileResources = { ...resources };
+  if (removal.knowledge === true) delete next.knowledge;
+  else if (removal.knowledge !== undefined) {
+    const removeSet = new Set(removal.knowledge);
+    setOrDelete(next, "knowledge", next.knowledge?.filter(ref => !removeSet.has(ref.sourceId)));
+  }
   if (removal.files !== undefined) {
     if (removal.files === true) {
       delete next.files;
@@ -348,6 +355,7 @@ function removeResources(
   if (removal.failOnError) delete next.failOnError;
 
   for (const key of [
+    "knowledge",
     "files",
     "tools",
     "skills",
@@ -521,3 +529,4 @@ export function changedAgentProfileAxes(diff: AgentProfileDiff): AgentProfileDif
   }
   return [...axes].sort();
 }
+
