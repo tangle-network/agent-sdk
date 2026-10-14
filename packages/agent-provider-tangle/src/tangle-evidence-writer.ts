@@ -104,7 +104,7 @@ export async function createDirectoryEvidenceWriter(destination: string, maxByte
         await output.chmod(mode);
         // A caller that keeps the source until a verified durable copy exists may skip
         // syncing each temporary file. Other callers retain the original durability.
-        if (syncStagedFiles) await output.sync();
+        if (syncStagedFiles !== false) await output.sync();
       } finally { await output.close(); }
       total += size;
       return size;
