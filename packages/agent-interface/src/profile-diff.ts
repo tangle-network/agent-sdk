@@ -247,6 +247,15 @@ function replaceChangedProfileResources(
     return;
   }
 
+  // Resource removals prune empty sibling arrays. Restore only the candidate's
+  // explicit empties, without copying unchanged nonempty or external resources.
+  for (const axis of agentProfileResourceDiffPropertyAxes) {
+    const value = candidate?.[axis];
+    if (Array.isArray(value) && value.length === 0) {
+      Object.assign(resourceSet, { [axis]: [] });
+    }
+  }
+
   remove.resources = resourceRemove;
   const canonicalCandidate = canonicalProfileValue(candidate);
   if (
