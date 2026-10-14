@@ -10,6 +10,6 @@ The sanitized output contains 17511 characters.
 No prompts, paths, source content, credentials, or native identity are retained.
 
 The test wraps this output in the completed `message.part.updated` tool shape.
-That shape is emitted by `sdk-provider-codex/src/app-server-items.ts` in agent-dev-container.
+That shape is emitted by `sdk-provider-codex/src/app-server-items.ts` in agent-container.
 The Discovery failure record reports the same adapter string-bound error.
 Its exact Sandbox frame was not retained, and the later sandbox lookup returned null.

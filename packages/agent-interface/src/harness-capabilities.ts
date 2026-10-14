@@ -105,7 +105,7 @@ export interface HarnessModelExclusion {
 }
 
 const SANDBOX_HARNESS_MATRIX_EVIDENCE =
-  "https://github.com/tangle-network/agent-dev-container/issues/9382";
+  "https://github.com/tangle-network/agent-container/issues/9382";
 
 /**
  * Pairs a router-backed harness cannot run, measured on production with the Router credential: one

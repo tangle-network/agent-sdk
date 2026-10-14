@@ -61,7 +61,7 @@ export function createStepUsageFold(): StepUsageFold {
 /**
  * The step an OpenCode `step_finish` frame reports, in either wire shape.
  *
- * The sidecar (agent-dev-container `packages/sdk-provider-opencode/src/cli-events.ts`)
+ * The sidecar (agent-container `packages/sdk-provider-opencode/src/cli-events.ts`)
  * wraps the harness event as `{ type: "raw", backend: "opencode", event }`.
  * The live run stream writes only `event` as the frame data; the execution
  * replay writes the whole buffered envelope. Both frames carry one event id.

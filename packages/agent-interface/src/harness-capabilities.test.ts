@@ -157,7 +157,7 @@ describe("measured harness × model exclusions", () => {
       "Harness pi cannot run anthropic/claude-sonnet-5-5 with a reasoning effort",
     );
     expect(support.message).toContain("Remove model.reasoningEffort");
-    expect(support.message).toContain("agent-dev-container/issues/9382");
+    expect(support.message).toContain("agent-container/issues/9382");
   });
 
   it("every exclusion names a router-backed harness, a date and evidence", () => {

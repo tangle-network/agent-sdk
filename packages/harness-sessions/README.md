@@ -12,7 +12,7 @@ npm install @tangle-network/harness-sessions
 
 ## Where this fits
 
-- The sidecar's harness session contract (agent-dev-container `packages/cli-agent-registry`) imports `STORES` and `SessionFormatId` from here; it keeps no second copy of where a harness writes.
+- The sidecar's harness session contract (agent-container `packages/cli-agent-registry`) imports `STORES` and `SessionFormatId` from here; it keeps no second copy of where a harness writes.
 - The capture path reads captures through `listCapture` / `readCapture`.
 - Discovery's trace gate, agent-eval, agent-record and the blog read sessions only through this package.
 - Its only dependencies are `@tangle-network/agent-trace-contract` and Node built-ins (`node:sqlite` for OpenCode).

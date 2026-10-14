@@ -746,7 +746,7 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
               skills: [
                 {
                   kind: "github",
-                  repository: "tangle-network/agent-dev-container",
+                  repository: "tangle-network/agent-container",
                   path: ".agents/skills/support/SKILL.md",
                   ref: "develop",
                 },
@@ -769,7 +769,7 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
               skills: [
                 {
                   kind: "github",
-                  repository: "tangle-network/agent-dev-container",
+                  repository: "tangle-network/agent-container",
                   path: ".agents/skills/support/SKILL.md",
                   ref: "develop",
                 },
