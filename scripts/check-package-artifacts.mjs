@@ -50,6 +50,41 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 
+// Verify record-key semantics through the installed package, not workspace aliases.
+function assertInstalledProfileRecordKeys(consumerDirectory) {
+  run(node, ["--input-type=module", "--eval", `
+import assert from "node:assert/strict";
+import {
+  applyAgentProfileDiff,
+  canonicalAgentProfileDigest,
+  diffAgentProfiles,
+} from "@tangle-network/agent-interface";
+import { mergeAgentProfiles } from "@tangle-network/agent-interface/profile";
+import { agentProfileSchema } from "@tangle-network/agent-interface/profile-schema";
+
+for (const key of ["__proto__", "constructor", "prototype", "owner"]) {
+  const metadata = JSON.parse(JSON.stringify({ [key]: { x: 1 } }));
+  const base = agentProfileSchema.parse({ metadata, resources: { instructions: "base" } });
+  const candidate = agentProfileSchema.parse({ metadata, resources: { instructions: "x" } });
+  const before = JSON.stringify({ base, candidate });
+  const applied = diffAgentProfiles(base, candidate).reduce(applyAgentProfileDiff, base);
+  assert.equal(Object.hasOwn(applied.metadata, key), true);
+  assert.equal(Object.getPrototypeOf(applied.metadata), Object.prototype);
+  assert.equal(canonicalAgentProfileDigest(applied), canonicalAgentProfileDigest(candidate));
+  assert.equal(JSON.stringify({ base, candidate }), before);
+
+  const merged = mergeAgentProfiles(base, { metadata: { [key]: { x: 2 } } });
+  assert.deepEqual(Object.getOwnPropertyDescriptor(merged.metadata, key), {
+    value: { x: 2 }, enumerable: true, configurable: true, writable: true,
+  });
+  assert.equal(Object.getPrototypeOf(merged.metadata), Object.prototype);
+  const unspecified = mergeAgentProfiles(base, { metadata: { [key]: undefined } });
+  assert.deepEqual(unspecified.metadata[key], { x: 1 });
+  assert.equal(Object.hasOwn(mergeAgentProfiles(undefined, { metadata: { [key]: undefined } }).metadata, key), false);
+}
+`], { cwd: consumerDirectory });
+}
+
 function optionalPeerNames(manifest, packagesByName) {
   return Object.keys(manifest.peerDependencies ?? {}).filter(
     (name) =>
@@ -489,6 +524,9 @@ try {
       exportsCheck.specifiers,
       optionalPeers,
     );
+    if (manifest.name === "@tangle-network/agent-interface") {
+      assertInstalledProfileRecordKeys(consumerDirectory);
+    }
     if (optionalPeers.length > 0) {
       run(
         npm,
