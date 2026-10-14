@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
 import { bindTangleEvidenceEnvironment, captureTangleEnvironmentEvidence, captureTangleSandboxEvidence, captureTangleEnvironmentEvidenceToDirectory, noteTangleSession } from "./tangle-evidence.js";
+
+/** Counts FileHandle.sync calls; Node exposes the class only through an open handle. */
+async function spyOnFileSync(directory: string) {
+  const probe = await open(join(directory, ".sync-probe"), "w");
+  const prototype = Object.getPrototypeOf(probe);
+  await probe.close();
+  await rm(join(directory, ".sync-probe"));
+  return vi.spyOn(prototype, "sync");
+}
 
 const fixtureBoxes = new WeakMap<AgentEnvironment, SandboxInstanceLike>();
 const fixtureRawResponses = new WeakMap<AgentEnvironment, TangleRawEvidenceLike>();
@@ -977,15 +986,21 @@ describe("Tangle evidence capture", () => {
 describe("bounded directory evidence", () => {
   it.each([
     { partial: false, syncStagedFiles: undefined },
+    { partial: true, syncStagedFiles: undefined },
+    { partial: false, syncStagedFiles: false },
     { partial: true, syncStagedFiles: false },
   ])("preserves archive bytes, modes and provenance, partial=$partial syncStagedFiles=$syncStagedFiles", async ({ partial, syncStagedFiles }) => {
     const environment = fixture({ native: true, partial, excludedCredential: true });
     const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
     const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: 1_000_000 };
+    const sync = await spyOnFileSync(root);
     try {
       const expected = await captureTangleEnvironmentEvidence(environment, options);
       const exported = await directoryExportFixture(environment);
       const actual = await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(root, "capture"), syncStagedFiles });
+      // The public directory API forwards the option: default syncs each staged file, false syncs none.
+      if (syncStagedFiles === false) expect(sync).not.toHaveBeenCalled();
+      else expect(sync).toHaveBeenCalled();
       expect({ ...actual.provenance, capturedAt: expected.provenance.capturedAt }).toEqual(expected.provenance);
       for (const file of expected.files) {
         const bytes = await readFile(join(actual.directory, file.path));
@@ -995,7 +1010,10 @@ describe("bounded directory evidence", () => {
         expect((await stat(join(actual.directory, file.path))).mode & 0o777).toBe(file.mode);
       }
       await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      sync.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("exports native sessions without reading the workspace when the scope is none", async () => {
@@ -1032,21 +1050,21 @@ describe("bounded directory evidence", () => {
     })).rejects.toThrow("workspace scope is invalid");
   });
 
-  it.each(["payload", "records", "manifest", "truncated", "identity"] as const)("refuses %s corruption and removes owned staging", async (corrupt) => {
+  it.each((["payload", "records", "manifest", "truncated", "identity"] as const).flatMap(corrupt => [undefined, false].map(syncStagedFiles => ({ corrupt, syncStagedFiles }))))("refuses $corrupt corruption and removes owned staging, syncStagedFiles=$syncStagedFiles", async ({ corrupt, syncStagedFiles }) => {
     const environment = fixture({ native: true });
     const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
     try {
       const exported = await directoryExportFixture(environment, { corrupt });
       const destination = join(root, "capture");
       await expect(captureTangleEnvironmentEvidenceToDirectory(environment, {
-        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination,
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination, syncStagedFiles,
       })).rejects.toThrow();
       await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it("removes capture and native staging on cancellation", async () => {
+  it.each([undefined, false])("removes capture and native staging on cancellation, syncStagedFiles=%s", async (syncStagedFiles) => {
     const environment = fixture({ native: true });
     const controller = new AbortController();
     const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
@@ -1054,7 +1072,7 @@ describe("bounded directory evidence", () => {
       const exported = await directoryExportFixture(environment, { afterExport: () => controller.abort() });
       const destination = join(root, "capture");
       await expect(captureTangleEnvironmentEvidenceToDirectory(environment, {
-        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination, signal: controller.signal,
+        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, destination, signal: controller.signal, syncStagedFiles,
       })).rejects.toThrow();
       await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(stat(exported.exportedDirectory()!)).rejects.toMatchObject({ code: "ENOENT" });
