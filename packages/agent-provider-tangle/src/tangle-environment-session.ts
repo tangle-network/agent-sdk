@@ -406,7 +406,7 @@ export function sandboxSessionAsAgentSession(
             ...(useExactExecutionStream ? { streamBound: true } : {}),
           });
           // The sidecar stamps `id:` only on frames that have a replay-buffer position
-          // (agent-dev-container apps/sidecar/src/routes/agents-events.ts). A frame with no
+          // (agent-container apps/sidecar/src/routes/agents-events.ts). A frame with no
           // position carries no id by the SSE contract, so a reconnect resumes from the last
           // frame that had one. Refusing such a frame ended the whole stream, and with it the
           // terminal receipt that carries the execution's token usage: three long pi turns on

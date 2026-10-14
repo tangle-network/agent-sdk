@@ -460,7 +460,7 @@ export function createTangleWorkspaceBranching(
     // the checkpoint after create: last-resort sidecar recreation replays the
     // child's original create request, and after deletion that replay fails
     // with SNAPSHOT_NOT_FOUND instead of restoring the checkpoint
-    // (agent-dev-container#9388). The
+    // (agent-container#9388). The
     // account-wide child scan this replaces paged a listing that Sandbox
     // rebuilds and re-sorts on every page; on a busy account a page failed or
     // repeated, deletion was never attempted, and the source was kept running.

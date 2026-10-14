@@ -456,7 +456,7 @@ from a checkpoint holds a full restore of it in its own volume, so deleting the
 checkpoint neither waits for nor changes its children. One Sandbox path still
 names the checkpoint after create: last-resort sidecar recreation replays the
 child's original create request, and once the checkpoint is deleted that replay
-fails with `SNAPSHOT_NOT_FOUND` (agent-dev-container#9388).
+fails with `SNAPSHOT_NOT_FOUND` (agent-container#9388).
 The adapter never treats an SDK response without an explicit idempotency or
 deletion outcome as success.
 
