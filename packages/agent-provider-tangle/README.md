@@ -649,6 +649,7 @@ Pass `destination` alongside the same capture options.
 The destination must not exist; its parent must exist.
 The result contains `directory` and `provenance`; callers own removal after durable persistence.
 Failed captures remove their private destination and native-export staging.
+Directory capture syncs each staged file by default. A caller that keeps the source environment until the captured bytes have been verified and stored durably may pass `syncStagedFiles: false` to avoid a sync for each temporary file. The option does not change byte, digest, mode, or completeness checks; it does not make the staging tree durable across a host failure.
 
 Directory capture streams workspace files, native payloads, and event records into private files.
 It requires Sandbox `session.exportRawEvidence()` and its dedicated server archive route.

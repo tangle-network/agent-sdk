@@ -61,7 +61,7 @@ export function createMemoryEvidenceWriter(maxBytes: number, signal?: AbortSigna
 }
 
 /** One fresh private tree, streamed writes and hash-verified bounded downloads. */
-export async function createDirectoryEvidenceWriter(destination: string, maxBytes: number, signal?: AbortSignal): Promise<EvidenceWriter & { directory: string; remove(): Promise<void> }> {
+export async function createDirectoryEvidenceWriter(destination: string, maxBytes: number, signal?: AbortSignal, syncStagedFiles = true): Promise<EvidenceWriter & { directory: string; remove(): Promise<void> }> {
   limits(maxBytes);
   signal?.throwIfAborted();
   if (!destination) throw new Error("Tangle evidence destination is required");
@@ -102,7 +102,9 @@ export async function createDirectoryEvidenceWriter(destination: string, maxByte
         }
         signal?.throwIfAborted();
         await output.chmod(mode);
-        await output.sync();
+        // A caller that keeps the source until a verified durable copy exists may skip
+        // syncing each temporary file. Other callers retain the original durability.
+        if (syncStagedFiles) await output.sync();
       } finally { await output.close(); }
       total += size;
       return size;

@@ -975,14 +975,17 @@ describe("Tangle evidence capture", () => {
 });
 
 describe("bounded directory evidence", () => {
-  it.each([false, true])("preserves the legacy archive bytes and provenance, partial=%s", async (partial) => {
+  it.each([
+    { partial: false, syncStagedFiles: undefined },
+    { partial: true, syncStagedFiles: false },
+  ])("preserves archive bytes, modes and provenance, partial=$partial syncStagedFiles=$syncStagedFiles", async ({ partial, syncStagedFiles }) => {
     const environment = fixture({ native: true, partial, excludedCredential: true });
     const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
     const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: 1_000_000 };
     try {
       const expected = await captureTangleEnvironmentEvidence(environment, options);
       const exported = await directoryExportFixture(environment);
-      const actual = await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(root, "capture") });
+      const actual = await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(root, "capture"), syncStagedFiles });
       expect({ ...actual.provenance, capturedAt: expected.provenance.capturedAt }).toEqual(expected.provenance);
       for (const file of expected.files) {
         const bytes = await readFile(join(actual.directory, file.path));
