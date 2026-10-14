@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import { agentProfileDiffSchema, agentProfileSchema } from "./profile-schema.js";
 import {
   applyAgentProfileDiff,
@@ -346,6 +347,132 @@ describe("AgentProfileDiff", () => {
       expect(applyProfileDiffs(baseline, diffs), field).toEqual(candidate);
     }
   });
+
+  it.each(["knowledge", "files", "tools", "skills", "agents", "commands"] as const)(
+    "restores an unchanged empty %s sibling after every other resource leaf changes",
+    (emptyAxis) => {
+      for (const [changedAxis, resources] of Object.entries(resourceFieldCases)) {
+        if (changedAxis === emptyAxis) continue;
+        const baseline: AgentProfile = { resources: { [emptyAxis]: [] } };
+        const candidate: AgentProfile = {
+          resources: { ...resources, [emptyAxis]: [] },
+        };
+        for (const [before, after] of [[baseline, candidate], [candidate, baseline]]) {
+          const original = structuredClone([before, after]);
+          const diffs = verifiedProfileDiffs(before, after);
+          expect(diffs[0]?.remove?.resources, changedAxis).toEqual({ [changedAxis]: true });
+          expect(diffs[1]?.set?.resources?.[emptyAxis], changedAxis).toEqual([]);
+          const applied = applyProfileDiffs(before, diffs);
+          expect(canonicalAgentProfileDigest(applied), changedAxis).toBe(
+            canonicalAgentProfileDigest(after),
+          );
+          expect([before, after]).toEqual(original);
+          expect(diffs[1]?.set?.resources?.[emptyAxis]).not.toBe(after.resources?.[emptyAxis]);
+        }
+      }
+    },
+  );
+
+  it("round-trips the resource state matrix without copying unchanged nonempty siblings", () => {
+    const states = {
+      files: [undefined, [], resourceFieldCases.files.files, [{
+        path: "protocol.md", resource: defineInlineResource("protocol", "Changed."),
+      }]],
+      skills: [undefined, [], resourceFieldCases.skills.skills, [{
+        kind: "github", repository: "example/repo", path: "SKILL.md", ref: "main",
+      }]],
+      knowledge: [undefined, [], resourceFieldCases.knowledge.knowledge, [{
+        sourceId: "source_1", generation: `kg_${"b".repeat(64)}`,
+      }]],
+    };
+    const profiles: AgentProfile[] = [{}];
+    for (const files of states.files) {
+      for (const skills of states.skills) {
+        for (const knowledge of states.knowledge) {
+          profiles.push(agentProfileSchema.parse({
+            resources: Object.fromEntries(Object.entries({ files, skills, knowledge })
+              .filter(([, value]) => value !== undefined)),
+          }));
+        }
+      }
+    }
+    expect(profiles).toHaveLength(65);
+    const originals = structuredClone(profiles);
+    for (const baseline of profiles) {
+      for (const candidate of profiles) {
+        const diffs = verifiedProfileDiffs(baseline, candidate);
+        const applied = applyProfileDiffs(baseline, diffs);
+        expect(canonicalAgentProfileDigest(applied)).toBe(canonicalAgentProfileDigest(candidate));
+        expect(diffs).toEqual(verifiedProfileDiffs(baseline, candidate));
+        if (baseline === candidate) expect(diffs).toEqual([]);
+        for (const axis of ["files", "skills", "knowledge"] as const) {
+          const value = candidate.resources?.[axis];
+          if (value?.length && JSON.stringify(value) === JSON.stringify(baseline.resources?.[axis])) {
+            expect(diffs.some((diff) => diff.set?.resources?.[axis] !== undefined)).toBe(false);
+          }
+        }
+      }
+    }
+    expect(profiles).toEqual(originals);
+  });
+
+  it("preserves knowledge generation order while replacing a file and retaining empty siblings", () => {
+    const first = { sourceId: "first", generation: `kg_${"a".repeat(64)}` };
+    const second = { sourceId: "second", generation: `kg_${"b".repeat(64)}` };
+    const baseline: AgentProfile = { resources: {
+      knowledge: [first, second], skills: [], ...resourceFieldCases.files,
+    } };
+    const candidate: AgentProfile = { resources: {
+      knowledge: [second, { ...first, generation: `kg_${"c".repeat(64)}` }],
+      skills: [], files: [{ path: "new.md", resource: defineInlineResource("new", "New.") }],
+    } };
+    const diffs = verifiedProfileDiffs(baseline, candidate);
+    expect(diffs[1]?.set?.resources?.knowledge).toEqual(candidate.resources?.knowledge);
+    expect(canonicalAgentProfileDigest(applyProfileDiffs(baseline, diffs))).toBe(
+      canonicalAgentProfileDigest(candidate),
+    );
+  });
+
+  it("detaches restored empty arrays and changed nested resources from both inputs", () => {
+    const baseline: AgentProfile = { resources: { files: [], skills: [] } };
+    const candidate: AgentProfile = { resources: { files: [], ...resourceFieldCases.skills } };
+    const original = structuredClone([baseline, candidate]);
+    const diffs = diffAgentProfiles(baseline, candidate);
+    const resources = diffs[1]!.set!.resources!;
+    resources.files!.push({ path: "new.md", resource: defineInlineResource("new", "New.") });
+    resources.skills![0]!.name = "changed";
+    expect([baseline, candidate]).toEqual(original);
+  });
+
+  it("retains historical empty-sibling pruning for manually authored removals", () => {
+    const baseline: AgentProfile = { resources: { files: [], ...resourceFieldCases.skills } };
+    const reset = agentProfileDiffSchema.parse({
+      kind: "agent-profile-diff", remove: { resources: { skills: true } },
+    });
+    expect(applyAgentProfileDiff(baseline, reset)).toEqual({});
+    expect(baseline.resources?.files).toEqual([]);
+  });
+
+  it("normalizes undefined resource members without materializing absent arrays", () => {
+    const baseline: AgentProfile = { resources: { files: [], skills: undefined } };
+    const candidate: AgentProfile = { resources: {
+      files: [], skills: undefined, instructions: "Changed.",
+    } };
+    const diffs = verifiedProfileDiffs(baseline, candidate);
+    expect(diffs[1]?.set?.resources).toEqual({ files: [], instructions: "Changed." });
+    expect(canonicalAgentProfileDigest(applyProfileDiffs(baseline, diffs))).toBe(
+      canonicalAgentProfileDigest(candidate),
+    );
+  });
+
+  it.each([NaN, Infinity, 1n, new Array(1), [undefined]])(
+    "rejects non-JSON profile values rather than silently normalizing them: %s",
+    (invalid) => {
+      const profile: AgentProfile = { metadata: { invalid } };
+      expect(() => diffAgentProfiles({}, profile)).toThrow();
+      expect(() => diffAgentProfiles(profile, {})).toThrow();
+    },
+  );
 
   it("uses profile identity normalization for undefined open-record entries", () => {
     const withUndefined = agentProfileSchema.parse({

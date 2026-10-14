@@ -167,6 +167,60 @@ if (failures.length > 0) {
   return deferred;
 }
 
+function assertExactProfileDiffs(consumerDirectory) {
+  run(node, ["--input-type=module", "--eval", `
+import assert from "node:assert/strict";
+import {
+  agentProfileDiffSchema,
+  applyAgentProfileDiff,
+  canonicalAgentProfileDigest,
+  diffAgentProfiles,
+} from "@tangle-network/agent-interface";
+
+const axes = ["knowledge", "files", "tools", "skills", "agents", "commands"];
+const skill = { kind: "inline", name: "verify", content: "Verify." };
+const external = { kind: "github", repository: "example/repo", path: "AGENTS.md", ref: "main" };
+const pin = { sourceId: "source_1", generation: "kg_" + "a".repeat(64) };
+for (const emptyAxis of axes) {
+  const changedAxis = emptyAxis === "skills" ? "knowledge" : "skills";
+  const value = changedAxis === "knowledge" ? [pin] : [skill];
+  const baseline = { resources: { [emptyAxis]: [] } };
+  const candidate = { resources: { [emptyAxis]: [], [changedAxis]: value } };
+  for (const [before, after] of [[baseline, candidate], [candidate, baseline]]) {
+    const original = structuredClone([before, after]);
+    const diffs = diffAgentProfiles(before, after).map((diff) => agentProfileDiffSchema.parse(diff));
+    assert.deepEqual(diffs[0].remove.resources, { [changedAxis]: true });
+    assert.deepEqual(diffs[1].set.resources[emptyAxis], []);
+    const applied = diffs.reduce(applyAgentProfileDiff, before);
+    assert.equal(canonicalAgentProfileDigest(applied), canonicalAgentProfileDigest(after));
+    diffs[1].set.resources[emptyAxis].push("detachment probe");
+    assert.deepEqual([before, after], original);
+  }
+}
+const profiles = [{}, { resources: {} }, { resources: { files: [] } }];
+for (const knowledge of [undefined, [], [pin], [{ ...pin, generation: "kg_" + "b".repeat(64) }]]) {
+  for (const skills of [undefined, [], [skill]]) {
+    profiles.push({ resources: {
+      files: [], agents: [external],
+      ...(knowledge === undefined ? {} : { knowledge }),
+      ...(skills === undefined ? {} : { skills }),
+    } });
+  }
+}
+for (const baseline of profiles) {
+  for (const candidate of profiles) {
+    const diffs = diffAgentProfiles(baseline, candidate).map((diff) => agentProfileDiffSchema.parse(diff));
+    assert.equal(canonicalAgentProfileDigest(diffs.reduce(applyAgentProfileDiff, baseline)),
+      canonicalAgentProfileDigest(candidate));
+    if (baseline.resources?.agents && candidate.resources?.agents) {
+      assert.ok(diffs.every((diff) => diff.set?.resources?.agents === undefined));
+    }
+  }
+}
+console.log("Packed public Interface: exact resource round trips passed.");
+`], { cwd: consumerDirectory });
+}
+
 function runJson(command, args, options) {
   const output = run(command, args, options);
   try {
@@ -542,6 +596,10 @@ try {
         { cwd: consumerDirectory, env: npmEnvironment },
       );
       importExports(consumerDirectory, exportsCheck.specifiers, []);
+    }
+
+    if (entry.manifest.name === "@tangle-network/agent-interface") {
+      assertExactProfileDiffs(consumerDirectory);
     }
 
     const packed = runJson(
