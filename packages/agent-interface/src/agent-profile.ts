@@ -645,7 +645,15 @@ function assignDefined<T extends object>(
   for (const source of sources) {
     if (source === undefined) continue;
     for (const [key, value] of Object.entries(source)) {
-      if (value !== undefined) merged[key] = value;
+      if (value !== undefined) {
+        // Define own data properties like object spread, including __proto__.
+        Object.defineProperty(merged, key, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
     }
   }
   return merged as Partial<T>;

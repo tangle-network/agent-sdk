@@ -4,7 +4,9 @@ import {
   mergeAgentProfiles,
   type AgentProfile,
 } from "./agent-profile.js";
-import { applyAgentProfileDiff } from "./profile-diff.js";
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
+import { agentProfileSchema } from "./profile-schema.js";
+import { applyAgentProfileDiff, diffAgentProfiles } from "./profile-diff.js";
 import { canonicalCandidateJson } from "./agent-candidate-schema-common.js";
 
 /**
@@ -159,6 +161,73 @@ describe("profile helpers omit unset optional keys", () => {
         prompt: { systemPrompt: "Stand-alone prompt." },
         resources: { failOnError: true },
       }),
+    );
+  });
+});
+
+describe("profile records preserve own data keys", () => {
+  const keys = ["__proto__", "constructor", "prototype", "owner"];
+
+  it.each(keys)("preserves %s across a schema-valid diff/apply round trip", (key) => {
+    const metadata = JSON.parse(`{"${key}":{"x":1}}`);
+    const base = agentProfileSchema.parse({
+      metadata,
+      resources: { instructions: "base" },
+    });
+    const candidate = agentProfileSchema.parse({
+      metadata,
+      resources: { instructions: "x" },
+    });
+    const before = canonicalCandidateJson({ base, candidate });
+    const applied = diffAgentProfiles(base, candidate).reduce(
+      (profile, diff) => applyAgentProfileDiff(profile, diff),
+      base,
+    );
+
+    expect(applied.metadata).toHaveProperty(key, { x: 1 });
+    expect(Object.hasOwn(applied.metadata!, key)).toBe(true);
+    expect(Object.getPrototypeOf(applied.metadata!)).toBe(Object.prototype);
+    expect(canonicalAgentProfileDigest(applied)).toBe(
+      canonicalAgentProfileDigest(candidate),
+    );
+    expect(canonicalCandidateJson({ base, candidate })).toBe(before);
+  });
+
+  it.each(keys)("layers %s as a writable own value without changing inputs", (key) => {
+    const baseMetadata = Object.freeze({ [key]: { x: 1 }, retained: true });
+    const overlayMetadata = Object.freeze({ [key]: { x: 2 }, added: true });
+    const base = Object.freeze({ metadata: baseMetadata });
+    const overlay = Object.freeze({ metadata: overlayMetadata });
+    const before = canonicalCandidateJson({ base, overlay });
+    const merged = mergeAgentProfiles(base, overlay)!;
+
+    expect(canonicalCandidateJson(merged.metadata)).toBe(
+      canonicalCandidateJson({ [key]: { x: 2 }, retained: true, added: true }),
+    );
+    expect(Object.getPrototypeOf(merged.metadata!)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(merged.metadata!, key)).toEqual({
+      value: { x: 2 },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    expect(merged.metadata).not.toBe(baseMetadata);
+    expect(merged.metadata).not.toBe(overlayMetadata);
+    expect(canonicalCandidateJson({ base, overlay })).toBe(before);
+  });
+
+  it.each(keys)("treats undefined %s as unspecified", (key) => {
+    const base = { metadata: { [key]: { x: 1 } } };
+    const overlay = { metadata: { [key]: undefined } };
+    expect(mergeAgentProfiles(base, overlay)?.metadata).toStrictEqual(base.metadata);
+    expect(
+      Object.hasOwn(mergeAgentProfiles(undefined, overlay)!.metadata!, key),
+    ).toBe(false);
+    expect(mergeAgentProfiles(base, undefined)?.metadata).toStrictEqual(
+      base.metadata,
+    );
+    expect(mergeAgentProfiles(undefined, base)?.metadata).toStrictEqual(
+      base.metadata,
     );
   });
 });
