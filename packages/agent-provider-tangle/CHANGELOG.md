@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.1.0
+
+### Minor Changes
+
+- 4660975: Allow directory evidence callers that retain their source through verified durable offload to skip per-file sync of temporary staging files.
+
 ## 4.0.0
 
 ### Major Changes
