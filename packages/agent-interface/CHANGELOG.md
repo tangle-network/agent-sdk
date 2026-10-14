@@ -1,5 +1,12 @@
 # @tangle-network/agent-interface
 
+## 5.2.1
+
+### Patch Changes
+
+- 62f761e: Preserve explicitly empty resource arrays when generating exact profile replacement diffs alongside changed resource siblings. Keep existing removal semantics and avoid copying unchanged nonempty or unresolved resources into replacement patches.
+- 69b2160: Preserve own metadata and record keys such as `__proto__` when merging profiles or applying profile diffs, without changing the returned record's prototype. Undefined overlay entries remain unspecified.
+
 ## 5.2.0
 
 ### Minor Changes
