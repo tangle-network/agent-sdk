@@ -112,6 +112,12 @@ export interface TangleSandboxEvidenceOptions extends Omit<TangleEnvironmentEvid
   workspaceRoot?: string;
 }
 
+/** Directory capture alone may stage without per-file sync when the caller guards durable offload. */
+export interface TangleDirectoryEvidenceOptions {
+  destination: string;
+  syncStagedFiles?: boolean;
+}
+
 export interface TangleEnvironmentEvidence {
   files: Array<{ path: string; bytes: Uint8Array; mode: number }>;
   provenance: {
@@ -212,18 +218,18 @@ export interface TangleDirectoryEvidence {
 /** Capture to a new private directory without accumulating workspace content in memory. */
 export async function captureTangleEnvironmentEvidenceToDirectory(
   environment: AgentEnvironment,
-  options: TangleEnvironmentEvidenceOptions & { destination: string },
+  options: TangleEnvironmentEvidenceOptions & TangleDirectoryEvidenceOptions,
 ): Promise<TangleDirectoryEvidence> {
   const context = evidenceContext(environment, options);
-  return captureTangleSandboxEvidenceToDirectory(context.box, { ...context.options, destination: options.destination });
+  return captureTangleSandboxEvidenceToDirectory(context.box, { ...context.options, destination: options.destination, syncStagedFiles: options.syncStagedFiles });
 }
 
 /** The caller owns a successful directory; incomplete captures are removed. */
 export async function captureTangleSandboxEvidenceToDirectory(
   box: SandboxInstanceLike,
-  options: TangleSandboxEvidenceOptions & { destination: string },
+  options: TangleSandboxEvidenceOptions & TangleDirectoryEvidenceOptions,
 ): Promise<TangleDirectoryEvidence> {
-  const writer = await createDirectoryEvidenceWriter(options.destination, options.maxBytes, options.signal);
+  const writer = await createDirectoryEvidenceWriter(options.destination, options.maxBytes, options.signal, options.syncStagedFiles);
   try {
     const provenance = await captureSandboxEvidence(box, options, writer);
     return { directory: writer.directory, provenance };
