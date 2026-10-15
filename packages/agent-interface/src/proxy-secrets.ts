@@ -28,7 +28,7 @@ const list = <T extends z.ZodType<string>>(schema: T) =>
   z.array(schema).min(1).max(CONTRACT_MAX_ARRAY_LENGTH).refine(unique, "selectors must be unique");
 const envNameSchema = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const headerSchema = z.string().max(256).regex(/^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$/).refine((name) =>
-  !["authorization", "proxy-authorization", "host", "connection", "content-length", "transfer-encoding", "trailer", "upgrade", "te"].includes(name.toLowerCase()),
+  !["authorization", "proxy-authorization", "proxy-authenticate", "host", "connection", "keep-alive", "proxy-connection", "content-length", "transfer-encoding", "trailer", "upgrade", "te"].includes(name.toLowerCase()),
 "use bearer/basic for Authorization; routing and framing headers cannot carry secrets");
 
 /** Match complete components only. Selected header names are case-insensitive; duplicate fields
