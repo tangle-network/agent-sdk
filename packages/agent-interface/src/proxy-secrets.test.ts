@@ -1,3 +1,4 @@
+import { ProxySecretParentsSchema, isProxySecretParentsTotal } from "./environment-provider.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { type CreateAgentEnvironmentInput, type ProxySecretBinding, AgentEnvironmentGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation, mergeProxySecretBindings } from "./environment-provider.js";
@@ -105,5 +106,30 @@ describe("portable proxy-secret public contract", () => {
     expect(isProxySecretGrantAttenuation(parent, { ...child, scope: { ...child.scope, paths: ["/v1/eventspill"] } })).toBe(false);
     expect(isProxySecretGrantAttenuation(parent, { ...child, identity: { ...child.identity, revision: "foreign" } })).toBe(false);
     expect(isProxySecretGrantAttenuation(parent, { ...child, expiresAt: "2026-10-15T00:06:00.000Z" })).toBe(false);
+  });
+});
+
+
+describe("host-only canonical parent map", () => {
+  it("admits mixed string/null pins with exact final selection keys", () => {
+    const parsed = ProxySecretBindingSchema.parse(binding);
+    const coord = { ...parsed, envName: "COORD" };
+    const parents = { REPORTS_TOKEN: "actual-parent", COORD: null };
+    expect(ProxySecretParentsSchema.parse(parents)).toEqual(parents);
+    expect(isProxySecretParentsTotal([parsed, coord], parents)).toBe(true);
+    for (const invalid of [{}, { REPORTS_TOKEN: null }, { ...parents, EXTRA: null },
+      { ...parents, COORD: undefined }, { ...parents, COORD: { sandboxId: "parent" } },
+      { ...parents, REPORTS_TOKEN: "" }, [], new Date(), new Map()]) {
+      expect(isProxySecretParentsTotal([parsed, coord], invalid)).toBe(false);
+    }
+    expect(isProxySecretParentsTotal([], {})).toBe(true);
+    const special = JSON.parse('{"__proto__":null}');
+    expect(isProxySecretParentsTotal([{ ...parsed, envName: "__proto__" }], special)).toBe(true);
+    expect(Object.hasOwn(ProxySecretParentsSchema.parse(special), "__proto__")).toBe(true);
+    expect(isProxySecretParentsTotal([parsed], JSON.parse('{"REPORTS_TOKEN":null,"__proto__":null}'))).toBe(false);
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecretParents: {} }).success).toBe(false);
+    expect(AgentEnvironmentGetOptionsSchema.parse({ proxySecrets: [], proxySecretParents: {} })).toEqual({ proxySecrets: [], proxySecretParents: {} });
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecrets: [binding], proxySecretParents: {} }).success).toBe(false);
+    expect(agentProfileSchema.safeParse({ proxySecrets: [binding], proxySecretParents: parents }).success).toBe(false);
   });
 });

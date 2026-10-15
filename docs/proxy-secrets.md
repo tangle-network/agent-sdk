@@ -47,3 +47,31 @@ The provider negotiates declared secure requests before calling a credential res
 Creation and reconnect read the installed receipt. Retained execution revalidates custody before dispatch, including source renewal and generation-safe replacement through the existing lifecycle. A staged, expired, revoked, foreign or unacknowledged receipt cannot authorize execution. Recovery reauthorizes; clones require independent placeholders and rematerialized files. Losing an acknowledgment or contacting a partitioned host does not prove revocation complete. A generation identifies one immutable installed receipt; rotation may advance the source revision only in a newer generation while retaining the tenant, issuer and secret identity.
 
 The core integration owner enables advertisement only after API, placement driver, proxy, host and materializer agree. Package-level tests prove this contract and adapter behavior; production confinement, rotation, snapshot custody and native-client compatibility require the program's served proofs.
+
+## Host parent selection
+
+`ProxySecretParents`, `ProxySecretParentsSchema` and `isProxySecretParentsTotal`
+are available from the canonical package root and environment-provider entry
+point. The shared wire fixture includes parent-map cases. This host control is
+optional on CREATE and explicit custody attachment/PATCH; readback reports the
+effective pins. It is separate from portable declarations and AgentProfile.
+
+A supplied map has exactly one destination environment key per final binding.
+A string requests an API-verified parent sandbox; null explicitly requests
+independent root issuance. It contains no parent environment name or caller
+grant ID. Trusted Runtime producers retain the complete map from actual
+allocation state before creating, including null for fresh coordination authority.
+The API projects pins from validated private parent locators without persisting
+a second map. The API delegation marker is separate from engine capabilities.
+
+An omitted map preserves existing `(envName, secretRef)` pins; new tuples in a
+mapped replacement need an explicit total map. Changing a pin requires
+acknowledged removal first. Policy-only PATCH cannot carry a map; empty
+replacement permits an omitted or empty map and clears only after revoked
+acknowledgment. Explicit maps, observed maps and delegated grants require the
+API marker and exact total readback; a delegated receipt without a map refuses.
+Ordinary initial root creation without a map can use the existing root protocol.
+
+These exports establish the shared contract. Provider forwarding and the
+parent-capable Sandbox SDK are qualified and released through their owners;
+read their published manifests and authenticated capability document for support.

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProxySecretCapabilitiesSchema, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt } from "./proxy-secrets.js";
+import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
@@ -355,6 +355,8 @@ export interface AgentEnvironment {
   readonly contextTransferReceipt?: ContextTransferReceipt;
   /** Trusted metadata only; dispatch requires an installed receipt, never proxy-installed. */
   readonly proxySecretReceipt?: ProxySecretReceipt;
+  /** API-verified effective parent pins read from current custody. */
+  readonly proxySecretParents?: ProxySecretParents;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -881,6 +883,8 @@ export interface CreateAgentEnvironmentInput {
   /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
    * Trusted issuer authorization is required before resolving any reference. */
   proxySecrets?: readonly ProxySecretBinding[];
+  /** Host-only total destination-to-parent selection; null means explicit independent root. */
+  proxySecretParents?: ProxySecretParents;
   /**
    * Outbound network policy for this environment.
    *
@@ -1037,6 +1041,8 @@ export interface AgentEnvironmentGetOptions {
   /** Explicit custody attachment through the existing egress lifecycle. Omission reads current
    * custody; [] revokes custom bindings. A get never allocates a replacement environment. */
   proxySecrets?: readonly ProxySecretBinding[];
+  /** Host-only total destination-to-parent selection; null means explicit independent root. */
+  proxySecretParents?: ProxySecretParents;
   expectedProxySecretGeneration?: number;
   requireInPlace?: boolean;
   /**
@@ -1051,9 +1057,14 @@ export interface AgentEnvironmentGetOptions {
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
   signal: z.custom<AbortSignal>().optional(),
   proxySecrets: ProxySecretsSchema.optional(),
+  proxySecretParents: ProxySecretParentsSchema.optional(),
   ...ProxySecretUpdateControlsSchema.shape,
   contextTransfer: ContextTransferRequestSchema.optional(),
 }).superRefine((options, ctx) => {
+  if (options.proxySecretParents !== undefined &&
+      (options.proxySecrets === undefined || !isProxySecretParentsTotal(options.proxySecrets, options.proxySecretParents))) {
+    ctx.addIssue({ code: "custom", path: ["proxySecretParents"], message: "parent map requires an explicit total proxySecrets selection" });
+  }
   if (options.proxySecrets !== undefined && options.contextTransfer !== undefined) {
     ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "context-transfer attachment cannot also change proxy custody" });
   }
