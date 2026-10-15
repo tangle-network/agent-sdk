@@ -64,4 +64,3 @@ function decodeRecordKey(value: string): string {
   }
   return decoded;
 }
-
