@@ -16,6 +16,7 @@ export const SESSION_FORMAT_IDS = [
   'factory.session-jsonl',
   'gemini.chat-json',
   'amp.thread-json',
+  // Legacy capture layout for archived ForgeCode sessions; no new run or reader is registered.
   'forge.sqlite',
   'hermes.state-sqlite',
   'prime.session-jsonl',
