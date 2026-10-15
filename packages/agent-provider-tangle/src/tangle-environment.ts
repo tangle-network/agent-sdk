@@ -401,7 +401,6 @@ export async function sandboxInstanceAsEnvironment(
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
     ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,
-    ...(proxySecretReceipt === undefined ? {} : { get proxySecretReceipt() { return proxySecretReceipt; } }),
     ...(workspaceBranching === undefined
       ? {}
       : { workspaceBranching }),
@@ -714,6 +713,12 @@ export async function sandboxInstanceAsEnvironment(
         }
       : {}),
   };
+  if (proxySecretReceipt !== undefined) {
+    Object.defineProperty(environment, "proxySecretReceipt", {
+      enumerable: true,
+      get: () => proxySecretReceipt,
+    });
+  }
   bindTangleEvidenceEnvironment(environment, box);
   return environment;
 }
