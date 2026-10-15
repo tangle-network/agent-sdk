@@ -147,7 +147,6 @@ export async function sandboxInstanceAsEnvironment(
       canonicalCandidateDigest(request.proxySecrets) !== canonicalCandidateDigest(persistedProxySecrets)) {
     throw new Error("Tangle persisted proxy-secret declarations differ from creation");
   }
-  const proxySecrets = request?.proxySecrets ?? persistedProxySecrets;
   let proxySecretReceipt: ProxySecretReceipt | undefined;
   const recordedCredentials = box.metadata?.modelCredentials;
   const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
@@ -158,6 +157,8 @@ export async function sandboxInstanceAsEnvironment(
   const persistedNative = recordedNativeReference
     ? captureModelCredentials(recordedCredentials as { cliAuth: CliAuthReference })
     : undefined;
+  const proxySecrets = mergeProxySecrets(request?.proxySecrets ?? persistedProxySecrets,
+    persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined);
   const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
     ? persistedNative.cliAuth : undefined;
   if (request?.nativeAuth !== undefined && persistedReference !== undefined &&
@@ -240,7 +241,7 @@ export async function sandboxInstanceAsEnvironment(
     assertCaptureInput(input);
     const requestedTurnProfile = input.profile ?? promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend?.profile;
     if (requestedTurnProfile?.proxySecrets !== undefined &&
-        canonicalCandidateDigest(captureProxySecrets(requestedTurnProfile.proxySecrets)) !== canonicalCandidateDigest(proxySecrets ?? [])) {
+        canonicalCandidateDigest(mergeProxySecrets(proxySecrets, captureProxySecrets(requestedTurnProfile.proxySecrets))) !== canonicalCandidateDigest(proxySecrets ?? [])) {
       throw new Error("Tangle turn proxy-secret declarations differ from its environment");
     }
     const replay = input.lastEventId !== undefined || input.controlRef !== undefined;

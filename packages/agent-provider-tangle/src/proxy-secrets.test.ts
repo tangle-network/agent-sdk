@@ -177,4 +177,16 @@ describe("public provider proxy-secret custody", () => {
     expect(fixture.creates).toEqual([]);
   });
 
+  it("retains resolver-owned native bindings separately from the exact authored profile", async () => {
+    const fixture = setup();
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, cliAuthReferences: true, codexCredentialContinuations: true });
+    const nativeProfile = { name: "native-reporter", harness: "codex" as const,
+      model: { metadata: { credentialSource: "subscription" } }, proxySecrets: [] };
+    const selected = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] };
+    const environment = await createTangleProvider({ client: fixture.client, modelCredentials: async () => selected }).create({ profile: nativeProfile });
+    for await (const _event of environment.stream({ prompt: "report", profile: nativeProfile, turnId: "profile-and-native" })) {}
+    expect(fixture.grants).toHaveBeenCalledWith(expect.objectContaining({ proxySecrets: [binding] }), undefined);
+    expect(fixture.turns).toHaveBeenCalledTimes(1);
+  });
+
 });
