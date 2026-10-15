@@ -60,7 +60,6 @@ async function checkReadOnlyExports(consumer) {
     "readOnly discovery schema must be exported from root and environment-provider");
   assert.equal(canonical.AgentEnvironmentReadOnlyGetOptionsSchema.safeParse({ readOnly: true }).success, true);
   assert.equal(canonical.AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true }).success, false);
-  return canonical;
 }
 
 // Consume archives already installed by the maintained gate. This mode neither builds nor
