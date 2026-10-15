@@ -185,6 +185,7 @@ export function sandboxOptionsFromCreateInput(
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
     ...(proxySecrets === undefined ? {} : { proxySecrets }),
+    ...(input.proxySecretParents === undefined ? {} : { proxySecretParents: input.proxySecretParents }),
     ...(Array.isArray(secrets) ? { secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
@@ -325,6 +326,7 @@ export function assertCreateInputShape(
     "providerOptions",
     "runtimeAttachments",
     "proxySecrets",
+    "proxySecretParents",
   ]) keys.delete(key);
   if (keys.size > 0) throw new Error("Tangle create input contains unsupported fields");
   if (input.runtimeAttachments !== undefined) {

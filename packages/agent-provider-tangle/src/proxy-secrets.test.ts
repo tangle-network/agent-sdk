@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
 import { createTangleProvider } from "./index.js";
-import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxClientLike } from "./tangle-types.js";
+import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt, ProxySecretParents, AgentEnvironmentGetOptions } from "@tangle-network/agent-interface/environment-provider";
+import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+
+type EgressUpdate = Parameters<NonNullable<NonNullable<SandboxInstanceLike["egress"]>["update"]>>[0];
 
 const binding = {
   envName: "REPORTS_TOKEN",
@@ -39,8 +41,8 @@ function setup() {
     backend: { status: async () => ({ type: "codex" }) },
     grantNativeCredential: grants,
     egress: {
-      get: async () => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
-      update: async () => ({ proxySecretReceipt: receipt }),
+      get: async (): Promise<unknown> => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
+      update: async (_update?: EgressUpdate): Promise<unknown> => ({ proxySecretReceipt: receipt }),
     },
     async *streamPrompt() { turns(); },
   };
@@ -53,6 +55,85 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("retains the validated discovery mode when caller options change during lookup", async () => {
+    const fixture = setup();
+    fixture.box.status = "stopped";
+    const operation: AgentEnvironmentGetOptions = { readOnly: true };
+    const resume = vi.fn(async () => {});
+    Object.assign(fixture.box, { resume });
+    const provider = createTangleProvider({ client: { ...fixture.client, get: async () => {
+      delete operation.readOnly;
+      return fixture.box;
+    } }, requireNativeSessionCapture: true });
+    const environment = await provider.get!("proxy-box", operation);
+    expect(environment?.proxySecretReceipt).toEqual(fixture.receipt);
+    expect(environment?.dispatch).toBeUndefined();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it("refuses malformed discovery flags before ordinary reconnect or lookup", async () => {
+    const fixture = setup();
+    const get = vi.fn(fixture.client.get);
+    const provider = createTangleProvider({ client: { ...fixture.client, get }, requireNativeSessionCapture: true });
+    for (const readOnly of [false, null, "true"]) {
+      const wireOptions = JSON.parse(JSON.stringify({ readOnly }));
+      await expect(provider.get!("proxy-box", wireOptions)).rejects.toThrow();
+    }
+    await expect(provider.get!("proxy-box", JSON.parse('{"readOnly":true,"contextTransfer":{}}'))).rejects.toThrow();
+    expect(get).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+  });
+
+  it("rejects read-only custody mutations before even looking up the sandbox", async () => {
+    const fixture = setup();
+    const get = vi.fn(fixture.client.get);
+    const provider = createTangleProvider({ client: { ...fixture.client, get } });
+    for (const controls of [{ proxySecrets: [] }, { proxySecretParents: {} }, { expectedProxySecretGeneration: 1 }, { requireInPlace: true }]) {
+      await expect(provider.get!("proxy-box", { readOnly: true, ...controls })).rejects.toThrow(/read.?only|unrecognized/i);
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+  });
+
+  it("discovers suspended protected custody read-only without native reconnect or mutation", async () => {
+    const fixture = setup();
+    fixture.box.status = "stopped";
+    const resume = vi.fn(async () => {});
+    const refresh = vi.fn(async () => {});
+    const update = vi.fn(fixture.box.egress.update);
+    const backendStatus = vi.fn(fixture.box.backend.status);
+    const guestCapabilities = vi.fn(async () => { throw Object.assign(new Error("stopped sandbox"), { status: 503 }); });
+    const sessionProbe = vi.fn(() => { throw new Error("read-only discovery must not probe a session"); });
+    Object.assign(fixture.box, { resume, refresh, capabilities: guestCapabilities, session: sessionProbe });
+    fixture.box.egress.update = update;
+    fixture.box.backend.status = backendStatus;
+    Object.assign(fixture.box.egress, { get: async () => ({ proxySecrets: fixture.declarations,
+      proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } }) });
+    const provider = createTangleProvider({
+      client: { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) },
+      requireNativeSessionCapture: true,
+    });
+    const environment = await provider.get!("proxy-box", { readOnly: true });
+    expect(environment?.proxySecretReceipt).toEqual(fixture.receipt);
+    expect(environment?.proxySecretParents).toEqual({ REPORTS_TOKEN: null });
+    expect(environment?.dispatch).toBeUndefined();
+    expect(environment?.write).toBeUndefined();
+    expect(environment?.destroy).toBeUndefined();
+    expect(environment?.capabilities).toMatchObject({ streaming: { live: false }, workspace: { write: false, exec: false } });
+    fixture.box.status = "running";
+    await expect(environment!.status()).resolves.toBe("stopped");
+    await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse dispatch" })) {} }).rejects.toThrow(/read.only/i);
+    expect(resume).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(backendStatus).not.toHaveBeenCalled();
+    expect(guestCapabilities).not.toHaveBeenCalled();
+    expect(sessionProbe).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+    expect(fixture.turns).not.toHaveBeenCalled();
+    expect(fixture.creates).toEqual([]);
+  });
+
   it("accepts an actual SDK Sandbox with a nullable capability response", () => {
     const client = Object.assign(
       new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
@@ -313,4 +394,196 @@ describe("public provider proxy-secret custody", () => {
     expect(fixture.turns).not.toHaveBeenCalled();
   });
 
+});
+
+
+describe("host parent selection through the public provider", () => {
+  it("forwards explicit total root pins and exposes verified readback", async () => {
+    const fixture = setup();
+    const parents = { REPORTS_TOKEN: null };
+    fixture.client.capabilities = async () => ({ proxySecrets: capability, proxySecretDelegation: 1 });
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, proxySecretDelegation: 1 });
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: parents });
+    const input = { profile, proxySecretParents: parents };
+    const environment = await createTangleProvider({ client: fixture.client }).create(input);
+    expect(fixture.creates[0]).toMatchObject({ proxySecretParents: parents });
+    expect(environment).toHaveProperty("proxySecretParents", parents);
+    expect((await createTangleProvider({ client: fixture.client }).get?.(environment.id))).toHaveProperty("proxySecretParents", parents);
+  });
+
+  it("requires the API marker before mapped create allocation", async () => {
+    const fixture = setup();
+    const input = { profile, proxySecretParents: { REPORTS_TOKEN: null } };
+    await expect(createTangleProvider({ client: fixture.client }).create(input)).rejects.toThrow(/delegation.*capabilit/i);
+    expect(fixture.creates).toHaveLength(0);
+  });
+
+  it("rejects delegated grants without total parent readback", async () => {
+    const fixture = setup();
+    fixture.receipt.bindings[0]!.grant.parentGrantId = "parent-grant";
+    await expect(createTangleProvider({ client: fixture.client }).create({ profile })).rejects.toThrow(/parent.*(map|readback)/i);
+  });
+
+  it("requires the API marker for observed maps on ordinary recovery", async () => {
+    const fixture = setup();
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client: fixture.client }).get?.("proxy-box")).rejects.toThrow(/delegation.*capabilit/i);
+  });
+});
+
+
+describe("mapped mixed authority and immutable parent pins", () => {
+  function mapped() {
+    const fixture = setup();
+    const inherited = { ...binding, envName: "RENAMED_TOKEN" };
+    const coord = { ...binding, envName: "COORD", secretRef: { kind: "secret-ref" as const, key: "fresh-coordination" } };
+    const parents = { RENAMED_TOKEN: "actual-parent", COORD: null };
+    const parentGrant = { ...structuredClone(fixture.receipt.bindings[0]!.grant),
+      grantId: "parent-grant", sandboxId: "actual-parent", epoch: "parent-epoch",
+      issuedAt: new Date(Date.now() - 10_000).toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString() };
+    const parentBinding = { ...binding, envName: "ORIGINAL_TOKEN", ttlSeconds: 900 };
+    const parentReceipt: ProxySecretReceipt = { ...structuredClone(fixture.receipt), sandboxId: "actual-parent",
+      bindings: [{ envName: parentBinding.envName, secretRef: parentBinding.secretRef, grant: parentGrant }] };
+    fixture.declarations = [inherited, coord];
+    fixture.receipt.bindings = [
+      { envName: inherited.envName, secretRef: inherited.secretRef,
+        grant: { ...structuredClone(fixture.receipt.bindings[0]!.grant), parentGrantId: parentGrant.grantId } },
+      { envName: coord.envName, secretRef: coord.secretRef,
+        grant: { ...structuredClone(fixture.receipt.bindings[0]!.grant), grantId: "root-coord", identity: { ...parentGrant.identity, secretId: "coord-source" } } },
+    ];
+    let currentParents: ProxySecretParents = parents;
+    const gets = vi.fn(async (id: string) => id === "actual-parent" ? {
+      ...fixture.box, id, egress: { get: async () => ({ proxySecrets: [parentBinding], proxySecretReceipt: parentReceipt }) },
+    } : id === "proxy-box" ? fixture.box : null);
+    const client = { ...fixture.client, get: gets, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) };
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents });
+    const updates = vi.fn(async (update?: EgressUpdate) => {
+      if (update === undefined || !("proxySecrets" in update)) throw new Error("fixture requires explicit update");
+      fixture.declarations = update.proxySecrets;
+      if (update.proxySecretParents !== undefined) currentParents = update.proxySecretParents;
+      if (update.proxySecrets.length === 0) fixture.receipt = { ...fixture.receipt, generation: fixture.receipt.generation + 1, status: "revoked", materializationAcknowledged: true, bindings: [] };
+      return { proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents };
+    });
+    fixture.box.egress.update = updates;
+    const input = { profile: { name: "mixed", harness: "opencode" as const }, proxySecrets: [inherited, coord], proxySecretParents: parents };
+    return { fixture, client, gets, updates, input, parents, parentReceipt, setParents(value: typeof currentParents) { currentParents = value; } };
+  }
+
+  it("discovers expired installed child and parent custody only as a non-executable snapshot", async () => {
+    const m = mapped();
+    m.fixture.box.status = "stopped";
+    const now = Date.now();
+    for (const entry of m.fixture.receipt.bindings) {
+      entry.grant.issuedAt = new Date(now - 10_000).toISOString();
+      entry.grant.expiresAt = new Date(now - 1000).toISOString();
+    }
+    m.parentReceipt.bindings[0]!.grant.issuedAt = new Date(now - 20_000).toISOString();
+    m.parentReceipt.bindings[0]!.grant.expiresAt = new Date(now - 500).toISOString();
+    const resume = vi.fn(async () => {});
+    Object.assign(m.fixture.box, { resume });
+    const environment = await createTangleProvider({ client: m.client, requireNativeSessionCapture: true })
+      .get!("proxy-box", { readOnly: true });
+    expect(environment?.proxySecretReceipt).toEqual(m.fixture.receipt);
+    expect(environment?.proxySecretParents).toEqual(m.parents);
+    await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse expired dispatch" })) {} }).rejects.toThrow(/read.only/);
+    await expect(createTangleProvider({ client: m.client }).get!("proxy-box")).rejects.toThrow(/expired/);
+    expect(resume).not.toHaveBeenCalled();
+    expect(m.updates).not.toHaveBeenCalled();
+    expect(m.fixture.grants).not.toHaveBeenCalled();
+    expect(m.fixture.turns).not.toHaveBeenCalled();
+  });
+
+  it("uses actual parent identity despite a renamed environment and independent coordination", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    const environment = await provider.create(m.input);
+    expect(environment.proxySecretParents).toEqual(m.parents);
+    expect(m.gets).toHaveBeenCalledWith("actual-parent", undefined);
+    const recovered = await provider.get?.(environment.id);
+    expect(recovered?.proxySecretParents).toEqual(m.parents);
+    await provider.get?.(environment.id, { proxySecrets: m.input.proxySecrets });
+    expect(m.updates).toHaveBeenCalledWith(expect.objectContaining({ proxySecretParents: m.parents }), undefined);
+  });
+
+  it.each(["missing", "null", "other", "scope", "expired"] as const)("refuses invalid current mapped authority (%s)", async (fault) => {
+    const m = mapped();
+    if (fault === "missing") m.setParents({});
+    if (fault === "null") m.setParents({ RENAMED_TOKEN: null, COORD: null });
+    if (fault === "other") m.setParents({ RENAMED_TOKEN: "different-parent", COORD: null });
+    if (fault === "scope") m.parentReceipt.bindings[0]!.grant.scope.hosts = ["different.example.com"];
+    if (fault === "expired") m.parentReceipt.bindings[0]!.grant.expiresAt = new Date(Date.now() - 500).toISOString();
+    await expect(createTangleProvider({ client: m.client }).create(m.input)).rejects.toThrow();
+    expect(m.fixture.turns).not.toHaveBeenCalled();
+    if (fault === "expired") expect(m.fixture.creates).toHaveLength(0);
+  });
+
+  it("refuses changed pins and omitted maps for new tuples before PATCH", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    await provider.create(m.input);
+    await expect(provider.get?.("proxy-box", { proxySecrets: m.input.proxySecrets, proxySecretParents: { RENAMED_TOKEN: null, COORD: null } })).rejects.toThrow(/acknowledged revocation/);
+    await expect(provider.get?.("proxy-box", { proxySecrets: [{ ...binding, envName: "NEW_TUPLE" }] })).rejects.toThrow(/new tuple.*explicit total parent map/i);
+    expect(m.updates).not.toHaveBeenCalled();
+  });
+
+  it("requires acknowledged empty revocation and exact PATCH map readback", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    await provider.create(m.input);
+    const revoked = await provider.get?.("proxy-box", { proxySecrets: [], proxySecretParents: {} });
+    expect(revoked?.proxySecretReceipt?.status).toBe("revoked");
+    expect(revoked?.proxySecretParents).toEqual({});
+  });
+
+  it("blocks retained dispatch after a pin changes", async () => {
+    const m = mapped();
+    const environment = await createTangleProvider({ client: m.client }).create(m.input);
+    m.setParents({ RENAMED_TOKEN: null, COORD: null });
+    await expect((async () => { for await (const _event of environment.stream({ prompt: "fixture" })) {} })()).rejects.toThrow(/parent map readback/);
+    expect(m.fixture.turns).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("newly observed mutation maps", () => {
+  it("requires negotiation when only a PATCH response first exposes a map", async () => {
+    const fixture = setup();
+    fixture.box.egress.update = async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client: fixture.client }).get?.("proxy-box", { proxySecrets: [binding] }))
+      .rejects.toThrow(/delegation.*capabilit/i);
+  });
+
+  it("requires a newly observed PATCH map to survive current GET readback", async () => {
+    const fixture = setup();
+    const client = { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) };
+    fixture.box.egress.update = async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client }).get?.("proxy-box", { proxySecrets: [binding] }))
+      .rejects.toThrow(/parent map readback/);
+  });
+});
+
+
+describe("native renewal parent controls", () => {
+  it.each(["marker-missing", "readback-missing", "mapped"] as const)("checks mutation maps before dispatch (%s)", async (mode) => {
+    const fixture = setup();
+    const parents = { REPORTS_TOKEN: null };
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, cliAuthReferences: true, codexCredentialContinuations: true });
+    const client = { ...fixture.client, capabilities: async () => ({ proxySecrets: capability,
+      ...(mode === "marker-missing" ? {} : { proxySecretDelegation: 1 as const }) }) };
+    if (mode === "mapped") fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: parents });
+    fixture.grants.mockImplementation(async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: parents }));
+    const native = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
+    const selected = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] };
+    const environment = await createTangleProvider({ client, modelCredentials: async () => selected })
+      .create({ profile: native, ...(mode === "mapped" ? { proxySecretParents: parents } : {}) });
+    const turn = async () => { for await (const _event of environment.stream({ prompt: "fixture", profile: native, turnId: "parent-renewal" })) {} };
+    if (mode === "mapped") {
+      await turn();
+      expect(fixture.grants).toHaveBeenCalledWith(expect.objectContaining({ proxySecretParents: parents }), undefined);
+      expect(fixture.turns).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(turn()).rejects.toThrow(mode === "marker-missing" ? /delegation.*capabilit/i : /parent map readback/i);
+      expect(fixture.turns).not.toHaveBeenCalled();
+    }
+  });
 });

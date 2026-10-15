@@ -1,6 +1,8 @@
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentEnvironmentGetOptionsSchema,
+  AgentEnvironmentReadOnlyGetOptionsSchema,
+  ProxySecretParentsSchema,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
@@ -28,7 +30,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, proxySecretCapabilityFromDocument, PROXY_SECRETS_METADATA_KEY, rebindProxySecrets, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
+import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, proxySecretCapabilityFromDocument, PROXY_SECRETS_METADATA_KEY, rebindProxySecrets, requireProxySecretCapability, captureProxySecretParents, requireProxySecretDelegation, readProxySecretParents } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -170,6 +172,10 @@ export function createTangleProvider(
     if (requestedProxySecrets !== undefined) {
       requireProxySecretCapability(peerCapabilities, requestedProxySecrets);
     }
+    if (input.proxySecretParents !== undefined) {
+      ProxySecretParentsSchema.parse(input.proxySecretParents);
+      requireProxySecretDelegation(peerCapabilities);
+    }
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -213,6 +219,11 @@ export function createTangleProvider(
     if (selectedProxySecrets !== undefined) {
       requireProxySecretCapability(peerCapabilities, selectedProxySecrets);
     }
+    const selectedParents = captureProxySecretParents(selectedProxySecrets, input.proxySecretParents);
+    if (canonicalCandidateDigest(mappedOptions.proxySecretParents ?? null) !== canonicalCandidateDigest(selectedParents ?? null)) {
+      throw new Error("Tangle mapped parent map differs from requested pins");
+    }
+    if (selectedParents !== undefined) await readProxySecretParents(options.client, selectedParents, input);
     assertMappedCreateOptions(mappedOptions);
     if (Object.hasOwn(mappedOptions.metadata ?? {}, "modelCredentials") &&
       (!subscription || selectedCredentials === undefined ||
@@ -342,6 +353,7 @@ export function createTangleProvider(
             : { resources: requestedResources }),
           credentialSource,
           ...(selectedProxySecrets === undefined ? {} : { proxySecrets: selectedProxySecrets }),
+          ...(selectedParents === undefined ? {} : { proxySecretParents: selectedParents }),
           ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
           ...(createOptions.backend?.model?.cliAuth === undefined ? {} : {
             nativeAuth: { harness: createOptions.backend.type!, cliAuth: createOptions.backend.model.cliAuth },
@@ -444,21 +456,31 @@ export function createTangleProvider(
             if (operation?.contextTransfer !== undefined) {
               throw new Error("Tangle context transfer attachment is not qualified by this receiver deployment");
             }
-            if (operation !== undefined) AgentEnvironmentGetOptionsSchema.parse(operation);
+            if (operation !== undefined) {
+              operation = ("readOnly" in operation ? AgentEnvironmentReadOnlyGetOptionsSchema : AgentEnvironmentGetOptionsSchema).parse(operation);
+            }
             const reconnectBindings = operation?.proxySecrets === undefined ? undefined : captureProxySecrets(operation.proxySecrets);
             if (reconnectBindings === undefined && (operation?.expectedProxySecretGeneration !== undefined || operation?.requireInPlace !== undefined)) {
               throw new Error("Tangle proxy-secret reconnect controls require an explicit declaration");
+            }
+            if (operation?.proxySecretParents !== undefined) {
+              requireProxySecretDelegation(await awaitWithSignal(options.client.capabilities?.(), operation.signal));
             }
             if (reconnectBindings !== undefined) {
               if (operation?.requireInPlace === false) throw new Error("Tangle proxy-secret reconnect requires in-place custody");
               requireProxySecretCapability(await awaitWithSignal(options.client.capabilities?.(), operation?.signal), reconnectBindings);
             }
             boundedIdentifier(id, "Tangle environment id");
-            await resolveCapabilities();
+            if (operation?.readOnly !== true) await resolveCapabilities();
             operation?.signal?.throwIfAborted();
             const box = await awaitWithSignal(options.client.get?.(id, operation?.signal ? { signal: operation.signal } : undefined), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
+            if (operation?.readOnly === true) {
+              return sandboxInstanceAsEnvironment(box, providerName, options.client,
+                defaultTangleSandboxCapabilities(), operation.signal ? { signal: operation.signal } : undefined,
+                { readOnly: true });
+            }
             if (options.requireNativeSessionCapture) {
               // Native capture admits only the backend the live container reports, so a
               // suspended sandbox must run again before anything can reconnect to it. A stopped
@@ -490,7 +512,8 @@ export function createTangleProvider(
               }
               captureCapabilities = await awaitWithSignal(requireNativeCaptureCapability(box, backendType), operation?.signal);
             }
-            if (reconnectBindings !== undefined) await rebindProxySecrets(box, reconnectBindings, operation!);
+            const reconnectParents = reconnectBindings === undefined ? undefined
+              : await rebindProxySecrets(box, reconnectBindings, operation!, options.client);
             const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
             return await sandboxInstanceAsEnvironment(
               box,
@@ -501,6 +524,7 @@ export function createTangleProvider(
               {
                 ...confidentialVerifierOption(options.confidentialAttestationVerifier),
                 ...(reconnectBindings === undefined ? {} : { proxySecrets: reconnectBindings, rebindProxySecrets: true }),
+                ...(reconnectParents === undefined ? {} : { proxySecretParents: reconnectParents }),
                 ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
                 ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
                 ...(captureCapabilities === undefined ? {} : { captureCapabilities }),

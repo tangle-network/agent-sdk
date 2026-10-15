@@ -50,28 +50,30 @@ The core integration owner enables advertisement only after API, placement drive
 
 ## Host parent selection
 
-`ProxySecretParents`, `ProxySecretParentsSchema` and `isProxySecretParentsTotal`
-are available from the canonical package root and environment-provider entry
-point. The shared wire fixture includes parent-map cases. This host control is
-optional on CREATE and explicit custody attachment/PATCH; readback reports the
-effective pins. It is separate from portable declarations and AgentProfile.
+Trusted host callers use optional `proxySecretParents` on existing CREATE and
+explicit custody attachment/PATCH. Import `ProxySecretParents`,
+`ProxySecretParentsSchema` and `isProxySecretParentsTotal` from agent-interface
+or its environment-provider entry point. The shared wire fixture includes map
+cases. Read the schema and authenticated API capability document for support;
+the delegation marker is an API field, separate from engine capabilities.
 
-A supplied map has exactly one destination environment key per final binding.
-A string requests an API-verified parent sandbox; null explicitly requests
-independent root issuance. It contains no parent environment name or caller
-grant ID. Trusted Runtime producers retain the complete map from actual
-allocation state before creating, including null for fresh coordination authority.
-The API projects pins from validated private parent locators without persisting
-a second map. The API delegation marker is separate from engine capabilities.
+When present the map has exactly one destination environment key per final
+binding: a parent sandbox ID string requests verified attenuation, and `null`
+explicitly requests independent root issuance. It carries no parent environment
+name or caller grant ID. The portable declaration and AgentProfile stay unchanged.
+Runtime obtains IDs from actual allocation state and retains the complete map
+before creation, including explicit null for fresh coordination authority.
 
-An omitted map preserves existing `(envName, secretRef)` pins; new tuples in a
-mapped replacement need an explicit total map. Changing a pin requires
-acknowledged removal first. Policy-only PATCH cannot carry a map; empty
-replacement permits an omitted or empty map and clears only after revoked
-acknowledgment. Explicit maps, observed maps and delegated grants require the
-API marker and exact total readback; a delegated receipt without a map refuses.
-Ordinary initial root creation without a map can use the existing root protocol.
+Mapped creates require the API delegation marker before resolution/allocation,
+fresh parent reads through the same authenticated client, and exact map readback.
+Observed maps and delegated grants also require this protocol on recovery and
+retained use. A delegated receipt without a total map refuses. Ordinary initial
+root creation without a map can use the existing root protocol.
 
-These exports establish the shared contract. Provider forwarding and the
-parent-capable Sandbox SDK are qualified and released through their owners;
-read their published manifests and authenticated capability document for support.
+Policy-only PATCH cannot carry a map. Omitted maps preserve validated existing
+`(envName, secretRef)` pins; new tuples in a mapped replacement need an explicit
+total map. Changing a pin requires acknowledged removal first. Empty replacement
+permits an omitted or empty map and clears pins only after revoked acknowledgment.
+The API projects pins from its existing private parent locators; no second map
+is persisted. Provider recovery and renewal carry the admitted pins and verify
+readback without trusting caller metadata or weakening guest resource guards.

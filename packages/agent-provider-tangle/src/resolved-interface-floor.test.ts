@@ -92,9 +92,14 @@ function resolvedInterfaceVersion(): string {
   );
 }
 
-/** `^X.Y.Z` only. Any other shape is refused rather than guessed at, so a range this check cannot
- *  reason about fails here instead of passing silently. */
+/** pnpm rewrites workspace:^ to the owned package version when packing/publishing.
+ * Other ranges must be explicit carets; an unknown shape refuses rather than guessing. */
 function declaredFloor(range: string | undefined): string {
+  if (range === "workspace:^") {
+    const owned = readManifest(join(packageRoot, "..", "agent-interface", "package.json")).version;
+    if (owned === undefined) throw new Error("owned agent-interface manifest has no version");
+    return owned;
+  }
   const match = /^\^(\d+\.\d+\.\d+)$/.exec(range ?? "");
   if (match === null) {
     throw new Error(
