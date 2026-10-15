@@ -239,4 +239,44 @@ describe("public provider proxy-secret custody", () => {
     expect(fixture.creates).toHaveLength(1);
   });
 
+  it("accepts a refreshed revision only with a newer receipt generation while pinning resolved secret identity", async () => {
+    const fixture = setup();
+    const environment = await createTangleProvider({ client: fixture.client }).create({ profile });
+    fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 2,
+      bindings: fixture.receipt.bindings.map((row) => ({ ...row, grant: { ...row.grant, identity: { ...row.grant.identity, revision: "rev-2" } } })) };
+    for await (const _event of environment.stream({ prompt: "use refreshed source" })) {}
+    expect(environment.proxySecretReceipt?.bindings[0]?.grant.identity.revision).toBe("rev-2");
+    fixture.receipt.bindings[0]!.grant.identity.revision = "rev-3";
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "same-generation mutation" })) {}
+    })()).rejects.toThrow(/custody|resolved identity/);
+    fixture.receipt = structuredClone(environment.proxySecretReceipt!);
+    fixture.receipt.bindings[0]!.grant.expiresAt = new Date(Date.parse(fixture.receipt.bindings[0]!.grant.expiresAt) + 100).toISOString();
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "same-generation lifetime mutation" })) {}
+    })()).rejects.toThrow(/custody/);
+    fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 3,
+      bindings: fixture.receipt.bindings.map((row) => ({ ...row, grant: { ...row.grant, identity: { ...row.grant.identity, secretId: "other-secret" } } })) };
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "different secret" })) {}
+    })()).rejects.toThrow(/custody|resolved identity/);
+    expect(fixture.turns).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the trusted source expiry ceiling for the same immutable revision across replacement grants", async () => {
+    const fixture = setup();
+    const grant = fixture.receipt.bindings[0]!.grant;
+    grant.sourceExpiresAt = new Date(Date.parse(grant.expiresAt) + 1000).toISOString();
+    const environment = await createTangleProvider({ client: fixture.client }).create({ profile });
+    fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 2,
+      bindings: fixture.receipt.bindings.map((row) => {
+        const { sourceExpiresAt: _sourceExpiry, ...withoutCeiling } = row.grant;
+        return { ...row, grant: withoutCeiling };
+      }) };
+    await expect((async () => {
+      for await (const _event of environment.stream({ prompt: "drop source lifetime evidence" })) {}
+    })()).rejects.toThrow(/resolved identity/);
+    expect(fixture.turns).not.toHaveBeenCalled();
+  });
+
 });

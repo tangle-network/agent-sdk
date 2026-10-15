@@ -91,7 +91,8 @@ export function validateProxySecretReceipt(
   if (receipt.sandboxId !== sandboxId ||
       (receipt.status !== "installed" && !(receipt.status === "revoked" && bindings.length === 0)) ||
       receipt.bindings.length !== bindings.length ||
-      (previous !== undefined && receipt.generation < previous.generation)) {
+      (previous !== undefined && (receipt.generation < previous.generation ||
+        (receipt.generation === previous.generation && canonicalCandidateDigest(receipt) !== canonicalCandidateDigest(previous))))) {
     throw new Error("Tangle proxy-secret receipt does not prove current sandbox custody");
   }
   const now = Date.now();
@@ -110,7 +111,14 @@ export function validateProxySecretReceipt(
         !proxySecretPresentationsEqual(binding.presentation, grant.presentation) ||
         grant.placeholderFormat !== (binding.placeholderFormat ?? "opaque") ||
         !isProxySecretScopeAttenuation(binding, grant.scope) ||
-        (prior !== undefined && canonicalCandidateDigest(prior.grant.identity) !== canonicalCandidateDigest(grant.identity))) {
+        (prior !== undefined && (
+          prior.grant.identity.tenantId !== grant.identity.tenantId ||
+          prior.grant.identity.issuerId !== grant.identity.issuerId ||
+          prior.grant.identity.secretId !== grant.identity.secretId ||
+          (prior.grant.identity.revision !== grant.identity.revision && receipt.generation <= previous!.generation) ||
+          (prior.grant.identity.revision === grant.identity.revision && prior.grant.sourceExpiresAt !== undefined &&
+            (grant.sourceExpiresAt === undefined || Date.parse(grant.sourceExpiresAt) > Date.parse(prior.grant.sourceExpiresAt) ||
+              expiresAt > Date.parse(prior.grant.sourceExpiresAt)))))) {
       throw new Error("Tangle proxy-secret receipt is expired, widened, or changes its resolved identity");
     }
   }
