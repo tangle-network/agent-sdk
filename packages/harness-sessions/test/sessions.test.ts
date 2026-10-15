@@ -64,6 +64,22 @@ describe('Claude Code', () => {
     ])
   })
 
+  it('reads a resumed transcript that writes its earlier records again once, with unique span identities', async () => {
+    // A resumed agent's file repeats its prefix with the same record uuids and timestamps.
+    const s = await both(claudeCodeReader, claudeCodeRefForFile(fixture('claude-code', 'replayed-records.jsonl')))
+    expect(s.messages.filter((m) => m.actor === 'human').map((m) => m.parts)).toEqual([
+      [{ type: 'text', text: 'Summarize the build failure.' }],
+      [{ type: 'text', text: 'Try again.' }],
+      [{ type: 'text', text: 'Thanks, now fix it.' }],
+    ])
+    expect(s.modelCalls.map((c) => [c.error ? 'error' : 'ok', c.servedModel])).toEqual([
+      ['error', null], ['ok', 'scripted-model'], ['ok', 'scripted-model'],
+    ])
+    expect(s.integrity.gaps).toEqual([])
+    const ids = toOtlpSpans(s).map((span) => span.span_id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
   it('leaves a turn killed during its tool call open with the call pending', async () => {
     const s = await both(claudeCodeReader, claudeCodeRefForFile(fixture('claude-code', 'killed.jsonl')))
     expect(s.modelCalls).toHaveLength(1)
