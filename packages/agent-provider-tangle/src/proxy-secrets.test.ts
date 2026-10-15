@@ -279,4 +279,18 @@ describe("public provider proxy-secret custody", () => {
     expect(fixture.turns).not.toHaveBeenCalled();
   });
 
+  it("refuses an empty reconnect update that does not confirm revocation", async () => {
+    const fixture = setup();
+    const provider = createTangleProvider({ client: fixture.client });
+    const created = await provider.create({ profile });
+    fixture.box.egress.update = vi.fn(async () => {
+      fixture.declarations = [];
+      fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 2, bindings: [] };
+      return { proxySecretReceipt: fixture.receipt };
+    });
+    await expect(provider.get?.(created.id, { proxySecrets: [] })).rejects.toThrow(/confirmed revocation/);
+    expect(fixture.creates).toHaveLength(1);
+    expect(fixture.turns).not.toHaveBeenCalled();
+  });
+
 });

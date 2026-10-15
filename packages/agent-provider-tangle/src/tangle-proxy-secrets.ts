@@ -148,6 +148,9 @@ export async function rebindProxySecrets(
     updated !== null && typeof updated === "object" && "proxySecretReceipt" in updated ? updated.proxySecretReceipt : undefined,
     box.id, bindings,
   );
+  if (bindings.length === 0 && receipt.status !== "revoked") {
+    throw new Error("Tangle proxy-secret reconnect requires confirmed revocation for an empty selection");
+  }
   if (receipt.generation < current.generation) throw new Error("Tangle proxy-secret reconnect returned stale custody");
   return readProxySecretReceipt(box, bindings, options, receipt);
 }
