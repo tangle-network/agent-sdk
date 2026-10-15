@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.2.1
+
+### Patch Changes
+
+- 8898a98: Accept nullable capability responses from the Sandbox SDK so its client can be passed directly to createTangleProvider. A null response continues to refuse proxy-secret requests before credential resolution or sandbox creation.
+
 ## 4.2.0
 
 ### Minor Changes
