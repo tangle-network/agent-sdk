@@ -104,6 +104,7 @@ export async function readProxySecretReceipt(
         }
       }
     }
+    control.parents = parents;
   }
   return receipt;
 }
@@ -237,7 +238,7 @@ export async function rebindProxySecrets(
       if (prior !== undefined && parents !== undefined && parents[binding.envName] !== priorPin) {
         throw new Error("Tangle changing a parent pin requires acknowledged revocation first");
       }
-      if (prior !== undefined) preserved[binding.envName] = priorPin!;
+      if (prior !== undefined) Object.defineProperty(preserved, binding.envName, { value: priorPin, enumerable: true });
     }
     parents ??= captureProxySecretParents(bindings, preserved);
     await readProxySecretParents(client, parents!, options);
@@ -254,10 +255,17 @@ export async function rebindProxySecrets(
     throw new Error("Tangle proxy-secret reconnect requires confirmed revocation for an empty selection");
   }
   if (receipt.generation < current.generation) throw new Error("Tangle proxy-secret reconnect returned stale custody");
+  // A newly observed map also opts into the API protocol, even on an old-root request.
+  const returnedParents = parentsFromState(updated, bindings);
+  if (returnedParents !== undefined) {
+    requireProxySecretDelegation(await awaitWithSignal(client.capabilities?.(), options.signal));
+  }
   // Validate the mutation response itself as well as a subsequent current GET.
-  if (parents !== undefined && canonicalCandidateDigest(parentsFromState(updated, bindings) ?? null) !== canonicalCandidateDigest(parents)) {
+  if (parents !== undefined && canonicalCandidateDigest(returnedParents ?? null) !== canonicalCandidateDigest(parents)) {
     throw new Error("Tangle parent map PATCH readback differs from admitted pins");
   }
-  await readProxySecretReceipt(box, bindings, options, receipt, false, { client, ...(parents === undefined ? {} : { parents }) });
-  return parents;
+  parents ??= returnedParents;
+  const control = { client, ...(parents === undefined ? {} : { parents }) };
+  await readProxySecretReceipt(box, bindings, options, receipt, false, control);
+  return control.parents;
 }

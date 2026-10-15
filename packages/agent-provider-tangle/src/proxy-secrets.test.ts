@@ -438,3 +438,47 @@ describe("mapped mixed authority and immutable parent pins", () => {
     expect(m.fixture.turns).not.toHaveBeenCalled();
   });
 });
+
+
+describe("newly observed mutation maps", () => {
+  it("requires negotiation when only a PATCH response first exposes a map", async () => {
+    const fixture = setup();
+    fixture.box.egress.update = async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client: fixture.client }).get?.("proxy-box", { proxySecrets: [binding] }))
+      .rejects.toThrow(/delegation.*capabilit/i);
+  });
+
+  it("requires a newly observed PATCH map to survive current GET readback", async () => {
+    const fixture = setup();
+    const client = { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) };
+    fixture.box.egress.update = async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client }).get?.("proxy-box", { proxySecrets: [binding] }))
+      .rejects.toThrow(/parent map readback/);
+  });
+});
+
+
+describe("native renewal parent controls", () => {
+  it.each(["marker-missing", "readback-missing", "mapped"] as const)("checks mutation maps before dispatch (%s)", async (mode) => {
+    const fixture = setup();
+    const parents = { REPORTS_TOKEN: null };
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, cliAuthReferences: true, codexCredentialContinuations: true });
+    const client = { ...fixture.client, capabilities: async () => ({ proxySecrets: capability,
+      ...(mode === "marker-missing" ? {} : { proxySecretDelegation: 1 as const }) }) };
+    if (mode === "mapped") fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: parents });
+    fixture.grants.mockImplementation(async () => ({ proxySecretReceipt: fixture.receipt, proxySecretParents: parents }));
+    const native = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
+    const selected = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] };
+    const environment = await createTangleProvider({ client, modelCredentials: async () => selected })
+      .create({ profile: native, ...(mode === "mapped" ? { proxySecretParents: parents } : {}) });
+    const turn = async () => { for await (const _event of environment.stream({ prompt: "fixture", profile: native, turnId: "parent-renewal" })) {} };
+    if (mode === "mapped") {
+      await turn();
+      expect(fixture.grants).toHaveBeenCalledWith(expect.objectContaining({ proxySecretParents: parents }), undefined);
+      expect(fixture.turns).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(turn()).rejects.toThrow(mode === "marker-missing" ? /delegation.*capabilit/i : /parent map readback/i);
+      expect(fixture.turns).not.toHaveBeenCalled();
+    }
+  });
+});

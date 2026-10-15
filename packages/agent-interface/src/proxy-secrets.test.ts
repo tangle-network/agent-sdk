@@ -123,6 +123,10 @@ describe("host-only canonical parent map", () => {
       expect(isProxySecretParentsTotal([parsed, coord], invalid)).toBe(false);
     }
     expect(isProxySecretParentsTotal([], {})).toBe(true);
+    const special = JSON.parse('{"__proto__":null}');
+    expect(isProxySecretParentsTotal([{ ...parsed, envName: "__proto__" }], special)).toBe(true);
+    expect(Object.hasOwn(ProxySecretParentsSchema.parse(special), "__proto__")).toBe(true);
+    expect(isProxySecretParentsTotal([parsed], JSON.parse('{"REPORTS_TOKEN":null,"__proto__":null}'))).toBe(false);
     expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecretParents: {} }).success).toBe(false);
     expect(AgentEnvironmentGetOptionsSchema.parse({ proxySecrets: [], proxySecretParents: {} })).toEqual({ proxySecrets: [], proxySecretParents: {} });
     expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecrets: [binding], proxySecretParents: {} }).success).toBe(false);
