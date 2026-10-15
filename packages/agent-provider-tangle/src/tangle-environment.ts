@@ -27,6 +27,7 @@ import type {
   PlacementInfo,
   ResourceProfile,
   ProxySecretBinding,
+  ProxySecretReceipt,
   TerminalAttachRequest,
   TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -147,7 +148,7 @@ export async function sandboxInstanceAsEnvironment(
     throw new Error("Tangle persisted proxy-secret declarations differ from creation");
   }
   const proxySecrets = request?.proxySecrets ?? persistedProxySecrets;
-  let proxySecretReceipt = proxySecrets === undefined ? undefined : await readProxySecretReceipt(box, proxySecrets, operation);
+  let proxySecretReceipt: ProxySecretReceipt | undefined;
   const recordedCredentials = box.metadata?.modelCredentials;
   const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
     Object.hasOwn(recordedCredentials, "cliAuth");
@@ -165,6 +166,12 @@ export async function sandboxInstanceAsEnvironment(
   }
   const nativeReference = request?.nativeAuth?.cliAuth ?? persistedReference;
   const credentialHarness = request?.nativeAuth?.harness ?? request?.credentialHarness;
+  // Recovery may obtain an expired reference-only receipt only when the trusted native
+  // owner can renew it. prepareTurn requires an installed, fresh acknowledgement before use.
+  if (proxySecrets !== undefined) {
+    proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, operation, undefined,
+      nativeReference !== undefined && request?.resolveModelCredentials !== undefined);
+  }
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(

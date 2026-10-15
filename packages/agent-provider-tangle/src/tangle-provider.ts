@@ -27,7 +27,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { assertProxySecretAliases, mergeProxySecrets, proxySecretsFromInput, PROXY_SECRETS_METADATA_KEY, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
+import { assertProxySecretAliases, mergeProxySecrets, proxySecretsFromInput, proxySecretCapabilityFromDocument, PROXY_SECRETS_METADATA_KEY, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -89,11 +89,22 @@ export function createTangleProvider(
     backendType: string | undefined,
   ): Promise<AgentEnvironmentCapabilities> => {
     const harness = harnessTypeSchema.safeParse(backendType);
-    const configured = options.capabilities
+    let configured = options.capabilities
       ? typeof options.capabilities === "function"
         ? await options.capabilities()
         : options.capabilities
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
+    const proxyCapability = proxySecretCapabilityFromDocument(await options.client.capabilities?.());
+    // Configured adapter ceilings never confer authority that the connected API did not prove.
+    configured = { ...configured, profile: { ...configured.profile },
+      ...(configured.create === undefined && proxyCapability === undefined ? {} : { create: { ...configured.create } }),
+    };
+    delete configured.profile.proxySecrets;
+    if (configured.create !== undefined) delete configured.create.proxySecrets;
+    if (proxyCapability !== undefined) {
+      configured.profile.proxySecrets = proxyCapability;
+      configured.create = { ...configured.create, proxySecrets: proxyCapability };
+    }
     if (configured.create?.workspaceSnapshot === true) {
       throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
     }

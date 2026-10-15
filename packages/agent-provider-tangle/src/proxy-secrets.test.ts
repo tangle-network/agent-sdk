@@ -123,7 +123,7 @@ describe("public provider proxy-secret custody", () => {
     const fixture = setup();
     fixture.box.capabilities = async () => ({ proxySecrets: capability, cliAuthReferences: true, codexCredentialContinuations: true });
     const nativeProfile = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
-    const selected = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] };
+    const selected = structuredClone({ cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] });
     const resolver = vi.fn(async () => selected);
     const provider = createTangleProvider({ client: fixture.client, modelCredentials: resolver });
     const environment = await provider.create({ profile: nativeProfile });
@@ -140,4 +140,41 @@ describe("public provider proxy-secret custody", () => {
     selected.proxySecrets[0]!.hosts = ["mutated.example.com"];
     expect(fixture.creates[0]).toMatchObject({ proxySecrets: [{ hosts: ["reports.example.com"] }] });
   });
+  it("recovers an expired native lease through its trusted resolver and requires fresh custody before dispatch", async () => {
+    const fixture = setup();
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, cliAuthReferences: true, codexCredentialContinuations: true });
+    const nativeProfile = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
+    const selected = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] };
+    let selection = 0;
+    const provider = createTangleProvider({ client: fixture.client, modelCredentials: async () => {
+      if (++selection > 1) {
+        fixture.receipt = { ...fixture.receipt, generation: 2, bindings: fixture.receipt.bindings.map((row) => ({
+          ...row, grant: { ...row.grant, issuedAt: new Date(Date.now() - 100).toISOString(), expiresAt: new Date(Date.now() + 299_000).toISOString() },
+        })) };
+      }
+      return selected;
+    } });
+    const created = await provider.create({ profile: nativeProfile });
+    fixture.receipt.bindings[0]!.grant.issuedAt = new Date(Date.now() - 300_000).toISOString();
+    fixture.receipt.bindings[0]!.grant.expiresAt = new Date(Date.now() - 1).toISOString();
+    const recovered = await provider.get?.(created.id);
+    if (!recovered) throw new Error("Expected native reconnect handle");
+    for await (const _event of recovered.stream({ prompt: "continue", profile: nativeProfile, turnId: "turn-renew" })) {}
+    expect(recovered.proxySecretReceipt?.generation).toBe(2);
+    expect(fixture.turns).toHaveBeenCalledTimes(1);
+    fixture.grants.mockRejectedValueOnce(new Error("trusted renewal refused"));
+    await expect((async () => {
+      for await (const _event of recovered.stream({ prompt: "again", profile: nativeProfile, turnId: "turn-fail" })) {}
+    })()).rejects.toThrow(/trusted renewal refused/);
+    expect(fixture.turns).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses resolver output containing credential values before allocation", async () => {
+    const fixture = setup();
+    const nativeProfile = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
+    const malicious = { cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" }, proxySecrets: [{ ...binding, value: "fixture-private-value" }] };
+    await expect(createTangleProvider({ client: fixture.client, modelCredentials: async () => malicious as never }).create({ profile: nativeProfile })).rejects.toThrow();
+    expect(fixture.creates).toEqual([]);
+  });
+
 });

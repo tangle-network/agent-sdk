@@ -1,6 +1,7 @@
 import {
   ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema,
-  type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretReceipt,
+  isProxySecretScopeAttenuation, proxySecretPresentationsEqual,
+  type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { awaitWithSignal } from "./tangle-contract-safety.js";
@@ -54,13 +55,18 @@ export function assertProxySecretAliases(
   }
 }
 
-export function requireProxySecretCapability(document: unknown, bindings: ProxySecretBinding[]): void {
+export function proxySecretCapabilityFromDocument(document: unknown): ProxySecretCapabilities | undefined {
   const value = document !== null && typeof document === "object" && "proxySecrets" in document
     ? document.proxySecrets : undefined;
   const parsed = ProxySecretCapabilitiesSchema.safeParse(value);
-  if (!parsed.success || bindings.some((binding) =>
-    !parsed.data.presentations.includes(binding.presentation.type) ||
-    !parsed.data.placeholderFormats.includes(binding.placeholderFormat ?? "opaque"))) {
+  return parsed.success ? parsed.data : undefined;
+}
+
+export function requireProxySecretCapability(document: unknown, bindings: ProxySecretBinding[]): void {
+  const capability = proxySecretCapabilityFromDocument(document);
+  if (capability === undefined || bindings.some((binding) =>
+    !capability.presentations.includes(binding.presentation.type) ||
+    !capability.placeholderFormats.includes(binding.placeholderFormat ?? "opaque"))) {
     throw new Error("Tangle peer does not prove the requested proxy-secret capability");
   }
 }
@@ -109,14 +115,9 @@ export function validateProxySecretReceipt(
     const expiresAt = Date.parse(grant.expiresAt);
     if (grant.sandboxId !== sandboxId || issuedAt > now || (!allowExpired && expiresAt <= now) ||
         (binding.ttlSeconds !== undefined && expiresAt - issuedAt > binding.ttlSeconds * 1000) ||
-        canonicalCandidateDigest(grant.presentation.type === "header" ? { ...grant.presentation, name: grant.presentation.name.toLowerCase() } : grant.presentation) !==
-          canonicalCandidateDigest(binding.presentation.type === "header" ? { ...binding.presentation, name: binding.presentation.name.toLowerCase() } : binding.presentation) ||
+        !proxySecretPresentationsEqual(binding.presentation, grant.presentation) ||
         grant.placeholderFormat !== (binding.placeholderFormat ?? "opaque") ||
-        !grant.scope.hosts.every((host) => binding.hosts.includes(host)) ||
-        (binding.methods !== undefined && (grant.scope.methods === undefined ||
-          !grant.scope.methods.every((method) => binding.methods!.includes(method)))) ||
-        (binding.paths !== undefined && (grant.scope.paths === undefined ||
-          !grant.scope.paths.every((path) => binding.paths!.some((allowed) => allowed === path || (allowed.endsWith("/*") && path.startsWith(allowed.slice(0, -1))))))) ||
+        !isProxySecretScopeAttenuation(binding, grant.scope) ||
         (prior !== undefined && canonicalCandidateDigest(prior.grant.identity) !== canonicalCandidateDigest(grant.identity))) {
       throw new Error("Tangle proxy-secret receipt is expired, widened, or changes its resolved identity");
     }
