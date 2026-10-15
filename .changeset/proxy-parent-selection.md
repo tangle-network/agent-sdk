@@ -1,5 +1,4 @@
 ---
-"@tangle-network/agent-interface": minor
 "@tangle-network/agent-provider-tangle": minor
 ---
 
