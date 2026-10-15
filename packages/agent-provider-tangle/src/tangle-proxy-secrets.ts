@@ -1,5 +1,5 @@
 import {
-  ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema, ProxySecretParentsSchema,
+  ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema, ProxySecretParentsSchema, ProxySecretDelegationCapabilitySchema,
   isProxySecretParentsTotal, isProxySecretGrantAttenuation, type ProxySecretParents,
   isProxySecretScopeAttenuation, proxySecretPresentationsEqual, mergeProxySecretBindings,
   type AgentEnvironmentGetOptions, type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
@@ -170,7 +170,7 @@ export function parentsFromState(state: unknown, bindings: ProxySecretBinding[])
 
 export function requireProxySecretDelegation(document: unknown): void {
   if (document === null || typeof document !== "object" ||
-      !("proxySecretDelegation" in document) || document.proxySecretDelegation !== 1) {
+      !("proxySecretDelegation" in document) || !ProxySecretDelegationCapabilitySchema.safeParse(document.proxySecretDelegation).success) {
     throw new Error("Tangle peer does not prove API proxy-secret delegation capability");
   }
 }
