@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { Sandbox } from "@tangle-network/sandbox";
 import { createTangleProvider } from "./index.js";
 import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxClientLike } from "./tangle-types.js";
@@ -52,6 +53,25 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("accepts an actual SDK Sandbox with a nullable capability response", () => {
+    const client = Object.assign(
+      new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
+      { async capabilities(): Promise<{ proxySecrets?: ProxySecretCapabilities } | null> { return null; } },
+    );
+    expect(createTangleProvider({ client }).name).toBe("tangle-sandbox");
+  });
+
+  it("refuses a null capability response before subscription resolution or allocation", async () => {
+    const { client, creates } = setup();
+    const resolver = vi.fn(async () => ({ cliAuth: { account: "seat", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const }, proxySecrets: [binding] }));
+    const native = { ...profile, harness: "codex" as const, model: { metadata: { credentialSource: "subscription" } } };
+    await expect(createTangleProvider({
+      client: { ...client, capabilities: async () => null }, modelCredentials: resolver,
+    }).create({ profile: native })).rejects.toThrow(/proxy.secret.*capabilit/i);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(creates).toEqual([]);
+  });
+
   it("forwards one canonical profile declaration without readable grants", async () => {
     const { client, creates } = setup();
     const environment = await createTangleProvider({ client }).create({ profile, secrets: [] });
