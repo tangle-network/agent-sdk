@@ -468,11 +468,16 @@ export function createTangleProvider(
               requireProxySecretCapability(await awaitWithSignal(options.client.capabilities?.(), operation?.signal), reconnectBindings);
             }
             boundedIdentifier(id, "Tangle environment id");
-            await resolveCapabilities();
+            if (operation?.readOnly !== true) await resolveCapabilities();
             operation?.signal?.throwIfAborted();
             const box = await awaitWithSignal(options.client.get?.(id, operation?.signal ? { signal: operation.signal } : undefined), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
+            if (operation?.readOnly === true) {
+              return sandboxInstanceAsEnvironment(box, providerName, options.client,
+                defaultTangleSandboxCapabilities(), operation.signal ? { signal: operation.signal } : undefined,
+                { readOnly: true });
+            }
             if (options.requireNativeSessionCapture) {
               // Native capture admits only the backend the live container reports, so a
               // suspended sandbox must run again before anything can reconnect to it. A stopped

@@ -70,7 +70,7 @@ export async function readProxySecretReceipt(
   operation?: { signal?: AbortSignal },
   previous?: ProxySecretReceipt,
   allowExpired = false,
-  control?: { client: SandboxClientLike; parents?: ProxySecretParents },
+  control?: { client: SandboxClientLike; parents?: ProxySecretParents; readOnly?: true },
 ): Promise<ProxySecretReceipt> {
   const document = await awaitWithSignal(box.capabilities?.(), operation?.signal);
   requireProxySecretCapability(document, bindings);
@@ -91,7 +91,7 @@ export async function readProxySecretReceipt(
   if (parents !== undefined) {
     if (control === undefined) throw new Error("Tangle parent map requires authenticated control-plane readback");
     requireProxySecretDelegation(await awaitWithSignal(control.client.capabilities?.(), operation?.signal));
-    const parentReceipts = await readProxySecretParents(control.client, parents, operation);
+    const parentReceipts = await readProxySecretParents(control.client, parents, operation, control.readOnly === true);
     for (const entry of receipt.bindings) {
       const parentId = parents[entry.envName];
       if (parentId === null) {
@@ -178,6 +178,7 @@ export function requireProxySecretDelegation(document: unknown): void {
 /** Same authenticated client, fresh control-plane reads, never a caller-supplied grant ID. */
 export async function readProxySecretParents(
   client: SandboxClientLike, parents: ProxySecretParents, operation?: { signal?: AbortSignal },
+  allowExpired = false,
 ): Promise<Map<string, ProxySecretReceipt>> {
   const receipts = new Map<string, ProxySecretReceipt>();
   for (const id of new Set(Object.values(parents))) {
@@ -189,7 +190,7 @@ export async function readProxySecretParents(
       throw new Error("Tangle parent custody readback is unavailable");
     }
     const bindings = captureProxySecrets(state.proxySecrets);
-    const receipt = validateProxySecretReceipt(state.proxySecretReceipt, id, bindings);
+    const receipt = validateProxySecretReceipt(state.proxySecretReceipt, id, bindings, undefined, allowExpired);
     if (receipt.status !== "installed") throw new Error("Tangle parent sandbox is not installed");
     const pins = parentsFromState(state, bindings);
     if (pins === undefined && receipt.bindings.some((entry) => entry.grant.parentGrantId !== undefined)) {

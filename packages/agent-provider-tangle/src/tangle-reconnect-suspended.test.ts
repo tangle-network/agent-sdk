@@ -94,6 +94,21 @@ function suspendableSandbox() {
 }
 
 describe("Tangle reconnect after the platform suspended a retained sandbox", () => {
+  it("returns an ordinary suspended snapshot without native reconnect", async () => {
+    const fixture = suspendableSandbox();
+    const provider = createTangleProvider({ client: fixture.client, requireNativeSessionCapture: true });
+    const created = await provider.create({ profile });
+    fixture.suspend();
+    const environment = await provider.get!(created.id, { readOnly: true });
+    expect(environment?.id).toBe(created.id);
+    expect(environment?.proxySecretReceipt).toBeUndefined();
+    await expect(environment!.status()).resolves.toBe("stopped");
+    expect(fixture.counts.resumes).toBe(0);
+    expect(fixture.counts.dispatches).toBe(0);
+    expect(environment?.capabilities?.streaming.live).toBe(false);
+    expect(environment?.dispatch).toBeUndefined();
+  });
+
   it("resumes once, reads the selected backend, and settles the interrupted execution without a second dispatch", async () => {
     const fixture = suspendableSandbox();
     const provider = createTangleProvider({ client: fixture.client, requireNativeSessionCapture: true });

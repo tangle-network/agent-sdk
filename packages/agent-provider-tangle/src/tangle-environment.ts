@@ -56,7 +56,7 @@ import {
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
 import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
-import { deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
+import { UNPROVEN_DEPLOYMENT, deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
   assertBoundedJson,
@@ -117,6 +117,7 @@ export async function sandboxInstanceAsEnvironment(
   declaredCapabilities: AgentEnvironmentCapabilities,
   operation?: { signal?: AbortSignal },
   request?: {
+    readOnly?: true;
     resources?: ResourceProfile;
     proxySecrets?: ProxySecretBinding[];
     proxySecretParents?: ProxySecretParents;
@@ -141,11 +142,12 @@ export async function sandboxInstanceAsEnvironment(
     assertBoundedJson(box.metadata, "Tangle environment metadata");
   }
   const support = sandboxCapabilitySupport(box, client, request?.resources);
-  const deployment = request?.captureCapabilities === undefined
-    ? await readDeploymentCapabilitySupport(box, operation)
-    : deploymentCapabilitySupport(request.captureCapabilities);
+  const deployment = request?.readOnly === true ? UNPROVEN_DEPLOYMENT
+    : request?.captureCapabilities === undefined
+      ? await readDeploymentCapabilitySupport(box, operation)
+      : deploymentCapabilitySupport(request.captureCapabilities);
   const modelRecord = box.metadata?.modelCredentials;
-  const readLiveProxyState = request?.proxySecrets !== undefined ||
+  const readLiveProxyState = request?.readOnly === true || request?.proxySecrets !== undefined ||
     box.metadata?.[PROXY_SECRETS_METADATA_KEY] !== undefined ||
     (modelRecord !== null && typeof modelRecord === "object" && "proxySecrets" in modelRecord) ||
     typeof client.capabilities === "function";
@@ -166,7 +168,7 @@ export async function sandboxInstanceAsEnvironment(
   const recordedCredentials = box.metadata?.modelCredentials;
   const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
     Object.hasOwn(recordedCredentials, "cliAuth");
-  if ((request?.requireCliAuthReferences || recordedNativeReference) && !deployment.cliAuthReferences) {
+  if (request?.readOnly !== true && (request?.requireCliAuthReferences || recordedNativeReference) && !deployment.cliAuthReferences) {
     throw new Error("Tangle selected sandbox does not prove native credential reference support");
   }
   const persistedNative = recordedNativeReference
@@ -176,7 +178,7 @@ export async function sandboxInstanceAsEnvironment(
     persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined));
   const proxySecretParents = request?.proxySecretParents ??
     (proxySecrets === undefined ? undefined : parentsFromState(liveEgress, proxySecrets));
-  const parentControl = { client, ...(proxySecretParents === undefined ? {} : { parents: proxySecretParents }) };
+  const parentControl = { client, ...(request?.readOnly === true ? { readOnly: true as const } : {}), ...(proxySecretParents === undefined ? {} : { parents: proxySecretParents }) };
   const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
     ? persistedNative.cliAuth : undefined;
   if (request?.nativeAuth !== undefined && persistedReference !== undefined &&
@@ -189,7 +191,37 @@ export async function sandboxInstanceAsEnvironment(
   // owner can renew it. prepareTurn requires an installed, fresh acknowledgement before use.
   if (proxySecrets !== undefined) {
     proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, operation, undefined,
-      nativeReference !== undefined && request?.resolveModelCredentials !== undefined, parentControl);
+      request?.readOnly === true || (nativeReference !== undefined && request?.resolveModelCredentials !== undefined), parentControl);
+  }
+  if (request?.readOnly === true) {
+    const status = statusFromUnknown(box.status);
+    // This snapshot carries custody facts, including expired installed grants, but no authority
+    // to resume, renew, install credentials or execute. Do not bind live evidence/operation handles.
+    return Object.freeze({
+      id: environmentId, provider: providerName,
+      ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
+      ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
+      ...(proxySecretReceipt === undefined ? {} : { proxySecretReceipt }),
+      ...(parentControl.parents === undefined ? {} : { proxySecretParents: parentControl.parents }),
+      capabilities: frozenCapabilityDocument(AgentEnvironmentCapabilitiesSchema.parse({
+        profile: { namedProfiles: false, systemPrompt: { replace: false, append: false },
+          instructions: false, tools: false, permissions: false, mcp: false, subagents: false,
+          resources: { files: false, instructions: false }, runtimeUpdate: false, validation: false },
+        streaming: { live: false, replay: false, detach: false, turnIdempotency: false },
+        sessions: { continue: false, list: false, messages: false },
+        workspace: { read: false, write: false, exec: false, git: false, upload: false, download: false },
+        branching: { checkpoint: false, fork: false }, placement: false, usage: false,
+        confidential: false, lifecycle: false,
+      })),
+      async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
+        assertOptionKeys(options, ["signal"], "Tangle read-only status");
+        options?.signal?.throwIfAborted();
+        return status;
+      },
+      async *stream(): AsyncIterable<AgentEnvironmentEvent> {
+        throw new Error("Tangle read-only environment cannot execute turns");
+      },
+    });
   }
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");

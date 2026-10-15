@@ -55,6 +55,17 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("rejects read-only custody mutations before even looking up the sandbox", async () => {
+    const fixture = setup();
+    const get = vi.fn(fixture.client.get);
+    const provider = createTangleProvider({ client: { ...fixture.client, get } });
+    for (const controls of [{ proxySecrets: [] }, { proxySecretParents: {} }, { expectedProxySecretGeneration: 1 }, { requireInPlace: true }]) {
+      await expect(provider.get!("proxy-box", { readOnly: true, ...controls })).rejects.toThrow(/read.only/);
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+  });
+
   it("discovers suspended protected custody read-only without native reconnect or mutation", async () => {
     const fixture = setup();
     fixture.box.status = "stopped";
@@ -71,12 +82,15 @@ describe("public provider proxy-secret custody", () => {
       client: { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) },
       requireNativeSessionCapture: true,
     });
-    const environment = await provider.get!("proxy-box", Object.assign({}, { readOnly: true as const }));
+    const environment = await provider.get!("proxy-box", { readOnly: true });
     expect(environment?.proxySecretReceipt).toEqual(fixture.receipt);
     expect(environment?.proxySecretParents).toEqual({ REPORTS_TOKEN: null });
     expect(environment?.dispatch).toBeUndefined();
     expect(environment?.write).toBeUndefined();
     expect(environment?.destroy).toBeUndefined();
+    expect(environment?.capabilities).toMatchObject({ streaming: { live: false }, workspace: { write: false, exec: false }, lifecycle: false });
+    fixture.box.status = "running";
+    await expect(environment!.status()).resolves.toBe("stopped");
     await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse dispatch" })) {} }).rejects.toThrow(/read.only/i);
     expect(resume).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
@@ -421,6 +435,30 @@ describe("mapped mixed authority and immutable parent pins", () => {
     const input = { profile: { name: "mixed", harness: "opencode" as const }, proxySecrets: [inherited, coord], proxySecretParents: parents };
     return { fixture, client, gets, updates, input, parents, parentReceipt, setParents(value: typeof currentParents) { currentParents = value; } };
   }
+
+  it("discovers expired installed child and parent custody only as a non-executable snapshot", async () => {
+    const m = mapped();
+    m.fixture.box.status = "stopped";
+    const now = Date.now();
+    for (const entry of m.fixture.receipt.bindings) {
+      entry.grant.issuedAt = new Date(now - 10_000).toISOString();
+      entry.grant.expiresAt = new Date(now - 1000).toISOString();
+    }
+    m.parentReceipt.bindings[0]!.grant.issuedAt = new Date(now - 20_000).toISOString();
+    m.parentReceipt.bindings[0]!.grant.expiresAt = new Date(now - 500).toISOString();
+    const resume = vi.fn(async () => {});
+    Object.assign(m.fixture.box, { resume });
+    const environment = await createTangleProvider({ client: m.client, requireNativeSessionCapture: true })
+      .get!("proxy-box", { readOnly: true });
+    expect(environment?.proxySecretReceipt).toEqual(m.fixture.receipt);
+    expect(environment?.proxySecretParents).toEqual(m.parents);
+    await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse expired dispatch" })) {} }).rejects.toThrow(/read.only/);
+    await expect(createTangleProvider({ client: m.client }).get!("proxy-box")).rejects.toThrow(/expired/);
+    expect(resume).not.toHaveBeenCalled();
+    expect(m.updates).not.toHaveBeenCalled();
+    expect(m.fixture.grants).not.toHaveBeenCalled();
+    expect(m.fixture.turns).not.toHaveBeenCalled();
+  });
 
   it("uses actual parent identity despite a renamed environment and independent coordination", async () => {
     const m = mapped();
