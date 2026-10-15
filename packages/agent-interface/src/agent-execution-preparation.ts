@@ -616,12 +616,12 @@ function validateAxisCoverage(
         path: request.path,
       });
     }
-    if (coverage.result.disposition === "unsupported" && !allowPartial) {
+    if (coverage.result.disposition === "unsupported" && (!allowPartial || request.axis === "proxySecrets")) {
       issues.push({
         code: "strict-unsupported",
         message:
           `${request.axis} at ${request.path} is unsupported but the authored ` +
-          "profile did not explicitly set resources.failOnError=false",
+          "profile cannot safely omit this requested behavior",
         axis: request.axis,
         path: request.path,
       });

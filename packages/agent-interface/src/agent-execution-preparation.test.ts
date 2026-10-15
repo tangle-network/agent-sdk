@@ -220,11 +220,13 @@ describe("profile materialization leaves", () => {
       authoredProfile: profile,
       axisResults: coverage(profile).filter((result) => result.axis !== "proxySecrets"),
     }))).toContain("missing-coverage");
-    expect(refusalCodes(() => buildReceipt({
-      authoredProfile: profile,
-      axisResults: coverage(profile).map((result) => result.axis === "proxySecrets"
-        ? { ...result, disposition: "unsupported", reason: "peer lacks protocol 1" } : result),
-    }))).toContain("strict-unsupported");
+    for (const requested of [profile, { ...profile, resources: { failOnError: false } }]) {
+      expect(refusalCodes(() => buildReceipt({
+        authoredProfile: requested,
+        axisResults: coverage(requested).map((result) => result.axis === "proxySecrets"
+          ? { ...result, disposition: "unsupported", reason: "peer lacks protocol 1" } : result),
+      }))).toContain("strict-unsupported");
+    }
   });
 
   it.each([

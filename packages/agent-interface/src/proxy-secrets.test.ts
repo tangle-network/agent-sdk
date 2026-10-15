@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation } from "./environment-provider.js";
+import { AgentEnvironmentGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation } from "./environment-provider.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
 import { snapshotAgentProfile } from "./agent-profile-snapshot.js";
@@ -18,6 +18,11 @@ const fixture = JSON.parse(readFileSync(new URL("../fixtures/proxy-secret-wire-v
 describe("portable proxy-secret public contract", () => {
   it.each(fixture.declarations)("validates shared declaration $name", ({ value, valid }) => {
     expect(ProxySecretBindingSchema.safeParse(value).success).toBe(valid);
+  });
+  it("validates explicit retained-custody attachment controls and preserves revocation", () => {
+    expect(AgentEnvironmentGetOptionsSchema.parse({ proxySecrets: [], expectedProxySecretGeneration: 2, requireInPlace: true })).toEqual({ proxySecrets: [], expectedProxySecretGeneration: 2, requireInPlace: true });
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ expectedProxySecretGeneration: 2 }).success).toBe(false);
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecrets: [binding], expectedProxySecretGeneration: -1 }).success).toBe(false);
   });
   it("rejects plaintext, ambiguity and duplicate binding names", () => {
     expect(ProxySecretsSchema.safeParse([binding, binding]).success).toBe(false);

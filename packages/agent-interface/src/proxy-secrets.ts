@@ -158,10 +158,13 @@ export function isProxySecretScopeAttenuation(parent: ProxySecretScope, child: P
 
 /** Header selectors compare case-insensitively; query selectors and Basic usernames are exact. */
 export function proxySecretPresentationsEqual(left: ProxySecretPresentation, right: ProxySecretPresentation): boolean {
-  if (left.type !== right.type) return false;
-  if (left.type === "header" && right.type === "header") return left.name.toLowerCase() === right.name.toLowerCase();
-  if (left.type === "query" && right.type === "query") return left.name === right.name;
-  if (left.type === "basic" && right.type === "basic") return left.username === right.username;
+  const p = ProxySecretPresentationSchema.safeParse(left), c = ProxySecretPresentationSchema.safeParse(right);
+  if (!p.success || !c.success) return false;
+  const from = p.data, to = c.data;
+  if (from.type !== to.type) return false;
+  if (from.type === "header" && to.type === "header") return from.name.toLowerCase() === to.name.toLowerCase();
+  if (from.type === "query" && to.type === "query") return from.name === to.name;
+  if (from.type === "basic" && to.type === "basic") return from.username === to.username;
   return true;
 }
 function subset(parent: readonly string[] | undefined, child: readonly string[] | undefined): boolean {
