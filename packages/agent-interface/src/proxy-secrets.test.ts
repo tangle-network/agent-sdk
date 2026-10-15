@@ -119,7 +119,7 @@ describe("host-only canonical parent map", () => {
     expect(isProxySecretParentsTotal([parsed, coord], parents)).toBe(true);
     for (const invalid of [{}, { REPORTS_TOKEN: null }, { ...parents, EXTRA: null },
       { ...parents, COORD: undefined }, { ...parents, COORD: { sandboxId: "parent" } },
-      { ...parents, REPORTS_TOKEN: "" }, []]) {
+      { ...parents, REPORTS_TOKEN: "" }, [], new Date(), new Map()]) {
       expect(isProxySecretParentsTotal([parsed, coord], invalid)).toBe(false);
     }
     expect(isProxySecretParentsTotal([], {})).toBe(true);

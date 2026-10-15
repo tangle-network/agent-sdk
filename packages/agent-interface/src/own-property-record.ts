@@ -40,6 +40,8 @@ function encodeOwnRecordKeys(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return value;
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return [];
   const encoded: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     encoded[encodeRecordKey(key)] = entry;
