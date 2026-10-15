@@ -1,7 +1,7 @@
 import {
   ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema,
   isProxySecretScopeAttenuation, proxySecretPresentationsEqual,
-  type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
+  type AgentEnvironmentGetOptions, type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { awaitWithSignal } from "./tangle-contract-safety.js";
@@ -18,11 +18,7 @@ export function proxySecretsFromInput(input: CreateAgentEnvironmentInput): Proxy
   const profile = typeof input.profile === "string" ? undefined : input.profile.proxySecrets;
   const direct = input.proxySecrets === undefined ? undefined : captureProxySecrets(input.proxySecrets);
   const declared = profile === undefined ? undefined : captureProxySecrets(profile);
-  if (direct !== undefined && declared !== undefined &&
-      canonicalCandidateDigest(direct) !== canonicalCandidateDigest(declared)) {
-    throw new Error("Tangle input and profile proxy-secret declarations disagree");
-  }
-  return direct ?? declared;
+  return mergeProxySecrets(declared, direct);
 }
 
 export function mergeProxySecrets(
@@ -44,11 +40,14 @@ export function mergeProxySecrets(
 export function assertProxySecretAliases(
   bindings: ProxySecretBinding[] | undefined,
   env: Record<string, string> | undefined,
-  secrets: string[] | undefined,
+  secrets: unknown,
 ): void {
+  if (bindings !== undefined && secrets !== undefined && !Array.isArray(secrets)) {
+    throw new Error("Tangle proxy-secret custody cannot use all or raw readable secret selection");
+  }
   for (const binding of bindings ?? []) {
     for (const alias of [binding.envName, binding.secretRef.key]) {
-      if (Object.hasOwn(env ?? {}, alias) || secrets?.includes(alias)) {
+      if (Object.hasOwn(env ?? {}, alias) || (Array.isArray(secrets) && secrets.includes(alias))) {
         throw new Error("Tangle proxy-secret reference or alias cannot receive raw readable secret delivery");
       }
     }
@@ -97,7 +96,8 @@ export function validateProxySecretReceipt(
   allowExpired = false,
 ): ProxySecretReceipt {
   const receipt = ProxySecretReceiptSchema.parse(value);
-  if (receipt.sandboxId !== sandboxId || receipt.status !== "installed" ||
+  if (receipt.sandboxId !== sandboxId ||
+      (receipt.status !== "installed" && !(receipt.status === "revoked" && bindings.length === 0)) ||
       receipt.bindings.length !== bindings.length ||
       (previous !== undefined && receipt.generation < previous.generation)) {
     throw new Error("Tangle proxy-secret receipt does not prove current sandbox custody");
@@ -123,4 +123,31 @@ export function validateProxySecretReceipt(
     }
   }
   return deepFreeze(receipt);
+}
+
+/** Explicit reconnect attachment reauthorizes through the existing trusted lifecycle owner. */
+export async function rebindProxySecrets(
+  box: SandboxInstanceLike,
+  bindings: ProxySecretBinding[],
+  options: AgentEnvironmentGetOptions,
+): Promise<ProxySecretReceipt> {
+  requireProxySecretCapability(await awaitWithSignal(box.capabilities?.(), options.signal), bindings);
+  if (box.egress?.update === undefined) throw new Error("Tangle proxy-secret reconnect requires in-place egress update support");
+  const state = await awaitWithSignal(box.egress.get(options), options.signal);
+  const current = ProxySecretReceiptSchema.parse(
+    state !== null && typeof state === "object" && "proxySecretReceipt" in state ? state.proxySecretReceipt : undefined,
+  );
+  if (current.sandboxId !== box.id || (options.expectedProxySecretGeneration !== undefined &&
+      current.generation !== options.expectedProxySecretGeneration)) {
+    throw new Error("Tangle proxy-secret reconnect generation or sandbox conflicts with current custody");
+  }
+  const updated = await awaitWithSignal(box.egress.update({
+    proxySecrets: bindings, expectedProxySecretGeneration: current.generation, requireInPlace: true,
+  }, options.signal ? { signal: options.signal } : undefined), options.signal);
+  const receipt = validateProxySecretReceipt(
+    updated !== null && typeof updated === "object" && "proxySecretReceipt" in updated ? updated.proxySecretReceipt : undefined,
+    box.id, bindings,
+  );
+  if (receipt.generation < current.generation) throw new Error("Tangle proxy-secret reconnect returned stale custody");
+  return readProxySecretReceipt(box, bindings, options, receipt);
 }

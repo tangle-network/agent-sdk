@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTangleProvider } from "./index.js";
-import type { ProxySecretCapabilities, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
+import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxClientLike } from "./tangle-types.js";
 
 const binding = {
@@ -19,6 +19,7 @@ function setup() {
   const creates: unknown[] = [];
   const turns = vi.fn();
   let metadata: Record<string, unknown> | undefined;
+  let declarations: ProxySecretBinding[] = [structuredClone(binding)];
   let receipt: ProxySecretReceipt = {
     protocolVersion: 1, sandboxId: "proxy-box", generation: 1, status: "installed",
     proxyAcknowledged: true, materializationAcknowledged: true,
@@ -37,17 +38,17 @@ function setup() {
     backend: { status: async () => ({ type: "codex" }) },
     grantNativeCredential: grants,
     egress: {
-      get: async () => ({ proxySecretReceipt: receipt }),
+      get: async () => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
       update: async () => ({ proxySecretReceipt: receipt }),
     },
     async *streamPrompt() { turns(); },
   };
   const client = {
     capabilities: async () => ({ proxySecrets: capability }),
-    async create(options?: Parameters<SandboxClientLike["create"]>[0]) { creates.push(options); metadata = options?.metadata; return box; },
+    async create(options?: Parameters<SandboxClientLike["create"]>[0]) { creates.push(options); metadata = options?.metadata; declarations = options?.proxySecrets === undefined ? declarations : structuredClone(options.proxySecrets); return box; },
     async get() { return box; },
   };
-  return { client, creates, turns, box, grants, get receipt() { return receipt; }, set receipt(value: ProxySecretReceipt) { receipt = value; } };
+  return { client, creates, turns, box, grants, get declarations() { return declarations; }, set declarations(value: typeof declarations) { declarations = value; }, get receipt() { return receipt; }, set receipt(value: ProxySecretReceipt) { receipt = value; } };
 }
 
 describe("public provider proxy-secret custody", () => {
@@ -83,7 +84,7 @@ describe("public provider proxy-secret custody", () => {
     const getBackend = async () => ({
       type: "opencode", name: "OpenCode", description: "fixture",
       capabilities: { streaming: true, toolUse: true, reasoning: true, multimodal: false, imageInput: false,
-        contextWindow: 128000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } },
+        contextWindow: 128000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true as const } },
     });
     await createTangleProvider({ client: { ...fixture.client, getBackend } }).create({ profile, runtimeAttachments });
     expect(fixture.creates[0]).toMatchObject({ proxySecrets: [binding], secrets: [], backend: { runtimeAttachments } });
@@ -113,7 +114,7 @@ describe("public provider proxy-secret custody", () => {
     const environment = await provider.create({ profile });
     const recovered = await provider.get?.(environment.id);
     expect(recovered?.proxySecretReceipt?.generation).toBe(1);
-    fixture.receipt = { ...fixture.receipt, generation: 2, status: "revoked", bindings: [] };
+    fixture.receipt = { ...fixture.receipt, generation: 2, status: "revoked", bindings: [], materializationAcknowledged: true };
     await expect(provider.get?.(environment.id)).rejects.toThrow(/custody/);
     await expect((async () => { for await (const _event of environment.stream({ prompt: "send report" })) {} })()).rejects.toThrow(/custody/);
     expect(fixture.turns).not.toHaveBeenCalled();
@@ -148,7 +149,7 @@ describe("public provider proxy-secret custody", () => {
     let selection = 0;
     const provider = createTangleProvider({ client: fixture.client, modelCredentials: async () => {
       if (++selection > 1) {
-        fixture.receipt = { ...fixture.receipt, generation: 2, bindings: fixture.receipt.bindings.map((row) => ({
+        fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 2, bindings: fixture.receipt.bindings.map((row) => ({
           ...row, grant: { ...row.grant, issuedAt: new Date(Date.now() - 100).toISOString(), expiresAt: new Date(Date.now() + 299_000).toISOString() },
         })) };
       }
@@ -187,6 +188,55 @@ describe("public provider proxy-secret custody", () => {
     for await (const _event of environment.stream({ prompt: "report", profile: nativeProfile, turnId: "profile-and-native" })) {}
     expect(fixture.grants).toHaveBeenCalledWith(expect.objectContaining({ proxySecrets: [binding] }), undefined);
     expect(fixture.turns).toHaveBeenCalledTimes(1);
+  });
+
+  it("combines independent profile and executor declarations without adding readable secret grants", async () => {
+    const fixture = setup();
+    const extra = { ...binding, envName: "COORDINATION_TOKEN", secretRef: { kind: "secret-ref" as const, key: "coordination-access" } };
+    fixture.receipt.bindings.push({ ...fixture.receipt.bindings[0]!, envName: extra.envName, secretRef: extra.secretRef,
+      grant: { ...fixture.receipt.bindings[0]!.grant, grantId: "grant-coordination", identity: {
+        tenantId: "tenant-1", issuerId: "issuer-1", secretId: "coordination-secret", revision: "rev-1",
+      } } });
+    await createTangleProvider({ client: fixture.client }).create({ profile, proxySecrets: [extra] });
+    expect(fixture.creates[0]).toMatchObject({ proxySecrets: [binding, extra], secrets: [] });
+  });
+
+  it("rebinds an existing environment in place using generation-bound lifecycle acknowledgements", async () => {
+    const fixture = setup();
+    const provider = createTangleProvider({ client: fixture.client });
+    const created = await provider.create({ profile });
+    const replacement = { ...binding, secretRef: { kind: "secret-ref" as const, key: "renewed-reports-access" } };
+    const updates = vi.fn(async () => {
+      fixture.declarations = [replacement];
+      fixture.receipt = { ...fixture.receipt, status: "installed", materializationAcknowledged: true, generation: 2,
+        bindings: [{ ...fixture.receipt.bindings[0]!, secretRef: replacement.secretRef }] };
+      return { proxySecretReceipt: fixture.receipt };
+    });
+    fixture.box.egress.update = updates;
+    const rebound = await provider.get?.(created.id, { proxySecrets: [replacement], expectedProxySecretGeneration: 1, requireInPlace: true });
+    expect(updates).toHaveBeenCalledWith({ proxySecrets: [replacement], expectedProxySecretGeneration: 1, requireInPlace: true }, undefined);
+    expect(rebound?.proxySecretReceipt?.bindings[0]?.secretRef).toEqual(replacement.secretRef);
+    for await (const _event of rebound!.stream({ prompt: "send report" })) {}
+    expect(fixture.turns).toHaveBeenCalledTimes(1);
+    expect((await provider.get?.(created.id))?.proxySecretReceipt?.bindings[0]?.secretRef).toEqual(replacement.secretRef);
+    await expect(provider.get?.(created.id, { proxySecrets: [replacement], expectedProxySecretGeneration: 1 })).rejects.toThrow(/generation/);
+    expect(fixture.creates).toHaveLength(1);
+  });
+
+  it("preserves explicit empty reconnect selection and requires confirmed revocation", async () => {
+    const fixture = setup();
+    const provider = createTangleProvider({ client: fixture.client });
+    const created = await provider.create({ profile });
+    const updates = vi.fn(async () => {
+      fixture.declarations = [];
+      fixture.receipt = { ...fixture.receipt, status: "revoked", materializationAcknowledged: true, generation: 2, bindings: [] };
+      return { proxySecretReceipt: fixture.receipt };
+    });
+    fixture.box.egress.update = updates;
+    const revoked = await provider.get?.(created.id, { proxySecrets: [] });
+    expect(updates).toHaveBeenCalledWith({ proxySecrets: [], expectedProxySecretGeneration: 1, requireInPlace: true }, undefined);
+    expect(revoked?.proxySecretReceipt?.status).toBe("revoked");
+    expect(fixture.creates).toHaveLength(1);
   });
 
 });

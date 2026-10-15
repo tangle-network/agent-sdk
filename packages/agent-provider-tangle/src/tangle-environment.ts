@@ -118,6 +118,7 @@ export async function sandboxInstanceAsEnvironment(
   request?: {
     resources?: ResourceProfile;
     proxySecrets?: ProxySecretBinding[];
+    rebindProxySecrets?: boolean;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
     requireCliAuthReferences?: boolean;
@@ -141,11 +142,17 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = request?.captureCapabilities === undefined
     ? await readDeploymentCapabilitySupport(box, operation)
     : deploymentCapabilitySupport(request.captureCapabilities);
+  const liveEgress = box.egress === undefined ? undefined : await awaitWithSignal(box.egress.get(operation), operation?.signal);
+  const authoritativeProxySecrets = liveEgress !== null && typeof liveEgress === "object" &&
+    "proxySecrets" in liveEgress && liveEgress.proxySecrets !== undefined
+    ? captureProxySecrets(liveEgress.proxySecrets) : undefined;
   const recordedProxySecrets = box.metadata?.[PROXY_SECRETS_METADATA_KEY];
-  const persistedProxySecrets = recordedProxySecrets === undefined ? undefined : captureProxySecrets(recordedProxySecrets);
-  if (request?.proxySecrets !== undefined && persistedProxySecrets !== undefined &&
-      canonicalCandidateDigest(request.proxySecrets) !== canonicalCandidateDigest(persistedProxySecrets)) {
-    throw new Error("Tangle persisted proxy-secret declarations differ from creation");
+  const persistedProxySecrets = authoritativeProxySecrets !== undefined || recordedProxySecrets === undefined
+    ? undefined : captureProxySecrets(recordedProxySecrets);
+  const recordedBindings = authoritativeProxySecrets ?? persistedProxySecrets;
+  if (request?.proxySecrets !== undefined && recordedBindings !== undefined &&
+      canonicalCandidateDigest(request.proxySecrets) !== canonicalCandidateDigest(recordedBindings)) {
+    throw new Error("Tangle live proxy-secret declarations differ from the requested custody");
   }
   let proxySecretReceipt: ProxySecretReceipt | undefined;
   const recordedCredentials = box.metadata?.modelCredentials;
@@ -157,8 +164,8 @@ export async function sandboxInstanceAsEnvironment(
   const persistedNative = recordedNativeReference
     ? captureModelCredentials(recordedCredentials as { cliAuth: CliAuthReference })
     : undefined;
-  const proxySecrets = mergeProxySecrets(request?.proxySecrets ?? persistedProxySecrets,
-    persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined);
+  const proxySecrets = authoritativeProxySecrets ?? (request?.rebindProxySecrets ? request.proxySecrets : mergeProxySecrets(request?.proxySecrets ?? persistedProxySecrets,
+    persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined));
   const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
     ? persistedNative.cliAuth : undefined;
   if (request?.nativeAuth !== undefined && persistedReference !== undefined &&

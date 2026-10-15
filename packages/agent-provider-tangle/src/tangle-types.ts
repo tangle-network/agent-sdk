@@ -519,6 +519,10 @@ export interface SandboxInstanceLike {
   ): Promise<unknown>;
   egress?: {
     get(options?: { signal?: AbortSignal }): Promise<unknown>;
+    update?(
+      update: NonNullable<CreateSandboxOptions["egressPolicy"]> | { proxySecrets: ProxySecretBinding[]; expectedProxySecretGeneration: number; requireInPlace: true },
+      options?: { signal?: AbortSignal },
+    ): Promise<unknown>;
   };
   read?(
     path: string,
