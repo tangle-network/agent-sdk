@@ -1058,19 +1058,16 @@ export interface AgentEnvironmentGetOptions {
   contextTransfer?: ContextTransferRequest;
 }
 
+// Keep the existing parser strict: published providers that import it must not silently
+// accept readOnly and then perform their ordinary reconnect side effects.
+const environmentGetSignalSchema = z.custom<AbortSignal>().optional();
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
-  signal: z.custom<AbortSignal>().optional(),
-  readOnly: z.literal(true).optional(),
+  signal: environmentGetSignalSchema,
   proxySecrets: ProxySecretsSchema.optional(),
   proxySecretParents: ProxySecretParentsSchema.optional(),
   ...ProxySecretUpdateControlsSchema.shape,
   contextTransfer: ContextTransferRequestSchema.optional(),
 }).superRefine((options, ctx) => {
-  if (options.readOnly === true) {
-    for (const field of ["proxySecrets", "proxySecretParents", "expectedProxySecretGeneration", "requireInPlace", "contextTransfer"] as const) {
-      if (options[field] !== undefined) ctx.addIssue({ code: "custom", path: [field], message: "read-only discovery cannot carry attachment or mutation controls" });
-    }
-  }
   if (options.proxySecretParents !== undefined &&
       (options.proxySecrets === undefined || !isProxySecretParentsTotal(options.proxySecrets, options.proxySecretParents))) {
     ctx.addIssue({ code: "custom", path: ["proxySecretParents"], message: "parent map requires an explicit total proxySecrets selection" });
@@ -1082,6 +1079,12 @@ export const AgentEnvironmentGetOptionsSchema = z.strictObject({
       (options.expectedProxySecretGeneration !== undefined || options.requireInPlace !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "proxy update controls require an explicit proxySecrets selection" });
   }
+}) satisfies z.ZodType<AgentEnvironmentGetOptions>;
+
+/** Explicit opt-in for providers implementing side-effect-free, non-executable discovery. */
+export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
+  signal: environmentGetSignalSchema,
+  readOnly: z.literal(true),
 }) satisfies z.ZodType<AgentEnvironmentGetOptions>;
 
 export interface AgentEnvironmentProvider {

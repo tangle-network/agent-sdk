@@ -1,7 +1,7 @@
 import { ProxySecretParentsSchema, isProxySecretParentsTotal } from "./environment-provider.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { type CreateAgentEnvironmentInput, type ProxySecretBinding, AgentEnvironmentGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation, mergeProxySecretBindings } from "./environment-provider.js";
+import { type CreateAgentEnvironmentInput, type ProxySecretBinding, AgentEnvironmentGetOptionsSchema, AgentEnvironmentReadOnlyGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation, mergeProxySecretBindings } from "./environment-provider.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
 import { snapshotAgentProfile } from "./agent-profile-snapshot.js";
@@ -18,10 +18,11 @@ const fixture = JSON.parse(readFileSync(new URL("../fixtures/proxy-secret-wire-v
 
 describe("portable proxy-secret public contract", () => {
   it("admits literal read-only discovery without attachment or mutation controls", () => {
-    expect(AgentEnvironmentGetOptionsSchema.parse({ readOnly: true })).toEqual({ readOnly: true });
-    expect(AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: false }).success).toBe(false);
+    expect(AgentEnvironmentReadOnlyGetOptionsSchema.parse({ readOnly: true })).toEqual({ readOnly: true });
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true }).success).toBe(false);
+    expect(AgentEnvironmentReadOnlyGetOptionsSchema.safeParse({ readOnly: false }).success).toBe(false);
     for (const controls of [{ proxySecrets: [] }, { proxySecretParents: {} }, { expectedProxySecretGeneration: 1 }, { requireInPlace: true }]) {
-      expect(AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true, ...controls }).success).toBe(false);
+      expect(AgentEnvironmentReadOnlyGetOptionsSchema.safeParse({ readOnly: true, ...controls }).success).toBe(false);
     }
   });
 
