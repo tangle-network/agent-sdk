@@ -55,6 +55,38 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("discovers suspended protected custody read-only without native reconnect or mutation", async () => {
+    const fixture = setup();
+    fixture.box.status = "stopped";
+    const resume = vi.fn(async () => {});
+    const refresh = vi.fn(async () => {});
+    const update = vi.fn(fixture.box.egress.update);
+    const backendStatus = vi.fn(fixture.box.backend.status);
+    Object.assign(fixture.box, { resume, refresh });
+    fixture.box.egress.update = update;
+    fixture.box.backend.status = backendStatus;
+    const getEgress = fixture.box.egress.get;
+    Object.assign(fixture.box.egress, { get: async () => ({ ...await getEgress(), proxySecretParents: { REPORTS_TOKEN: null } }) });
+    const provider = createTangleProvider({
+      client: { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) },
+      requireNativeSessionCapture: true,
+    });
+    const environment = await provider.get!("proxy-box", Object.assign({}, { readOnly: true as const }));
+    expect(environment?.proxySecretReceipt).toEqual(fixture.receipt);
+    expect(environment?.proxySecretParents).toEqual({ REPORTS_TOKEN: null });
+    expect(environment?.dispatch).toBeUndefined();
+    expect(environment?.write).toBeUndefined();
+    expect(environment?.destroy).toBeUndefined();
+    await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse dispatch" })) {} }).rejects.toThrow(/read.only/i);
+    expect(resume).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(backendStatus).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+    expect(fixture.turns).not.toHaveBeenCalled();
+    expect(fixture.creates).toEqual([]);
+  });
+
   it("accepts an actual SDK Sandbox with a nullable capability response", () => {
     const client = Object.assign(
       new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
