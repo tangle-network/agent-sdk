@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.3.0
+
+### Minor Changes
+
+- 2fbbc4a: Add the canonical reference-only proxySecrets declaration, strict matching and metadata schemas, profile identity and materialization evidence, and bounded scope comparisons. Forward declarations through Tangle credential selection and creation, and require live acknowledged custody receipts before retained execution.
+
 ## 5.2.1
 
 ### Patch Changes
