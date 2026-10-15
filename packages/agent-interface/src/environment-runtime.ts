@@ -1038,6 +1038,10 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 /** Reconstruct an existing environment; never allocates a replacement. */
 export interface AgentEnvironmentGetOptions {
   signal?: AbortSignal;
+  /** Side-effect-free custody discovery on a qualified provider. Never resumes, installs or
+   * rebinds; the returned snapshot cannot execute. Unsupported providers must reject this mode.
+   * Expired installed custody may be returned as metadata, never as dispatch authority. */
+  readOnly?: true;
   /** Explicit custody attachment through the existing egress lifecycle. Omission reads current
    * custody; [] revokes custom bindings. A get never allocates a replacement environment. */
   proxySecrets?: readonly ProxySecretBinding[];
@@ -1049,13 +1053,16 @@ export interface AgentEnvironmentGetOptions {
    * Authorize the first turn of an accepted portable transfer. The provider looks up the exact
    * durable operation and returns its dispatch-capable environment with contextTransferReceipt.
    * A missing, uncertain, conflicting or unsupported receipt refuses attachment. The request's
-   * exact profile, workspace and resources remain authoritative; ordinary get remains read-only.
+   * exact profile, workspace and resources remain authoritative; use readOnly for discovery without reconnect side effects.
    */
   contextTransfer?: ContextTransferRequest;
 }
 
+// Keep the existing parser strict: published providers that import it must not silently
+// accept readOnly and then perform their ordinary reconnect side effects.
+const environmentGetSignalSchema = z.custom<AbortSignal>().optional();
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
-  signal: z.custom<AbortSignal>().optional(),
+  signal: environmentGetSignalSchema,
   proxySecrets: ProxySecretsSchema.optional(),
   proxySecretParents: ProxySecretParentsSchema.optional(),
   ...ProxySecretUpdateControlsSchema.shape,
@@ -1072,6 +1079,12 @@ export const AgentEnvironmentGetOptionsSchema = z.strictObject({
       (options.expectedProxySecretGeneration !== undefined || options.requireInPlace !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "proxy update controls require an explicit proxySecrets selection" });
   }
+}) satisfies z.ZodType<AgentEnvironmentGetOptions>;
+
+/** Explicit opt-in for providers implementing side-effect-free, non-executable discovery. */
+export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
+  signal: environmentGetSignalSchema,
+  readOnly: z.literal(true),
 }) satisfies z.ZodType<AgentEnvironmentGetOptions>;
 
 export interface AgentEnvironmentProvider {

@@ -202,6 +202,7 @@ export function createCliBridgeProvider(
       if (id.length === 0 || id.trim() !== id) {
         throw new Error("cli-bridge environment id must be non-empty and have no outer whitespace");
       }
+      if (getOptions !== undefined && "readOnly" in getOptions) throw new Error("CLI Bridge does not support read-only environment discovery");
       const operation = AgentEnvironmentGetOptionsSchema.parse(getOptions ?? {});
       operation.signal?.throwIfAborted();
       const accepted = operation.contextTransfer;
