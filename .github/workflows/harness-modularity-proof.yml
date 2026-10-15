@@ -1,0 +1,81 @@
+# Temporary implementation-branch proof runner. Remove before completing this PR.
+name: Harness modularity SDK proof
+on:
+  pull_request:
+    paths: ['.github/workflows/harness-modularity-proof.yml']
+permissions:
+  contents: read
+jobs:
+  sdk:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'refactor/harness-modularity-20261014'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Retain tracked implementation text for independent review
+        run: |
+          python3 - <<'PY'
+          import io, os, pathlib, subprocess, tarfile
+          extensions = {'.ts','.tsx','.js','.mjs','.cjs','.json','.yaml','.yml','.toml','.md','.sh'}
+          with tarfile.open(os.path.join(os.environ['RUNNER_TEMP'],'sdk-source.tar.gz'),'w:gz') as archive:
+              for value in subprocess.check_output(['git','ls-files','-z']).decode().split('\0'):
+                  path = pathlib.Path(value)
+                  if value and path.suffix in extensions and path.is_file() and not path.is_symlink():
+                      data = path.read_bytes()
+                      try: data.decode('utf-8')
+                      except UnicodeError: continue
+                      info = tarfile.TarInfo(value); info.size = len(data)
+                      archive.addfile(info, io.BytesIO(data))
+          PY
+      - run: pnpm install --frozen-lockfile
+      - name: Use the artifact-check npm version maintained by SDK CI
+        run: |
+          npm install -g npm@12.1.0
+          test "$(npm --version)" = '12.1.0'
+      - name: Execute the maintained package checks and retain each result
+        run: |
+          node --input-type=module <<'JS'
+          import { spawnSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const commands = [
+            ['build',['-r','build']],
+            ['typecheck',['-r','check-types']],
+            ['tests',['-r','test']],
+            ['package-artifacts',['check:package-artifacts']],
+            ['control-artifacts',['check:control-artifacts']],
+          ];
+          const head = spawnSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).stdout.trim();
+          const steps = [];
+          for (const [name,args] of commands) {
+            const result = spawnSync('pnpm',args,{encoding:'utf8',maxBuffer:64*1024*1024,timeout:600000,env:{...process.env,VITEST_MAX_WORKERS:'2'}});
+            writeFileSync(join(process.env.RUNNER_TEMP,`sdk-${name}.log`),`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+            steps.push({name,command:['pnpm',...args],exitCode:result.status,signal:result.signal,error:result.error?.message});
+            console.log(name,result.status);
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP,'sdk-harness-proof.json'),JSON.stringify({head,kind:'sdk-package-proof',nativeExecution:false,steps},null,2));
+          if (steps.some(step => step.exitCode !== 0)) process.exitCode = 1;
+          JS
+      - name: Retain actual proof and diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sdk-harness-proof-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/sdk-source.tar.gz
+            ${{ runner.temp }}/sdk-harness-proof.json
+            ${{ runner.temp }}/sdk-build.log
+            ${{ runner.temp }}/sdk-typecheck.log
+            ${{ runner.temp }}/sdk-tests.log
+            ${{ runner.temp }}/sdk-package-artifacts.log
+            ${{ runner.temp }}/sdk-control-artifacts.log
+          if-no-files-found: error
+          retention-days: 7
