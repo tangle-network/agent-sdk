@@ -68,12 +68,14 @@ describe("harness catalog version independence", () => {
     expect(peer.deletes()).toBe(1);
   });
 
+  // Object rows keep array-valued inputs whole: it.each otherwise spreads each
+  // array as positional arguments and never tests the actual malformed list.
   it.each([
     undefined, null, {}, "opencode", [null], [42], [""], [" opencode"],
     ["opencode\n"], ["opencode\u0000"], ["x".repeat(129)],
     ["opencode", "opencode"], ["opencode", "future", "future"], new Array(1),
     Array.from({ length: 257 }, (_, index) => `future-${index}`),
-  ])("rejects malformed and duplicate entries rather than ignoring them: %j", (raw) => {
+  ].map((raw, index) => ({ raw, index })))("rejects malformed list case $index", ({ raw }) => {
     expect(() => nativeCaptureHarnesses(raw)).toThrow("valid harness list");
   });
 
