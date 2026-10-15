@@ -68,7 +68,7 @@ export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?:
 
 export interface SandboxClientLike {
   /** Authenticated control-plane capability discovery before resolution or allocation. */
-  capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities }>;
+  capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities } | null>;
   create(
     options?: TangleCreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
