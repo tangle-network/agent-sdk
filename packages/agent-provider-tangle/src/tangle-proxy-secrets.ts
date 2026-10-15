@@ -1,11 +1,12 @@
 import {
-  ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema,
+  ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema, ProxySecretParentsSchema,
+  isProxySecretParentsTotal, isProxySecretGrantAttenuation, type ProxySecretParents,
   isProxySecretScopeAttenuation, proxySecretPresentationsEqual, mergeProxySecretBindings,
   type AgentEnvironmentGetOptions, type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { awaitWithSignal } from "./tangle-contract-safety.js";
-import type { SandboxInstanceLike } from "./tangle-types.js";
+import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 /** Provider-owned public declarations bind recovery; they contain no authority or values. */
 export const PROXY_SECRETS_METADATA_KEY = "tangleProxySecrets";
@@ -69,15 +70,42 @@ export async function readProxySecretReceipt(
   operation?: { signal?: AbortSignal },
   previous?: ProxySecretReceipt,
   allowExpired = false,
+  control?: { client: SandboxClientLike; parents?: ProxySecretParents },
 ): Promise<ProxySecretReceipt> {
   const document = await awaitWithSignal(box.capabilities?.(), operation?.signal);
   requireProxySecretCapability(document, bindings);
   if (box.egress === undefined) throw new Error("Tangle proxy-secret receipt readback is unavailable");
   const state = await awaitWithSignal(box.egress.get(operation), operation?.signal);
-  return validateProxySecretReceipt(
+  const receipt = validateProxySecretReceipt(
     state !== null && typeof state === "object" && "proxySecretReceipt" in state ? state.proxySecretReceipt : undefined,
     box.id, bindings, previous, allowExpired,
   );
+  const parents = parentsFromState(state, bindings);
+  if (control?.parents !== undefined && (parents === undefined ||
+      canonicalCandidateDigest(parents) !== canonicalCandidateDigest(control.parents))) {
+    throw new Error("Tangle parent map readback differs from admitted pins");
+  }
+  if (parents === undefined && receipt.bindings.some((entry) => entry.grant.parentGrantId !== undefined)) {
+    throw new Error("Tangle delegated parent map readback is missing");
+  }
+  if (parents !== undefined) {
+    if (control === undefined) throw new Error("Tangle parent map requires authenticated control-plane readback");
+    requireProxySecretDelegation(await awaitWithSignal(control.client.capabilities?.(), operation?.signal));
+    const parentReceipts = await readProxySecretParents(control.client, parents, operation);
+    for (const entry of receipt.bindings) {
+      const parentId = parents[entry.envName];
+      if (parentId === null) {
+        if (entry.grant.parentGrantId !== undefined) throw new Error("Tangle explicit root pin returned a delegated grant");
+      } else {
+        const parent = parentReceipts.get(parentId!);
+        if (parentId === box.id || parent === undefined || !parent.bindings.some((candidate) =>
+          isProxySecretGrantAttenuation(candidate.grant, entry.grant))) {
+          throw new Error("Tangle parent grant readback does not prove requested attenuation");
+        }
+      }
+    }
+  }
+  return receipt;
 }
 
 export function validateProxySecretReceipt(
@@ -125,12 +153,59 @@ export function validateProxySecretReceipt(
   return deepFreeze(receipt);
 }
 
+/** Capture a total map only after final profile and host declaration merging. */
+export function captureProxySecretParents(bindings: ProxySecretBinding[] | undefined, parents: unknown): ProxySecretParents | undefined {
+  if (parents === undefined) return undefined;
+  if (bindings === undefined || !isProxySecretParentsTotal(bindings, parents)) {
+    throw new Error("Tangle parent map must be total for the explicit proxy-secret selection");
+  }
+  return deepFreeze(ProxySecretParentsSchema.parse(parents));
+}
+
+export function parentsFromState(state: unknown, bindings: ProxySecretBinding[]): ProxySecretParents | undefined {
+  return captureProxySecretParents(bindings,
+    state !== null && typeof state === "object" && "proxySecretParents" in state ? state.proxySecretParents : undefined);
+}
+
+export function requireProxySecretDelegation(document: unknown): void {
+  if (document === null || typeof document !== "object" ||
+      !("proxySecretDelegation" in document) || document.proxySecretDelegation !== 1) {
+    throw new Error("Tangle peer does not prove API proxy-secret delegation capability");
+  }
+}
+
+/** Same authenticated client, fresh control-plane reads, never a caller-supplied grant ID. */
+export async function readProxySecretParents(
+  client: SandboxClientLike, parents: ProxySecretParents, operation?: { signal?: AbortSignal },
+): Promise<Map<string, ProxySecretReceipt>> {
+  const receipts = new Map<string, ProxySecretReceipt>();
+  for (const id of new Set(Object.values(parents))) {
+    if (id === null) continue;
+    const box = await awaitWithSignal(client.get?.(id, operation?.signal ? { signal: operation.signal } : undefined), operation?.signal);
+    if (box?.id !== id || box.egress === undefined) throw new Error("Tangle parent sandbox readback is unavailable");
+    const state = await awaitWithSignal(box.egress.get(operation), operation?.signal);
+    if (state === null || typeof state !== "object" || !("proxySecrets" in state) || !("proxySecretReceipt" in state)) {
+      throw new Error("Tangle parent custody readback is unavailable");
+    }
+    const bindings = captureProxySecrets(state.proxySecrets);
+    const receipt = validateProxySecretReceipt(state.proxySecretReceipt, id, bindings);
+    if (receipt.status !== "installed") throw new Error("Tangle parent sandbox is not installed");
+    const pins = parentsFromState(state, bindings);
+    if (pins === undefined && receipt.bindings.some((entry) => entry.grant.parentGrantId !== undefined)) {
+      throw new Error("Tangle delegated parent map readback is missing");
+    }
+    receipts.set(id, receipt);
+  }
+  return receipts;
+}
+
 /** Explicit reconnect attachment reauthorizes through the existing trusted lifecycle owner. */
 export async function rebindProxySecrets(
   box: SandboxInstanceLike,
   bindings: ProxySecretBinding[],
   options: AgentEnvironmentGetOptions,
-): Promise<ProxySecretReceipt> {
+  client: SandboxClientLike,
+): Promise<ProxySecretParents | undefined> {
   requireProxySecretCapability(await awaitWithSignal(box.capabilities?.(), options.signal), bindings);
   if (box.egress?.update === undefined) throw new Error("Tangle proxy-secret reconnect requires in-place egress update support");
   const state = await awaitWithSignal(box.egress.get(options), options.signal);
@@ -141,8 +216,35 @@ export async function rebindProxySecrets(
       current.generation !== options.expectedProxySecretGeneration)) {
     throw new Error("Tangle proxy-secret reconnect generation or sandbox conflicts with current custody");
   }
+  const currentBindings = state !== null && typeof state === "object" && "proxySecrets" in state
+    ? captureProxySecrets(state.proxySecrets) : undefined;
+  if (currentBindings !== undefined) validateProxySecretReceipt(current, box.id, currentBindings, undefined, true);
+  const priorParents = parentsFromState(state, currentBindings ?? []);
+  if (priorParents === undefined && current.bindings.some((entry) => entry.grant.parentGrantId !== undefined)) {
+    throw new Error("Tangle delegated parent map readback is missing");
+  }
+  let parents = captureProxySecretParents(bindings, options.proxySecretParents);
+  if (parents !== undefined || priorParents !== undefined) {
+    requireProxySecretDelegation(await awaitWithSignal(client.capabilities?.(), options.signal));
+    const preserved: ProxySecretParents = {};
+    for (const binding of bindings) {
+      const prior = current.bindings.find((entry) => entry.envName === binding.envName &&
+        canonicalCandidateDigest(entry.secretRef) === canonicalCandidateDigest(binding.secretRef));
+      if (prior === undefined && parents === undefined) {
+        throw new Error("Tangle new tuple in mapped replacement requires an explicit total parent map");
+      }
+      const priorPin = priorParents === undefined ? null : priorParents[binding.envName];
+      if (prior !== undefined && parents !== undefined && parents[binding.envName] !== priorPin) {
+        throw new Error("Tangle changing a parent pin requires acknowledged revocation first");
+      }
+      if (prior !== undefined) preserved[binding.envName] = priorPin!;
+    }
+    parents ??= captureProxySecretParents(bindings, preserved);
+    await readProxySecretParents(client, parents!, options);
+  }
   const updated = await awaitWithSignal(box.egress.update({
-    proxySecrets: bindings, expectedProxySecretGeneration: current.generation, requireInPlace: true,
+    proxySecrets: bindings, ...(parents === undefined ? {} : { proxySecretParents: parents }),
+    expectedProxySecretGeneration: current.generation, requireInPlace: true,
   }, options.signal ? { signal: options.signal } : undefined), options.signal);
   const receipt = validateProxySecretReceipt(
     updated !== null && typeof updated === "object" && "proxySecretReceipt" in updated ? updated.proxySecretReceipt : undefined,
@@ -152,5 +254,10 @@ export async function rebindProxySecrets(
     throw new Error("Tangle proxy-secret reconnect requires confirmed revocation for an empty selection");
   }
   if (receipt.generation < current.generation) throw new Error("Tangle proxy-secret reconnect returned stale custody");
-  return readProxySecretReceipt(box, bindings, options, receipt);
+  // Validate the mutation response itself as well as a subsequent current GET.
+  if (parents !== undefined && canonicalCandidateDigest(parentsFromState(updated, bindings) ?? null) !== canonicalCandidateDigest(parents)) {
+    throw new Error("Tangle parent map PATCH readback differs from admitted pins");
+  }
+  await readProxySecretReceipt(box, bindings, options, receipt, false, { client, ...(parents === undefined ? {} : { parents }) });
+  return parents;
 }

@@ -47,3 +47,33 @@ The provider negotiates declared secure requests before calling a credential res
 Creation and reconnect read the installed receipt. Retained execution revalidates custody before dispatch, including source renewal and generation-safe replacement through the existing lifecycle. A staged, expired, revoked, foreign or unacknowledged receipt cannot authorize execution. Recovery reauthorizes; clones require independent placeholders and rematerialized files. Losing an acknowledgment or contacting a partitioned host does not prove revocation complete. A generation identifies one immutable installed receipt; rotation may advance the source revision only in a newer generation while retaining the tenant, issuer and secret identity.
 
 The core integration owner enables advertisement only after API, placement driver, proxy, host and materializer agree. Package-level tests prove this contract and adapter behavior; production confinement, rotation, snapshot custody and native-client compatibility require the program's served proofs.
+
+## Host parent selection
+
+Trusted host callers use optional `proxySecretParents` on existing CREATE and
+explicit custody attachment/PATCH. Import `ProxySecretParents`,
+`ProxySecretParentsSchema` and `isProxySecretParentsTotal` from agent-interface
+or its environment-provider entry point. The shared wire fixture includes map
+cases. Read the schema and authenticated API capability document for support;
+the delegation marker is an API field, separate from engine capabilities.
+
+When present the map has exactly one destination environment key per final
+binding: a parent sandbox ID string requests verified attenuation, and `null`
+explicitly requests independent root issuance. It carries no parent environment
+name or caller grant ID. The portable declaration and AgentProfile stay unchanged.
+Runtime obtains IDs from actual allocation state and retains the complete map
+before creation, including explicit null for fresh coordination authority.
+
+Mapped creates require the API delegation marker before resolution/allocation,
+fresh parent reads through the same authenticated client, and exact map readback.
+Observed maps and delegated grants also require this protocol on recovery and
+retained use. A delegated receipt without a total map refuses. Ordinary initial
+root creation without a map can use the existing root protocol.
+
+Policy-only PATCH cannot carry a map. Omitted maps preserve validated existing
+`(envName, secretRef)` pins; new tuples in a mapped replacement need an explicit
+total map. Changing a pin requires acknowledged removal first. Empty replacement
+permits an omitted or empty map and clears pins only after revoked acknowledgment.
+The API projects pins from its existing private parent locators; no second map
+is persisted. Provider recovery and renewal carry the admitted pins and verify
+readback without trusting caller metadata or weakening guest resource guards.

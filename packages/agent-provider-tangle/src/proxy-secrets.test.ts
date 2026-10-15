@@ -39,8 +39,8 @@ function setup() {
     backend: { status: async () => ({ type: "codex" }) },
     grantNativeCredential: grants,
     egress: {
-      get: async () => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
-      update: async () => ({ proxySecretReceipt: receipt }),
+      get: async (): Promise<unknown> => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
+      update: async (_update?: { proxySecrets: ProxySecretBinding[]; proxySecretParents?: Record<string, string | null> }): Promise<unknown> => ({ proxySecretReceipt: receipt }),
     },
     async *streamPrompt() { turns(); },
   };
@@ -347,5 +347,94 @@ describe("host parent selection through the public provider", () => {
     const fixture = setup();
     fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
     await expect(createTangleProvider({ client: fixture.client }).get?.("proxy-box")).rejects.toThrow(/delegation.*capabilit/i);
+  });
+});
+
+
+describe("mapped mixed authority and immutable parent pins", () => {
+  function mapped() {
+    const fixture = setup();
+    const inherited = { ...binding, envName: "RENAMED_TOKEN" };
+    const coord = { ...binding, envName: "COORD", secretRef: { kind: "secret-ref" as const, key: "fresh-coordination" } };
+    const parents = { RENAMED_TOKEN: "actual-parent", COORD: null };
+    const parentGrant = { ...structuredClone(fixture.receipt.bindings[0]!.grant),
+      grantId: "parent-grant", sandboxId: "actual-parent", epoch: "parent-epoch",
+      issuedAt: new Date(Date.now() - 10_000).toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString() };
+    const parentBinding = { ...binding, envName: "ORIGINAL_TOKEN" };
+    const parentReceipt: ProxySecretReceipt = { ...structuredClone(fixture.receipt), sandboxId: "actual-parent",
+      bindings: [{ envName: parentBinding.envName, secretRef: parentBinding.secretRef, grant: parentGrant }] };
+    fixture.declarations = [inherited, coord];
+    fixture.receipt.bindings = [
+      { envName: inherited.envName, secretRef: inherited.secretRef,
+        grant: { ...structuredClone(fixture.receipt.bindings[0]!.grant), parentGrantId: parentGrant.grantId } },
+      { envName: coord.envName, secretRef: coord.secretRef,
+        grant: { ...structuredClone(fixture.receipt.bindings[0]!.grant), grantId: "root-coord", identity: { ...parentGrant.identity, secretId: "coord-source" } } },
+    ];
+    let currentParents: Record<string, string | null> = parents;
+    const gets = vi.fn(async (id: string) => id === "actual-parent" ? {
+      ...fixture.box, id, egress: { get: async () => ({ proxySecrets: [parentBinding], proxySecretReceipt: parentReceipt }) },
+    } : id === "proxy-box" ? fixture.box : null);
+    const client = { ...fixture.client, get: gets, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) };
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents });
+    const updates = vi.fn(async (update?: { proxySecrets: ProxySecretBinding[]; proxySecretParents?: Record<string, string | null> }) => {
+      if (update === undefined) throw new Error("fixture requires explicit update");
+      fixture.declarations = update.proxySecrets;
+      if (update.proxySecretParents !== undefined) currentParents = update.proxySecretParents;
+      if (update.proxySecrets.length === 0) fixture.receipt = { ...fixture.receipt, generation: fixture.receipt.generation + 1, status: "revoked", bindings: [] };
+      return { proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents };
+    });
+    fixture.box.egress.update = updates;
+    const input = { profile: { name: "mixed", harness: "opencode" as const }, proxySecrets: [inherited, coord], proxySecretParents: parents };
+    return { fixture, client, gets, updates, input, parents, parentReceipt, setParents(value: typeof currentParents) { currentParents = value; } };
+  }
+
+  it("uses actual parent identity despite a renamed environment and independent coordination", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    const environment = await provider.create(m.input);
+    expect(environment.proxySecretParents).toEqual(m.parents);
+    expect(m.gets).toHaveBeenCalledWith("actual-parent", undefined);
+    const recovered = await provider.get?.(environment.id);
+    expect(recovered?.proxySecretParents).toEqual(m.parents);
+    await provider.get?.(environment.id, { proxySecrets: m.input.proxySecrets });
+    expect(m.updates).toHaveBeenCalledWith(expect.objectContaining({ proxySecretParents: m.parents }), undefined);
+  });
+
+  it.each(["missing", "null", "other", "scope", "expired"] as const)("refuses invalid current mapped authority (%s)", async (fault) => {
+    const m = mapped();
+    if (fault === "missing") m.setParents({});
+    if (fault === "null") m.setParents({ RENAMED_TOKEN: null, COORD: null });
+    if (fault === "other") m.setParents({ RENAMED_TOKEN: "different-parent", COORD: null });
+    if (fault === "scope") m.parentReceipt.bindings[0]!.grant.scope.hosts = ["different.example.com"];
+    if (fault === "expired") m.parentReceipt.bindings[0]!.grant.expiresAt = new Date(Date.now() - 500).toISOString();
+    await expect(createTangleProvider({ client: m.client }).create(m.input)).rejects.toThrow();
+    expect(m.fixture.turns).not.toHaveBeenCalled();
+    if (fault === "expired") expect(m.fixture.creates).toHaveLength(0);
+  });
+
+  it("refuses changed pins and omitted maps for new tuples before PATCH", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    await provider.create(m.input);
+    await expect(provider.get?.("proxy-box", { proxySecrets: m.input.proxySecrets, proxySecretParents: { RENAMED_TOKEN: null, COORD: null } })).rejects.toThrow(/acknowledged revocation/);
+    await expect(provider.get?.("proxy-box", { proxySecrets: [{ ...binding, envName: "NEW_TUPLE" }] })).rejects.toThrow(/new tuple.*explicit total parent map/i);
+    expect(m.updates).not.toHaveBeenCalled();
+  });
+
+  it("requires acknowledged empty revocation and exact PATCH map readback", async () => {
+    const m = mapped();
+    const provider = createTangleProvider({ client: m.client });
+    await provider.create(m.input);
+    const revoked = await provider.get?.("proxy-box", { proxySecrets: [], proxySecretParents: {} });
+    expect(revoked?.proxySecretReceipt?.status).toBe("revoked");
+    expect(revoked?.proxySecretParents).toEqual({});
+  });
+
+  it("blocks retained dispatch after a pin changes", async () => {
+    const m = mapped();
+    const environment = await createTangleProvider({ client: m.client }).create(m.input);
+    m.setParents({ RENAMED_TOKEN: null, COORD: null });
+    await expect((async () => { for await (const _event of environment.stream({ prompt: "fixture" })) {} })()).rejects.toThrow(/parent map readback/);
+    expect(m.fixture.turns).not.toHaveBeenCalled();
   });
 });

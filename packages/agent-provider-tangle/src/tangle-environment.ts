@@ -1,6 +1,6 @@
 import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
 import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
-import { captureProxySecrets, mergeProxySecrets, PROXY_SECRETS_METADATA_KEY, readProxySecretReceipt, requireProxySecretCapability, validateProxySecretReceipt } from "./tangle-proxy-secrets.js";
+import { captureProxySecrets, mergeProxySecrets, PROXY_SECRETS_METADATA_KEY, readProxySecretReceipt, parentsFromState, requireProxySecretCapability, validateProxySecretReceipt } from "./tangle-proxy-secrets.js";
 import { captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY } from "./tangle-create-options.js";
 import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
@@ -28,6 +28,7 @@ import type {
   ResourceProfile,
   ProxySecretBinding,
   ProxySecretReceipt,
+  ProxySecretParents,
   TerminalAttachRequest,
   TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -118,6 +119,7 @@ export async function sandboxInstanceAsEnvironment(
   request?: {
     resources?: ResourceProfile;
     proxySecrets?: ProxySecretBinding[];
+    proxySecretParents?: ProxySecretParents;
     rebindProxySecrets?: boolean;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
@@ -172,6 +174,9 @@ export async function sandboxInstanceAsEnvironment(
     : undefined;
   const proxySecrets = authoritativeProxySecrets ?? (request?.rebindProxySecrets ? request.proxySecrets : mergeProxySecrets(request?.proxySecrets ?? persistedProxySecrets,
     persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined));
+  const proxySecretParents = request?.proxySecretParents ??
+    (proxySecrets === undefined ? undefined : parentsFromState(liveEgress, proxySecrets));
+  const parentControl = { client, ...(proxySecretParents === undefined ? {} : { parents: proxySecretParents }) };
   const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
     ? persistedNative.cliAuth : undefined;
   if (request?.nativeAuth !== undefined && persistedReference !== undefined &&
@@ -184,7 +189,7 @@ export async function sandboxInstanceAsEnvironment(
   // owner can renew it. prepareTurn requires an installed, fresh acknowledgement before use.
   if (proxySecrets !== undefined) {
     proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, operation, undefined,
-      nativeReference !== undefined && request?.resolveModelCredentials !== undefined);
+      nativeReference !== undefined && request?.resolveModelCredentials !== undefined, parentControl);
   }
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");
@@ -261,7 +266,7 @@ export async function sandboxInstanceAsEnvironment(
     if (proxySecrets !== undefined) {
       // An expired lease can be renewed by the trusted owner, but never dispatched as-is.
       const canRenew = !replay && nativeReference !== undefined && request?.resolveModelCredentials !== undefined;
-      proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt, canRenew);
+      proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt, canRenew, parentControl);
     }
     if (nativeReference === undefined) return input;
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
@@ -334,14 +339,17 @@ export async function sandboxInstanceAsEnvironment(
       input.signal?.throwIfAborted();
       const granted = await awaitWithSignal(box.grantNativeCredential(
         { harness, cliAuth: selectedReference,
-          ...(proxySecrets === undefined ? {} : { proxySecrets, expectedProxySecretGeneration: proxySecretReceipt!.generation, requireInPlace: true }),
+          ...(proxySecrets === undefined ? {} : { proxySecrets, ...(proxySecretParents === undefined ? {} : { proxySecretParents }), expectedProxySecretGeneration: proxySecretReceipt!.generation, requireInPlace: true }),
         },
         input.signal ? { signal: input.signal } : undefined,
       ), input.signal);
       input.signal?.throwIfAborted();
       if (proxySecrets !== undefined) {
+        if (proxySecretParents !== undefined && canonicalCandidateDigest(parentsFromState(granted, proxySecrets) ?? null) !== canonicalCandidateDigest(proxySecretParents)) {
+          throw new Error("Tangle renewal parent map readback differs from admitted pins");
+        }
         proxySecretReceipt = validateProxySecretReceipt(granted !== null && typeof granted === "object" && "proxySecretReceipt" in granted ? granted.proxySecretReceipt : undefined, environmentId, proxySecrets, proxySecretReceipt);
-        proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt);
+        proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt, false, parentControl);
       }
     }
     const selectedModel = { ...model, cliAuth: selectedReference };
@@ -718,6 +726,9 @@ export async function sandboxInstanceAsEnvironment(
       enumerable: true,
       get: () => proxySecretReceipt,
     });
+  }
+  if (proxySecretParents !== undefined) {
+    Object.defineProperty(environment, "proxySecretParents", { enumerable: true, get: () => proxySecretParents });
   }
   bindTangleEvidenceEnvironment(environment, box);
   return environment;
