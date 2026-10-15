@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
 import { createTangleProvider } from "./index.js";
-import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
-import type { SandboxClientLike } from "./tangle-types.js";
+import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt, ProxySecretParents } from "@tangle-network/agent-interface/environment-provider";
+import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
+
+type EgressUpdate = Parameters<NonNullable<NonNullable<SandboxInstanceLike["egress"]>["update"]>>[0];
 
 const binding = {
   envName: "REPORTS_TOKEN",
@@ -40,7 +42,7 @@ function setup() {
     grantNativeCredential: grants,
     egress: {
       get: async (): Promise<unknown> => ({ proxySecrets: declarations, proxySecretReceipt: receipt }),
-      update: async (_update?: { proxySecrets: ProxySecretBinding[]; proxySecretParents?: Record<string, string | null> }): Promise<unknown> => ({ proxySecretReceipt: receipt }),
+      update: async (_update?: EgressUpdate): Promise<unknown> => ({ proxySecretReceipt: receipt }),
     },
     async *streamPrompt() { turns(); },
   };
@@ -370,17 +372,17 @@ describe("mapped mixed authority and immutable parent pins", () => {
       { envName: coord.envName, secretRef: coord.secretRef,
         grant: { ...structuredClone(fixture.receipt.bindings[0]!.grant), grantId: "root-coord", identity: { ...parentGrant.identity, secretId: "coord-source" } } },
     ];
-    let currentParents: Record<string, string | null> = parents;
+    let currentParents: ProxySecretParents = parents;
     const gets = vi.fn(async (id: string) => id === "actual-parent" ? {
       ...fixture.box, id, egress: { get: async () => ({ proxySecrets: [parentBinding], proxySecretReceipt: parentReceipt }) },
     } : id === "proxy-box" ? fixture.box : null);
     const client = { ...fixture.client, get: gets, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) };
     fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents });
-    const updates = vi.fn(async (update?: { proxySecrets: ProxySecretBinding[]; proxySecretParents?: Record<string, string | null> }) => {
-      if (update === undefined) throw new Error("fixture requires explicit update");
+    const updates = vi.fn(async (update?: EgressUpdate) => {
+      if (update === undefined || !("proxySecrets" in update)) throw new Error("fixture requires explicit update");
       fixture.declarations = update.proxySecrets;
       if (update.proxySecretParents !== undefined) currentParents = update.proxySecretParents;
-      if (update.proxySecrets.length === 0) fixture.receipt = { ...fixture.receipt, generation: fixture.receipt.generation + 1, status: "revoked", bindings: [] };
+      if (update.proxySecrets.length === 0) fixture.receipt = { ...fixture.receipt, generation: fixture.receipt.generation + 1, status: "revoked", materializationAcknowledged: true, bindings: [] };
       return { proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: currentParents };
     });
     fixture.box.egress.update = updates;
