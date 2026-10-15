@@ -314,3 +314,38 @@ describe("public provider proxy-secret custody", () => {
   });
 
 });
+
+
+describe("host parent selection through the public provider", () => {
+  it("forwards explicit total root pins and exposes verified readback", async () => {
+    const fixture = setup();
+    const parents = { REPORTS_TOKEN: null };
+    fixture.client.capabilities = async () => ({ proxySecrets: capability, proxySecretDelegation: 1 });
+    fixture.box.capabilities = async () => ({ proxySecrets: capability, proxySecretDelegation: 1 });
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: parents });
+    const input = { profile, proxySecretParents: parents };
+    const environment = await createTangleProvider({ client: fixture.client }).create(input);
+    expect(fixture.creates[0]).toMatchObject({ proxySecretParents: parents });
+    expect(environment).toHaveProperty("proxySecretParents", parents);
+    expect((await createTangleProvider({ client: fixture.client }).get?.(environment.id))).toHaveProperty("proxySecretParents", parents);
+  });
+
+  it("requires the API marker before mapped create allocation", async () => {
+    const fixture = setup();
+    const input = { profile, proxySecretParents: { REPORTS_TOKEN: null } };
+    await expect(createTangleProvider({ client: fixture.client }).create(input)).rejects.toThrow(/delegation.*capabilit/i);
+    expect(fixture.creates).toHaveLength(0);
+  });
+
+  it("rejects delegated grants without total parent readback", async () => {
+    const fixture = setup();
+    fixture.receipt.bindings[0]!.grant.parentGrantId = "parent-grant";
+    await expect(createTangleProvider({ client: fixture.client }).create({ profile })).rejects.toThrow(/parent.*(map|readback)/i);
+  });
+
+  it("requires the API marker for observed maps on ordinary recovery", async () => {
+    const fixture = setup();
+    fixture.box.egress.get = async () => ({ proxySecrets: fixture.declarations, proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } });
+    await expect(createTangleProvider({ client: fixture.client }).get?.("proxy-box")).rejects.toThrow(/delegation.*capabilit/i);
+  });
+});
