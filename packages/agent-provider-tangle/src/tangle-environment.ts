@@ -210,8 +210,8 @@ export async function sandboxInstanceAsEnvironment(
         sessions: { continue: false, list: false, messages: false },
         workspace: { read: false, write: false, exec: false, git: false, upload: false, download: false },
         branching: { checkpoint: false, fork: false }, placement: false, usage: false,
-        confidential: false, lifecycle: false,
-      })),
+        confidential: false,
+      } satisfies AgentEnvironmentCapabilities)),
       async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
         assertOptionKeys(options, ["signal"], "Tangle read-only status");
         options?.signal?.throwIfAborted();

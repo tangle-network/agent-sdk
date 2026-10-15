@@ -87,7 +87,7 @@ async function checkReadOnlyConsumer(consumer) {
   assert.equal(snapshot.write, undefined);
   assert.equal(snapshot.destroy, undefined);
   assert.equal(snapshot.capabilities.streaming.live, false);
-  assert.equal(snapshot.capabilities.lifecycle, false);
+  assert.equal(snapshot.capabilities.workspace.exec, false);
   await assert.rejects(async () => { for await (const event of snapshot.stream({ prompt: "refuse" })) {} }, /read.only/i);
   assert.deepEqual(calls, { gets: 1, resumes: 0, turns: 0, guestCapabilities: 0, sessionProbes: 0 });
   console.log(JSON.stringify({ readOnlyInstalledCompatibility: "PASS", legacySharesCandidateCanonical: true,

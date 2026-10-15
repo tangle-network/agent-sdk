@@ -119,7 +119,7 @@ describe("public provider proxy-secret custody", () => {
     expect(environment?.dispatch).toBeUndefined();
     expect(environment?.write).toBeUndefined();
     expect(environment?.destroy).toBeUndefined();
-    expect(environment?.capabilities).toMatchObject({ streaming: { live: false }, workspace: { write: false, exec: false }, lifecycle: false });
+    expect(environment?.capabilities).toMatchObject({ streaming: { live: false }, workspace: { write: false, exec: false } });
     fixture.box.status = "running";
     await expect(environment!.status()).resolves.toBe("stopped");
     await expect(async () => { for await (const _event of environment!.stream({ prompt: "refuse dispatch" })) {} }).rejects.toThrow(/read.only/i);
