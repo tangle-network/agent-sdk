@@ -49,7 +49,11 @@ export type ProxySecretPresentation = z.infer<typeof ProxySecretPresentationSche
 export const ProxySecretScopeSchema = z.strictObject({
   hosts: list(hostSchema), methods: list(methodSchema).optional(), paths: list(pathSchema).optional(),
 });
-export type ProxySecretScope = z.infer<typeof ProxySecretScopeSchema>;
+export interface ProxySecretScope {
+  hosts: readonly string[];
+  methods?: readonly string[];
+  paths?: readonly string[];
+}
 const comparableScopeSchema = ProxySecretScopeSchema.strip();
 export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
   envName: envNameSchema,
@@ -58,7 +62,8 @@ export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
   placeholderFormat: z.enum(["opaque", "jwt"]).optional(),
   ttlSeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 });
-export type ProxySecretBinding = z.infer<typeof ProxySecretBindingSchema>;
+export type ProxySecretBinding =
+  Omit<z.infer<typeof ProxySecretBindingSchema>, keyof ProxySecretScope> & ProxySecretScope;
 export const ProxySecretsSchema = z.array(ProxySecretBindingSchema).max(CONTRACT_MAX_ARRAY_LENGTH)
   .refine((bindings) => unique(bindings.map((binding) => binding.envName)), "proxy secret env names must be unique");
 export const ProxySecretResolvedIdentitySchema = z.strictObject({
@@ -169,4 +174,25 @@ export function proxySecretPresentationsEqual(left: ProxySecretPresentation, rig
 }
 function subset(parent: readonly string[] | undefined, child: readonly string[] | undefined): boolean {
   return parent === undefined || (child !== undefined && child.every((value) => parent.includes(value)));
+}
+
+/** Merge independent declaration sources. Identical names deduplicate only when the full
+ * schema-parsed declaration agrees; callers preserve omission versus explicit empty selection.
+ * The result is detached public metadata. Conflicts fail without exposing declaration contents.
+ */
+export function mergeProxySecretBindings(
+  ...collections: readonly (readonly ProxySecretBinding[] | undefined)[]
+): ProxySecretBinding[] {
+  const merged = new Map<string, z.infer<typeof ProxySecretBindingSchema>>();
+  for (const collection of collections) {
+    if (collection === undefined) continue;
+    for (const binding of ProxySecretsSchema.parse(collection)) {
+      const existing = merged.get(binding.envName);
+      if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(binding)) {
+        throw new Error("proxy-secret declarations disagree for the same environment name");
+      }
+      merged.set(binding.envName, binding);
+    }
+  }
+  return ProxySecretsSchema.parse([...merged.values()]);
 }

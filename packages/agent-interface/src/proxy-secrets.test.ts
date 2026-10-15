@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { AgentEnvironmentGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation } from "./environment-provider.js";
+import { type CreateAgentEnvironmentInput, type ProxySecretBinding, AgentEnvironmentGetOptionsSchema, ProxySecretBindingSchema, ProxySecretCapabilitiesSchema, ProxySecretGrantSchema, ProxySecretReceiptSchema, ProxySecretsSchema, isProxySecretGrantAttenuation, isProxySecretBindingAttenuation, mergeProxySecretBindings } from "./environment-provider.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import { mergeAgentProfiles } from "./agent-profile.js";
 import { snapshotAgentProfile } from "./agent-profile-snapshot.js";
@@ -16,6 +16,18 @@ const grant = { protocolVersion: 1, grantId: "grant-1", sandboxId: "box-1", epoc
 const fixture = JSON.parse(readFileSync(new URL("../fixtures/proxy-secret-wire-v1.json", import.meta.url), "utf8")) as { declarations: { name: string; value: unknown; valid: boolean }[] };
 
 describe("portable proxy-secret public contract", () => {
+  it("accepts immutable declarations from the advertised SDK syntax", () => {
+    const authored = {
+      envName: "REPORTS_TOKEN",
+      secretRef: { kind: "secret-ref", key: "reporting-api" },
+      hosts: ["reports.example.com"],
+      presentation: { type: "bearer" },
+      methods: ["POST"],
+      paths: ["/v1/events"],
+    } as const satisfies ProxySecretBinding;
+    const input = { profile: {}, proxySecrets: [authored] } as const satisfies CreateAgentEnvironmentInput;
+    expect(ProxySecretsSchema.parse(input.proxySecrets)).toEqual([authored]);
+  });
   it.each(fixture.declarations)("validates shared declaration $name", ({ value, valid }) => {
     expect(ProxySecretBindingSchema.safeParse(value).success).toBe(valid);
   });
@@ -23,6 +35,12 @@ describe("portable proxy-secret public contract", () => {
     expect(AgentEnvironmentGetOptionsSchema.parse({ proxySecrets: [], expectedProxySecretGeneration: 2, requireInPlace: true })).toEqual({ proxySecrets: [], expectedProxySecretGeneration: 2, requireInPlace: true });
     expect(AgentEnvironmentGetOptionsSchema.safeParse({ expectedProxySecretGeneration: 2 }).success).toBe(false);
     expect(AgentEnvironmentGetOptionsSchema.safeParse({ proxySecrets: [binding], expectedProxySecretGeneration: -1 }).success).toBe(false);
+  });
+  it("merges independent declarations with exact conflict refusal", () => {
+    const parsed = ProxySecretBindingSchema.parse(binding);
+    expect(mergeProxySecretBindings(undefined, [parsed], [{ ...parsed }])).toEqual([parsed]);
+    expect(mergeProxySecretBindings([])).toEqual([]);
+    expect(() => mergeProxySecretBindings([parsed], [{ ...parsed, hosts: ["other.example.com"] }])).toThrow(/disagree/);
   });
   it("rejects plaintext, ambiguity and duplicate binding names", () => {
     expect(ProxySecretsSchema.safeParse([binding, binding]).success).toBe(false);

@@ -878,8 +878,8 @@ export interface CreateAgentEnvironmentInput {
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: string[] | Record<string, string>;
-  /** Same declaration as AgentProfile. Explicit [] clears custom bindings; omission preserves
-   * profile intent. Trusted issuer authorization is required before resolving any reference. */
+  /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
+   * Trusted issuer authorization is required before resolving any reference. */
   proxySecrets?: readonly ProxySecretBinding[];
   /**
    * Outbound network policy for this environment.

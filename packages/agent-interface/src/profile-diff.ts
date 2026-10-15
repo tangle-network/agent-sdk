@@ -85,8 +85,8 @@ export interface AgentProfileDiffRemoval {
 /**
  * A portable profile improvement artifact.
  *
- * `set` is an AgentProfile overlay: profile arrays are appended with the same
- * semantics as {@link mergeAgentProfiles}. `remove` deletes whole axes or named
+ * `set` follows {@link mergeAgentProfiles}: additive arrays append, while
+ * proxySecrets replaces the complete selection. `remove` deletes whole axes or named
  * entries after the overlay is applied. This keeps the optimized unit the full
  * AgentProfile instead of a benchmark-specific file mount.
  */
