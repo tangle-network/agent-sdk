@@ -15,6 +15,7 @@ import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { headRecord } from './head.js'
+import { claudeRecordIsMachine, claudeTypedPromptText } from './claude-records.js'
 
 const FORMAT = 'claude-code.projects-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -32,6 +33,11 @@ function usageOf(value: unknown): TokenUsage | null {
   })
 }
 
+function firstText(parts: Part[]): string {
+  for (const part of parts) if (part.type === 'text') return part.text
+  return ''
+}
+
 const INTERRUPTED = /^\[Request interrupted by user/u
 
 export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
@@ -41,6 +47,8 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
+  // A resumed agent's file writes its earlier records again, each with the uuid it had.
+  const seenUuids = new Set<string>()
 
   const observe = (record: Record<string, unknown>): void => {
     if (!subagent && record.isSidechain === true) {
@@ -49,6 +57,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     }
     const type = record.type
     if (type !== 'user' && type !== 'assistant' && type !== 'system') return
+    if (typeof record.uuid === 'string') {
+      if (seenUuids.has(record.uuid)) return
+      seenUuids.add(record.uuid)
+    }
     const at = builder.seen(record.timestamp)
     if (builder.cwd === null && typeof record.cwd === 'string') builder.cwd = record.cwd
     if (!identified && typeof record.sessionId === 'string') {
@@ -62,6 +74,8 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       }
     }
     const uuid = str(record.uuid) ?? `${builder.nativeSessionId}:${stats.line}`
+    const machine = (text: string): boolean =>
+      claudeRecordIsMachine({ text, isMeta: record.isMeta === true, isCompactSummary: record.isCompactSummary === true, entrypoint: str(record.entrypoint) ?? undefined })
 
     if (type === 'system') {
       if (record.subtype !== 'api_error') return
@@ -98,10 +112,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         builder.message({
           id: uuid,
           role: 'user',
-          actor: record.isMeta === true || record.isCompactSummary === true ? 'injected' : subagent ? 'subagent-spawn' : 'human',
+          actor: machine(content) ? 'injected' : subagent ? 'subagent-spawn' : 'human',
           at,
           modelCallId: null,
-          parts: [{ type: 'text', text: content }],
+          parts: [{ type: 'text', text: machine(content) ? content : claudeTypedPromptText(content) }],
         })
         return
       }
@@ -127,7 +141,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
           if (agentId) builder.child(agentId, block.tool_use_id)
         } else if (block.type === 'text' && typeof block.text === 'string') {
           if (INTERRUPTED.test(block.text)) aborted = { at }
-          userParts.push({ type: 'text', text: block.text })
+          userParts.push({ type: 'text', text: claudeTypedPromptText(block.text) })
         } else if (block.type === 'image' || block.type === 'document') {
           const source = isRecord(block.source) ? block.source : {}
           userParts.push({ type: 'attachment', mediaType: str(source.media_type) ?? String(block.type), ref: str(source.url) ?? `inline:${uuid}` })
@@ -138,7 +152,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         builder.message({
           id: uuid,
           role: 'user',
-          actor: record.isMeta === true ? 'injected' : subagent ? 'subagent-spawn' : 'human',
+          actor: machine(firstText(userParts)) ? 'injected' : subagent ? 'subagent-spawn' : 'human',
           at,
           modelCallId: null,
           parts: userParts,

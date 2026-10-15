@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { validateTraceSpans } from '@tangle-network/agent-trace-contract'
 import {
   claudeCodeReader, claudeCodeRefForFile, codexReader, codexRefForFile, opencodeReader, opencodeSessionsInStore,
-  piReader, piRefForFile, readerFor, readSessionInput, toChatMessages, toOtlpSpans, toTurns,
+  claudeRecordIsMachine, claudeTypedPromptText, piReader, piRefForFile, readerFor, readSessionInput, toChatMessages, toOtlpSpans, toTurns,
   type HarnessSession, type HarnessSessionReader, type SessionRef,
 } from '../src/index.js'
 
@@ -50,6 +50,34 @@ describe('Claude Code', () => {
     expect(s.ending.status).toBe('completed')
     expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
     expect(toTurns(s).filter((t) => t.role === 'assistant').map((t) => t.model)).toEqual(Array(3).fill('traceproof-scripted-model'))
+  })
+
+  it('classifies harness-written user records as injected and a typed slash command as human', async () => {
+    // Records shaped as a Claude Code 2.1.286 interactive session writes them (entrypoint cli, no origin field).
+    const s = await both(claudeCodeReader, claudeCodeRefForFile(fixture('claude-code', 'machine-records.jsonl')))
+    const users = s.messages.filter((m) => m.role === 'user').map((m) => [m.actor, m.parts.map((p) => (p.type === 'text' ? p.text : p.type))])
+    expect(users).toEqual([
+      ['injected', [expect.stringContaining('<local-command-caveat>')]],
+      ['human', ['/effort']],
+      ['injected', [expect.stringContaining('<local-command-stdout>')]],
+      ['human', ['Rename the helper to parseConfig.']],
+    ])
+  })
+
+  it('reads a resumed transcript that writes its earlier records again once, with unique span identities', async () => {
+    // A resumed agent's file repeats its prefix with the same record uuids and timestamps.
+    const s = await both(claudeCodeReader, claudeCodeRefForFile(fixture('claude-code', 'replayed-records.jsonl')))
+    expect(s.messages.filter((m) => m.actor === 'human').map((m) => m.parts)).toEqual([
+      [{ type: 'text', text: 'Summarize the build failure.' }],
+      [{ type: 'text', text: 'Try again.' }],
+      [{ type: 'text', text: 'Thanks, now fix it.' }],
+    ])
+    expect(s.modelCalls.map((c) => [c.error ? 'error' : 'ok', c.servedModel])).toEqual([
+      ['error', null], ['ok', 'scripted-model'], ['ok', 'scripted-model'],
+    ])
+    expect(s.integrity.gaps).toEqual([])
+    const ids = toOtlpSpans(s).map((span) => span.span_id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('leaves a turn killed during its tool call open with the call pending', async () => {
@@ -135,5 +163,19 @@ describe('registry', () => {
     expect(readerFor('claude').harness).toBe('claude-code')
     expect(readerFor('codex-acp').harness).toBe('codex')
     expect(() => readerFor('no-such-harness')).toThrow(/no session reader/)
+  })
+})
+
+describe('Claude Code record rules', () => {
+  it('names harness-written records and recovers typed commands', () => {
+    expect(claudeRecordIsMachine({ text: 'hi', isMeta: true })).toBe(true)
+    expect(claudeRecordIsMachine({ text: 'hi', isCompactSummary: true })).toBe(true)
+    expect(claudeRecordIsMachine({ text: 'hi', entrypoint: 'sdk-cli' })).toBe(true)
+    expect(claudeRecordIsMachine({ text: '  <task-notification>x' })).toBe(true)
+    expect(claudeRecordIsMachine({ text: '[Request interrupted by user for tool use]' })).toBe(true)
+    expect(claudeRecordIsMachine({ text: '<command-name>/model</command-name>', entrypoint: 'cli' })).toBe(false)
+    expect(claudeRecordIsMachine({ text: '<bash-input>ls</bash-input>' })).toBe(false)
+    expect(claudeTypedPromptText('<command-name>/model</command-name><command-args>opus</command-args>')).toBe('/model opus')
+    expect(claudeTypedPromptText('plain text')).toBe('plain text')
   })
 })
