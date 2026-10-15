@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.3.1
+
+### Patch Changes
+
+- ca00679: Reject Keep-Alive, Proxy-Connection, and Proxy-Authenticate proxy-secret header selectors, including case variants, because the proxy strips them before forwarding.
+
 ## 5.3.0
 
 ### Minor Changes
