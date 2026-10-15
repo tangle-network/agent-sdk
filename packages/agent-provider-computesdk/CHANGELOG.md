@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-computesdk
 
+## 1.0.6
+
+### Patch Changes
+
+- e2cc3b4: Reject unsupported readOnly environment discovery before lookup instead of silently accepting a side-effect-free contract the adapter does not implement.
+- Updated dependencies [e2cc3b4]
+  - @tangle-network/agent-interface@5.5.0
+
 ## 1.0.5
 
 ### Patch Changes

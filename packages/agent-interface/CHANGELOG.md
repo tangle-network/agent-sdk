@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.5.0
+
+### Minor Changes
+
+- e2cc3b4: Add explicit readOnly discovery to existing environment get options, excluding attachment and mutation controls and requiring a non-executable custody snapshot from qualified providers.
+
 ## 5.4.0
 
 ### Minor Changes
