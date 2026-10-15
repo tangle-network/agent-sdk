@@ -37,6 +37,7 @@ import type {
   ProxySecretBinding,
   ProxySecretCapabilities,
   ProxySecretReceipt,
+  ProxySecretParents,
 } from "@tangle-network/agent-interface/environment-provider";
 
 /**
@@ -64,11 +65,11 @@ export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
-export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[] };
+export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[]; proxySecretParents?: ProxySecretParents };
 
 export interface SandboxClientLike {
   /** Authenticated control-plane capability discovery before resolution or allocation. */
-  capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities } | null>;
+  capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities; proxySecretDelegation?: 1 } | null>;
   create(
     options?: TangleCreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
@@ -514,13 +515,13 @@ export interface SandboxInstanceLike {
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
   /** Owner-authorized named grant; material never crosses this consumer boundary. */
   grantNativeCredential?(
-    grant: { harness: "claude-code" | "codex"; cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[]; expectedProxySecretGeneration?: number; requireInPlace?: boolean },
+    grant: { harness: "claude-code" | "codex"; cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[]; proxySecretParents?: ProxySecretParents; expectedProxySecretGeneration?: number; requireInPlace?: boolean },
     options?: { signal?: AbortSignal },
   ): Promise<unknown>;
   egress?: {
     get(options?: { signal?: AbortSignal }): Promise<unknown>;
     update?(
-      update: NonNullable<CreateSandboxOptions["egressPolicy"]> | { proxySecrets: ProxySecretBinding[]; expectedProxySecretGeneration: number; requireInPlace: true },
+      update: NonNullable<CreateSandboxOptions["egressPolicy"]> | { proxySecrets: ProxySecretBinding[]; proxySecretParents?: ProxySecretParents; expectedProxySecretGeneration: number; requireInPlace: true },
       options?: { signal?: AbortSignal },
     ): Promise<unknown>;
   };

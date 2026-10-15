@@ -61,6 +61,27 @@ export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
 export type ProxySecretBinding = z.infer<typeof ProxySecretBindingSchema>;
 export const ProxySecretsSchema = z.array(ProxySecretBindingSchema).max(CONTRACT_MAX_ARRAY_LENGTH)
   .refine((bindings) => unique(bindings.map((binding) => binding.envName)), "proxy secret env names must be unique");
+/** Host execution control, never part of an authored declaration or profile identity.
+ * Strings select an API-verified parent sandbox; null explicitly selects independent issuance.
+ * When present, every destination in the final effective selection must have exactly one key.
+ */
+export const ProxySecretParentsSchema = z.record(envNameSchema, boundedIdentifierSchema.nullable())
+  .refine((parents) => Object.keys(parents).length <= CONTRACT_MAX_ARRAY_LENGTH, "too many parent selections");
+export type ProxySecretParents = z.infer<typeof ProxySecretParentsSchema>;
+
+/** Shape and totality only; the API verifies issuer authority and durable immutable pins. */
+export function isProxySecretParentsTotal(
+  bindings: readonly ProxySecretBinding[], parents: unknown,
+): parents is ProxySecretParents {
+  const selection = ProxySecretsSchema.safeParse(bindings);
+  const parsed = ProxySecretParentsSchema.safeParse(parents);
+  return selection.success && parsed.success && Object.keys(parsed.data).length === selection.data.length &&
+    selection.data.every((binding) => Object.hasOwn(parsed.data, binding.envName));
+}
+
+/** API control-plane support; intentionally separate from the engine capability contract. */
+export const ProxySecretDelegationCapabilitySchema = z.literal(1);
+
 export const ProxySecretResolvedIdentitySchema = z.strictObject({
   tenantId: boundedIdentifierSchema, issuerId: boundedIdentifierSchema,
   secretId: boundedIdentifierSchema, revision: boundedIdentifierSchema,
