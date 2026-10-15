@@ -103,6 +103,9 @@ export const ProxySecretReceiptSchema = z.discriminatedUnion("status", [
   if (receipt.bindings.some((binding) => binding.grant.sandboxId !== receipt.sandboxId)) {
     ctx.addIssue({ code: "custom", path: ["bindings"], message: "receipt grants must belong to its sandbox" });
   }
+  if (new Set(receipt.bindings.map((binding) => binding.grant.epoch)).size > 1) {
+    ctx.addIssue({ code: "custom", path: ["bindings"], message: "receipt grants must share one sandbox lifecycle epoch" });
+  }
   if (receipt.status === "revoked" && receipt.bindings.length !== 0) {
     ctx.addIssue({ code: "custom", path: ["bindings"], message: "revoked receipt cannot retain bindings" });
   }

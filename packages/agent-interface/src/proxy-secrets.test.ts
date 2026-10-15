@@ -70,6 +70,12 @@ describe("portable proxy-secret public contract", () => {
     expect(ProxySecretReceiptSchema.safeParse({ ...receipt, placeholder: "forbidden" }).success).toBe(false);
     expect(ProxySecretReceiptSchema.safeParse({ ...receipt, proxyAcknowledged: false }).success).toBe(false);
     expect(ProxySecretReceiptSchema.safeParse({ ...receipt, sandboxId: "foreign-box" }).success).toBe(false);
+    expect(ProxySecretReceiptSchema.safeParse({
+      ...receipt, bindings: [...receipt.bindings, {
+        envName: "SECOND_TOKEN", secretRef: binding.secretRef,
+        grant: { ...grant, grantId: "grant-2", epoch: "stale-epoch" },
+      }],
+    }).success).toBe(false);
     expect(ProxySecretCapabilitiesSchema.safeParse({ protocolVersion: 2 }).success).toBe(false);
   });
   it("keeps reference slot placement in canonical candidate identity", () => {
