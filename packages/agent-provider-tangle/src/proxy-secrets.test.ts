@@ -362,7 +362,7 @@ describe("mapped mixed authority and immutable parent pins", () => {
     const parentGrant = { ...structuredClone(fixture.receipt.bindings[0]!.grant),
       grantId: "parent-grant", sandboxId: "actual-parent", epoch: "parent-epoch",
       issuedAt: new Date(Date.now() - 10_000).toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString() };
-    const parentBinding = { ...binding, envName: "ORIGINAL_TOKEN" };
+    const parentBinding = { ...binding, envName: "ORIGINAL_TOKEN", ttlSeconds: 900 };
     const parentReceipt: ProxySecretReceipt = { ...structuredClone(fixture.receipt), sandboxId: "actual-parent",
       bindings: [{ envName: parentBinding.envName, secretRef: parentBinding.secretRef, grant: parentGrant }] };
     fixture.declarations = [inherited, coord];
