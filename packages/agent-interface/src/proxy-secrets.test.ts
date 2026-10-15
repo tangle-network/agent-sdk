@@ -82,6 +82,7 @@ describe("portable proxy-secret public contract", () => {
     const ref = { kind: "secret-ref" as const, key: "reporting-api", format: "bearer" as const };
     expect(agentCandidateProfileSchema.parse({ mcp: { reports: { command: "reports-mcp", env: { REPORTS_TOKEN: ref } } } }).mcp?.reports).toBeDefined();
     const plan = { sourceProfileDigest: "sha256:" + "a".repeat(64), harness: "codex", files: [{ relPath: "auth.json", mode: 384, contentSha256: "sha256:" + "b".repeat(64), secretSlots: [{ path: ["token"], ref }] }], env: {}, flags: [], unsupported: [] };
+    expect(agentCandidateProfilePlanMaterialSchema.safeParse({ ...plan, systemPrompt: ref }).success).toBe(false);
     const parsed = agentCandidateProfilePlanMaterialSchema.parse(plan);
     const changed = agentCandidateProfilePlanMaterialSchema.parse({ ...plan, files: [{ ...plan.files[0], secretSlots: [{ path: ["other"], ref }] }] });
     expect(canonicalCandidateDigest(parsed)).not.toBe(canonicalCandidateDigest(changed));

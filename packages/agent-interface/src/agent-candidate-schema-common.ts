@@ -302,14 +302,15 @@ export const agentCandidateSecretRefSchema = z.strictObject({
   format: z.enum(["raw", "bearer"]).optional(),
 });
 
+export const agentCandidatePublicValueSchema = z.strictObject({
+  kind: z.literal("public"),
+  value: z.string().refine(
+    isPublicConfigValue,
+    "candidate config cannot carry credentials; the evaluator owns model authorization",
+  ),
+});
 export const agentCandidateConfigValueSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("public"),
-    value: z.string().refine(
-      isPublicConfigValue,
-      "candidate config cannot carry credentials; the evaluator owns model authorization",
-    ),
-  }),
+  agentCandidatePublicValueSchema,
   agentCandidateSecretRefSchema,
 ]) satisfies z.ZodType<AgentCandidateConfigValue>;
 

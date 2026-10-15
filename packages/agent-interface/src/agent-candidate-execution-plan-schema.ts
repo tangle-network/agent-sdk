@@ -34,6 +34,7 @@ import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
   agentCandidateSecretRefSchema,
+  agentCandidatePublicValueSchema,
   agentCandidateMediaTypeSchema,
   environmentConfigSchema,
   gitObjectSchema,
@@ -203,8 +204,8 @@ export const agentCandidateProfilePlanMaterialSchema = z
     ),
     env: environmentConfigSchema,
     flags: z.array(agentCandidateConfigValueSchema),
-    systemPrompt: agentCandidateConfigValueSchema.optional(),
-    appendSystemPrompt: agentCandidateConfigValueSchema.optional(),
+    systemPrompt: agentCandidatePublicValueSchema.optional(),
+    appendSystemPrompt: agentCandidatePublicValueSchema.optional(),
     unsupported: z
       .array(
         z
@@ -451,7 +452,9 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
-    if (!material.launch.executable.startsWith("/") && !material.launch.env.PATH?.value.trim()) {
+    const executablePath = material.launch.env.PATH;
+    if (!material.launch.executable.startsWith("/") &&
+        (executablePath?.kind !== "public" || !executablePath.value.trim())) {
       ctx.addIssue({
         code: "custom",
         path: ["launch", "env", "PATH"],
@@ -544,18 +547,18 @@ export const agentCandidateExecutionPlanMaterialSchema = z
     }
     const taskPath = material.launch.env.TANGLE_CANDIDATE_TASK_PATH;
     if (taskPath !== undefined) {
-      if (taskPath.value !== "/tangle/input/task.txt") {
+      if (taskPath.kind !== "public" || taskPath.value !== "/tangle/input/task.txt") {
         ctx.addIssue({
           code: "custom",
           path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
           message: "task file delivery must use the fixed evaluator-owned path",
         });
       }
-      if (
+      if (taskPath.kind === "public" && (
         pathsOverlap(taskPath.value, material.workspaces.taskRoot) ||
         (material.workspaces.candidateRoot !== undefined &&
           pathsOverlap(taskPath.value, material.workspaces.candidateRoot))
-      ) {
+      )) {
         ctx.addIssue({
           code: "custom",
           path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],

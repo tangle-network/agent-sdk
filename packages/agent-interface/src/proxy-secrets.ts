@@ -47,13 +47,9 @@ export const ProxySecretPresentationSchema = z.discriminatedUnion("type", [
 ]);
 export type ProxySecretPresentation = z.infer<typeof ProxySecretPresentationSchema>;
 export const ProxySecretScopeSchema = z.strictObject({
-  hosts: list(hostSchema), methods: list(methodSchema).optional(), paths: list(pathSchema).optional(),
+  hosts: list(hostSchema).readonly(), methods: list(methodSchema).readonly().optional(), paths: list(pathSchema).readonly().optional(),
 });
-export interface ProxySecretScope {
-  hosts: readonly string[];
-  methods?: readonly string[];
-  paths?: readonly string[];
-}
+export type ProxySecretScope = z.infer<typeof ProxySecretScopeSchema>;
 const comparableScopeSchema = ProxySecretScopeSchema.strip();
 export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
   envName: envNameSchema,
@@ -62,8 +58,7 @@ export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
   placeholderFormat: z.enum(["opaque", "jwt"]).optional(),
   ttlSeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 });
-export type ProxySecretBinding =
-  Omit<z.infer<typeof ProxySecretBindingSchema>, keyof ProxySecretScope> & ProxySecretScope;
+export type ProxySecretBinding = z.infer<typeof ProxySecretBindingSchema>;
 export const ProxySecretsSchema = z.array(ProxySecretBindingSchema).max(CONTRACT_MAX_ARRAY_LENGTH)
   .refine((bindings) => unique(bindings.map((binding) => binding.envName)), "proxy secret env names must be unique");
 export const ProxySecretResolvedIdentitySchema = z.strictObject({
