@@ -457,7 +457,7 @@ export function createTangleProvider(
               throw new Error("Tangle context transfer attachment is not qualified by this receiver deployment");
             }
             if (operation !== undefined) {
-              ("readOnly" in operation ? AgentEnvironmentReadOnlyGetOptionsSchema : AgentEnvironmentGetOptionsSchema).parse(operation);
+              operation = ("readOnly" in operation ? AgentEnvironmentReadOnlyGetOptionsSchema : AgentEnvironmentGetOptionsSchema).parse(operation);
             }
             const reconnectBindings = operation?.proxySecrets === undefined ? undefined : captureProxySecrets(operation.proxySecrets);
             if (reconnectBindings === undefined && (operation?.expectedProxySecretGeneration !== undefined || operation?.requireInPlace !== undefined)) {

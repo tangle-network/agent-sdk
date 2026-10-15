@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
 import { createTangleProvider } from "./index.js";
-import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt, ProxySecretParents } from "@tangle-network/agent-interface/environment-provider";
+import type { ProxySecretBinding, ProxySecretCapabilities, ProxySecretReceipt, ProxySecretParents, AgentEnvironmentGetOptions } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxClientLike, SandboxInstanceLike } from "./tangle-types.js";
 
 type EgressUpdate = Parameters<NonNullable<NonNullable<SandboxInstanceLike["egress"]>["update"]>>[0];
@@ -55,6 +55,22 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("retains the validated discovery mode when caller options change during lookup", async () => {
+    const fixture = setup();
+    fixture.box.status = "stopped";
+    const operation: AgentEnvironmentGetOptions = { readOnly: true };
+    const resume = vi.fn(async () => {});
+    Object.assign(fixture.box, { resume });
+    const provider = createTangleProvider({ client: { ...fixture.client, get: async () => {
+      delete operation.readOnly;
+      return fixture.box;
+    } }, requireNativeSessionCapture: true });
+    const environment = await provider.get!("proxy-box", operation);
+    expect(environment?.proxySecretReceipt).toEqual(fixture.receipt);
+    expect(environment?.dispatch).toBeUndefined();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
   it("refuses malformed discovery flags before ordinary reconnect or lookup", async () => {
     const fixture = setup();
     const get = vi.fn(fixture.client.get);
