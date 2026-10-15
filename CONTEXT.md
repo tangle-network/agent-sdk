@@ -19,3 +19,5 @@
 **Proxy secret receipt.** Metadata acknowledging a particular sandbox generation and the installed grants. Proxy installation precedes placeholder materialization; execution requires both acknowledgments. Binding revocation and upstream credential revocation are separate facts.
 
 **Proxy secret parent selection.** `proxySecretParents` is a host-only total map from destination environment names to API-verified parent sandbox IDs, or explicit independent-root null. It pins host execution custody without becoming portable profile identity or grant authority; the API projects effective pins from validated private parent locators. _Avoid_: parent environment selectors, caller grant IDs, inferred root issuance, or a second persisted map.
+
+**Read-only discovery.** `get(id, { readOnly: true })` returns an existing environment custody snapshot without reconnect or execution side effects. Expired installed receipts remain metadata for trusted recovery decisions; they confer no execution authority. _Avoid_: ordinary reconnect as a discovery fallback.

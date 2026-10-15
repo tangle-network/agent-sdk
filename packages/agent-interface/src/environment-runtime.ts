@@ -1038,6 +1038,10 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 /** Reconstruct an existing environment; never allocates a replacement. */
 export interface AgentEnvironmentGetOptions {
   signal?: AbortSignal;
+  /** Side-effect-free custody discovery on a qualified provider. Never resumes, installs or
+   * rebinds; the returned snapshot cannot execute. Unsupported providers must reject this mode.
+   * Expired installed custody may be returned as metadata, never as dispatch authority. */
+  readOnly?: true;
   /** Explicit custody attachment through the existing egress lifecycle. Omission reads current
    * custody; [] revokes custom bindings. A get never allocates a replacement environment. */
   proxySecrets?: readonly ProxySecretBinding[];
@@ -1049,18 +1053,24 @@ export interface AgentEnvironmentGetOptions {
    * Authorize the first turn of an accepted portable transfer. The provider looks up the exact
    * durable operation and returns its dispatch-capable environment with contextTransferReceipt.
    * A missing, uncertain, conflicting or unsupported receipt refuses attachment. The request's
-   * exact profile, workspace and resources remain authoritative; ordinary get remains read-only.
+   * exact profile, workspace and resources remain authoritative; use readOnly for discovery without reconnect side effects.
    */
   contextTransfer?: ContextTransferRequest;
 }
 
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
   signal: z.custom<AbortSignal>().optional(),
+  readOnly: z.literal(true).optional(),
   proxySecrets: ProxySecretsSchema.optional(),
   proxySecretParents: ProxySecretParentsSchema.optional(),
   ...ProxySecretUpdateControlsSchema.shape,
   contextTransfer: ContextTransferRequestSchema.optional(),
 }).superRefine((options, ctx) => {
+  if (options.readOnly === true) {
+    for (const field of ["proxySecrets", "proxySecretParents", "expectedProxySecretGeneration", "requireInPlace", "contextTransfer"] as const) {
+      if (options[field] !== undefined) ctx.addIssue({ code: "custom", path: [field], message: "read-only discovery cannot carry attachment or mutation controls" });
+    }
+  }
   if (options.proxySecretParents !== undefined &&
       (options.proxySecrets === undefined || !isProxySecretParentsTotal(options.proxySecrets, options.proxySecretParents))) {
     ctx.addIssue({ code: "custom", path: ["proxySecretParents"], message: "parent map requires an explicit total proxySecrets selection" });

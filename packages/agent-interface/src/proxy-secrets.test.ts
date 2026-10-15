@@ -17,6 +17,14 @@ const grant = { protocolVersion: 1, grantId: "grant-1", sandboxId: "box-1", epoc
 const fixture = JSON.parse(readFileSync(new URL("../fixtures/proxy-secret-wire-v1.json", import.meta.url), "utf8")) as { declarations: { name: string; value: unknown; valid: boolean }[] };
 
 describe("portable proxy-secret public contract", () => {
+  it("admits literal read-only discovery without attachment or mutation controls", () => {
+    expect(AgentEnvironmentGetOptionsSchema.parse({ readOnly: true })).toEqual({ readOnly: true });
+    expect(AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: false }).success).toBe(false);
+    for (const controls of [{ proxySecrets: [] }, { proxySecretParents: {} }, { expectedProxySecretGeneration: 1 }, { requireInPlace: true }]) {
+      expect(AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true, ...controls }).success).toBe(false);
+    }
+  });
+
   it("accepts immutable declarations from the advertised SDK syntax", () => {
     const authored = {
       envName: "REPORTS_TOKEN",
