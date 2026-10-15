@@ -139,3 +139,5 @@ export { AgentEnvironmentEgressPolicySchema } from "./environment-requests.js";
 export * from "./native-session-event.js";
 
 export * from "./learning-state.js";
+
+export * from "./proxy-secrets.js";

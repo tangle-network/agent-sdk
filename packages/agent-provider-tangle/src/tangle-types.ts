@@ -34,6 +34,9 @@ import type {
   AgentEnvironmentCapabilities,
   AgentEnvironmentProvider,
   CreateAgentEnvironmentInput,
+  ProxySecretBinding,
+  ProxySecretCapabilities,
+  ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 
 /**
@@ -54,15 +57,20 @@ export interface SandboxCreateReceiptLike {
   outcome: "created" | "idempotent_replay" | "unknown";
   idempotencyKeyApplied: boolean;
   captureProof?: NativeCaptureProofLike;
+  proxySecretReceipt?: ProxySecretReceipt;
 }
 
 export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
+export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[] };
+
 export interface SandboxClientLike {
+  /** Authenticated control-plane capability discovery before resolution or allocation. */
+  capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities }>;
   create(
-    options?: CreateSandboxOptions,
+    options?: TangleCreateSandboxOptions,
     requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
   ): Promise<SandboxInstanceLike>;
   /**
@@ -147,6 +155,7 @@ export interface SandboxRuntimeCapabilityDocument {
   schema?: number;
   /** The selected runtime resolves stored-secret native authentication references. */
   cliAuthReferences?: boolean;
+  proxySecrets?: ProxySecretCapabilities;
   claudeTokenContinuations?: boolean;
   codexCredentialContinuations?: boolean;
   nativeSessionCaptureVersion?: number;
@@ -505,9 +514,16 @@ export interface SandboxInstanceLike {
   session?(id: string, options?: { signal?: AbortSignal }): SandboxSessionLike;
   /** Owner-authorized named grant; material never crosses this consumer boundary. */
   grantNativeCredential?(
-    grant: { harness: "claude-code" | "codex"; cliAuth: CliAuthReference },
+    grant: { harness: "claude-code" | "codex"; cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[]; expectedProxySecretGeneration?: number; requireInPlace?: boolean },
     options?: { signal?: AbortSignal },
-  ): Promise<void>;
+  ): Promise<unknown>;
+  egress?: {
+    get(options?: { signal?: AbortSignal }): Promise<unknown>;
+    update?(
+      update: NonNullable<CreateSandboxOptions["egressPolicy"]> | { proxySecrets: ProxySecretBinding[]; expectedProxySecretGeneration: number; requireInPlace: true },
+      options?: { signal?: AbortSignal },
+    ): Promise<unknown>;
+  };
   read?(
     path: string,
     options?: { sessionId?: string; signal?: AbortSignal }
@@ -836,7 +852,7 @@ export interface SandboxInteractionCommandResultLike {
 
 export type TangleModelCredentials =
   | { apiKeyEnv: string; baseUrl: string }
-  | { cliAuth: CliAuthReference };
+  | { cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[] };
 
 /** Select one public stored-secret reference for a stable create or fresh-turn identity. */
 export type TangleModelCredentialResolver = (
@@ -868,7 +884,7 @@ export interface TangleProviderOptions {
         | Promise<AgentEnvironmentCapabilities>);
   validateProfile?: AgentEnvironmentProvider["validateProfile"];
   /** Replaces the default mapping, including its backend and profile selection. */
-  mapCreateInput?: (input: CreateAgentEnvironmentInput) => CreateSandboxOptions;
+  mapCreateInput?: (input: CreateAgentEnvironmentInput) => TangleCreateSandboxOptions;
   exactProcess?: TangleExactProcessOptions;
   /**
    * Passed to the HTTP Sandbox creation request and the subsequent wait for

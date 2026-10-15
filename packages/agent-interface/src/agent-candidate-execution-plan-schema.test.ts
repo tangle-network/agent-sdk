@@ -141,6 +141,15 @@ function planFixture() {
 }
 
 describe("agentCandidateExecutionPlanMaterialSchema", () => {
+  it("keeps evaluator task and executable paths public after config references are admitted", () => {
+    const plan = planFixture();
+    for (const name of ["PATH", "TANGLE_CANDIDATE_TASK_PATH"]) {
+      expect(agentCandidateExecutionPlanMaterialSchema.safeParse({
+        ...plan,
+        launch: { ...plan.launch, env: { ...plan.launch.env, [name]: { kind: "secret-ref", key: "reporting-api" } } },
+      }).success).toBe(false);
+    }
+  });
   it("accepts the exact aggregate token field and rejects invalid or unknown fields", () => {
     const limits = planFixture().limits;
     expect(agentCandidateExecutionLimitsSchema.safeParse(limits).success).toBe(true);

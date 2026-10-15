@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretsSchema } from "./proxy-secrets.js";
 import type {
   AgentCandidateHookCommand,
   AgentCandidateMcpServer,
@@ -99,6 +100,7 @@ export const agentCandidateProfileSchema = z
     prompt: agentProfilePromptSchema.strict().optional(),
     model: candidateModelHintsSchema.optional(),
     harness: harnessTypeSchema.optional(),
+    proxySecrets: ProxySecretsSchema.optional(),
     permissions: z
       .record(z.string(), agentProfilePermissionSchema)
       .optional(),

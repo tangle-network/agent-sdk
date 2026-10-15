@@ -616,12 +616,14 @@ function validateAxisCoverage(
         path: request.path,
       });
     }
-    if (coverage.result.disposition === "unsupported" && !allowPartial) {
+    if (coverage.result.disposition === "unsupported" && (!allowPartial || request.axis === "proxySecrets")) {
       issues.push({
         code: "strict-unsupported",
         message:
           `${request.axis} at ${request.path} is unsupported but the authored ` +
-          "profile did not explicitly set resources.failOnError=false",
+          (request.axis === "proxySecrets"
+            ? "proxy-secret custody cannot be omitted by partial materialization"
+            : "profile did not explicitly set resources.failOnError=false"),
         axis: request.axis,
         path: request.path,
       });

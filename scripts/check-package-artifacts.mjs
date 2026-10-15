@@ -221,6 +221,35 @@ console.log("Packed public Interface: exact resource round trips passed.");
 `], { cwd: consumerDirectory });
 }
 
+function assertInstalledProxySecrets(consumerDirectory) {
+  run(node, ["--input-type=module", "--eval", `
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import * as root from "@tangle-network/agent-interface";
+import * as environment from "@tangle-network/agent-interface/environment-provider";
+import * as schemas from "@tangle-network/agent-interface/profile-schema";
+
+for (const name of ["ProxySecretBindingSchema", "ProxySecretsSchema", "ProxySecretReceiptSchema", "ProxySecretCapabilitiesSchema"]) {
+  assert.equal(root[name], environment[name], name);
+  assert.equal(root[name], schemas[name], name);
+}
+const fixtureUrl = new URL("../fixtures/proxy-secret-wire-v1.json",
+  import.meta.resolve("@tangle-network/agent-interface/profile-schema"));
+const fixture = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+for (const entry of fixture.declarations) {
+  assert.equal(root.ProxySecretBindingSchema.safeParse(entry.value).success, entry.valid, entry.name);
+}
+const binding = fixture.declarations.find(entry => entry.valid).value;
+const profile = schemas.agentProfileSchema.parse({ proxySecrets: [binding] });
+assert.deepEqual(profile.proxySecrets, [binding]);
+const changed = { proxySecrets: [{ ...binding, secretRef: { kind: "secret-ref", key: "different-approved-reference" } }] };
+assert.notEqual(root.canonicalAgentProfileDigest(profile), root.canonicalAgentProfileDigest(changed));
+assert.deepEqual(root.mergeProxySecretBindings([binding], [binding]), [binding]);
+assert.throws(() => root.mergeProxySecretBindings([binding], changed.proxySecrets));
+console.log("Packed public Interface: proxy-secret schemas, fixture, identity and merge passed.");
+`], { cwd: consumerDirectory });
+}
+
 function runJson(command, args, options) {
   const output = run(command, args, options);
   try {
@@ -600,6 +629,7 @@ try {
 
     if (entry.manifest.name === "@tangle-network/agent-interface") {
       assertExactProfileDiffs(consumerDirectory);
+      assertInstalledProxySecrets(consumerDirectory);
     }
 
     const packed = runJson(

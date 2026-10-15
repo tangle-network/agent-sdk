@@ -28,6 +28,7 @@ export const AGENT_PROFILE_MATERIALIZATION_AXES = [
   "modelMetadata",
   "harness",
   "seats",
+  "proxySecrets",
   "permissions",
   "tools",
   "mcp",
@@ -70,6 +71,7 @@ const profileProperties = [
   "model",
   "harness",
   "seats",
+  "proxySecrets",
   "permissions",
   "tools",
   "mcp",
@@ -140,6 +142,7 @@ const AXIS_DESCRIPTORS = [
   })),
   { axis: "harness", rootPath: "/harness", value: (profile) => profile.harness },
   { axis: "seats", rootPath: "/seats", value: (profile) => profile.seats },
+  { axis: "proxySecrets", rootPath: "/proxySecrets", value: (profile) => profile.proxySecrets },
   {
     axis: "permissions",
     rootPath: "/permissions",

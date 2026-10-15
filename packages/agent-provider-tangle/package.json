@@ -104,6 +104,8 @@
     "dist/tangle-usage-log.js",
     "dist/tangle-prompt.d.ts",
     "dist/tangle-prompt.js",
+    "dist/tangle-proxy-secrets.d.ts",
+    "dist/tangle-proxy-secrets.js",
     "dist/tangle-provider.d.ts",
     "dist/tangle-provider.js",
     "dist/tangle-readiness.d.ts",

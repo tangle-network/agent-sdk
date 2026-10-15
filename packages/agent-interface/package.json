@@ -131,6 +131,7 @@
   },
   "files": [
     "dist",
+    "fixtures/proxy-secret-wire-v1.json",
     "README.md",
     "LICENSE"
   ],

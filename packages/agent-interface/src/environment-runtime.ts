@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretCapabilitiesSchema, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
@@ -352,6 +353,8 @@ export interface AgentEnvironment {
   readonly creation?: AgentEnvironmentCreation;
   /** Authoritative receipt returned only by a qualified context-transfer attachment. */
   readonly contextTransferReceipt?: ContextTransferReceipt;
+  /** Trusted metadata only; dispatch requires an installed receipt, never proxy-installed. */
+  readonly proxySecretReceipt?: ProxySecretReceipt;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -521,6 +524,7 @@ export interface AgentEnvironmentCapabilities {
     workspaceCheckpoint?: boolean;
     /** True only when this qualified receiver verifies and restores WorkspaceRequest.snapshot. */
     workspaceSnapshot?: boolean;
+    proxySecrets?: ProxySecretCapabilities;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -639,6 +643,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         durableIdempotency: z.boolean().optional(),
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
+        proxySecrets: ProxySecretCapabilitiesSchema.optional(),
         workspaceCheckpoint: z.boolean().optional(),
         workspaceSnapshot: z.boolean().optional(),
       })
@@ -769,7 +774,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
         create.billingOwner === undefined &&
         create.runtimeAttachments === undefined &&
         create.workspaceCheckpoint === undefined &&
-        create.workspaceSnapshot === undefined
+        create.workspaceSnapshot === undefined &&
+        create.proxySecrets === undefined
       ) {
         refinement.addIssue({
           code: "custom",
@@ -872,6 +878,9 @@ export interface CreateAgentEnvironmentInput {
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: string[] | Record<string, string>;
+  /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
+   * Trusted issuer authorization is required before resolving any reference. */
+  proxySecrets?: readonly ProxySecretBinding[];
   /**
    * Outbound network policy for this environment.
    *
@@ -1025,6 +1034,11 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 /** Reconstruct an existing environment; never allocates a replacement. */
 export interface AgentEnvironmentGetOptions {
   signal?: AbortSignal;
+  /** Explicit custody attachment through the existing egress lifecycle. Omission reads current
+   * custody; [] revokes custom bindings. A get never allocates a replacement environment. */
+  proxySecrets?: readonly ProxySecretBinding[];
+  expectedProxySecretGeneration?: number;
+  requireInPlace?: boolean;
   /**
    * Authorize the first turn of an accepted portable transfer. The provider looks up the exact
    * durable operation and returns its dispatch-capable environment with contextTransferReceipt.
@@ -1036,7 +1050,17 @@ export interface AgentEnvironmentGetOptions {
 
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
   signal: z.custom<AbortSignal>().optional(),
+  proxySecrets: ProxySecretsSchema.optional(),
+  ...ProxySecretUpdateControlsSchema.shape,
   contextTransfer: ContextTransferRequestSchema.optional(),
+}).superRefine((options, ctx) => {
+  if (options.proxySecrets !== undefined && options.contextTransfer !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "context-transfer attachment cannot also change proxy custody" });
+  }
+  if (options.proxySecrets === undefined &&
+      (options.expectedProxySecretGeneration !== undefined || options.requireInPlace !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "proxy update controls require an explicit proxySecrets selection" });
+  }
 }) satisfies z.ZodType<AgentEnvironmentGetOptions>;
 
 export interface AgentEnvironmentProvider {
