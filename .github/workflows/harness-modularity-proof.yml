@@ -2,7 +2,10 @@
 name: Harness modularity SDK proof
 on:
   pull_request:
-    paths: ['.github/workflows/harness-modularity-proof.yml']
+    paths:
+      - '.github/workflows/harness-modularity-proof.yml'
+      - 'packages/agent-provider-tangle/**'
+      - 'packages/agent-interface/**'
 permissions:
   contents: read
 jobs:
