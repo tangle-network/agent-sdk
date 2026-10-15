@@ -107,8 +107,8 @@ describe("public provider proxy-secret custody", () => {
     Object.assign(fixture.box, { resume, refresh, capabilities: guestCapabilities, session: sessionProbe });
     fixture.box.egress.update = update;
     fixture.box.backend.status = backendStatus;
-    const getEgress = fixture.box.egress.get;
-    Object.assign(fixture.box.egress, { get: async () => ({ ...await getEgress(), proxySecretParents: { REPORTS_TOKEN: null } }) });
+    Object.assign(fixture.box.egress, { get: async () => ({ proxySecrets: fixture.declarations,
+      proxySecretReceipt: fixture.receipt, proxySecretParents: { REPORTS_TOKEN: null } }) });
     const provider = createTangleProvider({
       client: { ...fixture.client, capabilities: async () => ({ proxySecrets: capability, proxySecretDelegation: 1 as const }) },
       requireNativeSessionCapture: true,
