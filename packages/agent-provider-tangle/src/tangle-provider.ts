@@ -27,6 +27,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
+import { assertProxySecretAliases, mergeProxySecrets, proxySecretsFromInput, PROXY_SECRETS_METADATA_KEY, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -146,6 +147,17 @@ export function createTangleProvider(
     if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
       throw new Error("Tangle create providerOptions are not supported");
     }
+    if (Object.hasOwn(input.metadata ?? {}, PROXY_SECRETS_METADATA_KEY)) {
+      throw new Error("Tangle owns metadata.tangleProxySecrets");
+    }
+    const requestedProxySecrets = proxySecretsFromInput(input);
+    assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
+    // Discovery precedes every reference-only resolver. A resolver can introduce secure
+    // intent only in its result; legacy resolvers remain usable on peers without this protocol.
+    const peerCapabilities = await awaitWithSignal(options.client.capabilities?.(), input.signal);
+    if (requestedProxySecrets !== undefined) {
+      requireProxySecretCapability(peerCapabilities, requestedProxySecrets);
+    }
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -181,6 +193,14 @@ export function createTangleProvider(
         selectedCredentials,
         true,
       ) : defaultOptions!);
+    const selectedProxySecrets = mergeProxySecrets(requestedProxySecrets,
+      selectedCredentials !== undefined && "cliAuth" in selectedCredentials ? selectedCredentials.proxySecrets : undefined);
+    if (canonicalCandidateDigest(mappedOptions.proxySecrets ?? null) !== canonicalCandidateDigest(selectedProxySecrets ?? null)) {
+      throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
+    }
+    if (selectedProxySecrets !== undefined) {
+      requireProxySecretCapability(peerCapabilities, selectedProxySecrets);
+    }
     assertMappedCreateOptions(mappedOptions);
     if (Object.hasOwn(mappedOptions.metadata ?? {}, "modelCredentials") &&
       (!subscription || selectedCredentials === undefined ||
@@ -195,6 +215,9 @@ export function createTangleProvider(
     }
     const createOptions = deepFreeze(structuredClone({
       ...mappedOptions,
+      ...(selectedProxySecrets === undefined ? {} : {
+        metadata: { ...mappedOptions.metadata, [PROXY_SECRETS_METADATA_KEY]: selectedProxySecrets },
+      }),
       ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
     }));
     if (
@@ -306,6 +329,7 @@ export function createTangleProvider(
             ? {}
             : { resources: requestedResources }),
           credentialSource,
+          ...(selectedProxySecrets === undefined ? {} : { proxySecrets: selectedProxySecrets }),
           ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
           ...(createOptions.backend?.model?.cliAuth === undefined ? {} : {
             nativeAuth: { harness: createOptions.backend.type!, cliAuth: createOptions.backend.model.cliAuth },

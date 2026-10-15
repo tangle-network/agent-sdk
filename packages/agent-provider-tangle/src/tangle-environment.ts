@@ -1,5 +1,6 @@
 import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
 import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
+import { captureProxySecrets, mergeProxySecrets, PROXY_SECRETS_METADATA_KEY, readProxySecretReceipt, requireProxySecretCapability, validateProxySecretReceipt } from "./tangle-proxy-secrets.js";
 import { captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY } from "./tangle-create-options.js";
 import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
@@ -25,6 +26,7 @@ import type {
   ExecResult,
   PlacementInfo,
   ResourceProfile,
+  ProxySecretBinding,
   TerminalAttachRequest,
   TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -114,6 +116,7 @@ export async function sandboxInstanceAsEnvironment(
   operation?: { signal?: AbortSignal },
   request?: {
     resources?: ResourceProfile;
+    proxySecrets?: ProxySecretBinding[];
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
     requireCliAuthReferences?: boolean;
@@ -137,6 +140,14 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = request?.captureCapabilities === undefined
     ? await readDeploymentCapabilitySupport(box, operation)
     : deploymentCapabilitySupport(request.captureCapabilities);
+  const recordedProxySecrets = box.metadata?.[PROXY_SECRETS_METADATA_KEY];
+  const persistedProxySecrets = recordedProxySecrets === undefined ? undefined : captureProxySecrets(recordedProxySecrets);
+  if (request?.proxySecrets !== undefined && persistedProxySecrets !== undefined &&
+      canonicalCandidateDigest(request.proxySecrets) !== canonicalCandidateDigest(persistedProxySecrets)) {
+    throw new Error("Tangle persisted proxy-secret declarations differ from creation");
+  }
+  const proxySecrets = request?.proxySecrets ?? persistedProxySecrets;
+  let proxySecretReceipt = proxySecrets === undefined ? undefined : await readProxySecretReceipt(box, proxySecrets, operation);
   const recordedCredentials = box.metadata?.modelCredentials;
   const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
     Object.hasOwn(recordedCredentials, "cliAuth");
@@ -220,8 +231,18 @@ export async function sandboxInstanceAsEnvironment(
     AgentTurnInputSchema.parse(input);
     input.signal?.throwIfAborted();
     assertCaptureInput(input);
-    if (nativeReference === undefined) return input;
+    const requestedTurnProfile = input.profile ?? promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend?.profile;
+    if (requestedTurnProfile?.proxySecrets !== undefined &&
+        canonicalCandidateDigest(captureProxySecrets(requestedTurnProfile.proxySecrets)) !== canonicalCandidateDigest(proxySecrets ?? [])) {
+      throw new Error("Tangle turn proxy-secret declarations differ from its environment");
+    }
     const replay = input.lastEventId !== undefined || input.controlRef !== undefined;
+    if (proxySecrets !== undefined) {
+      // An expired lease can be renewed by the trusted owner, but never dispatched as-is.
+      const canRenew = !replay && nativeReference !== undefined && request?.resolveModelCredentials !== undefined;
+      proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt, canRenew);
+    }
+    if (nativeReference === undefined) return input;
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
     // A plain exact read supplies no backend override and keeps its admitted request unchanged.
     if (replay && backend === undefined) return input;
@@ -280,14 +301,27 @@ export async function sandboxInstanceAsEnvironment(
             : selected.cliAuth.format !== "bundle" && selected.cliAuth.format !== "files")) {
         throw new Error(`Tangle subscription turn resolver must select a stored ${harness} native reference`);
       }
+      const selectedProxySecrets = mergeProxySecrets(proxySecrets, selected.proxySecrets);
+      if (selectedProxySecrets !== undefined) {
+        requireProxySecretCapability(await awaitWithSignal(box.capabilities?.(), input.signal), selectedProxySecrets);
+        if (canonicalCandidateDigest(selectedProxySecrets) !== canonicalCandidateDigest(proxySecrets)) {
+          throw new Error("Tangle retained subscription turn cannot change its proxy-secret declarations");
+        }
+      }
       selectedReference = selected.cliAuth;
       assertCliAuthReferenceSupported(harness, { ...model, cliAuth: selectedReference });
       input.signal?.throwIfAborted();
-      await awaitWithSignal(box.grantNativeCredential(
-        { harness, cliAuth: selectedReference },
+      const granted = await awaitWithSignal(box.grantNativeCredential(
+        { harness, cliAuth: selectedReference,
+          ...(proxySecrets === undefined ? {} : { proxySecrets, expectedProxySecretGeneration: proxySecretReceipt!.generation, requireInPlace: true }),
+        },
         input.signal ? { signal: input.signal } : undefined,
       ), input.signal);
       input.signal?.throwIfAborted();
+      if (proxySecrets !== undefined) {
+        proxySecretReceipt = validateProxySecretReceipt(granted !== null && typeof granted === "object" && "proxySecretReceipt" in granted ? granted.proxySecretReceipt : undefined, environmentId, proxySecrets, proxySecretReceipt);
+        proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt);
+      }
     }
     const selectedModel = { ...model, cliAuth: selectedReference };
     assertCliAuthReferenceSupported(harness, selectedModel);
@@ -346,6 +380,7 @@ export async function sandboxInstanceAsEnvironment(
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
     ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,
+    ...(proxySecretReceipt === undefined ? {} : { get proxySecretReceipt() { return proxySecretReceipt; } }),
     ...(workspaceBranching === undefined
       ? {}
       : { workspaceBranching }),

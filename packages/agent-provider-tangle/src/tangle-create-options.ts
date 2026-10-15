@@ -30,7 +30,9 @@ import {
 import { profileCredentialSource } from "./model-credential-source.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
-import type { TangleModelCredentials } from "./tangle-types.js";
+import { deepFreeze } from "@tangle-network/agent-interface";
+import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput } from "./tangle-proxy-secrets.js";
+import type { TangleCreateSandboxOptions, TangleModelCredentials } from "./tangle-types.js";
 
 /** Immutable create evidence used to bind a later native resume to its restored snapshot. */
 export const NATIVE_RESUME_CHECKPOINT_METADATA_KEY = "tangleNativeResumeCheckpointId";
@@ -41,12 +43,12 @@ export function captureModelCredentials(
   if (value === undefined) return undefined;
   assertBoundedJson(value, "Tangle modelCredentials");
   if (value && typeof value === "object" && !Array.isArray(value) && "cliAuth" in value) {
-    if (Object.keys(value).some((key) => key !== "cliAuth")) {
-      throw new Error("Tangle native modelCredentials accepts only cliAuth");
+    if (Object.keys(value).some((key) => key !== "cliAuth" && key !== "proxySecrets")) {
+      throw new Error("Tangle native modelCredentials accepts only cliAuth and proxySecrets");
     }
     const parsed = cliAuthReferenceSchema.safeParse(value.cliAuth);
     if (!parsed.success) throw new Error("Tangle modelCredentials cliAuth must be a valid stored-secret reference");
-    return Object.freeze({ cliAuth: Object.freeze(parsed.data) });
+    return deepFreeze({ cliAuth: parsed.data, ...(value.proxySecrets === undefined ? {} : { proxySecrets: captureProxySecrets(value.proxySecrets) }) });
   }
   if (!value || typeof value !== "object" || Array.isArray(value) ||
     Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl")) {
@@ -77,7 +79,7 @@ export function sandboxOptionsFromCreateInput(
   parsedWorkspace?: WorkspaceRequest,
   modelCredentials?: TangleModelCredentials,
   subscriptionSelection = false,
-): CreateSandboxOptions {
+): TangleCreateSandboxOptions {
   const workspace = assertCreateInputShape(input, parsedWorkspace) ?? {};
   const profile = inlineAgentProfile(input.profile);
   const backend =
@@ -88,6 +90,9 @@ export function sandboxOptionsFromCreateInput(
   const selectedSecret = modelCredentials === undefined ? undefined
     : "cliAuth" in modelCredentials ? modelCredentials.cliAuth?.secretEnv : modelCredentials.apiKeyEnv;
   const nativeCredentials = modelCredentials !== undefined && "cliAuth" in modelCredentials;
+  const proxySecrets = mergeProxySecrets(proxySecretsFromInput(input), nativeCredentials ? modelCredentials.proxySecrets : undefined);
+  assertProxySecretAliases(proxySecrets, input.env, input.secrets);
+  const proxySelected = proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret) === true;
   if (modelCredentials !== undefined && selectedSecret === undefined) {
     throw new Error("Tangle modelCredentials must select a stored secret");
   }
@@ -105,9 +110,9 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
   const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
-  const secrets = selectedSecret !== undefined
+  const secrets = selectedSecret !== undefined && !proxySelected
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
-    : requestedSecrets;
+    : requestedSecrets ?? (proxySecrets === undefined ? undefined : []);
   if (secrets !== undefined && secrets.length > MAX_ARRAY_LENGTH) {
     throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
   }
@@ -179,6 +184,7 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
+    ...(proxySecrets === undefined ? {} : { proxySecrets }),
     ...(Array.isArray(secrets) ? { secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
@@ -191,7 +197,7 @@ export function sandboxOptionsFromCreateInput(
       profile,
       ...(modelCredentials === undefined ? {} : {
         model: "cliAuth" in modelCredentials
-          ? { ...modelCredentials, authMode: "oauth" as const } : modelCredentials,
+          ? { cliAuth: modelCredentials.cliAuth, authMode: "oauth" as const } : modelCredentials,
       }),
       ...(input.runtimeAttachments === undefined ? {} : {
         runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),
@@ -318,6 +324,7 @@ export function assertCreateInputShape(
     "signal",
     "providerOptions",
     "runtimeAttachments",
+    "proxySecrets",
   ]) keys.delete(key);
   if (keys.size > 0) throw new Error("Tangle create input contains unsupported fields");
   if (input.runtimeAttachments !== undefined) {
@@ -345,11 +352,16 @@ export function assertCreateInputShape(
   return workspace;
 }
 
-export function assertMappedCreateOptions(options: CreateSandboxOptions): void {
+export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
   }
   assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
+  const proxySecrets = options.proxySecrets === undefined ? undefined : captureProxySecrets(options.proxySecrets);
+  assertProxySecretAliases(proxySecrets, options.env, options.secrets);
+  if (proxySecrets !== undefined && !Array.isArray(options.secrets)) {
+    throw new Error("Tangle proxy-secret create requires explicit readable secret selection");
+  }
   if (options.backend?.model?.cliAuth !== undefined) {
     if (options.backend.type === undefined) {
       throw new Error("Tangle mapped native credentials require the selected backend type");
