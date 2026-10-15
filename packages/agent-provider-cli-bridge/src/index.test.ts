@@ -20,6 +20,15 @@ import { cliBridgeEnvironmentId } from "./environment-identity.js";
 import { toChatCompletionsBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
+  it("refuses unsupported read-only discovery before any remote lookup", async () => {
+    let calls = 0;
+    const provider = createCliBridgeProvider({ baseUrl: "http://bridge.local", fetch: async () => {
+      calls++; throw new Error("unexpected remote lookup");
+    } });
+    await expect(provider.get!("existing-environment", { readOnly: true })).rejects.toThrow(/read.only/);
+    expect(calls).toBe(0);
+  });
+
   it("refuses portable workspace snapshots before discovery or dispatch after reconstruction", async () => {
     let effects = 0;
     const report = await runWorkspaceSnapshotConformance({
