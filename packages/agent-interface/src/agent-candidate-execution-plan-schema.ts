@@ -46,6 +46,7 @@ import {
   sha256Utf8,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import { ProxySecretsSchema } from "./proxy-secrets.js";
 import { harnessTypeSchema } from "./harness.js";
 import { createAgentProfileActivationEvidenceSchema } from "./agent-profile-activation.js";
 
@@ -178,6 +179,7 @@ export const agentCandidateRetryPolicySchema = z.enum([
 
 export const agentCandidateProfilePlanMaterialSchema = z
   .object({
+    proxySecrets: ProxySecretsSchema.optional(),
     sourceProfileDigest: sha256DigestSchema,
     harness: harnessTypeSchema,
     files: z.array(

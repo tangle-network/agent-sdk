@@ -81,9 +81,12 @@ describe("portable proxy-secret public contract", () => {
   it("keeps reference slot placement in canonical candidate identity", () => {
     const ref = { kind: "secret-ref" as const, key: "reporting-api", format: "bearer" as const };
     expect(agentCandidateProfileSchema.parse({ mcp: { reports: { command: "reports-mcp", env: { REPORTS_TOKEN: ref } } } }).mcp?.reports).toBeDefined();
-    const plan = { sourceProfileDigest: "sha256:" + "a".repeat(64), harness: "codex", files: [{ relPath: "auth.json", mode: 384, contentSha256: "sha256:" + "b".repeat(64), secretSlots: [{ path: ["token"], ref }] }], env: {}, flags: [], unsupported: [] };
+    const plan = { proxySecrets: [binding], sourceProfileDigest: "sha256:" + "a".repeat(64), harness: "codex", files: [{ relPath: "auth.json", mode: 384, contentSha256: "sha256:" + "b".repeat(64), secretSlots: [{ path: ["token"], ref }] }], env: {}, flags: [], unsupported: [] };
     expect(agentCandidateProfilePlanMaterialSchema.safeParse({ ...plan, systemPrompt: ref }).success).toBe(false);
     const parsed = agentCandidateProfilePlanMaterialSchema.parse(plan);
+    expect(parsed.proxySecrets).toEqual([binding]);
+    const changedScope = agentCandidateProfilePlanMaterialSchema.parse({ ...plan, proxySecrets: [{ ...binding, hosts: ["other.example.com"] }] });
+    expect(canonicalCandidateDigest(parsed)).not.toBe(canonicalCandidateDigest(changedScope));
     const changed = agentCandidateProfilePlanMaterialSchema.parse({ ...plan, files: [{ ...plan.files[0], secretSlots: [{ path: ["other"], ref }] }] });
     expect(canonicalCandidateDigest(parsed)).not.toBe(canonicalCandidateDigest(changed));
     expect(agentCandidateProfilePlanMaterialSchema.safeParse({ ...plan, files: [{ ...plan.files[0], secretSlots: [{ path: ["token"], ref }, { path: ["token", "child"], ref }] }] }).success).toBe(false);

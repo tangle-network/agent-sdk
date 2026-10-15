@@ -10,6 +10,7 @@ import type {
   AgentSubagentProfile,
   ReasoningEffort,
 } from "./agent-profile.js";
+import type { ProxySecretBinding } from "./proxy-secrets.js";
 import type { AgentProfileActivationEvidence } from "./agent-profile-activation.js";
 import type { HarnessType } from "./harness.js";
 import type {
@@ -486,6 +487,8 @@ export interface AgentCandidateResolvedModel {
 
 /** Canonical, digest-free profile-plan identity document. */
 export interface AgentCandidateProfilePlanMaterial {
+  /** Reference-only declaration captured with the public plan before trusted resolution. */
+  proxySecrets?: ProxySecretBinding[];
   /** Canonical digest of the complete frozen profile that produced this plan. */
   sourceProfileDigest: Sha256Digest;
   harness: HarnessType;
