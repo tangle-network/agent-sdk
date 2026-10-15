@@ -710,6 +710,14 @@ The command transport accepts the same public capacity body only with exit code 
 Its typed error has no HTTP status.
 The caller's execution owner decides whether and when to retry.
 
+A deterministic unsupported subscription route returns only
+`{ error: { code: "model_credential_refused", reason: "unsupported_route" } }`.
+The command transport accepts this fixed envelope only with exit code 78; the HTTP transport
+accepts it only with an actual HTTP 400 response. Both expose `TangleCredentialRefusalError`
+before provisioning, with a fixed public message and no private command diagnostics.
+The command error has no HTTP status. Unknown fields or reasons are rejected; generic
+command failures, network failures and held account capacity do not become this refusal.
+
 ### Completion and native evidence
 
 The provider projects terminal results and terminal stream events into bounded completion summaries.

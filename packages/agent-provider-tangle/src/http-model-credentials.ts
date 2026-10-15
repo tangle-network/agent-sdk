@@ -1,4 +1,4 @@
-import { parseCredentialCapacity, type TangleCredentialCapacityError } from "./model-credential-capacity.js";
+import { parseCredentialCapacity, parseCredentialRefusal, type TangleCredentialCapacityError, type TangleCredentialRefusalError } from "./model-credential-capacity.js";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import { profileCredentialSource } from "./model-credential-source.js";
 import { parseModelCredentialResolverRequest } from "./model-credential-request.js";
@@ -103,9 +103,11 @@ export function createHttpModelCredentialResolver(options: HttpModelCredentialRe
       if (!response.ok) {
         let exitCode: number | undefined;
         let capacity: TangleCredentialCapacityError | undefined;
+        let refusal: TangleCredentialRefusalError | undefined;
         try {
           const payload = await publicResponse(response);
           capacity = parseCredentialCapacity(payload, response.status);
+          refusal = parseCredentialRefusal(payload, response.status);
           const detail = payload && typeof payload === "object" && "error" in payload ? payload.error : undefined;
           if (detail && typeof detail === "object" && "exitCode" in detail &&
             typeof detail.exitCode === "number" && Number.isSafeInteger(detail.exitCode) && detail.exitCode >= 0 && detail.exitCode <= 255) {
@@ -115,6 +117,7 @@ export function createHttpModelCredentialResolver(options: HttpModelCredentialRe
           // Upstream bodies and diagnostics are private; only a bounded numeric exit status is public.
         }
         if (capacity !== undefined) throw capacity;
+        if (refusal !== undefined) throw refusal;
         throw Object.assign(new Error(`Tangle credential broker refused resolution (HTTP ${response.status}${exitCode === undefined ? "" : `, owner exit ${exitCode}`})`), {
           status: response.status, ...(exitCode === undefined ? {} : { exitCode }),
         });
