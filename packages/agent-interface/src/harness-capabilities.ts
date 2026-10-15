@@ -12,7 +12,7 @@ import type { HarnessType } from "./harness.js";
  *   3. system-prompt intents (whether a harness can replace its own prompt, add to it, or neither).
  *
  * All are facets of the same question — "what can this (harness, model) pair actually do" — and
- * apply to BOTH harness-backed systems (vendor-locked CLIs like claude-code/codex/kimi) AND
+ * apply to BOTH harness-backed systems (CLIs that speak a vendor wire, like claude-code, codex and kimi-code) AND
  * router-backed systems (opencode, cli-base: any model the router serves). Lifted here so the
  * cli-bridge backends, the sandbox UI pickers, and the router all read one truth instead of each
  * hand-rolling a divergent copy.
@@ -29,18 +29,36 @@ export const reasoningLadder: readonly ReasoningEffort[] = REASONING_EFFORTS;
 // ── Harness ↔ model compatibility ────────────────────────────────────────────
 
 /**
- * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `anthropic`, `openai`).
- * A harness with no entry is router-backed: it runs any model, except the measured exclusions in
+ * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `moonshot`). A harness
+ * with no entry is router-backed: it runs any model, except the measured exclusions in
  * {@link harnessModelExclusions}.
+ *
+ * `claude-code` and `codex` are deliberately absent. Their CLIs speak a vendor wire (Anthropic
+ * Messages, OpenAI Responses), but the Tangle Router passes only that vendor's own models through
+ * natively and translates every other model on those wires to chat completions (text, images and
+ * function tools, streamed or not; hosted tools are dropped), so both run any router-served model.
+ * A caller's own vendor key or login still serves that vendor's models alone, which this table does
+ * not see. Which harness a vendor's model adopts when the caller names none is
+ * {@link vendorHarness}, a separate fact.
  *
  * `nanoclaw` is deliberately absent despite the "claw" name: its runner routes every provider through
  * the Tangle router (canonical model id straight to the gateway), so it is router-backed like
  * `opencode` — not Anthropic-locked.
  */
 const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {
-  "claude-code": ["anthropic"],
-  codex: ["openai"],
   "kimi-code": ["moonshot"],
+};
+
+/**
+ * The harness that natively speaks a vendor's models. A model of that vendor adopts it when the
+ * caller names no harness ({@link preferredHarnessForModel}), and a locked harness handed such a
+ * model switches to it ({@link snapHarnessToModel}). It is not a restriction: `claude-code` and
+ * `codex` also run other providers' models through the router.
+ */
+const vendorHarness: Readonly<Record<string, HarnessType>> = {
+  anthropic: "claude-code",
+  openai: "codex",
+  moonshot: "kimi-code",
 };
 
 /** Provider prefix of a canonical model id (`anthropic/claude-…` → `anthropic`), or null. */
@@ -250,15 +268,11 @@ export function harnessSupportsModel(
   return harnessModelSupport(harness, modelId, options).supported;
 }
 
-/** The harness to adopt for a model whose provider is vendor-locked (`anthropic` → `claude-code`,
+/** The harness a vendor's model adopts when the caller names none (`anthropic` → `claude-code`,
  *  `openai` → `codex`, `moonshot` → `kimi-code`); `null` when any router-backed harness will do. */
 export function preferredHarnessForModel(modelId: string): HarnessType | null {
   const provider = resolveModelProvider(modelId);
-  if (!provider) return null;
-  for (const [harness, providers] of Object.entries(harnessProviderLock)) {
-    if (providers?.includes(provider)) return harness as HarnessType;
-  }
-  return null;
+  return provider ? (vendorHarness[provider] ?? null) : null;
 }
 
 // ── Harness ↔ model snapping (catalog-aware) ─────────────────────────────────
@@ -271,12 +285,6 @@ export function preferredHarnessForModel(modelId: string): HarnessType | null {
 const harnessPreferredModelPatterns: Partial<
   Record<HarnessType, readonly RegExp[]>
 > = {
-  "claude-code": [
-    /^anthropic\/claude-opus-[\d.-]+$/,
-    /^anthropic\/claude-sonnet-[\d.-]+$/,
-    /^anthropic\//,
-  ],
-  codex: [/^openai\/gpt-\d+(\.\d+)?$/, /^openai\/gpt/, /^openai\//],
   "kimi-code": [/^moonshot\//],
 };
 
@@ -310,8 +318,7 @@ export function snapModelToHarness(
 
 /**
  * Keep the harness when it can run `modelId`; otherwise return the model's native harness
- * (anthropic → claude-code, openai → codex, moonshot → kimi-code), falling back to the router-backed
- * `opencode` for everything else.
+ * ({@link vendorHarness}), falling back to the router-backed `opencode` for everything else.
  */
 export function snapHarnessToModel(
   harness: HarnessType,
