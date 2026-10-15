@@ -12,6 +12,7 @@
  * fixed. This package is the canonical public home for these symbols.
  */
 
+import type { ProxySecretBinding, ProxySecretCapabilities } from "./proxy-secrets.js";
 import type { HarnessType } from "./harness.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 
@@ -528,6 +529,9 @@ export interface AgentProfile {
    * Omission preserves the existing single-provider execution policy.
    */
   seats?: AgentProfileSeat[];
+  /** Reference-only proxy custody. Overlay replaces the entire selection; [] clears it.
+   * Authorization and issuer scope remain outside this authored profile. */
+  proxySecrets?: ProxySecretBinding[];
   permissions?: Record<string, AgentProfilePermission>;
   tools?: Record<string, boolean>;
   mcp?: Record<string, AgentProfileMcpServer>;
@@ -584,6 +588,8 @@ export interface AgentProfileSystemPromptCapability {
  */
 export interface AgentProfileCapabilities {
   namedProfiles: boolean;
+  /** Absent means proxy-only profiles must be refused before secret resolution. */
+  proxySecrets?: ProxySecretCapabilities;
   systemPrompt: AgentProfileSystemPromptCapability;
   instructions: boolean;
   tools: boolean;

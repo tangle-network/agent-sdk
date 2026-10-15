@@ -37,7 +37,7 @@ describe("portable proxy-secret public contract", () => {
   });
   it("requires metadata-only acknowledged receipts and protocol agreement", () => {
     expect(ProxySecretGrantSchema.parse(grant)).toEqual(grant);
-    const receipt = { protocolVersion: 1, sandboxId: "box-1", generation: 1, status: "installed", bindings: [{ envName: binding.envName, grant }], proxyAcknowledged: true, materializationAcknowledged: true };
+    const receipt = { protocolVersion: 1, sandboxId: "box-1", generation: 1, status: "installed", bindings: [{ envName: binding.envName, secretRef: binding.secretRef, grant }], proxyAcknowledged: true, materializationAcknowledged: true };
     expect(ProxySecretReceiptSchema.parse(receipt)).toEqual(receipt);
     expect(ProxySecretReceiptSchema.safeParse({ ...receipt, placeholder: "forbidden" }).success).toBe(false);
     expect(ProxySecretReceiptSchema.safeParse({ ...receipt, proxyAcknowledged: false }).success).toBe(false);

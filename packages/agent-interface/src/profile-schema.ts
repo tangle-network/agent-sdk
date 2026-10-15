@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretsSchema } from "./proxy-secrets.js";
 import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
 export {
   agentProfileKnowledgeRefSchema,
@@ -454,6 +455,7 @@ export const agentProfileDiffRemovalSchema = z.strictObject({
   model: removeListSchema.optional(),
   harness: z.literal(true).optional(),
   seats: z.literal(true).optional(),
+  proxySecrets: z.literal(true).optional(),
   permissions: removeListSchema.optional(),
   tools: removeListSchema.optional(),
   mcp: removeListSchema.optional(),
@@ -579,6 +581,7 @@ export const agentProfileSchema = z
     model: agentProfileModelHintsSchema.optional(),
     harness: harnessTypeSchema.optional(),
     seats: z.array(agentProfileSeatSchema).nonempty().optional(),
+    proxySecrets: ProxySecretsSchema.optional(),
     permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
     tools: ownPropertyRecordSchema(z.boolean()).optional(),
     mcp: ownPropertyRecordSchema(agentProfileMcpServerSchema).optional(),
@@ -816,3 +819,5 @@ export const capabilitySchema: z.ZodType<Capability> = z.strictObject({
     recommendedSize: z.enum(SANDBOX_SIZE_PRESET_NAMES).optional(),
 });
 
+
+export * from "./proxy-secrets.js";

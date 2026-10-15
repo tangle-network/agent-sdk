@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretCapabilitiesSchema } from "./proxy-secrets.js";
 import type { AgentProfileCapabilities } from "./agent-profile.js";
 import {
   boundedIdentifierSchema,
@@ -7,6 +8,7 @@ import {
 
 export const AgentProfileCapabilitiesSchema = z.strictObject({
   namedProfiles: z.boolean(),
+  proxySecrets: ProxySecretCapabilitiesSchema.optional(),
   /*
    * Replacement and addition are independent provider capabilities. Require
    * both declarations so an omitted bit cannot be mistaken for support.

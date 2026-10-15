@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretCapabilitiesSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
@@ -352,6 +353,8 @@ export interface AgentEnvironment {
   readonly creation?: AgentEnvironmentCreation;
   /** Authoritative receipt returned only by a qualified context-transfer attachment. */
   readonly contextTransferReceipt?: ContextTransferReceipt;
+  /** Trusted metadata only; dispatch requires an installed receipt, never proxy-installed. */
+  readonly proxySecretReceipt?: ProxySecretReceipt;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -521,6 +524,7 @@ export interface AgentEnvironmentCapabilities {
     workspaceCheckpoint?: boolean;
     /** True only when this qualified receiver verifies and restores WorkspaceRequest.snapshot. */
     workspaceSnapshot?: boolean;
+    proxySecrets?: ProxySecretCapabilities;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -639,6 +643,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         durableIdempotency: z.boolean().optional(),
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
+        proxySecrets: ProxySecretCapabilitiesSchema.optional(),
         workspaceCheckpoint: z.boolean().optional(),
         workspaceSnapshot: z.boolean().optional(),
       })
@@ -769,7 +774,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
         create.billingOwner === undefined &&
         create.runtimeAttachments === undefined &&
         create.workspaceCheckpoint === undefined &&
-        create.workspaceSnapshot === undefined
+        create.workspaceSnapshot === undefined &&
+        create.proxySecrets === undefined
       ) {
         refinement.addIssue({
           code: "custom",
@@ -872,6 +878,9 @@ export interface CreateAgentEnvironmentInput {
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: string[] | Record<string, string>;
+  /** Same declaration as AgentProfile. Explicit [] clears custom bindings; omission preserves
+   * profile intent. Trusted issuer authorization is required before resolving any reference. */
+  proxySecrets?: readonly ProxySecretBinding[];
   /**
    * Outbound network policy for this environment.
    *
