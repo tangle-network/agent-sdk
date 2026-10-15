@@ -47,6 +47,8 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
+  // A resumed agent's file writes its earlier records again, each with the uuid it had.
+  const seenUuids = new Set<string>()
 
   const observe = (record: Record<string, unknown>): void => {
     if (!subagent && record.isSidechain === true) {
@@ -55,6 +57,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     }
     const type = record.type
     if (type !== 'user' && type !== 'assistant' && type !== 'system') return
+    if (typeof record.uuid === 'string') {
+      if (seenUuids.has(record.uuid)) return
+      seenUuids.add(record.uuid)
+    }
     const at = builder.seen(record.timestamp)
     if (builder.cwd === null && typeof record.cwd === 'string') builder.cwd = record.cwd
     if (!identified && typeof record.sessionId === 'string') {
