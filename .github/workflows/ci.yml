@@ -1,9 +1,17 @@
 name: CI
 
+# Source integration does not wait for a runner. These are post-merge checks;
+# package publication retains its own qualification and credential boundary.
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
+
+# Finish the active immutable revision. GitHub retains the newest pending push;
+# do not cancel useful qualification whenever another source change lands.
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -19,8 +27,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Release runs the artifact checks with this exact npm. Run them with the
-      # same npm here so a pull request cannot pass CI and then fail at release.
+      # Match publication's package-verification tooling.
       - run: |
           npm install -g npm@12.1.0
           test "$(npm --version)" = "12.1.0"
