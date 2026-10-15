@@ -13,6 +13,7 @@ export * from "./provider-adapter.js";
 export type * from "./environment-provider.js";
 export {
   AgentEnvironmentCapabilitiesSchema,
+  AgentEnvironmentReadOnlyGetOptionsSchema,
   AgentRuntimeAttachmentsSchema,
   AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,

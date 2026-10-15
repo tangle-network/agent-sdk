@@ -21,6 +21,7 @@ if (readOnlyConsumerIndex !== -1) {
 } else {
 const cohort = prepareControlCohort();
 try {
+  await checkReadOnlyExports(cohort.consumer);
   run(tsc, ["-p", "tsconfig.json"], { cwd: cohort.consumer });
   const testOutput = run(
     vitest,
@@ -50,6 +51,17 @@ try {
 
 }
 
+// Check both supported entry points in the actual installed artifact, not a source shim.
+async function checkReadOnlyExports(consumer) {
+  const consumerRequire = createRequire(join(consumer, "package.json"));
+  const canonical = await import(pathToFileURL(consumerRequire.resolve("@tangle-network/agent-interface/environment-provider")).href);
+  const root = await import(pathToFileURL(consumerRequire.resolve("@tangle-network/agent-interface")).href);
+  assert.equal(root.AgentEnvironmentReadOnlyGetOptionsSchema, canonical.AgentEnvironmentReadOnlyGetOptionsSchema,
+    "readOnly discovery schema must be exported from root and environment-provider");
+  assert.equal(canonical.AgentEnvironmentReadOnlyGetOptionsSchema.safeParse({ readOnly: true }).success, true);
+  assert.equal(canonical.AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true }).success, false);
+}
+
 // Consume archives already installed by the maintained gate. This mode neither builds nor
 // installs another cohort: its legacy alias must be the independently selected registry package.
 async function checkReadOnlyConsumer(consumer) {
@@ -59,9 +71,7 @@ async function checkReadOnlyConsumer(consumer) {
   const legacyRequire = createRequire(legacyEntry);
   assert.equal(realpathSync(legacyRequire.resolve("@tangle-network/agent-interface/environment-provider")),
     realpathSync(canonicalEntry), "legacy Provider must actually resolve the candidate canonical archive");
-  const canonical = await import(pathToFileURL(canonicalEntry).href);
-  assert.equal(canonical.AgentEnvironmentReadOnlyGetOptionsSchema.safeParse({ readOnly: true }).success, true);
-  assert.equal(canonical.AgentEnvironmentGetOptionsSchema.safeParse({ readOnly: true }).success, false);
+  await checkReadOnlyExports(consumer);
   const legacy = await import(pathToFileURL(legacyEntry).href);
   const current = await import(pathToFileURL(consumerRequire.resolve("@tangle-network/agent-provider-tangle")).href);
   const calls = { gets: 0, resumes: 0, turns: 0, guestCapabilities: 0, sessionProbes: 0 };
