@@ -621,7 +621,9 @@ function validateAxisCoverage(
         code: "strict-unsupported",
         message:
           `${request.axis} at ${request.path} is unsupported but the authored ` +
-          "profile cannot safely omit this requested behavior",
+          (request.axis === "proxySecrets"
+            ? "proxy-secret custody cannot be omitted by partial materialization"
+            : "profile did not explicitly set resources.failOnError=false"),
         axis: request.axis,
         path: request.path,
       });

@@ -236,6 +236,7 @@ describe("AgentProfileDiff", () => {
           model: true,
           harness: true,
           seats: true,
+          proxySecrets: true,
           permissions: true,
           tools: true,
           mcp: true,
