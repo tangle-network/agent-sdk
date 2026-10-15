@@ -1,6 +1,7 @@
 import {
   AgentEnvironmentCapabilitiesSchema,
   AgentEnvironmentGetOptionsSchema,
+  AgentEnvironmentReadOnlyGetOptionsSchema,
   ProxySecretParentsSchema,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -455,7 +456,9 @@ export function createTangleProvider(
             if (operation?.contextTransfer !== undefined) {
               throw new Error("Tangle context transfer attachment is not qualified by this receiver deployment");
             }
-            if (operation !== undefined) AgentEnvironmentGetOptionsSchema.parse(operation);
+            if (operation !== undefined) {
+              ("readOnly" in operation ? AgentEnvironmentReadOnlyGetOptionsSchema : AgentEnvironmentGetOptionsSchema).parse(operation);
+            }
             const reconnectBindings = operation?.proxySecrets === undefined ? undefined : captureProxySecrets(operation.proxySecrets);
             if (reconnectBindings === undefined && (operation?.expectedProxySecretGeneration !== undefined || operation?.requireInPlace !== undefined)) {
               throw new Error("Tangle proxy-secret reconnect controls require an explicit declaration");

@@ -141,7 +141,6 @@ export async function sandboxInstanceAsEnvironment(
     }
     assertBoundedJson(box.metadata, "Tangle environment metadata");
   }
-  const support = sandboxCapabilitySupport(box, client, request?.resources);
   const deployment = request?.readOnly === true ? UNPROVEN_DEPLOYMENT
     : request?.captureCapabilities === undefined
       ? await readDeploymentCapabilitySupport(box, operation)
@@ -223,6 +222,7 @@ export async function sandboxInstanceAsEnvironment(
       },
     });
   }
+  const support = sandboxCapabilitySupport(box, client, request?.resources);
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(

@@ -72,7 +72,8 @@ export async function readProxySecretReceipt(
   allowExpired = false,
   control?: { client: SandboxClientLike; parents?: ProxySecretParents; readOnly?: true },
 ): Promise<ProxySecretReceipt> {
-  const document = await awaitWithSignal(box.capabilities?.(), operation?.signal);
+  const document = await awaitWithSignal(control?.readOnly === true
+    ? control.client.capabilities?.() : box.capabilities?.(), operation?.signal);
   requireProxySecretCapability(document, bindings);
   if (box.egress === undefined) throw new Error("Tangle proxy-secret receipt readback is unavailable");
   const state = await awaitWithSignal(box.egress.get(operation), operation?.signal);

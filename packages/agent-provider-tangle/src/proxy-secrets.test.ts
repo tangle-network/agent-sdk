@@ -55,12 +55,25 @@ function setup() {
 }
 
 describe("public provider proxy-secret custody", () => {
+  it("refuses malformed discovery flags before ordinary reconnect or lookup", async () => {
+    const fixture = setup();
+    const get = vi.fn(fixture.client.get);
+    const provider = createTangleProvider({ client: { ...fixture.client, get }, requireNativeSessionCapture: true });
+    for (const readOnly of [false, null, "true"]) {
+      const wireOptions = JSON.parse(JSON.stringify({ readOnly }));
+      await expect(provider.get!("proxy-box", wireOptions)).rejects.toThrow();
+    }
+    await expect(provider.get!("proxy-box", JSON.parse('{"readOnly":true,"contextTransfer":{}}'))).rejects.toThrow();
+    expect(get).not.toHaveBeenCalled();
+    expect(fixture.grants).not.toHaveBeenCalled();
+  });
+
   it("rejects read-only custody mutations before even looking up the sandbox", async () => {
     const fixture = setup();
     const get = vi.fn(fixture.client.get);
     const provider = createTangleProvider({ client: { ...fixture.client, get } });
     for (const controls of [{ proxySecrets: [] }, { proxySecretParents: {} }, { expectedProxySecretGeneration: 1 }, { requireInPlace: true }]) {
-      await expect(provider.get!("proxy-box", { readOnly: true, ...controls })).rejects.toThrow(/read.only/);
+      await expect(provider.get!("proxy-box", { readOnly: true, ...controls })).rejects.toThrow(/read.?only|unrecognized/i);
     }
     expect(get).not.toHaveBeenCalled();
     expect(fixture.grants).not.toHaveBeenCalled();
@@ -73,7 +86,9 @@ describe("public provider proxy-secret custody", () => {
     const refresh = vi.fn(async () => {});
     const update = vi.fn(fixture.box.egress.update);
     const backendStatus = vi.fn(fixture.box.backend.status);
-    Object.assign(fixture.box, { resume, refresh });
+    const guestCapabilities = vi.fn(async () => { throw Object.assign(new Error("stopped sandbox"), { status: 503 }); });
+    const sessionProbe = vi.fn(() => { throw new Error("read-only discovery must not probe a session"); });
+    Object.assign(fixture.box, { resume, refresh, capabilities: guestCapabilities, session: sessionProbe });
     fixture.box.egress.update = update;
     fixture.box.backend.status = backendStatus;
     const getEgress = fixture.box.egress.get;
@@ -95,6 +110,8 @@ describe("public provider proxy-secret custody", () => {
     expect(resume).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
     expect(backendStatus).not.toHaveBeenCalled();
+    expect(guestCapabilities).not.toHaveBeenCalled();
+    expect(sessionProbe).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(fixture.grants).not.toHaveBeenCalled();
     expect(fixture.turns).not.toHaveBeenCalled();
