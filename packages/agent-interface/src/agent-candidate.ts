@@ -5,6 +5,7 @@ import type {
   AgentProfileMode,
   AgentProfileModelHints,
   AgentProfileResourceRef,
+  AgentProfileSecretRef,
   AgentProfileResources,
   AgentSubagentProfile,
   ReasoningEffort,
@@ -100,7 +101,7 @@ export interface AgentCandidatePublicValue {
   value: string;
 }
 
-export type AgentCandidateConfigValue = AgentCandidatePublicValue;
+export type AgentCandidateConfigValue = AgentCandidatePublicValue | AgentProfileSecretRef;
 
 export interface AgentCandidateGitHubRepository {
   kind: "github";
@@ -492,6 +493,8 @@ export interface AgentCandidateProfilePlanMaterial {
     relPath: string;
     mode: number;
     contentSha256: Sha256Digest;
+    /** Public reference placements in the null-valued JSON template; part of plan identity. */
+    secretSlots?: Array<{ path: Array<string | number>; ref: AgentProfileSecretRef }>;
     /** Omit for a workspace-root file; agent-root files must name this root. */
     root?: "agent";
   }>;

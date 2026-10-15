@@ -292,24 +292,33 @@ function isPublicConfigValue(value: string): boolean {
   );
 }
 
-export const agentCandidateConfigValueSchema = z
-  .object({
+/** Shared public reference owner; resolution belongs to the trusted executor. */
+export const agentCandidateSecretRefSchema = z.strictObject({
+  kind: z.literal("secret-ref"),
+  key: z.string().min(1).max(500).refine(
+    (value) => value.trim().length > 0 && isPublicConfigValue(value),
+    "secret reference key must be a public non-credential identity",
+  ),
+  format: z.enum(["raw", "bearer"]).optional(),
+});
+
+export const agentCandidateConfigValueSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
     kind: z.literal("public"),
-    value: z
-      .string()
-      .refine(
-        isPublicConfigValue,
-        "candidate config cannot carry credentials; the evaluator owns model authorization",
-      ),
-  })
-  .strict() satisfies z.ZodType<AgentCandidateConfigValue>;
+    value: z.string().refine(
+      isPublicConfigValue,
+      "candidate config cannot carry credentials; the evaluator owns model authorization",
+    ),
+  }),
+  agentCandidateSecretRefSchema,
+]) satisfies z.ZodType<AgentCandidateConfigValue>;
 
 function configRecordSchema(keySchema: z.ZodString) {
   return z
     .record(keySchema, agentCandidateConfigValueSchema)
     .superRefine((config, ctx) => {
       for (const name of Object.keys(config)) {
-        if (secretNamePattern.test(name)) {
+        if (secretNamePattern.test(name) && config[name]?.kind !== "secret-ref") {
           ctx.addIssue({
             code: "custom",
             path: [name],

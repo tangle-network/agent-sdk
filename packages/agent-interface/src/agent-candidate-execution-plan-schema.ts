@@ -33,6 +33,7 @@ import { reasoningEffortSchema } from "./profile-schema.js";
 import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
+  agentCandidateSecretRefSchema,
   agentCandidateMediaTypeSchema,
   environmentConfigSchema,
   gitObjectSchema,
@@ -189,6 +190,13 @@ export const agentCandidateProfilePlanMaterialSchema = z
             ),
           mode: z.number().int().min(0).max(0o777),
           contentSha256: sha256DigestSchema,
+          secretSlots: z.array(z.strictObject({
+            path: z.array(z.union([
+              z.string().refine((value) => !["__proto__", "prototype", "constructor"].includes(value)),
+              z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+            ])),
+            ref: agentCandidateSecretRefSchema,
+          })).optional(),
           root: z.literal("agent").optional(),
         })
         .strict(),
@@ -213,6 +221,18 @@ export const agentCandidateProfilePlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
+    material.files.forEach((file, fileIndex) => {
+      const slots = file.secretSlots ?? [];
+      slots.forEach((slot, slotIndex) => {
+        if (slots.slice(0, slotIndex).some((previous) => {
+          const common = Math.min(previous.path.length, slot.path.length);
+          return previous.path.slice(0, common).every((segment, index) => segment === slot.path[index]);
+        })) {
+          ctx.addIssue({ code: "custom", path: ["files", fileIndex, "secretSlots", slotIndex],
+            message: "secret slot paths cannot duplicate or overlap" });
+        }
+      });
+    });
     const fileIdentities = material.files.map(profilePlanFileIdentity);
     addDuplicateIssues(
       fileIdentities,

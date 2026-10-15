@@ -1,3 +1,4 @@
+import { agentCandidateSecretRefSchema } from "./agent-candidate-schema-common.js";
 import { z } from "zod";
 import { ProxySecretsSchema } from "./proxy-secrets.js";
 import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
@@ -255,29 +256,13 @@ const publicProfileConfigStringSchema = z
     "public profile config cannot carry credential-like material",
   );
 
-const secretReferenceKeySchema = z
-  .string()
-  .min(1)
-  .max(500)
-  .refine(
-    (value) =>
-      value.trim().length > 0 &&
-      isWellFormedUnicode(value) &&
-      !controlCharacterPattern.test(value) &&
-      !looksLikeCredential(value),
-    "secret reference key must be a public non-credential identity",
-  );
 
 export const agentProfilePublicConfigValueSchema = z.strictObject({
   kind: z.literal("public"),
   value: publicProfileConfigStringSchema,
 });
 
-export const agentProfileSecretRefSchema = z.strictObject({
-  kind: z.literal("secret-ref"),
-  key: secretReferenceKeySchema,
-  format: z.enum(["raw", "bearer"]).optional(),
-});
+export const agentProfileSecretRefSchema = agentCandidateSecretRefSchema;
 
 export const agentProfileConfigValueSchema = z.discriminatedUnion("kind", [
   agentProfilePublicConfigValueSchema,

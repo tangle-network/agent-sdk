@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentCandidateSecretRefSchema } from "./agent-candidate-schema-common.js";
 import { boundedIdentifierSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 
 /**
@@ -49,9 +50,10 @@ export const ProxySecretScopeSchema = z.strictObject({
   hosts: list(hostSchema), methods: list(methodSchema).optional(), paths: list(pathSchema).optional(),
 });
 export type ProxySecretScope = z.infer<typeof ProxySecretScopeSchema>;
+const comparableScopeSchema = ProxySecretScopeSchema.strip();
 export const ProxySecretBindingSchema = ProxySecretScopeSchema.extend({
   envName: envNameSchema,
-  secretRef: z.strictObject({ kind: z.literal("secret-ref"), key: boundedIdentifierSchema }),
+  secretRef: agentCandidateSecretRefSchema.omit({ format: true }),
   presentation: ProxySecretPresentationSchema,
   placeholderFormat: z.enum(["opaque", "jwt"]).optional(),
   ttlSeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -71,13 +73,13 @@ export const ProxySecretGrantSchema = z.strictObject({
   identity: ProxySecretResolvedIdentitySchema, scope: ProxySecretScopeSchema,
   presentation: ProxySecretPresentationSchema, placeholderFormat: z.enum(["opaque", "jwt"]),
   issuedAt: timestamp, expiresAt: timestamp, sourceExpiresAt: timestamp.optional(), parentGrantId: boundedIdentifierSchema.optional(),
-}).refine((grant) => Date.parse(grant.expiresAt) > Date.parse(grant.issuedAt) &&
+}).refine((grant) => grant.parentGrantId !== grant.grantId && Date.parse(grant.expiresAt) > Date.parse(grant.issuedAt) &&
   (grant.sourceExpiresAt === undefined || Date.parse(grant.expiresAt) <= Date.parse(grant.sourceExpiresAt)), "grant expiry must follow issuance");
 export type ProxySecretGrant = z.infer<typeof ProxySecretGrantSchema>;
 const receiptShape = {
   protocolVersion: z.literal(1), sandboxId: boundedIdentifierSchema,
   generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  bindings: z.array(z.strictObject({ envName: envNameSchema, secretRef: z.strictObject({ kind: z.literal("secret-ref"), key: boundedIdentifierSchema }), grant: ProxySecretGrantSchema })).max(CONTRACT_MAX_ARRAY_LENGTH),
+  bindings: z.array(z.strictObject({ envName: envNameSchema, secretRef: agentCandidateSecretRefSchema.omit({ format: true }), grant: ProxySecretGrantSchema })).max(CONTRACT_MAX_ARRAY_LENGTH),
   proxyAcknowledged: z.literal(true),
 };
 /** proxy-installed is a phase-two input, never dispatch authority. Only installed acknowledges
@@ -128,13 +130,34 @@ export function isProxySecretGrantAttenuation(parent: ProxySecretGrant, child: P
   const from = p.data, to = c.data;
   return to.parentGrantId === from.grantId &&
     Object.keys(from.identity).every((key) => from.identity[key as keyof ProxySecretResolvedIdentity] === to.identity[key as keyof ProxySecretResolvedIdentity]) &&
-    samePresentation(from.presentation, to.presentation) && from.placeholderFormat === to.placeholderFormat &&
+    proxySecretPresentationsEqual(from.presentation, to.presentation) && from.placeholderFormat === to.placeholderFormat &&
     Date.parse(to.issuedAt) >= Date.parse(from.issuedAt) && Date.parse(to.expiresAt) <= Date.parse(from.expiresAt) &&
-    subset(from.scope.hosts, to.scope.hosts) && subset(from.scope.methods, to.scope.methods) &&
-    (from.scope.paths === undefined || (to.scope.paths !== undefined && to.scope.paths.every((path) =>
-      from.scope.paths!.some((allowed) => allowed === path || (allowed.endsWith("/*") && path.startsWith(allowed.slice(0, -1)))))));
+    isProxySecretScopeAttenuation(from.scope, to.scope);
 }
-function samePresentation(left: ProxySecretPresentation, right: ProxySecretPresentation): boolean {
+
+/** Early declaration guard only: matching public refs do not establish resolved authority. */
+export function isProxySecretBindingAttenuation(parent: ProxySecretBinding, child: ProxySecretBinding): boolean {
+  const p = ProxySecretBindingSchema.safeParse(parent), c = ProxySecretBindingSchema.safeParse(child);
+  if (!p.success || !c.success) return false;
+  const from = p.data, to = c.data;
+  return from.secretRef.key === to.secretRef.key &&
+    proxySecretPresentationsEqual(from.presentation, to.presentation) &&
+    (from.placeholderFormat ?? "opaque") === (to.placeholderFormat ?? "opaque") &&
+    (from.ttlSeconds === undefined || (to.ttlSeconds !== undefined && to.ttlSeconds <= from.ttlSeconds)) &&
+    isProxySecretScopeAttenuation(from, to);
+}
+
+/** Omitted methods/paths mean all; a bounded parent cannot be widened by omission. */
+export function isProxySecretScopeAttenuation(parent: ProxySecretScope, child: ProxySecretScope): boolean {
+  const p = comparableScopeSchema.safeParse(parent), c = comparableScopeSchema.safeParse(child);
+  if (!p.success || !c.success) return false;
+  return subset(p.data.hosts, c.data.hosts) && subset(p.data.methods, c.data.methods) &&
+    (p.data.paths === undefined || (c.data.paths !== undefined && c.data.paths.every((path) =>
+      p.data.paths!.some((allowed) => allowed === path || (allowed.endsWith("/*") && path.startsWith(allowed.slice(0, -1)))))));
+}
+
+/** Header selectors compare case-insensitively; query selectors and Basic usernames are exact. */
+export function proxySecretPresentationsEqual(left: ProxySecretPresentation, right: ProxySecretPresentation): boolean {
   if (left.type !== right.type) return false;
   if (left.type === "header" && right.type === "header") return left.name.toLowerCase() === right.name.toLowerCase();
   if (left.type === "query" && right.type === "query") return left.name === right.name;
