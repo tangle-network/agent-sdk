@@ -1,6 +1,6 @@
 import {
   ProxySecretCapabilitiesSchema, ProxySecretReceiptSchema, ProxySecretsSchema,
-  isProxySecretScopeAttenuation, proxySecretPresentationsEqual,
+  isProxySecretScopeAttenuation, proxySecretPresentationsEqual, mergeProxySecretBindings,
   type AgentEnvironmentGetOptions, type CreateAgentEnvironmentInput, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
@@ -25,16 +25,8 @@ export function mergeProxySecrets(
   requested: ProxySecretBinding[] | undefined,
   selected: ProxySecretBinding[] | undefined,
 ): ProxySecretBinding[] | undefined {
-  if (selected === undefined) return requested;
-  const merged = new Map((requested ?? []).map((binding) => [binding.envName, binding]));
-  for (const binding of selected) {
-    const existing = merged.get(binding.envName);
-    if (existing !== undefined && canonicalCandidateDigest(existing) !== canonicalCandidateDigest(binding)) {
-      throw new Error("Tangle selected and requested proxy-secret declarations disagree");
-    }
-    merged.set(binding.envName, binding);
-  }
-  return captureProxySecrets([...merged.values()]);
+  return requested === undefined && selected === undefined
+    ? undefined : deepFreeze(mergeProxySecretBindings(requested, selected));
 }
 
 export function assertProxySecretAliases(

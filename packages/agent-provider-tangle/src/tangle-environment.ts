@@ -142,7 +142,13 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = request?.captureCapabilities === undefined
     ? await readDeploymentCapabilitySupport(box, operation)
     : deploymentCapabilitySupport(request.captureCapabilities);
-  const liveEgress = box.egress === undefined ? undefined : await awaitWithSignal(box.egress.get(operation), operation?.signal);
+  const modelRecord = box.metadata?.modelCredentials;
+  const readLiveProxyState = request?.proxySecrets !== undefined ||
+    box.metadata?.[PROXY_SECRETS_METADATA_KEY] !== undefined ||
+    (modelRecord !== null && typeof modelRecord === "object" && "proxySecrets" in modelRecord) ||
+    typeof client.capabilities === "function";
+  const liveEgress = !readLiveProxyState || box.egress === undefined ? undefined
+    : await awaitWithSignal(box.egress.get(operation), operation?.signal);
   const authoritativeProxySecrets = liveEgress !== null && typeof liveEgress === "object" &&
     "proxySecrets" in liveEgress && liveEgress.proxySecrets !== undefined
     ? captureProxySecrets(liveEgress.proxySecrets) : undefined;
