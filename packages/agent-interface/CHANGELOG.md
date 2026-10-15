@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.4.0
+
+### Minor Changes
+
+- 56a6e4a: Export host-only total proxy-secret parent selection, API delegation marker validation and create/reconnect/readback types without changing portable declarations or profiles.
+
 ## 5.3.1
 
 ### Patch Changes
