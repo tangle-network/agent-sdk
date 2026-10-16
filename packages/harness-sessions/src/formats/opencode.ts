@@ -16,7 +16,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { SessionBuilder, count, isRecord, isoTime, sessionError, str, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionError, SessionRef, TokenUsage } from '../schema.js'
 import { isMissing, withSqlite } from '../source.js'
-import { EVIDENCE, STORES, mtimeMs } from '../stores.js'
+import { EVIDENCE, STORES, mtimeMs, withinPath } from '../stores.js'
 
 const FORMAT = 'opencode.sqlite' as const
 const STORE = STORES[FORMAT]
@@ -226,7 +226,7 @@ export async function opencodeSessionsInStore(path: string, home: string | null,
     const rows = db.prepare('SELECT id, parent_id, directory, time_updated FROM session ORDER BY time_updated DESC').all() as Array<{ id: string; parent_id: string | null; directory: string; time_updated: number }>
     return rows
       .filter((row) => (!opts.nativeSessionId || row.id === opts.nativeSessionId)
-        && (!opts.cwd || row.directory.startsWith(opts.cwd))
+        && (!opts.cwd || withinPath(row.directory, opts.cwd))
         && (!opts.sinceMs || row.time_updated >= opts.sinceMs))
       .map((row) => ({ harness: HARNESS, format: FORMAT, nativeSessionId: row.id, path, files, home, cwd: row.directory, mtimeMs: row.time_updated || mtime, parentNativeSessionId: row.parent_id }))
   })

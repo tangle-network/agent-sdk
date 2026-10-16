@@ -30,7 +30,8 @@ export type {
   TokenUsage,
 } from './schema.js'
 export { HARNESS_SESSION_SCHEMA } from './schema.js'
-export { EVIDENCE, SESSION_FORMAT_IDS, STORES, assertStoreRoot, storeGlob } from './catalog.js'
+export { CODEX_HOME_RULE, EVIDENCE, SESSION_FORMAT_IDS, STORES, assertStoreRoot, isCodexHome, storeGlob, withinPath } from './catalog.js'
+export { codexHomes } from './stores.js'
 export { knownHarnesses, listReaders, maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 export { claudeCodeReader, claudeCodeRefForFile } from './formats/claude-code.js'
 export { claudeRecordIsMachine, claudeTypedPromptText, type ClaudeRecordFacts } from './formats/claude-records.js'

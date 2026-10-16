@@ -13,7 +13,7 @@ import { basename, join } from 'node:path'
 import { SessionBuilder, count, isRecord, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
+import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { runFold, type SessionFold } from './fold.js'
 import { headRecord } from './head.js'
 
@@ -131,7 +131,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
       const head = await headRecord(ref.path, (r) => r.type === 'session_start', 1)
       const cwd = head ? str(head.cwd) : null
       ref.cwd = cwd
-      if (!cwd || !cwd.startsWith(opts.cwd)) continue
+      if (!cwd || !withinPath(cwd, opts.cwd)) continue
     }
     filtered.push(ref)
   }

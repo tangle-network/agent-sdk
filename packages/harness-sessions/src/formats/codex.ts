@@ -22,10 +22,11 @@ import {
   type BuildMode,
 } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
+import { CODEX_HOME_RULE, EVIDENCE, STORES, codexHomes, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const FORMAT = 'codex.rollout-jsonl' as const
@@ -309,35 +310,88 @@ function httpStatusOf(payload: Record<string, unknown>): number | null {
   return null
 }
 
-async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
-  const root = join(home, STORE.root)
-  const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
-  const refs: SessionRef[] = []
-  for (const rel of await walkFiles(root)) {
-    if (!pattern.test(rel)) continue
-    const path = join(root, rel)
-    const mtime = await mtimeMs(path)
-    if (opts.sinceMs && mtime < opts.sinceMs) continue
+const ROLLOUT = storeGlob(CODEX_HOME_RULE.rollout)
+const UUID_V7 = /^([0-9a-f]{8})-([0-9a-f]{4})-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+
+/** Every rollout file, live and archived, in every Codex home under `home`. */
+async function rollouts(home: string): Promise<string[]> {
+  const files: string[] = []
+  for (const codexHome of await codexHomes(home)) {
+    for (const dir of CODEX_HOME_RULE.sessionDirs) {
+      const root = join(codexHome, dir)
+      for (const rel of await walkFiles(root)) if (ROLLOUT.test(basename(rel))) files.push(join(root, rel))
+    }
+  }
+  return files
+}
+
+/** A UUIDv7's creation time: a session's rollout is written at or after its thread id is made. */
+function uuidV7Ms(id: string): number {
+  const match = UUID_V7.exec(id)
+  return match ? Number.parseInt(`${match[1]}${match[2]}`, 16) : 0
+}
+
+/** A ref for each of `files` that passes the filters, from its `session_meta`, with the file's bytes. */
+async function refsOf(files: readonly string[], home: string, opts: LocateOptions): Promise<Array<{ ref: SessionRef; bytes: number }>> {
+  const found: Array<{ ref: SessionRef; bytes: number }> = []
+  for (const path of files) {
+    let info
+    try {
+      info = await stat(path)
+    } catch (error) {
+      if (isMissing(error)) continue
+      throw error
+    }
+    if (opts.sinceMs && info.mtimeMs < opts.sinceMs) continue
     const meta = await headRecord(path, (r) => r.type === 'session_meta', 4)
     const payload = meta && isRecord(meta.payload) ? meta.payload : {}
     const cwd = str(payload.cwd)
-    if (opts.cwd && (cwd === null || !cwd.startsWith(opts.cwd))) continue
-    const id = str(payload.id) ?? ID_IN_NAME.exec(rel)?.[1] ?? basename(rel, '.jsonl')
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
     const source = isRecord(payload.source) ? payload.source : {}
     const spawn = isRecord(source.subagent) && isRecord(source.subagent.thread_spawn) ? source.subagent.thread_spawn : {}
-    refs.push({
-      harness: HARNESS,
-      format: FORMAT,
-      nativeSessionId: id,
-      path,
-      files: [path],
-      home,
-      cwd,
-      mtimeMs: mtime,
-      parentNativeSessionId: str(payload.parent_thread_id) ?? str(spawn.parent_thread_id),
+    found.push({
+      bytes: info.size,
+      ref: {
+        harness: HARNESS,
+        format: FORMAT,
+        nativeSessionId: str(payload.id) ?? ID_IN_NAME.exec(path)?.[1] ?? basename(path, '.jsonl'),
+        path,
+        files: [path],
+        home,
+        cwd,
+        mtimeMs: info.mtimeMs,
+        parentNativeSessionId: str(payload.parent_thread_id) ?? str(spawn.parent_thread_id),
+      },
     })
   }
-  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  return found
+}
+
+/**
+ * Sessions in every Codex home under `home`. A lookup by id takes the rollout named for it; when no
+ * name carries the id, it reads the `session_meta` of each rollout written since the id was made.
+ * A session copied into several homes (`acct move`) is one ref, its largest copy, which holds
+ * every record.
+ */
+async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
+  const files = await rollouts(home)
+  const id = opts.nativeSessionId
+  let found: Array<{ ref: SessionRef; bytes: number }>
+  if (id === undefined) {
+    found = await refsOf(files, home, opts)
+  } else {
+    const named = storeGlob(CODEX_HOME_RULE.named, id)
+    const byName = files.filter((path) => named.test(basename(path)))
+    found = byName.length > 0
+      ? await refsOf(byName, home, opts)
+      : (await refsOf(files, home, { ...opts, sinceMs: Math.max(opts.sinceMs ?? 0, uuidV7Ms(id)) })).filter((r) => r.ref.nativeSessionId === id)
+  }
+  const largest = new Map<string, { ref: SessionRef; bytes: number }>()
+  for (const copy of found) {
+    const kept = largest.get(copy.ref.nativeSessionId)
+    if (!kept || copy.bytes > kept.bytes || (copy.bytes === kept.bytes && copy.ref.mtimeMs > kept.ref.mtimeMs)) largest.set(copy.ref.nativeSessionId, copy)
+  }
+  return [...largest.values()].map((c) => c.ref).sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
 export const codexReader: HarnessSessionReader = {
