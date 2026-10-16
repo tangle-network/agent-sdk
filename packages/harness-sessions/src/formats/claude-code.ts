@@ -13,7 +13,7 @@ import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
+import { EVIDENCE, LOCATE_READS, STORES, mapLimit, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { claudeRecordIsMachine, claudeTypedPromptText } from './claude-records.js'
 
@@ -245,24 +245,23 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
     const key = `${project}/${id}`
     subagentsBySession.set(key, [...(subagentsBySession.get(key) ?? []), join(root, rel)])
   }
-  const refs: SessionRef[] = []
-  for (const rel of all) {
-    if (!main.test(rel)) continue
+  const sessions = await mapLimit(all.filter((rel) => main.test(rel)), LOCATE_READS, async (rel): Promise<SessionRef[]> => {
     const path = join(root, rel)
     const id = basename(rel, '.jsonl')
     const mtime = await mtimeMs(path)
-    if (opts.sinceMs && mtime < opts.sinceMs) continue
+    if (opts.sinceMs && mtime < opts.sinceMs) return []
     const head = await headRecord(path, (r) => typeof r.cwd === 'string')
     const cwd = head ? str(head.cwd) : null
-    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) return []
     const subagents = subagentsBySession.get(`${rel.split('/')[0]}/${id}`) ?? []
-    refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path, ...subagents], home, cwd, mtimeMs: mtime, parentNativeSessionId: null })
+    const refs: SessionRef[] = [{ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path, ...subagents], home, cwd, mtimeMs: mtime, parentNativeSessionId: null }]
     for (const file of subagents) {
       const agentId = basename(file, '.jsonl').replace(/^agent-/u, '')
       refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: agentId, path: file, files: [file], home, cwd, mtimeMs: await mtimeMs(file), parentNativeSessionId: id })
     }
-  }
-  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
+    return refs
+  })
+  return sessions.flat().sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
 export const claudeCodeReader: HarnessSessionReader = {

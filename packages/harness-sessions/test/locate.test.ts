@@ -152,6 +152,29 @@ describe('Claude Code', () => {
   })
 })
 
+describe('a session head longer than one read step', () => {
+  // Locate reads each file's head in 64 KB steps. A first record of several steps, made of
+  // characters 4, 2 and 3 UTF-8 bytes long so that step boundaries fall inside them, parses whole.
+  const wide = '𝄞é✓'.repeat(40_000)
+
+  it('reads a Claude Code cwd after a first record of several steps', async () => {
+    const home = scratch()
+    const head = JSON.stringify({ type: 'summary', summary: wide, leafUuid: 'l1' })
+    write(join(home, '.claude', 'projects', '-h-x-wide', 'c1.jsonl'), `${head}\n${CLAUDE.replaceAll(RECORDED_CWD, `"cwd":"${home}/x/wide"`)}`, '2026-10-15T09:00:00.000Z')
+    const refs = await claudeCodeReader.locate(home)
+    expect(refs.map((r) => [r.nativeSessionId, r.cwd])).toEqual([['c1', `${home}/x/wide`]])
+  })
+
+  it('reads a Codex session_meta of several steps, and a last record with no newline', async () => {
+    const home = scratch()
+    const at = '2026-10-15T09:00:00.000Z'
+    const id = threadId(at, 11)
+    const meta = JSON.stringify({ timestamp: at, type: 'session_meta', payload: { id, cwd: '/w/wide', base_instructions: { text: wide } } })
+    write(day(home, '.codex', id, at), meta, '2026-10-15T09:10:00.000Z')
+    expect((await codexReader.locate(home)).map((r) => [r.nativeSessionId, r.cwd])).toEqual([[id, '/w/wide']])
+  })
+})
+
 describe('path rules', () => {
   it('withinPath is equality or a path-boundary prefix', () => {
     expect([

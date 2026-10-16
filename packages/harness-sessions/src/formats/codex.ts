@@ -24,7 +24,7 @@ import {
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
-import { CODEX_HOME_RULE, EVIDENCE, STORES, codexHomes, storeGlob, walkFiles, withinPath } from '../stores.js'
+import { CODEX_HOME_RULE, EVIDENCE, LOCATE_READS, STORES, codexHomes, mapLimit, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -333,23 +333,22 @@ function uuidV7Ms(id: string): number {
 
 /** A ref for each of `files` that passes the filters, from its `session_meta`, with the file's bytes. */
 async function refsOf(files: readonly string[], home: string, opts: LocateOptions): Promise<Array<{ ref: SessionRef; bytes: number }>> {
-  const found: Array<{ ref: SessionRef; bytes: number }> = []
-  for (const path of files) {
+  const found = await mapLimit(files, LOCATE_READS, async (path): Promise<{ ref: SessionRef; bytes: number } | null> => {
     let info
     try {
       info = await stat(path)
     } catch (error) {
-      if (isMissing(error)) continue
+      if (isMissing(error)) return null
       throw error
     }
-    if (opts.sinceMs && info.mtimeMs < opts.sinceMs) continue
+    if (opts.sinceMs && info.mtimeMs < opts.sinceMs) return null
     const meta = await headRecord(path, (r) => r.type === 'session_meta', 4)
     const payload = meta && isRecord(meta.payload) ? meta.payload : {}
     const cwd = str(payload.cwd)
-    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) return null
     const source = isRecord(payload.source) ? payload.source : {}
     const spawn = isRecord(source.subagent) && isRecord(source.subagent.thread_spawn) ? source.subagent.thread_spawn : {}
-    found.push({
+    return {
       bytes: info.size,
       ref: {
         harness: HARNESS,
@@ -362,9 +361,9 @@ async function refsOf(files: readonly string[], home: string, opts: LocateOption
         mtimeMs: info.mtimeMs,
         parentNativeSessionId: str(payload.parent_thread_id) ?? str(spawn.parent_thread_id),
       },
-    })
-  }
-  return found
+    }
+  })
+  return found.filter((entry): entry is { ref: SessionRef; bytes: number } => entry !== null)
 }
 
 /**
