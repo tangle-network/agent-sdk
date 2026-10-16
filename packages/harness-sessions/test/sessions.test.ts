@@ -188,14 +188,13 @@ describe('a session read in parts', () => {
       { timestamp: '2026-10-16T10:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'First.' }] } },
       { timestamp: '2026-10-16T10:00:02.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Second.' }] } },
     ]
-    const users = (records: Parameters<typeof readSessionInput>[1]): string[] =>
-      readSessionInput('codex', records, { nativeSessionId: id, ...('records' in records && records.records.length === 1 ? { firstLine: 3 } : {}) })
+    const users = (input: Parameters<typeof readSessionInput>[1], firstLine?: number): string[] =>
+      readSessionInput('codex', input, { nativeSessionId: id, ...(firstLine === undefined ? {} : { firstLine }) })
         .messages.filter((message) => message.role === 'user').map((message) => message.id)
     const whole = users({ text: `${rows.map((row) => JSON.stringify(row)).join('\n')}\n` })
     expect(whole).toHaveLength(2)
-    // The last line alone, as text and as parsed records, starting on line 3.
-    expect(readSessionInput('codex', { text: `${JSON.stringify(rows[2])}\n` }, { nativeSessionId: id, firstLine: 3 })
-      .messages.filter((message) => message.role === 'user').map((message) => message.id)).toEqual([whole[1]])
-    expect(users({ records: [rows[2]] })).toEqual([whole[1]])
+    // The last line alone, as text and as parsed records, read as starting on line 3.
+    expect(users({ text: `${JSON.stringify(rows[2])}\n` }, 3)).toEqual([whole[1]])
+    expect(users({ records: [rows[2]] }, 3)).toEqual([whole[1]])
   })
 })
