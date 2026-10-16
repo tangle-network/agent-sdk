@@ -6,14 +6,16 @@
  * `data` blob: role, the provider and model the message was sent to, tokens, cost, finish and the
  * error that ended it. `part` rows carry the content: `text`, `reasoning`, `tool` (the call and
  * its result in one row), `step-start` and `step-finish` (one model response, with its tokens and
- * cost), `retry` (a failed attempt) and bookkeeping parts. The store is read from a private copy,
- * never in place: opening it can checkpoint the write-ahead log of a store a capture is keeping.
+ * cost), `retry` (a failed attempt) and bookkeeping parts. The store is opened read-only where it
+ * lies, so a read sees the rows a running OpenCode has committed to its write-ahead log and never
+ * writes the store, its log or a copy of it.
  */
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { SessionBuilder, count, isRecord, isoTime, sessionError, str, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionError, SessionRef, TokenUsage } from '../schema.js'
-import { isMissing, withSqliteCopy } from '../source.js'
+import { isMissing, withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs } from '../stores.js'
 
 const FORMAT = 'opencode.sqlite' as const
@@ -67,12 +69,23 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
   builder.parentNativeSessionId = session.parent_id ?? null
   builder.seen(session.time_created)
 
+  // The session's source is the rows this fold reads, not the whole store: a digest of the store
+  // file would read every other session in it and change whenever any of them did.
+  const digest = createHash('sha256').update(JSON.stringify(session))
+  let bytes = 0
+  const note = (row: Row): void => {
+    const data = String(row.data)
+    digest.update(`\n${row.id}\t${row.time_created}\t`).update(data)
+    bytes += Buffer.byteLength(data)
+  }
+
   const messages = db.prepare('SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id').all(ref.nativeSessionId) as unknown as Row[]
   const partsOf = db.prepare('SELECT id, time_created, data FROM part WHERE message_id = ? ORDER BY id')
   let unparsed = 0
   let aborted: { at: string | null; error: SessionError | null } | null = null
 
   for (const row of messages) {
+    note(row)
     const data = parse(row.data)
     if (data === null) {
       unparsed += 1
@@ -83,6 +96,7 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
     builder.seen(time.completed)
     const parts: Array<{ id: string; data: Record<string, unknown> }> = []
     for (const partRow of partsOf.iterate(row.id) as Iterable<Row>) {
+      note(partRow)
       const part = parse(partRow.data)
       if (part === null) unparsed += 1
       else parts.push({ id: partRow.id, data: part })
@@ -185,8 +199,11 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
   }
 
   const children = db.prepare('SELECT id FROM session WHERE parent_id = ? ORDER BY time_created, id').all(ref.nativeSessionId) as Array<{ id: string }>
-  for (const child of children) builder.child(child.id, null)
-  if (unparsed > 0) builder.source({ path: `${ref.path}#session=${ref.nativeSessionId}`, sha256: '', bytes: 0, unparsed })
+  for (const child of children) {
+    digest.update(`\n${child.id}`)
+    builder.child(child.id, null)
+  }
+  builder.source({ path: `${ref.path}#session=${ref.nativeSessionId}`, sha256: `sha256:${digest.digest('hex')}`, bytes, unparsed })
   const last = builder.modelCalls[builder.modelCalls.length - 1]
   if (aborted && last?.error?.kind === 'MessageAbortedError') last.error = null
   builder.inferEnding(aborted ?? undefined)
@@ -195,20 +212,17 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
 async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Promise<SessionBuilder> {
   options.signal?.throwIfAborted()
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  await withSqliteCopy(ref.path, (db, sources) => {
-    for (const source of sources) builder.source(source)
-    foldSession(db, ref, mode, builder)
-  })
+  await withSqlite(ref.path, (db) => foldSession(db, ref, mode, builder))
   if (ref.truncated) builder.markTruncated(`${ref.path}: the store copy was cut short`)
   return builder
 }
 
-/** Every session in one store file, without opening the live store. */
+/** Every session in one store file, read in place without writing it. */
 export async function opencodeSessionsInStore(path: string, home: string | null, opts: LocateOptions = {}): Promise<SessionRef[]> {
   const mtime = await mtimeMs(path)
   const files = [path]
   for (const suffix of ['-wal', '-shm']) if ((await mtimeMs(`${path}${suffix}`)) > 0) files.push(`${path}${suffix}`)
-  return withSqliteCopy(path, (db) => {
+  return withSqlite(path, (db) => {
     const rows = db.prepare('SELECT id, parent_id, directory, time_updated FROM session ORDER BY time_updated DESC').all() as Array<{ id: string; parent_id: string | null; directory: string; time_updated: number }>
     return rows
       .filter((row) => (!opts.nativeSessionId || row.id === opts.nativeSessionId)

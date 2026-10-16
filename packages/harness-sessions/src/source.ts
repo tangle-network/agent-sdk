@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
+import { pathToFileURL } from 'node:url'
 
 /** What one source file contributed to a read: its identity and what could not be parsed. */
 export interface SourceStats {
@@ -182,17 +183,6 @@ export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats
   }
 }
 
-/** Hash a file without parsing it. */
-export async function hashFile(path: string): Promise<{ sha256: string; bytes: number }> {
-  const hash = createHash('sha256')
-  let bytes = 0
-  for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
-    hash.update(chunk)
-    bytes += chunk.length
-  }
-  return { sha256: `sha256:${hash.digest('hex')}`, bytes }
-}
-
 // `node:sqlite` is loaded through `createRequire`: bundlers rewrite a dynamic `import()` of a
 // `node:` builtin under some targets, and a require obtained this way is not analyzable by them.
 function loadSqlite(): typeof import('node:sqlite') {
@@ -200,16 +190,75 @@ function loadSqlite(): typeof import('node:sqlite') {
   return nodeRequire('node:sqlite') as typeof import('node:sqlite')
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (isMissing(error)) return false
+    throw error
+  }
+}
+
+/**
+ * Open a SQLite store read-only where it lies. A store with a write-ahead log beside it is opened
+ * `mode=ro`: SQLite reads the log's committed tail and coordinates with a live writer through the
+ * store's shared-memory index (`-shm`), and never writes the store or its log or checkpoints it. A
+ * store without a log is opened `immutable=1`: no connection holds it open, the file holds every
+ * committed row, and SQLite creates no `-wal` or `-shm` beside it. Throws when the store is missing
+ * (`ENOENT`) or SQLite cannot read it in place.
+ */
+async function openSqlite(path: string): Promise<DatabaseSync> {
+  await stat(path)
+  const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
+  const { DatabaseSync } = loadSqlite()
+  // `readOnly` as well: a Node that treated the URI as a file name would fail to open, not create it.
+  const db = new DatabaseSync(`${pathToFileURL(path).href}?${mode}`, { readOnly: true })
+  try {
+    db.exec('PRAGMA busy_timeout = 5000')
+    // The first read opens the log and its index, so a store SQLite cannot read in place fails here.
+    db.prepare('PRAGMA schema_version').get()
+    return db
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+/** SQLite's primary result code `SQLITE_CANTOPEN`, which `node:sqlite` errors carry in `errcode`. */
+function cannotOpen(error: unknown): boolean {
+  const code = (error as { errcode?: unknown } | undefined)?.errcode
+  return typeof code === 'number' && (code & 0xff) === 14
+}
+
+/**
+ * Run `use` against a SQLite store opened read-only in place ({@link openSqlite}). A store SQLite
+ * cannot open in place is read from a private copy instead: a write-ahead log with no `-shm` in a
+ * directory SQLite cannot write (a capture on read-only storage), or a Node whose `node:sqlite`
+ * does not accept URI file names (before 22.15).
+ */
+export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
+  const db = await openSqlite(path).catch((error: unknown) => {
+    if (cannotOpen(error)) return null
+    throw error
+  })
+  if (db === null) return withSqliteCopy(path, use)
+  try {
+    return use(db)
+  } finally {
+    db.close()
+  }
+}
+
 interface StoreCopy {
   key: string
   dir: string
   db: DatabaseSync
-  sources: Array<{ path: string; sha256: string; bytes: number }>
 }
 
-// One private copy is kept per process: reading every session of one store (a 4 GB opencode.db
-// holding 26 sessions) copies it once, not once per session. It is replaced when a different
-// store, or a store that changed, is read, and removed when the process exits.
+// One private copy is kept per process: reading every session of a store SQLite cannot open in
+// place copies it once, not once per session. It is replaced when a different store, or a store
+// that changed, is read, and removed when the process exits.
 let current: StoreCopy | null = null
 
 function dropCopy(): void {
@@ -239,47 +288,32 @@ async function storeKey(path: string): Promise<string> {
 }
 
 /**
- * Run `use` against a private copy of a SQLite store. Opening a live store can checkpoint its
- * write-ahead log and change the bytes a capture is keeping, so the store and its -wal and -shm
- * siblings are copied first and only the copy is opened. `use` is synchronous so no other read can
- * replace the copy while it runs.
+ * Run `use` against a private copy of a SQLite store: the store and its `-wal` and `-shm` siblings
+ * are copied and only the copy is opened, writable, so SQLite replays the copied log into it. `use`
+ * is synchronous so no other read can replace the copy while it runs.
  */
-export async function withSqliteCopy<T>(
-  path: string,
-  use: (db: DatabaseSync, sources: Array<{ path: string; sha256: string; bytes: number }>) => T,
-): Promise<T> {
+async function withSqliteCopy<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
   const key = await storeKey(path)
   if (current?.key !== key) {
     const { DatabaseSync } = loadSqlite()
     const dir = await mkdtemp(join(tmpdir(), 'harness-sessions-sqlite-'))
     try {
-      const sources: Array<{ path: string; sha256: string; bytes: number }> = []
       for (const suffix of ['', '-wal', '-shm']) {
-        const copy = join(dir, `store.db${suffix}`)
         try {
-          await copyFile(`${path}${suffix}`, copy)
+          await copyFile(`${path}${suffix}`, join(dir, `store.db${suffix}`))
         } catch (error) {
           if (suffix === '' || !isMissing(error)) throw error
-          continue
         }
-        // The shared-memory index is rebuilt from the WAL; only the store and its log carry data.
-        if (suffix !== '-shm') sources.push({ path: `${path}${suffix}`, ...(await hashFile(copy)) })
       }
-      // Opened writable so SQLite replays the copied write-ahead log into the private copy.
       const db = new DatabaseSync(join(dir, 'store.db'))
       dropCopy()
-      current = { key, dir, db, sources }
+      current = { key, dir, db }
     } catch (error) {
       rmSync(dir, { recursive: true, force: true })
       throw error
     }
   }
-  return use(current!.db, current!.sources)
-}
-
-/** Remove the private store copy now instead of at process exit. */
-export function releaseSqliteCopy(): void {
-  dropCopy()
+  return use(current!.db)
 }
 
 export function isMissing(error: unknown): boolean {
