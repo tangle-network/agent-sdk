@@ -13,7 +13,7 @@ import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
+import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 
 const FORMAT = 'pi.session-jsonl' as const
@@ -169,7 +169,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
     if (opts.sinceMs && mtime < opts.sinceMs) continue
     const header = await headRecord(path, (r) => r.type === 'session', 1)
     const cwd = header ? str(header.cwd) : null
-    if (opts.cwd && (cwd === null || !cwd.startsWith(opts.cwd))) continue
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
     const id = (header && str(header.id)) ?? idFromName(rel)
     if (opts.nativeSessionId && id !== opts.nativeSessionId && idFromName(rel) !== opts.nativeSessionId) continue
     refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home, cwd, mtimeMs: mtime, parentNativeSessionId: null })

@@ -132,6 +132,46 @@ export const EVIDENCE = {
   'openclaw.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
 } as const satisfies Record<SessionFormatId, SessionEvidenceSources>
 
+/**
+ * Codex writes to whichever Codex home it runs with, so one HOME can hold several: `~/.codex`, a
+ * sibling such as `~/.codex-lane`, the `$CODEX_HOME` a process set, one acct home per account under
+ * `${ACCT_CONFIG:-~/.config/agent-accounts}/codex/<account>`, and on a fleet host a seat's `codex`
+ * directory. Every home keeps live rollouts in `sessions/` and archived ones in
+ * `archived_sessions/`. `STORES` declares the default home's live store, which is what a sandbox
+ * captures; the readers search every home. The same rule as tangle-tools
+ * `trace-archive/catalog.py` `classify`.
+ */
+export const CODEX_HOME_RULE = {
+  /** Directory names directly under HOME that are Codex homes: `.codex` and `.codex-<name>`. */
+  siblings: /^\.codex(?:-.+)?$/u,
+  /** Under HOME, unless `$ACCT_CONFIG` names it: each child is one account's Codex home. */
+  accounts: '.config/agent-accounts/codex',
+  sessionDirs: ['sessions', 'archived_sessions'],
+  /** A rollout's file name, at any depth under a session dir (`sessions/` nests by date). */
+  rollout: 'rollout-*.jsonl',
+  /** The name Codex gives a rollout, ending in its thread id. */
+  named: 'rollout-*-{id}.jsonl',
+} as const
+
+/**
+ * True when `dir` is itself a Codex home by its path: `.codex`, `.codex-<name>`, an acct account
+ * home (`agent-accounts/codex/<account>`), or a fleet seat's `codex` directory.
+ */
+export function isCodexHome(dir: string): boolean {
+  const parts = dir.replace(/\/+$/u, '').split('/')
+  const [name, parent, grandparent] = [parts.at(-1) ?? '', parts.at(-2) ?? '', parts.at(-3) ?? '']
+  if (CODEX_HOME_RULE.siblings.test(name)) return true
+  if (grandparent === 'agent-accounts' && parent === 'codex') return true
+  return name === 'codex' && parent !== 'agent-accounts'
+}
+
+/** True when `path` is `root` or lies under it on a path boundary: `/x/agent` is not under `/x/age`. */
+export function withinPath(path: string, root: string): boolean {
+  const p = path.replace(/\/+$/u, '')
+  const r = root.replace(/\/+$/u, '')
+  return p === r || p.startsWith(`${r}/`)
+}
+
 const REGEX_SPECIALS = /[.+^$()|[\]\\]/gu
 
 /**

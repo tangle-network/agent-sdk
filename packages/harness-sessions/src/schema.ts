@@ -209,7 +209,7 @@ export interface SessionRef {
 
 export interface LocateOptions {
   nativeSessionId?: string
-  /** Sessions whose recorded cwd equals or starts with this path. */
+  /** Sessions whose recorded cwd is this path or lies under it on a path boundary (`/x/agent` excludes `/x/agent-dev-container`). */
   cwd?: string
   /** Sessions modified at or after this epoch ms. */
   sinceMs?: number

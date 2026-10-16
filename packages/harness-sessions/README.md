@@ -22,9 +22,18 @@ npm install @tangle-network/harness-sessions
 | Harness | Format | Store under HOME | Served model from | Usage |
 |---|---|---|---|---|
 | `claude-code` | `claude-code.projects-jsonl` | `.claude/projects/*/{id}.jsonl`, subagents at `*/{id}/subagents/**/*.jsonl` | provider response (`message.model`) | per response, counted once per `message.id` |
-| `codex` | `codex.rollout-jsonl` | `.codex/sessions/*/*/*/rollout-*-{id}.jsonl` | turn context (the configured model) | per response (`last_token_usage`); session total from `total_token_usage` |
+| `codex` | `codex.rollout-jsonl` | `rollout-*-{id}.jsonl` under `sessions/` and `archived_sessions/` of every Codex home (below) | turn context (the configured model) | per response (`last_token_usage`); session total from `total_token_usage` |
 | `opencode` | `opencode.sqlite` | `.local/share/opencode/opencode.db` (shared by every session) | session record (`providerID/modelID`) | per step (`step-finish`) |
 | `pi` | `pi.session-jsonl` | `.pi/agent/sessions/**/*_{id}.jsonl` | session record (`provider/model`) | per assistant message |
+
+A HOME can hold several Codex homes, and `codexReader.locate` reads all of them (`codexHomes(home)` lists them):
+
+- `.codex` and each sibling `.codex-<name>`;
+- each acct account home, `.config/agent-accounts/codex/<account>`;
+- `home` itself when it is a Codex home by its path (`isCodexHome`), such as a fleet seat's `codex` directory passed as a store root;
+- for this process's own HOME only, `$CODEX_HOME` and `$ACCT_CONFIG/codex/<account>` in place of the default accounts directory. Another HOME, such as an archived host's store root or a capture, is read by its layout alone.
+
+Homes that resolve to one directory count once. A session copied into several homes (`acct move`) is one ref, its largest copy. A lookup by id takes the rollout whose name ends in the id; when no name does, it reads the `session_meta` of each rollout modified since the id's UUIDv7 time.
 
 Readers for Kimi, Factory, Gemini, Amp, Qwen, Copilot, Forge, Hermes, Prime and OpenClaw are added with the same real-data proof.
 
@@ -61,6 +70,7 @@ harness-sessions read <file|home|capture> [--harness h] [--session id] [--summar
 - The served model comes only from the provider response or the session record, never from the profile or the request. A failed request has no served model; `requestedModel` says which model it was sent to.
 - `usage` is `null` when the harness recorded none; it is never reported as zero. `input` excludes cache reads and cache writes, which have their own fields.
 - A session with zero model calls is not the trace of a turn.
+- `locate(home, { cwd })` keeps a session whose recorded cwd is `cwd` or lies under it on a path boundary (`withinPath`): `/w/agent` matches `/w/agent/sub`, never `/w/agent-dev-container`. Every store is resolved against the `home` given; only the Codex environment overrides above depend on the process.
 - An unparsable record is counted in `integrity.unparsedRecords` and never stops a read (`corruption: 'strict'` throws instead). A record cut off at the end of a live copy is reported as a torn tail, not as corruption.
 - `ending.status` is `completed`, `error`, `aborted` or `open`. `open` means the records stop mid-turn: the turn was still running or the process died.
 - An OpenCode store is opened read-only where it lies, with no copy: SQLite never writes the store or its write-ahead log. With a log present it reads the log's committed rows and keeps only its own shared-memory index (`-shm`) current; without one the store is opened immutable and nothing is created beside it. A store SQLite cannot open in place (a log with no `-shm` in a directory it cannot write, such as a capture on read-only storage, or any store under Node before 22.15, whose `node:sqlite` takes no URI file names) is read from a private copy. `integrity.sourceFiles` names the session as `<store>#session=<id>` with a digest of the rows read for it.

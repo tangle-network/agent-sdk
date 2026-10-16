@@ -13,7 +13,7 @@ import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
+import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { claudeRecordIsMachine, claudeTypedPromptText } from './claude-records.js'
 
@@ -254,7 +254,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
     if (opts.sinceMs && mtime < opts.sinceMs) continue
     const head = await headRecord(path, (r) => typeof r.cwd === 'string')
     const cwd = head ? str(head.cwd) : null
-    if (opts.cwd && (cwd === null || !cwd.startsWith(opts.cwd))) continue
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
     const subagents = subagentsBySession.get(`${rel.split('/')[0]}/${id}`) ?? []
     refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path, ...subagents], home, cwd, mtimeMs: mtime, parentNativeSessionId: null })
     for (const file of subagents) {
