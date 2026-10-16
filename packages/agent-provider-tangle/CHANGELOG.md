@@ -1,5 +1,14 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.2.2
+
+### Patch Changes
+
+- ddbd607: Derive HarnessType from its unchanged runtime identity schema. Keep historical IDs independent of executable retirement. Validate native-capture capability lists independently of the client's enum size, retaining known entries when a newer server advertises additional IDs without ever granting unknown execution. Preserve malformed-list rejection and exact selected-harness, protocol and container-proof admission checks.
+- b0ec5c8: Preserve a strict unsupported-route credential refusal from command and HTTP resolvers as a typed error without exposing resolver diagnostics. Keep capacity and transient failures on their existing paths.
+- Updated dependencies [ddbd607]
+  - @tangle-network/agent-interface@5.6.1
+
 ## 4.2.1
 
 ### Patch Changes
