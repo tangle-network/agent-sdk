@@ -1,4 +1,5 @@
 import { harnessTypeSchema, type HarnessType } from "@tangle-network/agent-interface";
+import { recognizedCaptureHarnesses } from "./capture-harness-list.js";
 import type { NativeCaptureProofLike, SandboxInstanceLike, SandboxRuntimeCapabilityDocument } from "./tangle-types.js";
 
 const imageId = /^sha256:[0-9a-f]{64}$/;
@@ -30,13 +31,13 @@ export function requireNativeCaptureProof(box: SandboxInstanceLike, create = fal
   return proof;
 }
 
-/** Parse the deployment's explicit per-harness admission without inferring from a global flag. */
+/**
+ * Read the known subset of a valid deployment list. Newer-server entries neither
+ * break a known selection nor grant this client support for an unknown harness.
+ * Admission below still requires a recognized, explicitly advertised identity.
+ */
 export function nativeCaptureHarnesses(raw: unknown): readonly HarnessType[] {
-  const parsed = harnessTypeSchema.array().max(harnessTypeSchema.options.length).safeParse(raw);
-  if (!parsed.success || new Set(parsed.data).size !== parsed.data.length) {
-    throw new Error("Tangle deployment has not proven native session capture with a valid harness list");
-  }
-  return Object.freeze(parsed.data);
+  return recognizedCaptureHarnesses(raw, harnessTypeSchema.options);
 }
 
 /** Require the selected container's native protocol and exact agent backend before dispatch. */
