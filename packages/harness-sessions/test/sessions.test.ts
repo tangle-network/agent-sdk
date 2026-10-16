@@ -179,3 +179,22 @@ describe('Claude Code record rules', () => {
     expect(claudeTypedPromptText('plain text')).toBe('plain text')
   })
 })
+
+describe('a session read in parts', () => {
+  it('names a record without an id by its file line, whichever part of the file is read', () => {
+    const id = '01a10000-0000-7000-8000-000000000001'
+    const rows = [
+      { timestamp: '2026-10-16T10:00:00.000Z', type: 'session_meta', payload: { id, cwd: '/w' } },
+      { timestamp: '2026-10-16T10:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'First.' }] } },
+      { timestamp: '2026-10-16T10:00:02.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Second.' }] } },
+    ]
+    const users = (input: Parameters<typeof readSessionInput>[1], firstLine?: number): string[] =>
+      readSessionInput('codex', input, { nativeSessionId: id, ...(firstLine === undefined ? {} : { firstLine }) })
+        .messages.filter((message) => message.role === 'user').map((message) => message.id)
+    const whole = users({ text: `${rows.map((row) => JSON.stringify(row)).join('\n')}\n` })
+    expect(whole).toHaveLength(2)
+    // The last line alone, as text and as parsed records, read as starting on line 3.
+    expect(users({ text: `${JSON.stringify(rows[2])}\n` }, 3)).toEqual([whole[1]])
+    expect(users({ records: [rows[2]] }, 3)).toEqual([whole[1]])
+  })
+})

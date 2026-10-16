@@ -143,17 +143,22 @@ export function memoryStats(label: string, text?: string): SourceStats {
   return { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
 }
 
-/** The records of JSONL text already in memory (a retained copy, a blob), read synchronously. */
-export function* textRecordsSync(text: string, stats: SourceStats, options: { strict?: boolean } = {}): Generator<Record<string, unknown>> {
+/**
+ * The records of JSONL text already in memory (a retained copy, a blob), read synchronously.
+ * `firstLine` numbers the text's first line, for text that continues a longer file.
+ */
+export function* textRecordsSync(text: string, stats: SourceStats, options: { strict?: boolean; firstLine?: number } = {}): Generator<Record<string, unknown>> {
   const lines = text.split('\n')
-  for (const [index, raw] of lines.entries()) {
+  const first = options.firstLine ?? 1
+  for (const [position, raw] of lines.entries()) {
+    const index = first - 1 + position
     const line = raw.replace(/\r$/u, '')
     if (line.trim().length === 0) continue
     let value: unknown
     try {
       value = JSON.parse(line)
     } catch {
-      if (index === lines.length - 1) {
+      if (position === lines.length - 1) {
         stats.tornTail = true
         continue
       }
@@ -171,9 +176,10 @@ export function* textRecordsSync(text: string, stats: SourceStats, options: { st
   }
 }
 
-/** Records a caller already parsed (one per line, in order). Non-objects count as unparsed. */
-export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats): Generator<Record<string, unknown>> {
-  for (const [index, value] of values.entries()) {
+/** Records a caller already parsed (one per line, in order, the first on line `firstLine`). Non-objects count as unparsed. */
+export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats, firstLine = 1): Generator<Record<string, unknown>> {
+  for (const [position, value] of values.entries()) {
+    const index = firstLine - 1 + position
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       noteUnparsed(stats, index + 1)
       continue

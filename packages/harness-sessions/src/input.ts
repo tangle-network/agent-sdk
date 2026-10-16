@@ -23,6 +23,12 @@ export interface SessionInputInit {
   parentNativeSessionId?: string | null
   /** Names the source in integrity records (a path, a blob ref). */
   label?: string
+  /**
+   * The file line `input` starts on, when it continues a longer file (records appended since a
+   * previous read). A record without an id of its own is named by its line, so the same record
+   * gets the same id whichever way the file is read. Default 1.
+   */
+  firstLine?: number
 }
 
 type CreateFold = (ref: SessionRef, mode: BuildMode, stats: SourceStats) => SessionFold
@@ -53,7 +59,10 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
     parentNativeSessionId: init.parentNativeSessionId ?? null,
   }
   const fold = create(ref, mode, stats)
-  const records = 'text' in input ? textRecordsSync(input.text, stats, { strict: options.corruption === 'strict' }) : arrayRecordsSync(input.records, stats)
+  const firstLine = init.firstLine ?? 1
+  const records = 'text' in input
+    ? textRecordsSync(input.text, stats, { strict: options.corruption === 'strict', firstLine })
+    : arrayRecordsSync(input.records, stats, firstLine)
   for (const record of records) fold.observe(record)
   return fold.finish()
 }
