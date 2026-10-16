@@ -30,6 +30,24 @@ export async function walkFiles(dir: string, signal?: AbortSignal): Promise<stri
   return out.sort()
 }
 
+/** Session files a locate reads at once: a store holds thousands, and each read waits on the disk. */
+export const LOCATE_READS = 32
+
+/** `fn` over `items`, at most `limit` at a time, with the results in the order of `items`. */
+export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      results[index] = await fn(items[index]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 /** Files under `home` that one store glob matches, as absolute paths. */
 export async function storeFiles(home: string, store: NativeSessionStore, glob: string, nativeSessionId?: string): Promise<string[]> {
   const root = join(home, store.root)
