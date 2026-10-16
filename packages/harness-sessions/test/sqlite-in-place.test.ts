@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -106,6 +106,10 @@ describe('OpenCode store read in place', () => {
       expect(result.session.integrity.sourceFiles).toEqual([
         { path: `${join(dir, 'opencode.db')}#session=${ROOT}`, sha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/), bytes: expect.any(Number) },
       ])
+      // A symlink to the store reads the log beside its target.
+      const link = join(scratch('hs-link-'), 'opencode.db')
+      symlinkSync(join(dir, 'opencode.db'), link)
+      expect((await opencodeSessionsInStore(link, null)).map((r) => r.nativeSessionId)).toEqual([TAIL, ROOT])
     } finally {
       await writer.stop()
     }

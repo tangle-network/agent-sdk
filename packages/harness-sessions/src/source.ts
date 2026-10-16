@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, rmSync } from 'node:fs'
-import { copyFile, mkdtemp, stat } from 'node:fs/promises'
+import { copyFile, mkdtemp, realpath, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -205,11 +205,10 @@ async function exists(path: string): Promise<boolean> {
  * `mode=ro`: SQLite reads the log's committed tail and coordinates with a live writer through the
  * store's shared-memory index (`-shm`), and never writes the store or its log or checkpoints it. A
  * store without a log is opened `immutable=1`: no connection holds it open, the file holds every
- * committed row, and SQLite creates no `-wal` or `-shm` beside it. Throws when the store is missing
- * (`ENOENT`) or SQLite cannot read it in place.
+ * committed row, and SQLite creates no `-wal` or `-shm` beside it. Throws when SQLite cannot read
+ * the store in place.
  */
 async function openSqlite(path: string): Promise<DatabaseSync> {
-  await stat(path)
   const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
   const { DatabaseSync } = loadSqlite()
   // `readOnly` as well: a Node that treated the URI as a file name would fail to open, not create it.
@@ -238,11 +237,14 @@ function cannotOpen(error: unknown): boolean {
  * does not accept URI file names (before 22.15).
  */
 export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
-  const db = await openSqlite(path).catch((error: unknown) => {
+  // SQLite follows a symlinked store to its target and keeps the log there, so the log is looked
+  // for there too. A missing store throws ENOENT here, which callers read as "no sessions".
+  const store = await realpath(path)
+  const db = await openSqlite(store).catch((error: unknown) => {
     if (cannotOpen(error)) return null
     throw error
   })
-  if (db === null) return withSqliteCopy(path, use)
+  if (db === null) return withSqliteCopy(store, use)
   try {
     return use(db)
   } finally {
