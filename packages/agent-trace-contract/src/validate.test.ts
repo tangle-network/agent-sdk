@@ -69,6 +69,7 @@ function conformingTrace(): ContractSpan[] {
       startTime: at(0),
       endTime: at(30),
       status: { code: "STATUS_CODE_OK" },
+      agent: { profileDigest: "sha256:abc", profileName: "coder" },
     }),
     branchSpan({
       traceId: TRACE,
@@ -166,6 +167,46 @@ function conformingTrace(): ContractSpan[] {
     }),
   ];
 }
+
+describe("profile-attribution", () => {
+  const span = (spanId: string, attributes: Record<string, unknown>) => ({
+    trace_id: TRACE,
+    span_id: spanId,
+    parent_span_id: null,
+    name: spanId,
+    start_time: "2026-07-31T10:00:00.000Z",
+    end_time: "2026-07-31T10:00:01.000Z",
+    status: { code: "STATUS_CODE_OK" },
+    attributes,
+  });
+
+  it("is available when either dimension of the profile is on a span", () => {
+    for (const attributes of [
+      { [ATTR.profileDigest]: "sha256:abc" },
+      { [ATTR.profileName]: "coder" },
+    ]) {
+      const result = validateTraceSpans([span("a", attributes)] as unknown as ContractSpan[]);
+      expect(capability(result, "profile-attribution")).toEqual({
+        name: "profile-attribution",
+        available: true,
+      });
+    }
+  });
+
+  it("does not count the model, harness or variant alone as saying which profile acted", () => {
+    const result = validateTraceSpans([
+      span("a", {
+        [ATTR.agentModel]: "claude-opus-4",
+        [ATTR.harness]: "claude-code",
+        [ATTR.skillsDigest]: "sha256:def",
+        [ATTR.directiveVariant]: "terse",
+      }),
+    ] as unknown as ContractSpan[]);
+    expect(capability(result, "profile-attribution").available).toBe(false);
+    // Losing who acted costs no other analysis, so no finding claims it.
+    expect(result.findings.filter((entry) => entry.blocks?.includes("profile-attribution"))).toEqual([]);
+  });
+});
 
 describe("validateTraceSpans on a conforming trace", () => {
   it("reports no findings and every capability available", () => {
@@ -2091,6 +2132,18 @@ describe("reason text, one exact string per unavailable branch", () => {
         span({ span_id: "y", parent_span_id: "x", start_time: at(5), end_time: at(1) }),
       ],
       "1 spans have an unparseable start_time or end_time; 1 spans end before they start",
+    ],
+    [
+      "profile-attribution",
+      "no span says which profile acted",
+      [span()],
+      `no spans carry ${ATTR.profileDigest} or ${ATTR.profileName}`,
+    ],
+    [
+      "profile-attribution",
+      "the profile key is there with nothing usable in it",
+      [span({ attributes: { [ATTR.profileDigest]: "", [ATTR.profileName]: 7 } })],
+      `no spans carry a usable ${ATTR.profileDigest} or ${ATTR.profileName} — the key is present on 1 span with a value that is not a non-empty string`,
     ],
   ];
 

@@ -62,11 +62,14 @@ export {
   OUTPUT_TOKEN_ATTR_KEYS,
   PARENT_CONFIDENCES,
   type ParentConfidence,
+  PROFILE_ATTR_KEYS,
   REASONING_TOKEN_ATTR_KEYS,
   SPAN_KIND_ATTR_KEYS,
   TOOL_NAME_ATTR_KEYS,
 } from "./attributes.js";
 export {
+  type AgentIdentity,
+  agentIdentityAttributes,
   branchSpan,
   type BranchSpanInit,
   contractSpan,

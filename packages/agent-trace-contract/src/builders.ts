@@ -19,6 +19,7 @@ import {
   attributeBag,
   LINK_KIND_ATTR,
   type LinkKind,
+  readProperty,
 } from "./attributes.js";
 import type {
   ContractSpan,
@@ -27,6 +28,60 @@ import type {
   SpanLink,
   SpanStatus,
 } from "./span.js";
+
+/**
+ * Who acted: the identity of the agent that owns a span. Every field is
+ * optional and an absent one stays absent; nothing here is ever filled with a
+ * placeholder, because a span that says `agent.profile.name = "unknown"`
+ * groups every unattributed span into one fictitious profile.
+ *
+ * A producer computes this once per agent and hands the same object to every
+ * span that agent owns, so a reader can group any span (a tool call, a model
+ * call, a loop round) by the profile that acted without walking the tree.
+ */
+export interface AgentIdentity {
+  /** Canonical digest of the authored AgentProfile, e.g. `sha256:…` → `agent.profile.digest`. */
+  profileDigest?: string;
+  /** The profile's `name` → `agent.profile.name`. */
+  profileName?: string;
+  /** The model the agent runs on → `agent.model`. Per-call models stay on `gen_ai.request.model`. */
+  model?: string;
+  /** The harness that executed the agent, e.g. `claude-code` → `agent.harness`. */
+  harness?: string;
+  /** Digest of the skill set the agent was given → `agent.skills.digest`. */
+  skillsDigest?: string;
+  /** The directive variant the agent was given, e.g. an A/B arm → `agent.directive.variant`. */
+  directiveVariant?: string;
+}
+
+const AGENT_IDENTITY_KEYS: ReadonlyArray<[keyof AgentIdentity, string]> = [
+  ["profileDigest", ATTR.profileDigest],
+  ["profileName", ATTR.profileName],
+  ["model", ATTR.agentModel],
+  ["harness", ATTR.harness],
+  ["skillsDigest", ATTR.skillsDigest],
+  ["directiveVariant", ATTR.directiveVariant],
+];
+
+/**
+ * The span attributes an {@link AgentIdentity} contributes: one key per
+ * non-empty string field, nothing for an absent, empty or non-string one.
+ *
+ * Exported for producers that build their own span shape (an OTLP key/value
+ * array, a vendor SDK) so they stamp the same keys under the same absence rule
+ * the builders apply. Tolerates a value of any shape, because identities are
+ * often read off an untyped event payload.
+ */
+export function agentIdentityAttributes(
+  identity: AgentIdentity | undefined,
+): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  for (const [field, key] of AGENT_IDENTITY_KEYS) {
+    const value = readProperty(identity, field);
+    if (isNonEmptyString(value)) attributes[key] = value;
+  }
+  return attributes;
+}
 
 /**
  * Fields shared by every builder.
@@ -56,6 +111,8 @@ export interface SpanInit {
   outcome?: Outcome;
   /** Numeric grade accompanying `outcome`. */
   score?: number;
+  /** Who acted; see {@link AgentIdentity}. */
+  agent?: AgentIdentity;
 }
 
 /** {@link SpanInit} plus an explicit kind — the generic builder's input. */
@@ -76,6 +133,7 @@ export function contractSpan(init: ContractSpanInit): ContractSpan {
   const attributes: Record<string, unknown> = {
     ...attributeBag(init.attributes),
   };
+  Object.assign(attributes, agentIdentityAttributes(init.agent));
   if (init.kind !== undefined) attributes[ATTR.spanKind] = init.kind;
   if (init.outcome !== undefined) attributes[ATTR.outcome] = init.outcome;
   if (isFiniteNumber(init.score)) attributes[ATTR.score] = init.score;

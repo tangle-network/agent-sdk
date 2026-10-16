@@ -57,6 +57,19 @@ export const ATTR = Object.freeze({
   operationId: "agent.operation.id",
   attemptId: "agent.operation.attempt_id",
   idempotencyKey: "agent.operation.idempotency_key",
+  // who acted — see AgentIdentity. `gen_ai.agent.name` names an agent
+  // INSTANCE (one node of a supervised tree, a label); these name what the
+  // instance ran: the authored AgentProfile, the model it declares, the harness
+  // that executed it, its skill set and the directive variant it was given. No
+  // semantic convention describes any of them, so they are ours.
+  profileDigest: "agent.profile.digest",
+  profileName: "agent.profile.name",
+  // The acting agent's model, on every span it owns. Not gen_ai.request.model,
+  // which is per call: an agent on one model may call another for a summary.
+  agentModel: "agent.model",
+  harness: "agent.harness",
+  skillsDigest: "agent.skills.digest",
+  directiveVariant: "agent.directive.variant",
 } as const);
 
 /**
@@ -283,6 +296,17 @@ export const ITERATION_ATTR_KEYS: readonly string[] = Object.freeze([
 export const BRANCH_ATTR_KEYS: readonly string[] = Object.freeze([
   ATTR.branchId,
   ATTR.branchArm,
+]);
+
+/**
+ * The keys that say WHICH profile acted. Like {@link BRANCH_ATTR_KEYS}, two
+ * dimensions of one identity rather than spellings of one field: the digest
+ * names an exact profile version, the name names it readably. Either answers
+ * "who acted"; only the digest tells two versions of one name apart.
+ */
+export const PROFILE_ATTR_KEYS: readonly string[] = Object.freeze([
+  ATTR.profileDigest,
+  ATTR.profileName,
 ]);
 
 const EMPTY_ATTRIBUTES: Record<string, unknown> = Object.freeze({});
