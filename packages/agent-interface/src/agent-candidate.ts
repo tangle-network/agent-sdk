@@ -5,10 +5,12 @@ import type {
   AgentProfileMode,
   AgentProfileModelHints,
   AgentProfileResourceRef,
+  AgentProfileSecretRef,
   AgentProfileResources,
   AgentSubagentProfile,
   ReasoningEffort,
 } from "./agent-profile.js";
+import type { ProxySecretBinding } from "./proxy-secrets.js";
 import type { AgentProfileActivationEvidence } from "./agent-profile-activation.js";
 import type { HarnessType } from "./harness.js";
 import type {
@@ -100,7 +102,7 @@ export interface AgentCandidatePublicValue {
   value: string;
 }
 
-export type AgentCandidateConfigValue = AgentCandidatePublicValue;
+export type AgentCandidateConfigValue = AgentCandidatePublicValue | AgentProfileSecretRef;
 
 export interface AgentCandidateGitHubRepository {
   kind: "github";
@@ -485,6 +487,8 @@ export interface AgentCandidateResolvedModel {
 
 /** Canonical, digest-free profile-plan identity document. */
 export interface AgentCandidateProfilePlanMaterial {
+  /** Reference-only declaration captured with the public plan before trusted resolution. */
+  proxySecrets?: ProxySecretBinding[];
   /** Canonical digest of the complete frozen profile that produced this plan. */
   sourceProfileDigest: Sha256Digest;
   harness: HarnessType;
@@ -492,6 +496,8 @@ export interface AgentCandidateProfilePlanMaterial {
     relPath: string;
     mode: number;
     contentSha256: Sha256Digest;
+    /** Public reference placements in the null-valued JSON template; part of plan identity. */
+    secretSlots?: Array<{ path: Array<string | number>; ref: AgentProfileSecretRef }>;
     /** Omit for a workspace-root file; agent-root files must name this root. */
     root?: "agent";
   }>;
@@ -502,14 +508,14 @@ export interface AgentCandidateProfilePlanMaterial {
    * Present only where the harness's own system prompt is deleted in favor of
    * this text.
    */
-  systemPrompt?: AgentCandidateConfigValue;
+  systemPrompt?: AgentCandidatePublicValue;
   /**
    * Exact text ADDED to the harness's own system prompt, which stays intact.
    * Recorded separately from the replacement so plan identity distinguishes the
    * two intents; a harness that lowers this into a flag or file still records
    * it here, because the same bytes in the two fields are two different runs.
    */
-  appendSystemPrompt?: AgentCandidateConfigValue;
+  appendSystemPrompt?: AgentCandidatePublicValue;
   unsupported: Array<{ dimension: string; reason: string }>;
 }
 

@@ -1,5 +1,6 @@
 import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
 import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
+import { captureProxySecrets, mergeProxySecrets, PROXY_SECRETS_METADATA_KEY, readProxySecretReceipt, requireProxySecretCapability, validateProxySecretReceipt } from "./tangle-proxy-secrets.js";
 import { captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY } from "./tangle-create-options.js";
 import { AgentTurnInputSchema, deepFreeze } from "@tangle-network/agent-interface";
 import { AgentEnvironmentCapabilitiesSchema } from "@tangle-network/agent-interface/environment-provider";
@@ -25,6 +26,8 @@ import type {
   ExecResult,
   PlacementInfo,
   ResourceProfile,
+  ProxySecretBinding,
+  ProxySecretReceipt,
   TerminalAttachRequest,
   TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
@@ -114,6 +117,8 @@ export async function sandboxInstanceAsEnvironment(
   operation?: { signal?: AbortSignal },
   request?: {
     resources?: ResourceProfile;
+    proxySecrets?: ProxySecretBinding[];
+    rebindProxySecrets?: boolean;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
     requireCliAuthReferences?: boolean;
@@ -137,6 +142,25 @@ export async function sandboxInstanceAsEnvironment(
   const deployment = request?.captureCapabilities === undefined
     ? await readDeploymentCapabilitySupport(box, operation)
     : deploymentCapabilitySupport(request.captureCapabilities);
+  const modelRecord = box.metadata?.modelCredentials;
+  const readLiveProxyState = request?.proxySecrets !== undefined ||
+    box.metadata?.[PROXY_SECRETS_METADATA_KEY] !== undefined ||
+    (modelRecord !== null && typeof modelRecord === "object" && "proxySecrets" in modelRecord) ||
+    typeof client.capabilities === "function";
+  const liveEgress = !readLiveProxyState || box.egress === undefined ? undefined
+    : await awaitWithSignal(box.egress.get(operation), operation?.signal);
+  const authoritativeProxySecrets = liveEgress !== null && typeof liveEgress === "object" &&
+    "proxySecrets" in liveEgress && liveEgress.proxySecrets !== undefined
+    ? captureProxySecrets(liveEgress.proxySecrets) : undefined;
+  const recordedProxySecrets = box.metadata?.[PROXY_SECRETS_METADATA_KEY];
+  const persistedProxySecrets = authoritativeProxySecrets !== undefined || recordedProxySecrets === undefined
+    ? undefined : captureProxySecrets(recordedProxySecrets);
+  const recordedBindings = authoritativeProxySecrets ?? persistedProxySecrets;
+  if (request?.proxySecrets !== undefined && recordedBindings !== undefined &&
+      canonicalCandidateDigest(request.proxySecrets) !== canonicalCandidateDigest(recordedBindings)) {
+    throw new Error("Tangle live proxy-secret declarations differ from the requested custody");
+  }
+  let proxySecretReceipt: ProxySecretReceipt | undefined;
   const recordedCredentials = box.metadata?.modelCredentials;
   const recordedNativeReference = recordedCredentials !== null && typeof recordedCredentials === "object" &&
     Object.hasOwn(recordedCredentials, "cliAuth");
@@ -146,6 +170,8 @@ export async function sandboxInstanceAsEnvironment(
   const persistedNative = recordedNativeReference
     ? captureModelCredentials(recordedCredentials as { cliAuth: CliAuthReference })
     : undefined;
+  const proxySecrets = authoritativeProxySecrets ?? (request?.rebindProxySecrets ? request.proxySecrets : mergeProxySecrets(request?.proxySecrets ?? persistedProxySecrets,
+    persistedNative !== undefined && "cliAuth" in persistedNative ? persistedNative.proxySecrets : undefined));
   const persistedReference = persistedNative !== undefined && "cliAuth" in persistedNative
     ? persistedNative.cliAuth : undefined;
   if (request?.nativeAuth !== undefined && persistedReference !== undefined &&
@@ -154,6 +180,12 @@ export async function sandboxInstanceAsEnvironment(
   }
   const nativeReference = request?.nativeAuth?.cliAuth ?? persistedReference;
   const credentialHarness = request?.nativeAuth?.harness ?? request?.credentialHarness;
+  // Recovery may obtain an expired reference-only receipt only when the trusted native
+  // owner can renew it. prepareTurn requires an installed, fresh acknowledgement before use.
+  if (proxySecrets !== undefined) {
+    proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, operation, undefined,
+      nativeReference !== undefined && request?.resolveModelCredentials !== undefined);
+  }
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "managed");
   const capabilities = frozenCapabilityDocument(
@@ -220,8 +252,18 @@ export async function sandboxInstanceAsEnvironment(
     AgentTurnInputSchema.parse(input);
     input.signal?.throwIfAborted();
     assertCaptureInput(input);
-    if (nativeReference === undefined) return input;
+    const requestedTurnProfile = input.profile ?? promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend?.profile;
+    if (requestedTurnProfile?.proxySecrets !== undefined &&
+        canonicalCandidateDigest(mergeProxySecrets(proxySecrets, captureProxySecrets(requestedTurnProfile.proxySecrets))) !== canonicalCandidateDigest(proxySecrets ?? [])) {
+      throw new Error("Tangle turn proxy-secret declarations differ from its environment");
+    }
     const replay = input.lastEventId !== undefined || input.controlRef !== undefined;
+    if (proxySecrets !== undefined) {
+      // An expired lease can be renewed by the trusted owner, but never dispatched as-is.
+      const canRenew = !replay && nativeReference !== undefined && request?.resolveModelCredentials !== undefined;
+      proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt, canRenew);
+    }
+    if (nativeReference === undefined) return input;
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
     // A plain exact read supplies no backend override and keeps its admitted request unchanged.
     if (replay && backend === undefined) return input;
@@ -280,14 +322,27 @@ export async function sandboxInstanceAsEnvironment(
             : selected.cliAuth.format !== "bundle" && selected.cliAuth.format !== "files")) {
         throw new Error(`Tangle subscription turn resolver must select a stored ${harness} native reference`);
       }
+      const selectedProxySecrets = mergeProxySecrets(proxySecrets, selected.proxySecrets);
+      if (selectedProxySecrets !== undefined) {
+        requireProxySecretCapability(await awaitWithSignal(box.capabilities?.(), input.signal), selectedProxySecrets);
+        if (canonicalCandidateDigest(selectedProxySecrets) !== canonicalCandidateDigest(proxySecrets)) {
+          throw new Error("Tangle retained subscription turn cannot change its proxy-secret declarations");
+        }
+      }
       selectedReference = selected.cliAuth;
       assertCliAuthReferenceSupported(harness, { ...model, cliAuth: selectedReference });
       input.signal?.throwIfAborted();
-      await awaitWithSignal(box.grantNativeCredential(
-        { harness, cliAuth: selectedReference },
+      const granted = await awaitWithSignal(box.grantNativeCredential(
+        { harness, cliAuth: selectedReference,
+          ...(proxySecrets === undefined ? {} : { proxySecrets, expectedProxySecretGeneration: proxySecretReceipt!.generation, requireInPlace: true }),
+        },
         input.signal ? { signal: input.signal } : undefined,
       ), input.signal);
       input.signal?.throwIfAborted();
+      if (proxySecrets !== undefined) {
+        proxySecretReceipt = validateProxySecretReceipt(granted !== null && typeof granted === "object" && "proxySecretReceipt" in granted ? granted.proxySecretReceipt : undefined, environmentId, proxySecrets, proxySecretReceipt);
+        proxySecretReceipt = await readProxySecretReceipt(box, proxySecrets, input.signal ? { signal: input.signal } : undefined, proxySecretReceipt);
+      }
     }
     const selectedModel = { ...model, cliAuth: selectedReference };
     assertCliAuthReferenceSupported(harness, selectedModel);
@@ -658,6 +713,12 @@ export async function sandboxInstanceAsEnvironment(
         }
       : {}),
   };
+  if (proxySecretReceipt !== undefined) {
+    Object.defineProperty(environment, "proxySecretReceipt", {
+      enumerable: true,
+      get: () => proxySecretReceipt,
+    });
+  }
   bindTangleEvidenceEnvironment(environment, box);
   return environment;
 }

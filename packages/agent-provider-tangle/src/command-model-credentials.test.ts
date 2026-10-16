@@ -113,3 +113,58 @@ it("retains typed account capacity from the command without inventing HTTP statu
   });
   await expect(pending).rejects.not.toHaveProperty("status");
 });
+
+const refusal = { error: { code: "model_credential_refused", reason: "unsupported_route" } };
+
+it("retains a fixed route refusal from a real command before provisioning", async () => {
+  const fixture = await command(`import { appendFileSync } from "node:fs";
+process.stdin.resume(); process.stdin.on("end", () => {
+  appendFileSync(process.env.RECEIPT, "attempt\\n");
+  process.stderr.write("private-token-fixture");
+  process.stdout.write(JSON.stringify(${JSON.stringify(refusal)})); process.exitCode = 78;
+});`);
+  const receipt = join(fixture.directory, "attempts.txt");
+  let creates = 0;
+  const provider = createTangleProvider({
+    client: { async create() { creates++; throw new Error("unexpected provisioning"); } },
+    modelCredentials: createCommandModelCredentialResolver({ ...fixture, env: { RECEIPT: receipt } }),
+  });
+  const pending = provider.create(input);
+  await expect(pending).rejects.toMatchObject({
+    name: "TangleCredentialRefusalError", code: "model_credential_refused", reason: "unsupported_route",
+    message: "Subscription credential route is unsupported",
+  });
+  await expect(pending).rejects.not.toHaveProperty("status");
+  await expect(pending).rejects.not.toThrow(/private-token-fixture/);
+  expect(await readFile(receipt, "utf8")).toBe("attempt\n");
+  expect(creates).toBe(0);
+});
+
+it.each([
+  "private-token-fixture",
+  JSON.stringify({ ...refusal, private: "private-token-fixture" }),
+  JSON.stringify({ error: { ...refusal.error, message: "private-token-fixture" } }),
+  JSON.stringify({ error: { ...refusal.error, resetAt: "private-token-fixture" } }),
+  JSON.stringify({ error: { ...refusal.error, reason: "private-token-fixture" } }),
+  JSON.stringify({ error: { ...refusal.error, code: "private-token-fixture" } }),
+  JSON.stringify({ error: { code: "model_credential_refused" } }),
+  JSON.stringify([refusal]),
+  "null",
+])("discards malformed or secret-bearing exit-78 output", async (output) => {
+  const fixture = await command(`process.stdin.resume(); process.stdin.on("end", () => {
+    process.stderr.write("private-token-fixture"); process.stdout.write(${JSON.stringify(output)}); process.exitCode = 78;
+  });`);
+  const pending = createCommandModelCredentialResolver(fixture)(input);
+  await expect(pending).rejects.toMatchObject({ exitCode: 78, message: "Tangle credential command failed (exit 78)" });
+  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.not.toThrow(/private-token-fixture/);
+});
+
+it.each([1, 75])("does not infer permanent refusal from a mismatched command exit %s", async (exitCode) => {
+  const fixture = await command(`process.stdin.resume(); process.stdin.on("end", () => {
+    process.stdout.write(JSON.stringify(${JSON.stringify(refusal)})); process.exitCode = ${exitCode};
+  });`);
+  const pending = createCommandModelCredentialResolver(fixture)(input);
+  await expect(pending).rejects.toMatchObject({ exitCode });
+  await expect(pending).rejects.not.toHaveProperty("code");
+});

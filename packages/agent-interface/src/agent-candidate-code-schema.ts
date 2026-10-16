@@ -247,7 +247,8 @@ export const agentCandidateExecutionSchema = z
       execution.launch.kind === "container-command"
         ? !execution.launch.executable.startsWith("/")
         : execution.launch.interpreter !== undefined;
-    if (requiresPath && !execution.env?.PATH?.value.trim()) {
+    const executablePath = execution.env?.PATH;
+    if (requiresPath && (executablePath?.kind !== "public" || !executablePath.value.trim())) {
       ctx.addIssue({
         code: "custom",
         path: ["env", "PATH"],

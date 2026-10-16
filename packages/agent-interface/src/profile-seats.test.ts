@@ -35,7 +35,9 @@ describe("AgentProfile.seats", () => {
   });
 
   it("refuses stages whose harness cannot honor the model, effort, or prompt", () => {
-    expect(agentProfileSchema.safeParse({ ...profile, seats: [profile.seats[0], { ...profile.seats[1], harness: "claude-code" }] }).success).toBe(false);
+    expect(agentProfileSchema.safeParse({ ...profile, seats: [profile.seats[0], { ...profile.seats[1], harness: "kimi-code" }] }).success).toBe(false);
+    // claude-code runs any router-served model, so a cross-provider seat on it is valid.
+    expect(agentProfileSchema.safeParse({ ...profile, seats: [profile.seats[0], { ...profile.seats[1], harness: "claude-code" }] }).success).toBe(true);
     expect(agentProfileSchema.safeParse({ ...profile, seats: [profile.seats[0], { ...profile.seats[1], harness: "nanoclaw" }] }).success).toBe(false);
     expect(agentProfileSchema.safeParse({ ...profile, prompt: { appendSystemPrompt: "extra" } }).success).toBe(false);
   });

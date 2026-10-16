@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
@@ -352,6 +353,10 @@ export interface AgentEnvironment {
   readonly creation?: AgentEnvironmentCreation;
   /** Authoritative receipt returned only by a qualified context-transfer attachment. */
   readonly contextTransferReceipt?: ContextTransferReceipt;
+  /** Trusted metadata only; dispatch requires an installed receipt, never proxy-installed. */
+  readonly proxySecretReceipt?: ProxySecretReceipt;
+  /** API-verified effective parent pins read from current custody. */
+  readonly proxySecretParents?: ProxySecretParents;
   /**
    * Detached metadata returned by the provider.
    * It can contain caller-authored annotations and is not authorization evidence.
@@ -521,6 +526,7 @@ export interface AgentEnvironmentCapabilities {
     workspaceCheckpoint?: boolean;
     /** True only when this qualified receiver verifies and restores WorkspaceRequest.snapshot. */
     workspaceSnapshot?: boolean;
+    proxySecrets?: ProxySecretCapabilities;
   };
   /** Per-surface flags for the normalized environment observation. */
   observation?: {
@@ -639,6 +645,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         durableIdempotency: z.boolean().optional(),
         billingOwner: z.boolean().optional(),
         runtimeAttachments: z.strictObject({ mcp: z.literal(true) }).optional(),
+        proxySecrets: ProxySecretCapabilitiesSchema.optional(),
         workspaceCheckpoint: z.boolean().optional(),
         workspaceSnapshot: z.boolean().optional(),
       })
@@ -769,7 +776,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
         create.billingOwner === undefined &&
         create.runtimeAttachments === undefined &&
         create.workspaceCheckpoint === undefined &&
-        create.workspaceSnapshot === undefined
+        create.workspaceSnapshot === undefined &&
+        create.proxySecrets === undefined
       ) {
         refinement.addIssue({
           code: "custom",
@@ -872,6 +880,11 @@ export interface CreateAgentEnvironmentInput {
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: string[] | Record<string, string>;
+  /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
+   * Trusted issuer authorization is required before resolving any reference. */
+  proxySecrets?: readonly ProxySecretBinding[];
+  /** Host-only total destination-to-parent selection; null means explicit independent root. */
+  proxySecretParents?: ProxySecretParents;
   /**
    * Outbound network policy for this environment.
    *
@@ -1025,18 +1038,53 @@ export async function createAgentEnvironmentWithIdempotency<T extends object>(
 /** Reconstruct an existing environment; never allocates a replacement. */
 export interface AgentEnvironmentGetOptions {
   signal?: AbortSignal;
+  /** Side-effect-free custody discovery on a qualified provider. Never resumes, installs or
+   * rebinds; the returned snapshot cannot execute. Unsupported providers must reject this mode.
+   * Expired installed custody may be returned as metadata, never as dispatch authority. */
+  readOnly?: true;
+  /** Explicit custody attachment through the existing egress lifecycle. Omission reads current
+   * custody; [] revokes custom bindings. A get never allocates a replacement environment. */
+  proxySecrets?: readonly ProxySecretBinding[];
+  /** Host-only total destination-to-parent selection; null means explicit independent root. */
+  proxySecretParents?: ProxySecretParents;
+  expectedProxySecretGeneration?: number;
+  requireInPlace?: boolean;
   /**
    * Authorize the first turn of an accepted portable transfer. The provider looks up the exact
    * durable operation and returns its dispatch-capable environment with contextTransferReceipt.
    * A missing, uncertain, conflicting or unsupported receipt refuses attachment. The request's
-   * exact profile, workspace and resources remain authoritative; ordinary get remains read-only.
+   * exact profile, workspace and resources remain authoritative; use readOnly for discovery without reconnect side effects.
    */
   contextTransfer?: ContextTransferRequest;
 }
 
+// Keep the existing parser strict: published providers that import it must not silently
+// accept readOnly and then perform their ordinary reconnect side effects.
+const environmentGetSignalSchema = z.custom<AbortSignal>().optional();
 export const AgentEnvironmentGetOptionsSchema = z.strictObject({
-  signal: z.custom<AbortSignal>().optional(),
+  signal: environmentGetSignalSchema,
+  proxySecrets: ProxySecretsSchema.optional(),
+  proxySecretParents: ProxySecretParentsSchema.optional(),
+  ...ProxySecretUpdateControlsSchema.shape,
   contextTransfer: ContextTransferRequestSchema.optional(),
+}).superRefine((options, ctx) => {
+  if (options.proxySecretParents !== undefined &&
+      (options.proxySecrets === undefined || !isProxySecretParentsTotal(options.proxySecrets, options.proxySecretParents))) {
+    ctx.addIssue({ code: "custom", path: ["proxySecretParents"], message: "parent map requires an explicit total proxySecrets selection" });
+  }
+  if (options.proxySecrets !== undefined && options.contextTransfer !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "context-transfer attachment cannot also change proxy custody" });
+  }
+  if (options.proxySecrets === undefined &&
+      (options.expectedProxySecretGeneration !== undefined || options.requireInPlace !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["proxySecrets"], message: "proxy update controls require an explicit proxySecrets selection" });
+  }
+}) satisfies z.ZodType<AgentEnvironmentGetOptions>;
+
+/** Explicit opt-in for providers implementing side-effect-free, non-executable discovery. */
+export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
+  signal: environmentGetSignalSchema,
+  readOnly: z.literal(true),
 }) satisfies z.ZodType<AgentEnvironmentGetOptions>;
 
 export interface AgentEnvironmentProvider {

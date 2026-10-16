@@ -6,6 +6,16 @@ import {
 } from "./index.js";
 
 describe("createComputeSdkProvider", () => {
+  it("refuses unsupported read-only discovery before remote lookup", async () => {
+    let gets = 0;
+    const provider = createComputeSdkProvider({ compute: { sandbox: {
+      create: async () => { throw new Error("unexpected create"); },
+      getById: async () => { gets++; throw new Error("unexpected lookup"); },
+    } } });
+    await expect(provider.get!("existing-environment", { readOnly: true })).rejects.toThrow(/read.only/);
+    expect(gets).toBe(0);
+  });
+
   it("refuses context attachment before remote lookup", async () => {
     let gets = 0;
     const provider = createComputeSdkProvider({ compute: { sandbox: {

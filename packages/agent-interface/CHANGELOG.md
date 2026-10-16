@@ -1,5 +1,39 @@
 # @tangle-network/agent-interface
 
+## 5.6.0
+
+### Minor Changes
+
+- 9847b3a: Let claude-code and codex run any router-served model. The Tangle Router passes only a vendor's own models through its Anthropic Messages and OpenAI Responses wires and translates every other model to chat completions, so those two harnesses no longer carry a provider lock: `harnessModelSupport("claude-code", "zai/glm-5.3")` and `harnessModelSupport("codex", "google/gemini-2.5-flash-lite")` are supported, and `harnessProviders` returns `null` for both. `kimi-code` stays locked to Moonshot. A vendor's model still adopts its native harness when the caller names none (`preferredHarnessForModel`, and `snapHarnessToModel` from a locked harness); `snapModelToHarness` no longer ranks Anthropic or OpenAI ids for claude-code and codex because they never snap.
+
+### Patch Changes
+
+- 6fa8378: Export the readOnly discovery schema from the package root as well as environment-provider, and verify both entry points in the installed control-artifact cohort.
+
+## 5.5.0
+
+### Minor Changes
+
+- e2cc3b4: Add explicit readOnly discovery to existing environment get options, excluding attachment and mutation controls and requiring a non-executable custody snapshot from qualified providers.
+
+## 5.4.0
+
+### Minor Changes
+
+- 56a6e4a: Export host-only total proxy-secret parent selection, API delegation marker validation and create/reconnect/readback types without changing portable declarations or profiles.
+
+## 5.3.1
+
+### Patch Changes
+
+- ca00679: Reject Keep-Alive, Proxy-Connection, and Proxy-Authenticate proxy-secret header selectors, including case variants, because the proxy strips them before forwarding.
+
+## 5.3.0
+
+### Minor Changes
+
+- 2fbbc4a: Add the canonical reference-only proxySecrets declaration, strict matching and metadata schemas, profile identity and materialization evidence, and bounded scope comparisons. Forward declarations through Tangle credential selection and creation, and require live acknowledged custody receipts before retained execution.
+
 ## 5.2.1
 
 ### Patch Changes

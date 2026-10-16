@@ -1,5 +1,22 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.2.1
+
+### Patch Changes
+
+- 8898a98: Accept nullable capability responses from the Sandbox SDK so its client can be passed directly to createTangleProvider. A null response continues to refuse proxy-secret requests before credential resolution or sandbox creation.
+
+## 4.2.0
+
+### Minor Changes
+
+- 2fbbc4a: Add the canonical reference-only proxySecrets declaration, strict matching and metadata schemas, profile identity and materialization evidence, and bounded scope comparisons. Forward declarations through Tangle credential selection and creation, and require live acknowledged custody receipts before retained execution.
+
+### Patch Changes
+
+- Updated dependencies [2fbbc4a]
+  - @tangle-network/agent-interface@5.3.0
+
 ## 4.1.0
 
 ### Minor Changes

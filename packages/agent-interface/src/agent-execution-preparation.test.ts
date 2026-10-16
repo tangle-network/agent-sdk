@@ -97,6 +97,7 @@ const fullProfile: AgentProfile = {
     metadata: { route: "research" },
   },
   harness: "codex",
+  proxySecrets: [{ envName: "REPORTS_TOKEN", secretRef: { kind: "secret-ref", key: "reporting-api" }, hosts: ["reports.example.com"], presentation: { type: "bearer" } }],
   permissions: { shell: "ask" },
   tools: { shell: true },
   mcp: {
@@ -207,10 +208,25 @@ function refusalCodes(build: () => unknown): string[] {
 
 describe("profile materialization leaves", () => {
   it("enumerates canonical leaves, including optional seat policy", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(35);
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(36);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
       AGENT_PROFILE_MATERIALIZATION_AXES.filter((axis) => axis !== "seats"),
     );
+  });
+
+  it("refuses missing or unsupported proxy-secret preparation before execution", () => {
+    const profile = { ...workerProfile, proxySecrets: fullProfile.proxySecrets };
+    expect(refusalCodes(() => buildReceipt({
+      authoredProfile: profile,
+      axisResults: coverage(profile).filter((result) => result.axis !== "proxySecrets"),
+    }))).toContain("missing-coverage");
+    for (const requested of [profile, { ...profile, resources: { failOnError: false } }]) {
+      expect(refusalCodes(() => buildReceipt({
+        authoredProfile: requested,
+        axisResults: coverage(requested).map((result) => result.axis === "proxySecrets"
+          ? { ...result, disposition: "unsupported", reason: "peer lacks protocol 1" } : result),
+      }))).toContain("strict-unsupported");
+    }
   });
 
   it.each([

@@ -15,6 +15,7 @@ const agentProfileDiffPropertyAxes = [
   "model",
   "harness",
   "seats",
+  "proxySecrets",
   "permissions",
   "tools",
   "mcp",
@@ -67,6 +68,7 @@ export interface AgentProfileDiffRemoval {
   model?: AgentProfileRemoveList;
   harness?: true;
   seats?: true;
+  proxySecrets?: true;
   permissions?: AgentProfileRemoveList;
   tools?: AgentProfileRemoveList;
   mcp?: AgentProfileRemoveList;
@@ -83,8 +85,8 @@ export interface AgentProfileDiffRemoval {
 /**
  * A portable profile improvement artifact.
  *
- * `set` is an AgentProfile overlay: profile arrays are appended with the same
- * semantics as {@link mergeAgentProfiles}. `remove` deletes whole axes or named
+ * `set` follows {@link mergeAgentProfiles}: additive arrays append, while
+ * proxySecrets replaces the complete selection. `remove` deletes whole axes or named
  * entries after the overlay is applied. This keeps the optimized unit the full
  * AgentProfile instead of a benchmark-specific file mount.
  */
@@ -436,6 +438,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
   }
   if (remove.harness !== undefined) delete next.harness;
   if (remove.seats !== undefined) delete next.seats;
+  if (remove.proxySecrets !== undefined) delete next.proxySecrets;
   if (remove.permissions !== undefined) {
     setOrDelete(
       next,

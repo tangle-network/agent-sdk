@@ -21,9 +21,36 @@ export class TangleCredentialCapacityError extends Error {
   }
 }
 
+/** A deterministic credential route refusal, before dispatch or account admission. */
+export class TangleCredentialRefusalError extends Error {
+  readonly code = "model_credential_refused";
+  readonly reason = "unsupported_route";
+  declare readonly status?: number;
+
+  constructor(httpStatus?: number) {
+    super("Subscription credential route is unsupported");
+    this.name = "TangleCredentialRefusalError";
+    if (httpStatus !== undefined) {
+      if (httpStatus !== 400) throw new Error("Credential refusal requires a real client-error response");
+      Object.defineProperty(this, "status", { value: httpStatus, enumerable: true });
+    }
+  }
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
+}
+
+/** The fixed public route refusal shares the bounded capacity transport, never private diagnostics. */
+export function parseCredentialRefusal(value: unknown, httpStatus?: number): TangleCredentialRefusalError | undefined {
+  if (httpStatus !== undefined && httpStatus !== 400) return undefined;
+  const envelope = record(value);
+  if (!envelope || Object.keys(envelope).some((key) => key !== "error")) return undefined;
+  const error = record(envelope.error);
+  if (!error || Object.keys(error).some((key) => key !== "code" && key !== "reason")) return undefined;
+  if (error.code !== "model_credential_refused" || error.reason !== "unsupported_route") return undefined;
+  return new TangleCredentialRefusalError(httpStatus);
 }
 
 /** Only fixed public fields survive parsing; upstream messages and private diagnostics do not. */

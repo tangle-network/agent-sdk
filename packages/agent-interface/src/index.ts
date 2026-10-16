@@ -13,6 +13,7 @@ export * from "./provider-adapter.js";
 export type * from "./environment-provider.js";
 export {
   AgentEnvironmentCapabilitiesSchema,
+  AgentEnvironmentReadOnlyGetOptionsSchema,
   AgentRuntimeAttachmentsSchema,
   AgentNativeContextContinuationAdmissionSchema,
   AgentNativeContextContinuationResultSchema,
@@ -139,3 +140,5 @@ export { AgentEnvironmentEgressPolicySchema } from "./environment-requests.js";
 export * from "./native-session-event.js";
 
 export * from "./learning-state.js";
+
+export * from "./proxy-secrets.js";

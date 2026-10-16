@@ -33,6 +33,8 @@ import { reasoningEffortSchema } from "./profile-schema.js";
 import {
   addDuplicateIssues,
   agentCandidateConfigValueSchema,
+  agentCandidateSecretRefSchema,
+  agentCandidatePublicValueSchema,
   agentCandidateMediaTypeSchema,
   environmentConfigSchema,
   gitObjectSchema,
@@ -44,6 +46,7 @@ import {
   sha256Utf8,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
+import { ProxySecretsSchema } from "./proxy-secrets.js";
 import { harnessTypeSchema } from "./harness.js";
 import { createAgentProfileActivationEvidenceSchema } from "./agent-profile-activation.js";
 
@@ -176,6 +179,7 @@ export const agentCandidateRetryPolicySchema = z.enum([
 
 export const agentCandidateProfilePlanMaterialSchema = z
   .object({
+    proxySecrets: ProxySecretsSchema.optional(),
     sourceProfileDigest: sha256DigestSchema,
     harness: harnessTypeSchema,
     files: z.array(
@@ -189,14 +193,21 @@ export const agentCandidateProfilePlanMaterialSchema = z
             ),
           mode: z.number().int().min(0).max(0o777),
           contentSha256: sha256DigestSchema,
+          secretSlots: z.array(z.strictObject({
+            path: z.array(z.union([
+              z.string().refine((value) => !["__proto__", "prototype", "constructor"].includes(value)),
+              z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+            ])),
+            ref: agentCandidateSecretRefSchema,
+          })).optional(),
           root: z.literal("agent").optional(),
         })
         .strict(),
     ),
     env: environmentConfigSchema,
     flags: z.array(agentCandidateConfigValueSchema),
-    systemPrompt: agentCandidateConfigValueSchema.optional(),
-    appendSystemPrompt: agentCandidateConfigValueSchema.optional(),
+    systemPrompt: agentCandidatePublicValueSchema.optional(),
+    appendSystemPrompt: agentCandidatePublicValueSchema.optional(),
     unsupported: z
       .array(
         z
@@ -213,6 +224,18 @@ export const agentCandidateProfilePlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
+    material.files.forEach((file, fileIndex) => {
+      const slots = file.secretSlots ?? [];
+      slots.forEach((slot, slotIndex) => {
+        if (slots.slice(0, slotIndex).some((previous) => {
+          const common = Math.min(previous.path.length, slot.path.length);
+          return previous.path.slice(0, common).every((segment, index) => segment === slot.path[index]);
+        })) {
+          ctx.addIssue({ code: "custom", path: ["files", fileIndex, "secretSlots", slotIndex],
+            message: "secret slot paths cannot duplicate or overlap" });
+        }
+      });
+    });
     const fileIdentities = material.files.map(profilePlanFileIdentity);
     addDuplicateIssues(
       fileIdentities,
@@ -431,7 +454,9 @@ export const agentCandidateExecutionPlanMaterialSchema = z
   })
   .strict()
   .superRefine((material, ctx) => {
-    if (!material.launch.executable.startsWith("/") && !material.launch.env.PATH?.value.trim()) {
+    const executablePath = material.launch.env.PATH;
+    if (!material.launch.executable.startsWith("/") &&
+        (executablePath?.kind !== "public" || !executablePath.value.trim())) {
       ctx.addIssue({
         code: "custom",
         path: ["launch", "env", "PATH"],
@@ -524,18 +549,18 @@ export const agentCandidateExecutionPlanMaterialSchema = z
     }
     const taskPath = material.launch.env.TANGLE_CANDIDATE_TASK_PATH;
     if (taskPath !== undefined) {
-      if (taskPath.value !== "/tangle/input/task.txt") {
+      if (taskPath.kind !== "public" || taskPath.value !== "/tangle/input/task.txt") {
         ctx.addIssue({
           code: "custom",
           path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],
           message: "task file delivery must use the fixed evaluator-owned path",
         });
       }
-      if (
+      if (taskPath.kind === "public" && (
         pathsOverlap(taskPath.value, material.workspaces.taskRoot) ||
         (material.workspaces.candidateRoot !== undefined &&
           pathsOverlap(taskPath.value, material.workspaces.candidateRoot))
-      ) {
+      )) {
         ctx.addIssue({
           code: "custom",
           path: ["launch", "env", "TANGLE_CANDIDATE_TASK_PATH"],

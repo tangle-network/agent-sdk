@@ -10,7 +10,7 @@ describe("agentCandidateProfileSchema", () => {
     ).toThrow(/Unrecognized key/);
   });
 
-  it("allows only public local process configuration", () => {
+  it("keeps process configuration reference-only or explicitly public", () => {
     expect(() =>
       agentCandidateProfileSchema.parse({
         mcp: {

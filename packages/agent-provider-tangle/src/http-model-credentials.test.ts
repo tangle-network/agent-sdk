@@ -147,3 +147,39 @@ it("does not classify authentication or malformed quota replies as account capac
     await expect(pending).rejects.not.toThrow(/private-invalid-value/);
   }
 });
+
+it("preserves a fixed route refusal from a real HTTP response before provisioning", async () => {
+  let calls = 0;
+  const url = await broker((_request, response) => {
+    calls++;
+    response.writeHead(400);
+    response.end(JSON.stringify({ error: { code: "model_credential_refused", reason: "unsupported_route" } }));
+  });
+  let creates = 0;
+  const provider = createTangleProvider({
+    client: { async create() { creates++; throw new Error("unexpected provisioning"); } },
+    modelCredentials: createHttpModelCredentialResolver({ url, bearer }),
+  });
+  await expect(provider.create({ profile: input.profile, idempotencyKey: input.idempotencyKey, metadata: input.metadata })).rejects.toMatchObject({
+    name: "TangleCredentialRefusalError", code: "model_credential_refused", reason: "unsupported_route",
+    status: 400, message: "Subscription credential route is unsupported",
+  });
+  expect(calls).toBe(1);
+  expect(creates).toBe(0);
+});
+
+it.each([
+  [400, { error: { code: "model_credential_refused", reason: "unsupported_route", token: "private-token-fixture" } }],
+  [400, { error: { code: "model_credential_refused", reason: "unsupported_route" }, private: "private-token-fixture" }],
+  [400, { error: { code: "model_credential_refused", reason: "private-token-fixture" } }],
+  [400, "private-token-fixture"],
+  [401, { error: { code: "model_credential_refused", reason: "unsupported_route" } }],
+  [429, { error: { code: "model_credential_refused", reason: "unsupported_route" } }],
+  [503, { error: { code: "model_credential_refused", reason: "unsupported_route" } }],
+])("does not grant semantic refusal to malformed or mismatched HTTP %s output", async (status, output) => {
+  const url = await broker((_request, response) => { response.writeHead(status as number); response.end(JSON.stringify(output)); });
+  const pending = createHttpModelCredentialResolver({ url, bearer })(input);
+  await expect(pending).rejects.toMatchObject({ status });
+  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.not.toThrow(/private-token-fixture/);
+});

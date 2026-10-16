@@ -91,6 +91,7 @@ export function createComputeSdkProvider(options: ComputeSdkProviderOptions): Ag
     ...(options.compute.sandbox.getById
       ? {
           async get(id: string, request?: AgentEnvironmentGetOptions): Promise<AgentEnvironment | null> {
+            if (request?.readOnly !== undefined) throw new Error("ComputeSDK does not support read-only environment discovery");
             if (request?.contextTransfer !== undefined) throw new Error("ComputeSDK provider does not support context transfer attachment");
             request?.signal?.throwIfAborted();
             const sandbox = await options.compute.sandbox.getById?.(id);
