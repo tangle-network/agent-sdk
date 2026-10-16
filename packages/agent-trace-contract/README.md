@@ -95,6 +95,12 @@ The rule for every one of them: **use the standard name wherever a standard exis
 | `agent.operation.id` | `ATTR.operationId` | retried work | One logical operation, shared by every attempt |
 | `agent.operation.attempt_id` | `ATTR.attemptId` | retried work | This attempt |
 | `agent.operation.idempotency_key` | `ATTR.idempotencyKey` | retried work | The key the target deduplicates on |
+| `agent.profile.digest` | `ATTR.profileDigest` | any | Canonical digest of the AgentProfile that acted |
+| `agent.profile.name` | `ATTR.profileName` | any | That profile's `name` |
+| `agent.model` | `ATTR.agentModel` | any | The acting agent's model; a call's model stays on `gen_ai.request.model` |
+| `agent.harness` | `ATTR.harness` | any | The harness that ran the agent, e.g. `claude-code` |
+| `agent.skills.digest` | `ATTR.skillsDigest` | any | Digest of the agent's skill set |
+| `agent.directive.variant` | `ATTR.directiveVariant` | any | The directive variant the agent was given |
 | `agent.link.kind` | `LINK_KIND_ATTR` | **link** | `steered_by` · `graded_by` · `retry_of` |
 
 An attribute is **absent**, never a placeholder.
@@ -102,6 +108,10 @@ A synthesized `0` token count or `""` model reads downstream as "this call was f
 
 Readers should use the candidate lists — `MODEL_ATTR_KEYS`, `INPUT_TOKEN_ATTR_KEYS`, `OUTPUT_TOKEN_ATTR_KEYS`, `CACHE_READ_TOKEN_ATTR_KEYS`, `CACHE_WRITE_TOKEN_ATTR_KEYS`, `REASONING_TOKEN_ATTR_KEYS`, `COST_ATTR_KEYS`, `TOOL_NAME_ATTR_KEYS`, `SPAN_KIND_ATTR_KEYS` — which also accept the spellings OpenInference, Langfuse and older producers use for the same field, so a foreign trace still yields numbers.
 This package owns these names; `@tangle-network/agent-core/telemetry` and `@tangle-network/agent-eval` import them instead of keeping their own lists.
+
+The six `agent.profile.*`, `agent.model`, `agent.harness`, `agent.skills.digest` and `agent.directive.variant` keys say **who acted**.
+`gen_ai.agent.name` names an agent instance (one node of a supervised tree); these name what that instance ran, which no semantic convention covers.
+Give every builder the same `agent: AgentIdentity` for the spans one agent owns, or stamp `agentIdentityAttributes(identity)` when you build spans yourself; both omit an absent field.
 
 A producer that attaches a child by timing or order, not by a recorded id, sets `agent.parent.confidence: heuristic`.
 The validator then reports the edge as `heuristic-parent`, and `parentLinks` counts every parent edge by confidence.
@@ -215,6 +225,7 @@ Decide whether to run an analysis by reading this list, not by parsing findings.
 | `tree-comparison` | at least two distinct `agent.branch.id` values, or two distinct `agent.branch.arm` values — the two keys are separate dimensions, not spellings of one, so two sibling arms recorded under a shared branch id still compare |
 | `steering-chain` | at least one link resolves to a span in the export |
 | `latency-analysis` | every timestamp parses and no span ends before it starts |
+| `profile-attribution` | at least one span carries `agent.profile.digest` or `agent.profile.name` |
 
 ```
 { name: 'loop-convergence', available: false, reason: 'no spans carry agent.loop.iteration' }

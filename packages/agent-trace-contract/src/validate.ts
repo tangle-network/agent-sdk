@@ -63,6 +63,7 @@ import {
   OUTPUT_TOKEN_ATTR_KEYS,
   PARENT_CONFIDENCES,
   type ParentConfidence,
+  PROFILE_ATTR_KEYS,
   readProperty,
   TOOL_NAME_ATTR_KEYS,
 } from "./attributes.js";
@@ -149,7 +150,8 @@ export type CapabilityName =
   | "loop-convergence"
   | "tree-comparison"
   | "steering-chain"
-  | "latency-analysis";
+  | "latency-analysis"
+  | "profile-attribution";
 
 /** Every {@link CapabilityName}, in the order `validateTraceSpans` reports them. */
 export const CAPABILITY_NAMES: readonly CapabilityName[] = Object.freeze([
@@ -160,6 +162,7 @@ export const CAPABILITY_NAMES: readonly CapabilityName[] = Object.freeze([
   "tree-comparison",
   "steering-chain",
   "latency-analysis",
+  "profile-attribution",
 ]);
 
 export interface Capability {
@@ -1061,6 +1064,27 @@ function computeCapabilities(input: CapabilityInput): CapabilityAssessment[] {
           timingCauses,
         );
 
+  // Who acted: any span naming its profile lets a consumer group work by the
+  // agent that did it. Absent, every comparison across profiles, models or
+  // directive variants has to be reconstructed from outside the trace.
+  const profileEvidence = attrEvidence(
+    input.views,
+    PROFILE_ATTR_KEYS,
+    firstStringAttr,
+  );
+  const profileAttribution =
+    profileEvidence.readable === 0
+      ? unavailable(
+          "profile-attribution",
+          absentAttrReason(
+            profileEvidence,
+            `${ATTR.profileDigest} or ${ATTR.profileName}`,
+            "a non-empty string",
+          ),
+          [],
+        )
+      : available("profile-attribution");
+
   return [
     tokenAccounting,
     costAttribution,
@@ -1069,6 +1093,7 @@ function computeCapabilities(input: CapabilityInput): CapabilityAssessment[] {
     treeComparison,
     steeringChain,
     latencyAnalysis,
+    profileAttribution,
   ];
 }
 
