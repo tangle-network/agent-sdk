@@ -22,13 +22,12 @@ import {
   type BuildMode,
 } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
 import { CODEX_HOME_RULE, EVIDENCE, STORES, codexHomes, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isMissing } from '../source.js'
 
 const FORMAT = 'codex.rollout-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -332,7 +331,7 @@ function uuidV7Ms(id: string): number {
   return match ? Number.parseInt(`${match[1]}${match[2]}`, 16) : 0
 }
 
-/** One ref per session among `files`, from each rollout's `session_meta`, with the bytes of its file. */
+/** A ref for each of `files` that passes the filters, from its `session_meta`, with the file's bytes. */
 async function refsOf(files: readonly string[], home: string, opts: LocateOptions): Promise<Array<{ ref: SessionRef; bytes: number }>> {
   const found: Array<{ ref: SessionRef; bytes: number }> = []
   for (const path of files) {
