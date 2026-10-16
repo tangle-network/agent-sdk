@@ -1,15 +1,28 @@
 name: CI
 
+# Ordinary internal source PRs allocate no qualification runner. Release PRs,
+# outside contributions, landed revisions and explicit verification retain it.
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   build-test:
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'release/') ||
+      startsWith(github.head_ref, 'changeset-release/') ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,8 +32,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Release runs the artifact checks with this exact npm. Run them with the
-      # same npm here so a pull request cannot pass CI and then fail at release.
+      # Match publication's package-verification tooling.
       - run: |
           npm install -g npm@12.1.0
           test "$(npm --version)" = "12.1.0"
@@ -32,6 +44,11 @@ jobs:
 
   cli-bridge-integration:
     name: CLI Bridge integration
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'release/') ||
+      startsWith(github.head_ref, 'changeset-release/') ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
