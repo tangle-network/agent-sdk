@@ -100,7 +100,7 @@ describe('Codex', () => {
 })
 
 describe('OpenCode', () => {
-  it('reads the session from a copy of the SQLite store', async () => {
+  it('reads the session from the SQLite store', async () => {
     const [ref, ...rest] = await opencodeSessionsInStore(fixture('opencode', 'opencode.db'), null)
     expect(rest).toHaveLength(0)
     const s = await both(opencodeReader, ref!)

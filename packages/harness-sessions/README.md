@@ -63,7 +63,7 @@ harness-sessions read <file|home|capture> [--harness h] [--session id] [--summar
 - A session with zero model calls is not the trace of a turn.
 - An unparsable record is counted in `integrity.unparsedRecords` and never stops a read (`corruption: 'strict'` throws instead). A record cut off at the end of a live copy is reported as a torn tail, not as corruption.
 - `ending.status` is `completed`, `error`, `aborted` or `open`. `open` means the records stop mid-turn: the turn was still running or the process died.
-- An OpenCode store is read from a private copy, never in place.
+- An OpenCode store is opened read-only where it lies, with no copy: SQLite never writes the store or its write-ahead log. With a log present it reads the log's committed rows and keeps only its own shared-memory index (`-shm`) current; without one the store is opened immutable and nothing is created beside it. A store SQLite cannot open in place (a log with no `-shm` in a directory it cannot write, such as a capture on read-only storage, or any store under Node before 22.15, whose `node:sqlite` takes no URI file names) is read from a private copy. `integrity.sourceFiles` names the session as `<store>#session=<id>` with a digest of the rows read for it.
 
 ## Tests
 
