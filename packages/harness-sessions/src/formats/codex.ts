@@ -78,13 +78,55 @@ function contentParts(content: unknown): Part[] {
   return parts
 }
 
-function outputOf(output: unknown): { output: unknown; text: string | null; isError: boolean } {
-  if (typeof output === 'string') return { output, text: output, isError: false }
+// `exec_command` and `write_stdin` answer with a text header (`Chunk ID`, `Wall time`, then
+// `Process exited with code N` once the process is done) before `Output:`; a still-running process
+// says `Process running with session ID` instead and has no status yet.
+const PROCESS_EXIT = /^Process exited with code (-?\d+)\s*$/mu
+
+function processFailed(text: string): boolean {
+  const header = text.split(/^Output:/mu, 1)[0] ?? ''
+  const match = PROCESS_EXIT.exec(header)
+  return match !== null && Number(match[1]) !== 0
+}
+
+/** A nonzero numeric `exit_code` anywhere in a parsed JSON value (code-mode tool results nest it). */
+function jsonExitFailed(value: unknown, depth = 0): boolean {
+  if (depth > 4) return false
+  if (Array.isArray(value)) return value.some((v) => jsonExitFailed(v, depth + 1))
+  if (!isRecord(value)) return false
+  if (typeof value.exit_code === 'number' && value.exit_code !== 0) return true
+  return Object.values(value).some((v) => jsonExitFailed(v, depth + 1))
+}
+
+/**
+ * Code mode runs JavaScript in an `exec` call; its `tools.exec_command(...)` results are printed
+ * as JSON items carrying `exit_code`. The first item is `Script failed` when the script threw.
+ */
+function codeModeFailed(output: unknown): boolean {
+  if (!Array.isArray(output)) return false
+  return output.some((item, i) => {
+    const text = isRecord(item) && typeof item.text === 'string' ? item.text : ''
+    if (i === 0 && /^Script failed\b/u.test(text)) return true
+    if (!text.includes('exit_code')) return false
+    try {
+      return jsonExitFailed(JSON.parse(text))
+    } catch {
+      return false
+    }
+  })
+}
+
+function outputOf(output: unknown, tool: { name: string; input: string }): { output: unknown; text: string | null; isError: boolean } {
+  const execFailed = (): boolean =>
+    tool.name === 'exec_command' || tool.name === 'write_stdin'
+      ? typeof output === 'string' && processFailed(output)
+      : tool.name === 'exec' && tool.input.includes('exec_command') && codeModeFailed(output)
+  if (typeof output === 'string') return { output, text: output, isError: execFailed() }
   if (isRecord(output)) {
     const content = output.content ?? output.output
     return { output, text: textOf(content) ?? (typeof content === 'string' ? content : null), isError: output.success === false }
   }
-  return { output: output ?? null, text: textOf(output), isError: false }
+  return { output: output ?? null, text: textOf(output), isError: execFailed() }
 }
 
 const MODEL_OUTPUT = new Set(['message', 'reasoning'])
@@ -110,6 +152,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let inherited = false
   let inheritedRecords = 0
   const foreignThreads = new Set<string>()
+  const tools = new Map<string, { name: string; input: string }>()
 
   const openCall = (at: string | null): ModelCall => {
     if (open) return open
@@ -200,12 +243,13 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
           const raw = kind === 'function_call' ? payload.arguments : kind === 'custom_tool_call' ? payload.input : (payload.action ?? payload.arguments ?? payload.input)
           const call = openCall(at)
           assistantMessage(at, call, [{ type: 'tool-call', toolCallId: callId }])
+          tools.set(callId, { name, input: typeof raw === 'string' ? raw : '' })
           builder.toolCall({ id: callId, name, ...argumentsOf(raw), at, messageId: openMessage! })
           // A web search is answered inside the response; there is no output item.
           if (kind === 'web_search_call') builder.toolResult(callId, { output: payload.action ?? null, text: null, isError: payload.status === 'failed', at, messageId: openMessage! })
         } else if (kind.endsWith('_call_output')) {
           const callId = str(payload.call_id) ?? ''
-          const result = outputOf(payload.output)
+          const result = outputOf(payload.output, tools.get(callId) ?? { name: '', input: '' })
           const id = `${callId}:output`
           builder.message({ id, role: 'tool', actor: 'tool-result', at, modelCallId: null, parts: [{ type: 'tool-result', toolCallId: callId }] })
           builder.toolResult(callId, { ...result, at, messageId: id })
