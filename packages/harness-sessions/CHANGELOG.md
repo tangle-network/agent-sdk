@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 0.1.7
+
+### Patch Changes
+
+- c925203: Codex `exec_command` (and `write_stdin`, and code-mode `exec` calls that run `tools.exec_command`) now take their span status from the recorded exit code instead of always reading as completed.
+
 ## 0.1.6
 
 ### Patch Changes
