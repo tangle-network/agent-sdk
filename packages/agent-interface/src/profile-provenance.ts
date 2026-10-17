@@ -59,7 +59,8 @@ export function mountSkill(
  * Every reason a profile's provenance records do not hold; empty when they do.
  *
  * Each record must be pinned to a commit and name inline resources whose bytes
- * hash to it. With `read`, the source file at that commit must hash to it too,
+ * hash to it. Inline resources without a record are not checked: a record is
+ * the producer's claim, and only claims are verified. With `read`, the source file at that commit must hash to it too,
  * which catches a record that was rewritten together with the inline copy.
  */
 export async function verifyResourceProvenance(
@@ -128,20 +129,33 @@ function isProvenanceRecord(value: unknown): value is AgentProfileResourceProven
   );
 }
 
+/**
+ * Inline contents by name. A record names a resource but not its kind, and
+ * `mountSkill` records skills, so a skill of that name wins; other kinds are
+ * matched only when no skill has the name, so a same-named command or file
+ * cannot fail a skill's record.
+ */
 function inlineResourcesByName(profile: AgentProfile): Map<string, string[]> {
   const resources = profile.resources;
-  const refs: (AgentProfileResourceRef | undefined)[] = [
+  const others: (AgentProfileResourceRef | undefined)[] = [
     ...(resources?.files?.map((mount) => mount.resource) ?? []),
     ...(resources?.tools ?? []),
-    ...(resources?.skills ?? []),
     ...(resources?.agents ?? []),
     ...(resources?.commands ?? []),
     typeof resources?.instructions === "object" ? resources.instructions : undefined,
   ];
-  const byName = new Map<string, string[]>();
+  const skills = byName(resources?.skills ?? []);
+  for (const [name, contents] of byName(others)) {
+    if (!skills.has(name)) skills.set(name, contents);
+  }
+  return skills;
+}
+
+function byName(refs: readonly (AgentProfileResourceRef | undefined)[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
   for (const ref of refs) {
     if (ref?.kind !== "inline") continue;
-    byName.set(ref.name, [...(byName.get(ref.name) ?? []), ref.content]);
+    map.set(ref.name, [...(map.get(ref.name) ?? []), ref.content]);
   }
-  return byName;
+  return map;
 }
