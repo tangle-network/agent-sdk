@@ -10,7 +10,7 @@ describe('Codex exec status', () => {
     expect(s.toolCalls.map((t) => [t.name, t.status])).toEqual([
       ['exec_command', 'error'], // Process exited with code 1
       ['exec_command', 'completed'], // code 0; "code 7" in the body is output, not status
-      ['exec_command', 'pending'], // still running: no exit status yet
+      ['exec_command', 'completed'], // still running: no exit status yet, so not an error
       ['exec', 'error'], // code mode: tools.exec_command result has exit_code 2
       ['exec', 'completed'],
     ])
