@@ -112,6 +112,7 @@ export * from "./agent-execution-preparation.js";
 export * from "./agent-workspace-lease.js";
 export * from "./deep-freeze.js";
 export * from "./profile-diff.js";
+export * from "./profile-provenance.js";
 export * from "./harness.js";
 export * from "./harness-capabilities.js";
 export * from "./profile-schema.js";
