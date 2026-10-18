@@ -287,9 +287,13 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
-  if (backend.profile?.model?.metadata?.credentialSource === "managed" &&
+  const explicitSource = backend.profile?.model?.metadata?.credentialSource;
+  if ((explicitSource === "managed" || explicitSource === "cli") &&
     (backend.model?.cliAuth !== undefined || backend.model?.authFiles !== undefined || backend.model?.authMode === "oauth")) {
-    throw new Error("Tangle explicit managed profile cannot receive native subscription credentials");
+    throw new Error(`Tangle explicit ${explicitSource} profile cannot receive native subscription credentials`);
+  }
+  if (explicitSource === "cli" && (backend.model?.apiKey !== undefined || backend.model?.apiKeyEnv !== undefined)) {
+    throw new Error("Tangle cli profile cannot receive a model API key");
   }
   if (backend.profile !== undefined) profileCredentialSource(backend.profile);
   if (backend.model?.cliAuth !== undefined) {
