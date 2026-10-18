@@ -155,6 +155,11 @@ describe("producer/consumer bound seam", () => {
       // with that size is handed to this provider.
       "MAX_PASSES",
       "MAX_CREDENTIAL_REFUSAL_RETRIES",
+      // Clamps on the SDK's own file and upload worker counts, and the bound on its in-flight
+      // request-timing map. Each limits work inside the SDK; none is a value handed to this provider.
+      "MAX_FILE_CONCURRENCY",
+      "MAX_UPLOAD_CONCURRENCY",
+      "MAX_LIVE_CAPTURES",
     ]);
     const unpaired = [...shipped].filter((name) => !declared.has(name) && !internal.has(name));
     expect(

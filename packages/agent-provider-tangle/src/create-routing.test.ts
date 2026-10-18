@@ -8,25 +8,33 @@ const routing = { only: ["zai"], allowFallbacks: false, requireModel: true };
 
 /** Drive the maintained Sandbox SDK client and keep the create request it sends. */
 async function createRequest(providerOptions: Record<string, unknown>) {
-  const requests: { method: string; url: string; body?: unknown }[] = [];
+  const requests: { method: string; path: string; body?: unknown }[] = [];
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input, init);
+    const path = new URL(request.url).pathname;
     const text = request.method === "GET" ? "" : await request.text();
-    requests.push({ method: request.method, url: request.url, ...(text ? { body: JSON.parse(text) } : {}) });
-    return new Response(JSON.stringify({ error: { code: "FIXTURE_STOP", message: "fixture stops after the request" } }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    requests.push({ method: request.method, path, ...(text ? { body: JSON.parse(text) } : {}) });
+    if (path === "/v1/sandboxes" || path === "/v1/sandboxes/sandbox-routing") {
+      return json({
+        id: "sandbox-routing", status: "running", createdAt: new Date(0).toISOString(),
+        filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
+        filesystemIncarnationProvenance: "fresh", filesystemIncarnationReadiness: "ready",
+        connection: { runtimeUrl: "https://sandbox.example/runtime", authToken: "fixture-runtime-token", edgeStatus: "ready" },
+      });
+    }
+    if (path.endsWith("/capabilities")) return new Response("", { status: 404 });
+    throw new Error(`Unexpected SDK request: ${request.method} ${path}`);
   });
   try {
     const provider = createTangleProvider({
       client: new Sandbox({ baseUrl: "https://sandbox.example", apiKey: "fixture-api-key" }),
     });
-    await expect(provider.create({ profile, providerOptions })).rejects.toThrow();
+    await provider.create({ profile, providerOptions });
   } finally {
     fetch.mockRestore();
   }
-  return requests.find((r) => r.method === "POST" && new URL(r.url).pathname === "/v1/sandboxes");
+  return requests.find((r) => r.method === "POST" && r.path === "/v1/sandboxes");
 }
 
 describe("Tangle create routing", () => {
