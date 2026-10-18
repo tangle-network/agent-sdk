@@ -79,7 +79,7 @@ export function createHttpModelCredentialResolver(options: HttpModelCredentialRe
   const minimumValidUntil = deadline?.toISOString();
   return async (input: Readonly<CreateAgentEnvironmentInput>) => {
     if (typeof input.profile === "string") throw new Error("Tangle credential broker requires an inline profile");
-    if (profileCredentialSource(input.profile) !== "subscription") return undefined;
+    if (profileCredentialSource(input.profile) === "managed") return undefined;
     input.signal?.throwIfAborted();
     const { signal, ...data } = input;
     const request = parseModelCredentialResolverRequest({ input: data, ...(minimumValidUntil === undefined ? {} : { minimumValidUntil }) });

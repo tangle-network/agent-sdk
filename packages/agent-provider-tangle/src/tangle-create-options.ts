@@ -106,15 +106,6 @@ export function sandboxOptionsFromCreateInput(
     }
     assertCliAuthReferenceSupported(backend, modelCredentials);
   }
-  // A cli profile's harness authenticates itself (OpenCode's keyless free tier). Sandbox runs that
-  // as OpenCode CLI mode: no Router key is minted and the model never reaches the Router.
-  const cliOwned = profileCredentialSource(profile) === "cli";
-  if (cliOwned && modelCredentials !== undefined) {
-    throw new Error("Tangle cli profile takes no modelCredentials; its harness CLI authenticates itself");
-  }
-  if (cliOwned && backend !== "opencode") {
-    throw new Error(`Tangle cli profile runs only on the opencode backend, not ${backend}`);
-  }
   if (selectedSecret !== undefined && Object.hasOwn(input.env ?? {}, selectedSecret)) {
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
@@ -204,7 +195,6 @@ export function sandboxOptionsFromCreateInput(
       ...(base.backend ?? {}),
       type: backend,
       profile,
-      ...(cliOwned ? { model: cliOwnedModel(profile) } : {}),
       ...(modelCredentials === undefined ? {} : {
         model: "cliAuth" in modelCredentials
           ? { cliAuth: modelCredentials.cliAuth, authMode: "oauth" as const } : modelCredentials,
@@ -362,27 +352,9 @@ export function assertCreateInputShape(
   return workspace;
 }
 
-/** Sandbox's OpenCode CLI mode on the profile's own provider and model, with no credential. */
-function cliOwnedModel(profile: Exclude<AgentProfileRef, string>): { mode: "cli"; provider?: string; model?: string } {
-  const provider = profile.model?.provider;
-  const model = profile.model?.default;
-  return {
-    mode: "cli",
-    ...(provider === undefined ? {} : { provider: boundedIdentifier(provider, "Tangle cli profile provider") }),
-    ...(model === undefined ? {} : { model: boundedString(model, "Tangle cli profile model") }),
-  };
-}
-
 export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
-  }
-  if (options.backend?.profile !== undefined && profileCredentialSource(options.backend.profile) === "cli") {
-    const model = options.backend.model;
-    if (model?.mode !== "cli" || model.apiKey !== undefined || model.apiKeyEnv !== undefined ||
-      model.cliAuth !== undefined || model.authFiles !== undefined) {
-      throw new Error("Tangle mapped cli profile must run in CLI mode with no model credential");
-    }
   }
   assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
   const proxySecrets = options.proxySecrets === undefined ? undefined : captureProxySecrets(options.proxySecrets);
