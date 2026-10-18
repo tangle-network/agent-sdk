@@ -95,6 +95,9 @@ Keep the stored secret available and valid throughout execution and recovery.
 The exact profile chooses access through `model.metadata.credentialSource`.
 Use `"subscription"` to request an enrolled account.
 Omitting this field or using `"managed"` preserves managed access.
+Use `"cli"` when the harness CLI authenticates its own provider, such as OpenCode's keyless free tier (`opencode/glm-5.3-flash-free`).
+Sandbox then runs OpenCode in CLI mode: no managed key is minted, no subscription is selected, and the model never reaches the Router.
+A `"cli"` profile runs only on the `opencode` backend and refuses `modelCredentials`; the box still needs egress to the provider's endpoint.
 Unknown or malformed intent fails before provisioning.
 `profileCredentialSource(profile)` exports this strict intent reader.
 
