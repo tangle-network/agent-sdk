@@ -213,7 +213,8 @@ export function createTangleProvider(
     }
     assertMappedCreateOptions(mappedOptions);
     // A custom mapper builds its own backend; requested routing must survive it.
-    if (canonicalCandidateDigest(mappedOptions.backend?.routing ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
+    const mappedRouting = mappedOptions.backend?.routing ?? mappedOptions.backend?.model?.routing;
+    if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
       throw new Error("Tangle mapped create options must carry exactly the requested providerOptions.routing");
     }
     if (Object.hasOwn(mappedOptions.metadata ?? {}, "modelCredentials") &&

@@ -5,6 +5,17 @@ import { promptOptionsFromTurnInput } from "./tangle-prompt.js";
 
 const profile = { name: "worker", harness: "opencode" as const };
 const routing = { only: ["zai"], allowFallbacks: false, requireModel: true };
+const catalog = {
+  backends: [{
+    type: "opencode", name: "OpenCode", description: "fixture",
+    capabilities: {
+      streaming: true, toolUse: true, reasoning: true, multimodal: false,
+      imageInput: false, contextWindow: 128_000, mcp: true, sessions: true,
+      configurable: true, interactions: [],
+    },
+  }],
+  timestamp: new Date(0).toISOString(),
+};
 
 /** Drive the maintained Sandbox SDK client and keep the create request it sends. */
 async function createRequest(providerOptions: Record<string, unknown>) {
@@ -15,6 +26,7 @@ async function createRequest(providerOptions: Record<string, unknown>) {
     const path = new URL(request.url).pathname;
     const text = request.method === "GET" ? "" : await request.text();
     requests.push({ method: request.method, path, ...(text ? { body: JSON.parse(text) } : {}) });
+    if (path === "/v1/backends") return json(catalog);
     if (path === "/v1/sandboxes" || path === "/v1/sandboxes/sandbox-routing") {
       return json({
         id: "sandbox-routing", status: "running", createdAt: new Date(0).toISOString(),
@@ -53,6 +65,26 @@ describe("Tangle create routing", () => {
     const create = vi.fn();
     const provider = createTangleProvider({ client: { create } });
     await expect(provider.create({ profile, providerOptions })).rejects.toThrow(message);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a mapper that carries the requested routing in the nested model block", async () => {
+    const create = vi.fn(async () => ({ id: "sandbox-mapped", status: "running" as const, async *streamPrompt() {} }));
+    const provider = createTangleProvider({
+      client: { async getBackend() { return catalog.backends[0] as never; }, create },
+      mapCreateInput: () => ({ backend: { type: "opencode", profile, model: { routing } } }),
+    });
+    await provider.create({ profile, providerOptions: { routing } });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a mapper that adds routing nobody requested", async () => {
+    const create = vi.fn();
+    const provider = createTangleProvider({
+      client: { create },
+      mapCreateInput: () => ({ backend: { type: "opencode", profile, model: { routing } } }),
+    });
+    await expect(provider.create({ profile })).rejects.toThrow(/requested providerOptions.routing/);
     expect(create).not.toHaveBeenCalled();
   });
 
