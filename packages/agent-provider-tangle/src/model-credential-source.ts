@@ -1,13 +1,6 @@
 import type { AgentProfile } from "@tangle-network/agent-interface";
 
-/**
- * Who authenticates the profile's model.
- * - `managed`: Tangle mints the model credential (the default).
- * - `subscription`: a selected stored subscription credential.
- * - `cli`: the harness CLI resolves and authenticates its own provider, such as OpenCode's
- *   keyless free tier. No managed key, no subscription seat, no credential resolver.
- */
-export type ProfileCredentialSource = "managed" | "subscription" | "cli";
+export type ProfileCredentialSource = "managed" | "subscription";
 
 /** Authored profile intent is independent of the harness, vendor, and available accounts. */
 export function profileCredentialSource(profile: AgentProfile): ProfileCredentialSource {
@@ -24,6 +17,6 @@ export function profileCredentialSource(profile: AgentProfile): ProfileCredentia
   }
   const source = metadata?.credentialSource;
   if (source === undefined || source === "managed") return "managed";
-  if (source === "subscription" || source === "cli") return source;
-  throw new Error('Tangle profile model.metadata.credentialSource must be "managed", "subscription" or "cli"');
+  if (source === "subscription") return "subscription";
+  throw new Error('Tangle profile model.metadata.credentialSource must be "managed" or "subscription"');
 }
