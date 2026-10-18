@@ -144,6 +144,8 @@ const SANDBOX_BACKEND_FIELD_LIST = [
   "server",
   "interactions",
   "metadata",
+  // Creation-only: the SDK normalizer refuses it on a turn.
+  "routing",
 ] as const;
 
 const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
@@ -166,6 +168,8 @@ const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
   "cliAuth",
   "authMode",
   "authFiles",
+  // Creation-only: the SDK normalizer refuses it on a turn.
+  "routing",
 ] as const;
 
 const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(

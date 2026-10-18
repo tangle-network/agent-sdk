@@ -6,6 +6,7 @@ import {
   parseBackendType,
   type BackendType,
   type CreateSandboxOptions,
+  type RouterRoutingOptions,
 } from "@tangle-network/sandbox";
 import {
   AgentEnvironmentEgressPolicySchema,
@@ -73,6 +74,66 @@ export function captureModelCredentials(
   return Object.freeze({ apiKeyEnv, baseUrl });
 }
 
+const ROUTING_FIELD_LIST = ["only", "allowFallbacks", "requireModel"] as const;
+
+// Pinned to the SDK's RouterRoutingOptions in both directions, so a routing
+// field the SDK adds or removes fails this build instead of being refused or
+// dropped at run time.
+type Exhaustive<T extends never> = T;
+type UncoveredRoutingField = Exhaustive<
+  Exclude<keyof RouterRoutingOptions, (typeof ROUTING_FIELD_LIST)[number]>
+>;
+type StaleRoutingField = Exhaustive<
+  Exclude<(typeof ROUTING_FIELD_LIST)[number], keyof RouterRoutingOptions>
+>;
+export type RoutingFieldCoverage = [UncoveredRoutingField, StaleRoutingField];
+
+/**
+ * Read create `providerOptions`, whose only field is `routing`: the Tangle
+ * Router provider routing every model call in the environment uses.
+ *
+ * Routing is fixed when the sandbox is created; the Sandbox SDK refuses it on
+ * a turn. Any other field is refused rather than dropped.
+ */
+export function createRoutingFromProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+): RouterRoutingOptions | undefined {
+  if (providerOptions === undefined) return undefined;
+  if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
+    throw new Error("Tangle create providerOptions must be a JSON object");
+  }
+  assertBoundedJson(providerOptions, "Tangle create providerOptions");
+  if (Object.keys(providerOptions).some((key) => key !== "routing")) {
+    throw new Error("Tangle create providerOptions accept only routing");
+  }
+  const routing = providerOptions.routing;
+  if (routing === undefined) return undefined;
+  if (!routing || typeof routing !== "object" || Array.isArray(routing)) {
+    throw new Error("Tangle create providerOptions.routing must be an object");
+  }
+  const fields = routing as Record<string, unknown>;
+  if (Object.keys(fields).some((key) => !(ROUTING_FIELD_LIST as readonly string[]).includes(key))) {
+    throw new Error(`Tangle create providerOptions.routing accepts only ${ROUTING_FIELD_LIST.join(", ")}`);
+  }
+  const { only, allowFallbacks, requireModel } = fields;
+  if (only !== undefined) {
+    if (!Array.isArray(only) || only.length === 0 || only.length > MAX_ARRAY_LENGTH) {
+      throw new Error("Tangle create providerOptions.routing.only must be a non-empty list of Router provider ids");
+    }
+    for (const provider of only) boundedIdentifier(provider, "Tangle routing provider id");
+  }
+  for (const [name, value] of [["allowFallbacks", allowFallbacks], ["requireModel", requireModel]] as const) {
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new Error(`Tangle create providerOptions.routing.${name} must be a boolean`);
+    }
+  }
+  return {
+    ...(only === undefined ? {} : { only: [...(only as string[])] }),
+    ...(allowFallbacks === undefined ? {} : { allowFallbacks: allowFallbacks as boolean }),
+    ...(requireModel === undefined ? {} : { requireModel: requireModel as boolean }),
+  };
+}
+
 export function sandboxOptionsFromCreateInput(
   input: CreateAgentEnvironmentInput,
   defaultBackend?: BackendType,
@@ -133,10 +194,7 @@ export function sandboxOptionsFromCreateInput(
       ),
     }),
   };
-  if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
-    throw new Error("Tangle create providerOptions are not supported");
-  }
-  if (input.providerOptions) assertBoundedRecord(input.providerOptions, "Tangle create providerOptions");
+  const routing = createRoutingFromProviderOptions(input.providerOptions);
   if (input.metadata) assertBoundedRecord(input.metadata, "Tangle metadata");
   if (input.name !== undefined) {
     boundedString(input.name, "Tangle environment name");
@@ -202,6 +260,7 @@ export function sandboxOptionsFromCreateInput(
       ...(input.runtimeAttachments === undefined ? {} : {
         runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),
       }),
+      ...(routing === undefined ? {} : { routing }),
     },
   };
   return mapped;
@@ -251,15 +310,7 @@ export function assertNoInlineSecretValues(
   input: CreateAgentEnvironmentInput,
   parsedWorkspace?: WorkspaceRequest,
 ): void {
-  if (input.providerOptions !== undefined) {
-    if (!input.providerOptions || typeof input.providerOptions !== "object" || Array.isArray(input.providerOptions)) {
-      throw new Error("Tangle create providerOptions must be a JSON object");
-    }
-    assertBoundedJson(input.providerOptions, "Tangle create providerOptions");
-    if (Object.keys(input.providerOptions).length > 0) {
-      throw new Error("Tangle create providerOptions are not supported");
-    }
-  }
+  createRoutingFromProviderOptions(input.providerOptions);
   if (input.workspace?.providerOptions !== undefined) {
     const workspace = parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
     if (workspace.providerOptions && Object.keys(workspace.providerOptions).length > 0) {
