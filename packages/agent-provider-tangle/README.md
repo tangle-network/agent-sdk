@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.60.27 <1.0.0`; the minimum version exports the shared terminal projection.
+The Sandbox peer range is `>=0.60.88 <1.0.0`; the minimum version declares create-time `backend.routing`.
 
 Terminal `result` and `done` events use the Sandbox SDK's `projectAgentTerminalRecord` summary. Cumulative tool history stays in native evidence; bounded approval identity survives projection, and malformed or conflicting approval sources fail closed. Terminal events omit the duplicate raw `providerEvent` payload.
 
@@ -231,6 +231,31 @@ Requests are bounded at 64 MiB and responses at 64 KiB.
 The account owner retains authority over registration, namespace verification, holds, quota, selection, and trusted renewal.
 Updating a stored secret does not refresh credentials already injected into a live Sandbox.
 Creation-time validity and the selected host's native credential lifecycle still bound long-running work.
+
+## Router routing at creation
+
+`CreateAgentEnvironmentInput.providerOptions.routing` sets the Tangle Router provider routing for every model call the environment makes.
+It reaches the Sandbox create call as `backend.routing`.
+
+```ts
+const environment = await provider.create({
+  profile,
+  providerOptions: {
+    routing: { only: ["zai"], allowFallbacks: false, requireModel: true },
+  },
+});
+```
+
+`only` lists the Router provider ids the calls may use.
+`allowFallbacks: false` stops the Router from falling back to another provider.
+`requireModel: true` fails the call rather than substituting another model.
+Routing is set at creation: the Sandbox SDK refuses `backend.routing` on a turn.
+A workspace fork sends no backend, so a forked environment's routing is whatever the platform copies from its parent.
+The Sandbox platform accepts it only for Router-backed OpenCode.
+
+`routing` is the only create `providerOptions` field; any other field is refused.
+Unknown routing fields are refused too; the accepted set is pinned to the SDK's `RouterRoutingOptions` at compile time.
+A custom `mapCreateInput` must carry exactly the requested routing, on `backend.routing` or `backend.model.routing`, and none when none was requested; otherwise creation is refused before any request.
 
 ## `create()` returns a ready environment
 

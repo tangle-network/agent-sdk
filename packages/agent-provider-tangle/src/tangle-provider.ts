@@ -27,7 +27,7 @@ import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
-import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
+import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
 import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, proxySecretCapabilityFromDocument, PROXY_SECRETS_METADATA_KEY, rebindProxySecrets, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
@@ -156,9 +156,7 @@ export function createTangleProvider(
     const parsedWorkspace = assertCreateInputShape(input);
     input.signal?.throwIfAborted();
     assertNoInlineSecretValues(input, parsedWorkspace);
-    if (input.providerOptions && Object.keys(input.providerOptions).length > 0) {
-      throw new Error("Tangle create providerOptions are not supported");
-    }
+    const requestedRouting = createRoutingFromProviderOptions(input.providerOptions);
     if (Object.hasOwn(input.metadata ?? {}, PROXY_SECRETS_METADATA_KEY)) {
       throw new Error("Tangle owns metadata.tangleProxySecrets");
     }
@@ -214,6 +212,11 @@ export function createTangleProvider(
       requireProxySecretCapability(peerCapabilities, selectedProxySecrets);
     }
     assertMappedCreateOptions(mappedOptions);
+    // A custom mapper builds its own backend; requested routing must survive it.
+    const mappedRouting = mappedOptions.backend?.routing ?? mappedOptions.backend?.model?.routing;
+    if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
+      throw new Error("Tangle mapped create options must carry exactly the requested providerOptions.routing");
+    }
     if (Object.hasOwn(mappedOptions.metadata ?? {}, "modelCredentials") &&
       (!subscription || selectedCredentials === undefined ||
         canonicalCandidateDigest(mappedOptions.metadata?.modelCredentials) !== canonicalCandidateDigest(selectedCredentials))) {
