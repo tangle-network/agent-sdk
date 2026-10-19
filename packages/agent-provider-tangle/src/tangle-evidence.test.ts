@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
@@ -94,6 +96,20 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
         return overrides.readError
           ? { files: [], errors: [{ path: paths[0], error: "unavailable" }] }
           : { files: [{ path: paths[0], content: content.toString("base64"), encoding: "base64" as const, size: 3 }], errors: [] };
+      },
+      /** A real tar.gz of the fixture tree, its members named as the Sidecar names them. */
+      async downloadArchive(directory: string, target: string) {
+        const tree = await mkdtemp(join(tmpdir(), "fixture-tree-"));
+        try {
+          const member = join(tree, filePath.slice(directory.length + 1));
+          await mkdir(dirname(member), { recursive: true });
+          await writeFile(member, content, { mode: 0o644 });
+          await promisify(execFile)("tar", ["-czf", target, "-C", tree, ...(await readdir(tree)).sort()]);
+          const bytes = await readFile(target);
+          return { sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
+        } finally {
+          await rm(tree, { recursive: true, force: true });
+        }
       },
     },
     session(id: string) {
