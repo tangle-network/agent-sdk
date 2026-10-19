@@ -599,7 +599,7 @@ describe("Tangle evidence capture", () => {
       source.inventory.scannedFiles += 1;
       source.inventory.reportedFiles += 1;
       if (mode === "directory") await directoryExportFixture(environment);
-      const exporting = box.session.bind(box);
+      const exporting = box.session!.bind(box);
       box.session = (id) => ({
         ...(mode === "directory" ? exporting(id) : originalSession(id)),
         ...(mode === "memory" ? { async rawEvidence() { return source; } } : {}),
@@ -614,14 +614,15 @@ describe("Tangle evidence capture", () => {
         const captured = mode === "directory"
           ? await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(directory, "capture") })
           : await captureTangleEnvironmentEvidence(environment, options);
+        const memoryFiles = mode === "memory" ? (captured as { files: Array<{ path: string; bytes: Uint8Array }> }).files : [];
         const files = mode === "directory"
           ? (await readdir(join(directory, "capture"), { recursive: true })).map((path) => String(path))
-          : captured.files.map((file) => file.path);
+          : memoryFiles.map((file) => file.path);
         const read = async (pattern: RegExp) => {
           const path = files.find((file) => pattern.test(file))!;
           return JSON.parse(mode === "directory"
             ? await readFile(join(directory, "capture", path), "utf8")
-            : Buffer.from(captured.files.find((file) => file.path === path)!.bytes).toString());
+            : Buffer.from(memoryFiles.find((file) => file.path === path)!.bytes).toString());
         };
 
         // Decoding: per part id in file order, the previous rebuilt text plus the delta.
