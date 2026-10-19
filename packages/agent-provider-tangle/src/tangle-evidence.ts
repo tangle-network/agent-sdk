@@ -8,6 +8,7 @@ import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttempt
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import { retainedCaptureAttribution } from "./tangle-retained-attribution.js";
 import { readWorkspaceArchive } from "./tangle-evidence-tar.js";
+import { harnessContentOmission, type HarnessContentOmission } from "./tangle-evidence-omission.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
@@ -1224,23 +1225,6 @@ function withoutRepeatedFrameText(record: unknown, previous: Map<string, string>
   }
   if (!Array.isArray(frames)) return record;
   return { ...record, frames: frames.map(compact) };
-}
-
-type HarnessContentOmission = "harness-install" | "harness-cache";
-
-/**
- * Codex caches under its home that it downloads again on start: plugin template assets and
- * the remote plugin and apps catalogs. Session state (`.codex/sessions`, the thread sqlite,
- * config) stays. One canary's capture was 84% these directories (186.8 MB of evidence).
- */
-const HARNESS_CACHE_DIRECTORIES = [".codex/plugins/cache/", ".codex/cache/remote_plugin_catalog/", ".codex/cache/codex_apps_tools/"];
-
-/** Why a native file keeps only its metadata, or undefined when its bytes are session state. */
-function harnessContentOmission(rootScope: string, path: string): HarnessContentOmission | undefined {
-  // A harness's installed packages, e.g. `.config/opencode/node_modules`.
-  if (path.split("/").includes("node_modules")) return "harness-install";
-  if (rootScope === "session-home" && HARNESS_CACHE_DIRECTORIES.some((directory) => path.startsWith(directory))) return "harness-cache";
-  return undefined;
 }
 
 function withoutNativeContent(source: object): Record<string, unknown> {

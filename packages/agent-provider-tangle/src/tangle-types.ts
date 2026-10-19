@@ -781,6 +781,8 @@ export interface SandboxSessionLike {
     maxBytes: number;
     maxFiles: number;
     maxArchiveBytes?: number;
+    /** Session-home directories whose files are listed with metadata only; ignored by an older SDK. */
+    omitContent?: readonly string[];
     signal?: AbortSignal;
   }): Promise<unknown>;
   /** Exact native coding-agent TUI bound to this session id. */

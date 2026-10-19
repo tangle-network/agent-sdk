@@ -4,6 +4,7 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EvidenceJsonArray } from "./tangle-evidence-json.js";
+import { NATIVE_OMIT_CONTENT_DIRECTORIES } from "./tangle-evidence-omission.js";
 import type { SandboxSessionLike, TangleRawEvidenceLike } from "./tangle-types.js";
 
 type Captured = Exclude<TangleRawEvidenceLike, { status: "unavailable" }>;
@@ -109,7 +110,7 @@ export async function prepareNativeDirectoryEvidence(session: SandboxSessionLike
   const destination = join(temporary, "export");
   const remove = () => rm(temporary, { recursive: true, force: true });
   try {
-    const response = record(await session.exportRawEvidence(destination, { maxBytes, maxFiles: MAX_ENTRIES, signal }));
+    const response = record(await session.exportRawEvidence(destination, { maxBytes, maxFiles: MAX_ENTRIES, omitContent: NATIVE_OMIT_CONTENT_DIRECTORIES, signal }));
     if (response.status === "unavailable") {
       return { native: response as unknown as RetainedNativeEvidence, payloads: new WeakMap(), remove };
     }
