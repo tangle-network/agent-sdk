@@ -542,6 +542,8 @@ export interface SandboxInstanceLike {
       localPath: string,
       options?: { overwrite?: boolean; maxBytes?: number; expectedSize?: number; signal?: AbortSignal }
     ): Promise<void | { sizeBytes: number; sha256: string }>;
+    /** A directory's tar.gz bytes as one stream; the caller reads it to the end or cancels it. */
+    openArchive?(remoteDir: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
     stat(path: string): Promise<{ size: number; isFile: boolean }>;
     list?(path: string, options?: { all?: boolean; long?: boolean }): Promise<Array<{
       name: string;

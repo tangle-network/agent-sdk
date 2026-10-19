@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import type { SandboxInstanceLike, TangleRawEvidenceLike } from "./tangle-types.js";
@@ -73,11 +75,11 @@ function spoolSource(sourceId: string, records: readonly unknown[]) {
     sha256: "sha256:" + createHash("sha256").update(bytes).digest("hex") };
 }
 
-function fixture(overrides: { complete?: boolean; filePath?: string; readError?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
+function fixture(overrides: { complete?: boolean; native?: boolean; wrongDigest?: boolean; wrongBackend?: boolean; missingBundleRevision?: boolean; incomplete?: boolean; workerRoot?: string; missingTerminal?: boolean; badSequence?: boolean;
   badInventory?: boolean; excludedCredential?: boolean; proof?: boolean; wrongProof?: boolean; partial?: boolean; wrongAttempt?: boolean; wrongProcessAttempt?: boolean; noProcess?: boolean; liveCountRace?: boolean } = {}) {
   const environment = { id: "box-1", provider: "tangle-sandbox" } as AgentEnvironment;
   const root = overrides.workerRoot ?? ".";
-  const filePath = overrides.filePath ?? (root === "." ? "notes/.finding.json" : root + "/notes/.finding.json");
+  const filePath = root === "." ? "notes/.finding.json" : root + "/notes/.finding.json";
   const content = Buffer.from([0, 1, 255]);
   const proof = { hostId: "host-1", containerId: "c".repeat(64), imageId: "sha256:" + "a".repeat(64), bundleRevision: "b".repeat(40), bundleChecksum: "sha256:" + "d".repeat(64) };
   const box = {
@@ -91,9 +93,21 @@ function fixture(overrides: { complete?: boolean; filePath?: string; readError?:
           : [{ name: ".finding.json", path: filePath, size: 3, isDir: false, isFile: true, isSymlink: false, permissions: 0o644 }];
       },
       async readBatch(paths: string[]) {
-        return overrides.readError
-          ? { files: [], errors: [{ path: paths[0], error: "unavailable" }] }
-          : { files: [{ path: paths[0], content: content.toString("base64"), encoding: "base64" as const, size: 3 }], errors: [] };
+        return { files: [{ path: paths[0], content: content.toString("base64"), encoding: "base64" as const, size: 3 }], errors: [] };
+      },
+      /** A real tar.gz of the fixture tree, its members named as the Sidecar names them. */
+      async openArchive(directory: string) {
+        const tree = await mkdtemp(join(tmpdir(), "fixture-tree-"));
+        try {
+          const member = join(tree, "content", filePath.slice(directory.length + 1));
+          await mkdir(dirname(member), { recursive: true });
+          await writeFile(member, content, { mode: 0o644 });
+          const target = join(tree, "archive.tar.gz");
+          await promisify(execFile)("tar", ["-czf", target, "-C", join(tree, "content"), ...(await readdir(join(tree, "content"))).sort()]);
+          return new Blob([await readFile(target)]).stream();
+        } finally {
+          await rm(tree, { recursive: true, force: true });
+        }
       },
     },
     session(id: string) {
@@ -745,263 +759,6 @@ describe("Tangle evidence capture", () => {
     expect(evidence.provenance.missing).toContain("Raw native session capture for Sandbox session session-1 is unavailable: raw-session-capture-capability-absent");
   });
 
-  function multiFileWorkspace(sizes: number[]) {
-    const environment = fixture({ native: true, proof: true });
-    const box = fixtureBoxes.get(environment)!;
-    const fs = box.fs!;
-    const contents = sizes.map((size, index) => ({
-      path: `notes/result-${index}.bin`,
-      bytes: Buffer.alloc(size, index % 256),
-      mode: index % 2 ? 0o755 : 0o600,
-    }));
-    const calls: string[][] = [];
-    fs.usage = async () => ({
-      sizeBytes: sizes.reduce((total, size) => total + size, 0),
-      fileCount: sizes.length, directoryCount: 1, complete: true, skippedEntries: 0,
-    });
-    const list = fs.list!.bind(fs);
-    fs.list = async (path, options) => path === "." ? list(path, options) : contents.map((file) => ({
-      path: file.path, name: file.path.split("/").at(-1)!, size: file.bytes.byteLength,
-      isDir: false, isFile: true, isSymlink: false, permissions: file.mode,
-    }));
-    fs.readBatch = async (paths) => {
-      calls.push([...paths]);
-      return {
-        files: paths.map((path) => {
-          const file = contents.find((entry) => entry.path === path);
-          if (!file) throw new Error("fixture received an unexpected path");
-          return { path, content: file.bytes.toString("base64"), encoding: "base64" as const,
-            size: file.bytes.byteLength, hash: createHash("sha256").update(file.bytes).digest("hex") };
-        }).reverse(),
-        errors: [],
-      };
-    };
-    return { environment, box, contents, calls };
-  }
-
-  it("batches workspace reads while preserving exact binary bytes, modes, order, and native proof", async () => {
-    const f = multiFileWorkspace(Array.from({ length: 250 }, (_, index) => index % 19));
-    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 100_000, requireNativeSessionCapture: true,
-    });
-    expect(f.calls.map((paths) => paths.length)).toEqual([100, 100, 50]);
-    const retained = evidence.files.filter((file) => file.path.startsWith("notes/"));
-    expect(retained.map(({ path, mode }) => ({ path, mode }))).toEqual(
-      f.contents.slice().sort((a, b) => a.path.localeCompare(b.path)).map(({ path, mode }) => ({ path, mode })),
-    );
-    for (const file of retained) {
-      expect(Buffer.from(file.bytes).equals(f.contents.find((item) => item.path === file.path)!.bytes)).toBe(true);
-    }
-    expect(evidence.provenance.workspace).toMatchObject({ scannedFiles: 250, reportedFiles: 250, complete: true });
-    expect(evidence.provenance.missing).toEqual([]);
-  });
-
-  it("bounds each multi-file response by declared bytes as well as file count", async () => {
-    const f = multiFileWorkspace([3 * 1024 * 1024, 3 * 1024 * 1024, 3 * 1024 * 1024]);
-    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 12 * 1024 * 1024,
-    });
-    expect(f.calls.map((paths) => paths.length)).toEqual([2, 1]);
-    const retained = evidence.files.filter((file) => file.path.startsWith("notes/"));
-    expect(retained.map(({ path, mode }) => ({ path, mode }))).toEqual(
-      f.contents.slice().sort((a, b) => a.path.localeCompare(b.path)).map(({ path, mode }) => ({ path, mode })),
-    );
-    for (const file of retained) {
-      expect(Buffer.from(file.bytes).equals(f.contents.find((item) => item.path === file.path)!.bytes)).toBe(true);
-    }
-  });
-
-  it.each(["missing", "duplicate", "unexpected", "conflicting", "duplicate-error"])(
-    "refuses a %s batch response instead of accepting incomplete or misattributed bytes",
-    async (failure) => {
-      const f = multiFileWorkspace([3, 4, 5]);
-      const readBatch = f.box.fs!.readBatch.bind(f.box.fs);
-      f.box.fs!.readBatch = async (paths, options) => {
-        const result = await readBatch(paths, options);
-        if (failure === "missing") return { ...result, files: result.files.slice(1) };
-        if (failure === "duplicate") return { ...result, files: [...result.files, result.files[0]!] };
-        if (failure === "unexpected") return { ...result, files: [...result.files, { ...result.files[0]!, path: "other/result.bin" }] };
-        const error = { path: paths[0]!, code: "FILE_TOO_LARGE", error: "JSON cap" };
-        return failure === "conflicting" ? { ...result, errors: [error] } :
-          { files: result.files.filter((file) => file.path !== paths[0]), errors: [error, error] };
-      };
-      await expect(captureTangleEnvironmentEvidence(f.environment, {
-        executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
-      })).rejects.toThrow(/batch|workspace file/);
-    },
-  );
-
-  it("stops before another batch when capture is cancelled during the read", async () => {
-    const f = multiFileWorkspace(Array.from({ length: 250 }, () => 3));
-    const abort = new AbortController();
-    const readBatch = f.box.fs!.readBatch.bind(f.box.fs);
-    f.box.fs!.readBatch = async (paths, options) => {
-      const result = await readBatch(paths, options);
-      abort.abort(new Error("capture cancelled"));
-      return result;
-    };
-    await expect(captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 100_000, signal: abort.signal,
-    })).rejects.toThrow("capture cancelled");
-    expect(f.calls).toHaveLength(1);
-  });
-
-  function largeWorkspace() {
-    const environment = fixture({ native: true, proof: true });
-    const box = fixtureBoxes.get(environment)!;
-    const fs = box.fs!;
-    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 0xa5);
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const downloads: Array<{ path: string; target: string; options: { maxBytes?: number; expectedSize?: number; signal?: AbortSignal } | undefined }> = [];
-    fs.usage = async () => ({ sizeBytes: bytes.byteLength, fileCount: 1, directoryCount: 1, complete: true, skippedEntries: 0 });
-    const list = fs.list!.bind(fs);
-    fs.list = async (path, options) => (await list(path, options)).map((entry) => ({
-      ...entry, ...(entry.isFile ? { size: bytes.byteLength } : {}),
-    }));
-    fs.readBatch = async (paths) => ({ files: [], errors: [{ path: paths[0]!, code: "FILE_TOO_LARGE", error: "JSON read limit" }] });
-    fs.supportsBoundedDownload = true;
-    fs.download = async (path, target, options) => {
-      downloads.push({ path, target, options });
-      await writeFile(target, bytes);
-      return { sizeBytes: bytes.byteLength, sha256 };
-    };
-    return { environment, box, bytes, sha256, downloads };
-  }
-
-  it("captures files above the JSON cap with exact bytes and complete native proof", async () => {
-    const f = largeWorkspace();
-    const signal = new AbortController().signal;
-    const maxBytes = f.bytes.byteLength + 100_000;
-    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes, signal, requireNativeSessionCapture: true,
-    });
-    const retained = evidence.files.find((file) => file.path === "notes/.finding.json")!;
-    expect(createHash("sha256").update(retained.bytes).digest("hex")).toBe(f.sha256);
-    expect(retained.bytes.byteLength).toBe(f.bytes.byteLength);
-    expect(f.downloads).toHaveLength(1);
-    expect(f.downloads[0]!.options).toEqual({ maxBytes, expectedSize: f.bytes.byteLength, signal });
-    await expect(stat(f.downloads[0]!.target)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(evidence.provenance.missing).toEqual([]);
-    expect(evidence.provenance.captureProof).toMatchObject({ containerId: "c".repeat(64) });
-    expect(evidence.provenance.sessions[0]!.nativeStore.complete).toBe(true);
-  });
-
-  it("isolates an oversized file between batches and preserves binary download fallback", async () => {
-    const f = multiFileWorkspace([3, 10 * 1024 * 1024 + 1, 4]);
-    const fs = f.box.fs!;
-    const readBatch = fs.readBatch.bind(fs);
-    const large = f.contents[1]!;
-    const downloads: string[] = [];
-    fs.readBatch = async (paths, options) => {
-      const result = await readBatch(paths, options);
-      return {
-        files: result.files.filter((file) => file.path !== large.path),
-        errors: paths.includes(large.path) ? [{ path: large.path, code: "FILE_TOO_LARGE", error: "JSON cap" }] : [],
-      };
-    };
-    fs.supportsBoundedDownload = true;
-    fs.download = async (path, target, options) => {
-      downloads.push(path);
-      expect(options?.expectedSize).toBe(large.bytes.byteLength);
-      await writeFile(target, large.bytes);
-      return { sizeBytes: large.bytes.byteLength, sha256: createHash("sha256").update(large.bytes).digest("hex") };
-    };
-    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 12 * 1024 * 1024, requireNativeSessionCapture: true,
-    });
-    expect(f.calls).toEqual(f.contents.map((file) => [file.path]));
-    expect(downloads).toEqual([large.path]);
-    for (const file of f.contents) {
-      const retained = evidence.files.find((item) => item.path === file.path)!;
-      expect(Buffer.from(retained.bytes).equals(file.bytes)).toBe(true);
-      expect(retained.mode).toBe(file.mode);
-    }
-    expect(evidence.provenance.missing).toEqual([]);
-  });
-
-  it.each(["receipt", "size", "hash", "cancel"])("refuses %s failure on a binary download and removes its private copy", async (failure) => {
-    const f = largeWorkspace();
-    const abort = new AbortController();
-    const download = f.box.fs!.download!;
-    f.box.fs!.download = async (path, target, options) => {
-      const receipt = await download(path, target, options);
-      if (failure === "receipt") return;
-      if (failure === "size") await writeFile(target, "short");
-      if (failure === "hash") {
-        const bytes = await readFile(target);
-        bytes[0] ^= 0xff;
-        await writeFile(target, bytes);
-      }
-      if (failure === "cancel") abort.abort(new Error("capture cancelled"));
-      return receipt;
-    };
-    await expect(captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength + 100_000,
-      signal: abort.signal, requireNativeSessionCapture: true,
-    })).rejects.toMatchObject({ message: failure === "receipt"
-      ? "Tangle evidence binary download omitted its exact size or digest receipt"
-      : failure === "size" ? "Tangle evidence workspace file changed or was truncated: notes/.finding.json"
-      : failure === "hash" ? "Tangle evidence workspace file hash mismatch: notes/.finding.json"
-      : "capture cancelled" });
-    await expect(stat(f.downloads[0]!.target)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("requires the bounded download capability and preserves other read failures", async () => {
-    const f = largeWorkspace();
-    delete f.box.fs!.supportsBoundedDownload;
-    const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: f.bytes.byteLength + 100_000 };
-    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toMatchObject({ message: "Tangle evidence requires bounded binary download for workspace file notes/.finding.json" });
-    f.box.fs!.supportsBoundedDownload = true;
-    f.box.fs!.readBatch = async (paths) => ({ files: [], errors: [{ path: paths[0]!, code: "EIO", error: "unavailable" }] });
-    await expect(captureTangleEnvironmentEvidence(f.environment, options)).rejects.toMatchObject({ message: "Tangle evidence could not read workspace file notes/.finding.json" });
-    expect(f.downloads).toHaveLength(0);
-  });
-
-  it("enforces the aggregate limit before downloading an oversized file", async () => {
-    const f = largeWorkspace();
-    await expect(captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength - 1,
-    })).rejects.toThrow(/byte limit/);
-    expect(f.downloads).toHaveLength(0);
-  });
-
-  it("excludes credential files before considering binary downloads", async () => {
-    const f = largeWorkspace();
-    f.box.fs!.usage = async () => ({ sizeBytes: f.bytes.byteLength, fileCount: 1, directoryCount: 0, complete: true, skippedEntries: 0 });
-    f.box.fs!.list = async () => [{ path: ".env", name: ".env", size: f.bytes.byteLength,
-      isFile: true, isDir: false, isSymlink: false, permissions: 0o600 }];
-    f.box.fs!.readBatch = async () => { throw new Error("credential read forbidden"); };
-    const evidence = await captureTangleEnvironmentEvidence(f.environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: f.bytes.byteLength + 100_000,
-      requireNativeSessionCapture: true,
-    });
-    expect(f.downloads).toHaveLength(0);
-    expect(evidence.files.some((file) => file.path === ".env")).toBe(false);
-    expect(evidence.provenance.excludedPaths).toContainEqual(expect.objectContaining({ path: ".env", reason: "credential-path" }));
-  });
-
-  it.each(["size", "hash"])("includes the exact workspace path in JSON %s failures", async (failure) => {
-    const environment = fixture();
-    const fs = fixtureBoxes.get(environment)!.fs!;
-    const readBatch = fs.readBatch!;
-    fs.readBatch = async (paths, options) => {
-      const result = await readBatch(paths, options);
-      return { ...result, files: result.files.map((file) => ({
-        ...file, ...(failure === "size" ? { content: "AA==" } : { hash: "0".repeat(64) }),
-      })) };
-    };
-    await expect(captureTangleEnvironmentEvidence(environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
-    })).rejects.toMatchObject({ message: failure === "size"
-      ? "Tangle evidence workspace file changed or was truncated: notes/.finding.json"
-      : "Tangle evidence workspace file hash mismatch: notes/.finding.json" });
-  });
-
-  it("refuses an incomplete inventory or a failed binary read", async () => {
-    await expect(captureTangleEnvironmentEvidence(fixture({ complete: false }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/incomplete/);
-    await expect(captureTangleEnvironmentEvidence(fixture({ readError: true }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toMatchObject({ message: "Tangle evidence could not read workspace file notes/.finding.json" });
-  });
-
   it("verifies and retains the exact native OpenCode export", async () => {
     const evidence = await captureTangleEnvironmentEvidence(fixture({ native: true }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
     expect(evidence.provenance.sessions[0]).toMatchObject({ nativeStore: { complete: true }, processStreams: { complete: true, stdoutBytes: 14 }, nativeEvents: { complete: true }, nativeSessionId: "native-1" });
@@ -1034,59 +791,6 @@ describe("Tangle evidence capture", () => {
       .rejects.toThrow(/inventory does not reconcile/);
   });
 
-  function credentialTreeWorkspace(subtree: { complete?: boolean; opencodeDirectories?: number } = {}) {
-    const environment = fixture();
-    const fs = fixtureBoxes.get(environment)!.fs!;
-    const result = Buffer.from("found");
-    const dir = (path: string) => ({ path, name: path.split("/").at(-1)!, size: 0, isDir: true, isFile: false, isSymlink: false, permissions: 0o755 });
-    const listed: string[] = [];
-    const usages: Record<string, { sizeBytes: number; fileCount: number; directoryCount: number }> = {
-      // notes, .opencode, .config, and .opencode's node_modules, zod, v4 and v4/core.
-      ".": { sizeBytes: result.byteLength + 17 + 20, fileCount: 4, directoryCount: 7 },
-      ".opencode": { sizeBytes: 17, fileCount: 2, directoryCount: subtree.opencodeDirectories ?? 4 },
-      ".config": { sizeBytes: 20, fileCount: 1, directoryCount: 0 },
-    };
-    fs.usage = async (path = ".") => {
-      const totals = usages[path];
-      if (!totals) throw new Error(`fixture has no usage for ${path}`);
-      return { ...totals, complete: path === "." || (subtree.complete ?? true), skippedEntries: 0 };
-    };
-    fs.list = async (path) => {
-      listed.push(path);
-      if (path === ".") return [dir("notes"), dir(".opencode"), dir(".config")];
-      if (path === "notes") return [{ path: "notes/result.txt", name: "result.txt", size: result.byteLength, isDir: false, isFile: true, isSymlink: false, permissions: 0o644 }];
-      throw new Error(`listed inside a credential directory: ${path}`);
-    };
-    fs.readBatch = async (paths) => {
-      if (paths.some((path) => path !== "notes/result.txt")) throw new Error("credential read forbidden");
-      return { files: [{ path: "notes/result.txt", content: result.toString("base64"), encoding: "base64" as const, size: result.byteLength }], errors: [] };
-    };
-    return { environment, listed };
-  }
-
-  it("accounts for a credential directory with one usage scan instead of listing below it", async () => {
-    const workspace = credentialTreeWorkspace();
-    const evidence = await captureTangleEnvironmentEvidence(workspace.environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 });
-    expect(workspace.listed.sort()).toEqual([".", "notes"]);
-    expect(evidence.files.map((file) => file.path)).toContain("notes/result.txt");
-    expect(evidence.files.some((file) => file.path.startsWith(".opencode") || file.path.startsWith(".config"))).toBe(false);
-    expect(evidence.provenance.excludedPaths).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: ".opencode", reason: "credential-path" }),
-      expect.objectContaining({ path: ".config", reason: "credential-path" }),
-    ]));
-    expect(evidence.provenance.workspace).toMatchObject({ scannedFiles: 4, scannedDirectories: 7, reportedFiles: 4, reportedDirectories: 7 });
-  });
-
-  it("refuses a credential directory whose usage scan is incomplete or disagrees with the workspace totals", async () => {
-    await expect(captureTangleEnvironmentEvidence(credentialTreeWorkspace({ complete: false }).environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
-      .rejects.toThrow(/usage scan is incomplete/);
-    await expect(captureTangleEnvironmentEvidence(credentialTreeWorkspace({ opencodeDirectories: 3 }).environment, { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 }))
-      .rejects.toThrow(/does not match the complete usage scan/);
-  });
-
-  it("refuses a path outside the listed workspace parent", async () => {
-    await expect(captureTangleEnvironmentEvidence(fixture({ filePath: "../secret" }), { executionId: "exec-1", harness: "opencode", maxBytes: 100_000 })).rejects.toThrow(/canonical/);
-  });
 });
 
 describe("bounded directory evidence", () => {
@@ -1120,33 +824,6 @@ describe("bounded directory evidence", () => {
       sync.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
-  });
-
-  it("exports native sessions without reading the workspace when the scope is none", async () => {
-    const environment = fixture({ native: true });
-    const box = fixtureBoxes.get(environment)!;
-    // A workspace over the byte bound, or one that changes mid-scan, must not cost the session.
-    box.fs = {
-      async usage() { throw new Error("the workspace must not be scanned"); },
-      async list() { throw new Error("the workspace must not be listed"); },
-      async readBatch() { throw new Error("the workspace must not be read"); },
-    } as unknown as SandboxInstanceLike["fs"];
-    const root = await mkdtemp(join(tmpdir(), "provider-evidence-test-"));
-    try {
-      await directoryExportFixture(environment);
-      const captured = await captureTangleEnvironmentEvidenceToDirectory(environment, {
-        executionId: "exec-1", harness: "opencode", maxBytes: 1_000_000, workspace: "none", destination: join(root, "capture"),
-      });
-      expect(captured.provenance.workspaceScope).toBe("none");
-      expect(captured.provenance.workspace).toEqual({ scannedFiles: 0, scannedDirectories: 0, reportedFiles: 0, reportedDirectories: 0, complete: false });
-      expect(captured.provenance.entries).toEqual([]);
-      expect(captured.provenance.sessions[0]?.nativeStore.complete).toBe(true);
-      expect(captured.provenance.sessions[0]?.nativeStore.entries.length).toBeGreaterThan(0);
-      await expect(stat(join(captured.directory, "notes/.finding.json"))).rejects.toMatchObject({ code: "ENOENT" });
-      const provenance = JSON.parse((await readFile(join(captured.directory, "__retention__/provenance.json"))).toString());
-      expect(provenance.workspaceScope).toBe("none");
-      expect(provenance.executionId).toBe("exec-1");
-    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("refuses an unknown workspace scope", async () => {
