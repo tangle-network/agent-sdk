@@ -96,15 +96,15 @@ function fixture(overrides: { complete?: boolean; native?: boolean; wrongDigest?
         return { files: [{ path: paths[0], content: content.toString("base64"), encoding: "base64" as const, size: 3 }], errors: [] };
       },
       /** A real tar.gz of the fixture tree, its members named as the Sidecar names them. */
-      async downloadArchive(directory: string, target: string) {
+      async openArchive(directory: string) {
         const tree = await mkdtemp(join(tmpdir(), "fixture-tree-"));
         try {
-          const member = join(tree, filePath.slice(directory.length + 1));
+          const member = join(tree, "content", filePath.slice(directory.length + 1));
           await mkdir(dirname(member), { recursive: true });
           await writeFile(member, content, { mode: 0o644 });
-          await promisify(execFile)("tar", ["-czf", target, "-C", tree, ...(await readdir(tree)).sort()]);
-          const bytes = await readFile(target);
-          return { sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
+          const target = join(tree, "archive.tar.gz");
+          await promisify(execFile)("tar", ["-czf", target, "-C", join(tree, "content"), ...(await readdir(join(tree, "content"))).sort()]);
+          return new Blob([await readFile(target)]).stream();
         } finally {
           await rm(tree, { recursive: true, force: true });
         }

@@ -23,6 +23,8 @@ export interface WorkspaceArchiveMember {
 const BLOCK = 512;
 // Bounds a PAX or GNU long-name record, which the reader holds in memory.
 const MAX_METADATA_BYTES = 1024 * 1024;
+// Bounds the zero padding read after the end-of-archive marker.
+const MAX_TRAILING_BYTES = 1024 * 1024;
 
 class ArchiveBytes {
   private chunks: Uint8Array[] = [];
@@ -31,12 +33,14 @@ class ArchiveBytes {
   private readonly source: AsyncIterator<Uint8Array>;
   constructor(source: AsyncIterator<Uint8Array>) { this.source = source; }
 
+  /** Buffer the next non-empty chunk; false at the end of the source. */
   private async fill(): Promise<boolean> {
-    if (this.ended) return false;
-    const next = await this.source.next();
-    if (next.done) { this.ended = true; return false; }
-    if (next.value.byteLength) { this.chunks.push(next.value); this.buffered += next.value.byteLength; }
-    return true;
+    while (!this.ended) {
+      const next = await this.source.next();
+      if (next.done) { this.ended = true; break; }
+      if (next.value.byteLength) { this.chunks.push(next.value); this.buffered += next.value.byteLength; return true; }
+    }
+    return false;
   }
 
   async exact(length: number): Promise<Uint8Array> {
@@ -149,8 +153,12 @@ export async function* readWorkspaceArchive(chunks: AsyncIterable<Uint8Array>): 
     const block = await bytes.exact(BLOCK);
     if (block.every((byte) => byte === 0)) {
       if (!(await bytes.exact(BLOCK)).every((byte) => byte === 0)) throw new Error("Tangle workspace archive has a malformed end marker");
+      let trailing = 0;
       for await (const tail of bytes.rest()) {
-        if (!tail.every((byte) => byte === 0)) throw new Error("Tangle workspace archive has data after its end marker");
+        trailing += tail.byteLength;
+        if (trailing > MAX_TRAILING_BYTES || !tail.every((byte) => byte === 0)) {
+          throw new Error("Tangle workspace archive has data after its end marker");
+        }
       }
       if (pax || longName !== undefined || longLink !== undefined) throw new Error("Tangle workspace archive ends inside a member");
       return;

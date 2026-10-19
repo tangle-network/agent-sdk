@@ -10,7 +10,7 @@ import { captureTangleSandboxEvidence } from "./tangle-evidence.js";
 
 /**
  * A box whose filesystem is a real local directory: list, usage and readBatch read the tree,
- * and downloadArchive streams GNU tar output, members named as the Sidecar names them. The
+ * and openArchive streams GNU tar output, members named as the Sidecar names them. The
  * capture's inventory, exclusions and retained bytes are checked against the tree itself.
  */
 async function directoryBox(root: string, archived: string[], corrupt = false): Promise<SandboxInstanceLike> {
@@ -41,12 +41,13 @@ async function directoryBox(root: string, archived: string[], corrupt = false): 
           return { path, content: bytes.toString("base64"), encoding: "base64" as const, size: bytes.byteLength, hash: createHash("sha256").update(bytes).digest("hex") };
         })), errors: [] };
       },
-      async downloadArchive(directory: string, target: string) {
+      async openArchive(directory: string) {
         archived.push(directory);
-        await promisify(execFile)("tar", ["-czf", target, "-C", join(root, directory), ...(await readdir(join(root, directory))).sort()]);
-        const bytes = await readFile(target);
-        if (corrupt) await writeFile(target, Buffer.concat([bytes, Buffer.from([0])]));
-        return { sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
+        const { stdout } = await promisify(execFile)("tar", ["-cz", "-C", join(root, directory), ...(await readdir(join(root, directory))).sort()],
+          { encoding: "buffer", maxBuffer: 256 * 1024 * 1024 });
+        // Flip one byte in the middle of the compressed stream.
+        if (corrupt) stdout[stdout.byteLength >> 1] ^= 0xff;
+        return new Blob([stdout]).stream();
       },
       async stat(path: string) { const stat = await lstat(join(root, path)); return { size: stat.size, isFile: stat.isFile() }; },
     },
@@ -85,6 +86,8 @@ describe("Tangle evidence workspace archive", () => {
     try {
       const files = await workspace(root);
       const archived: string[] = [];
+      // No archive byte may be staged on disk.
+      const before = (await readdir(tmpdir())).filter((name) => name.startsWith("tangle-evidence-"));
       const evidence = await captureTangleSandboxEvidence(await directoryBox(root, archived), {
         executionId: "exec-1", harness: "opencode", sandboxSessionIds: [], maxBytes: 64 * 1024 * 1024,
       });
@@ -98,6 +101,7 @@ describe("Tangle evidence workspace archive", () => {
       const usage = await (await directoryBox(root, [])).fs!.usage!(".");
       expect(evidence.provenance.workspace).toMatchObject({ scannedFiles: usage.fileCount, scannedDirectories: usage.directoryCount, complete: true });
       expect(evidence.provenance.workspace.archives).toEqual([expect.objectContaining({ path: "repo", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) })]);
+      expect((await readdir(tmpdir())).filter((name) => name.startsWith("tangle-evidence-"))).toEqual(before);
       const excluded = Object.fromEntries(evidence.provenance.excludedPaths.map((entry) => [entry.path, entry.reason]));
       expect(excluded).toEqual({ ".codex": "credential-path", "repo/.config": "credential-path", "repo/.env.local": "credential-path", "repo/pkg-link": "symlink" });
       expect(evidence.provenance.entries.some((entry) => entry.path.startsWith("repo/.config/"))).toBe(false);
@@ -108,13 +112,13 @@ describe("Tangle evidence workspace archive", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it("refuses an archive whose bytes differ from its receipt", async () => {
+  it("refuses a corrupted archive stream", async () => {
     const root = await mkdtemp(join(tmpdir(), "evidence-archive-"));
     try {
       await workspace(root);
       await expect(captureTangleSandboxEvidence(await directoryBox(root, [], true), {
         executionId: "exec-1", harness: "opencode", sandboxSessionIds: [], maxBytes: 64 * 1024 * 1024,
-      })).rejects.toThrow(/does not match its receipt/);
+      })).rejects.toThrow();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

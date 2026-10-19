@@ -61,8 +61,8 @@ async function* bufferedExecutionEvents(session: ReplaySession, executionId: str
 // Match the Sidecar request limit without accumulating 100 large JSON payloads.
 const WORKSPACE_BATCH_FILES = 100;
 const WORKSPACE_BATCH_BYTES = 8 * 1024 * 1024;
-// Top-level directory archives downloaded ahead of the one being read.
-const WORKSPACE_ARCHIVE_DOWNLOADS = 4;
+// Top-level directory archive requests open ahead of the one being read.
+const WORKSPACE_ARCHIVE_STREAMS = 4;
 // Tar header, PAX record and padding bytes an archive may add per member beyond its content.
 const WORKSPACE_ARCHIVE_ENTRY_OVERHEAD = 2048;
 interface WorkspaceFileRead {
@@ -139,7 +139,7 @@ export interface TangleEnvironmentEvidence {
     /** `complete` is false only when `workspaceScope` is `none`: no workspace was scanned. */
     workspace: {
       scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: boolean;
-      /** One verified Sandbox archive receipt per top-level directory whose contents were read. */
+      /** Bytes and SHA-256 of each top-level directory archive stream whose contents were read. */
       archives: Array<{ path: string; sizeBytes: number; sha256: string }>;
     };
     attempts: TangleEvidenceAttemptLike[];
@@ -349,6 +349,7 @@ async function captureSandboxEvidence(
   let scannedDirectories = 0;
   let scannedEntries = 0;
   let scannedSize = 0;
+  let ignoredBytes = 0;
   let capturedBytes = 0;
   let pending: WorkspaceFileRead[] = [];
   let pendingBytes = 0;
@@ -413,7 +414,9 @@ async function captureSandboxEvidence(
   // The root is listed once. Each top-level directory then arrives as one archive stream: listing
   // every directory cost about 0.5 s per request, 62-73 s of a 121 s capture of a 2,500-file
   // workspace on 2026-10-19, and the serial batch reads most of the rest. Credential and
-  // runtime-owned top-level directories are never archived, so their bytes stay in the box.
+  // runtime-owned top-level directories are never archived, so their bytes stay in the box. A
+  // credential path nested in an archived directory crosses the wire inside its archive and is
+  // dropped in memory; the Sidecar archive route has no exclusion filter yet.
   const archives: Array<{ sourcePath: string; path: string }> = [];
   // Credential subtree scans run alongside the archive downloads; each only adds to the totals.
   const blockedScans: Array<Promise<void>> = [];
@@ -448,36 +451,44 @@ async function captureSandboxEvidence(
     }
   }
   if (archives.length) {
-    if (!fs.downloadArchive) throw new Error("Tangle evidence requires workspace directory archive download");
-    const local = await import("node:fs/promises");
-    const { createReadStream } = await import("node:fs");
+    if (!fs.openArchive) throw new Error("Tangle evidence requires workspace directory archive streaming");
+    const { Readable } = await import("node:stream");
     const { createGunzip } = await import("node:zlib");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const staging = await local.mkdtemp(join(tmpdir(), "tangle-evidence-"));
-    const downloads = new AbortController();
-    const cancel = () => downloads.abort(options.signal?.reason);
+    // Archives are read from the network straight through gunzip and the tar reader; no archive
+    // byte is written to disk, so a credential file nested in a project directory is never at rest
+    // outside the box, even if this process dies mid-capture.
+    const streams = new AbortController();
+    const cancel = () => streams.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", cancel, { once: true });
-    const started: Array<Promise<{ file: string; sizeBytes: number; sha256: string }>> = [];
-    const start = (index: number) => {
-      if (index >= archives.length || index < started.length) return;
-      const file = join(staging, `${index}.tar.gz`);
-      const download = downloadWorkspaceArchive(fs, archives[index]!.sourcePath, file,
-        options.maxBytes + MAX_ENTRIES * WORKSPACE_ARCHIVE_ENTRY_OVERHEAD, downloads.signal)
-        .then((receipt) => ({ file, ...receipt }));
-      // Awaited in order below; a later download failing first must not surface as unhandled.
-      download.catch(() => {});
-      started[index] = download;
+    if (options.signal?.aborted) cancel();
+    const archiveLimit = options.maxBytes + MAX_ENTRIES * WORKSPACE_ARCHIVE_ENTRY_OVERHEAD;
+    const opened: Array<Promise<ReadableStream<Uint8Array>>> = [];
+    const open = (index: number) => {
+      if (index >= archives.length || index < opened.length) return;
+      const stream = fs.openArchive!(archives[index]!.sourcePath, { signal: streams.signal });
+      // Awaited in order below; a later request failing first must not surface as unhandled.
+      stream.catch(() => {});
+      opened.push(stream);
     };
     try {
-      for (let index = 0; index < WORKSPACE_ARCHIVE_DOWNLOADS; index++) start(index);
-      // Top-level files are read while the first archives download.
+      // Requests for the next archives are open while one is read; their bodies wait unread.
+      for (let index = 0; index < WORKSPACE_ARCHIVE_STREAMS; index++) open(index);
+      // Top-level files are read while the first archives open.
       await flushWorkspaceFiles();
       for (const [index, archive] of archives.entries()) {
-        const receipt = await started[index]!;
-        start(index + WORKSPACE_ARCHIVE_DOWNLOADS);
-        archiveReceipts.push({ path: archive.path, sizeBytes: receipt.sizeBytes, sha256: receipt.sha256 });
-        const source = createReadStream(receipt.file);
+        const body = await opened[index]!;
+        open(index + WORKSPACE_ARCHIVE_STREAMS);
+        const digest = createHash("sha256");
+        let archiveBytes = 0;
+        const counted = async function* () {
+          for await (const chunk of body) {
+            archiveBytes += chunk.byteLength;
+            if (archiveBytes > archiveLimit) throw new Error("Tangle evidence workspace archive exceeds its byte limit");
+            digest.update(chunk);
+            yield chunk;
+          }
+        };
+        const source = Readable.from(counted());
         const gunzip = createGunzip();
         source.on("error", (error) => gunzip.destroy(error));
         source.pipe(gunzip);
@@ -498,7 +509,12 @@ async function captureSandboxEvidence(
             // usage scan counted credential subtrees, so their members are counted, not admitted.
             const ancestors = path.split("/").slice(0, -1);
             const stop = ancestors.find((part) => blockedNames.has(part));
-            if (stop === ".sidecar") continue;
+            if (stop === ".sidecar") {
+              // Never admitted or counted, but its declared bytes still bound the decompression.
+              ignoredBytes += size;
+              if (ignoredBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
+              continue;
+            }
             if (stop !== undefined) {
               if (member.type === "directory") {
                 scannedDirectories++;
@@ -536,13 +552,14 @@ async function captureSandboxEvidence(
           gunzip.destroy();
           source.destroy();
         }
-        await local.rm(receipt.file, { force: true });
+        // The reader drains gunzip to its end, so the digest covers every streamed byte.
+        archiveReceipts.push({ path: archive.path, sizeBytes: archiveBytes, sha256: digest.digest("hex") });
       }
     } finally {
-      downloads.abort();
+      streams.abort();
       options.signal?.removeEventListener("abort", cancel);
-      await Promise.allSettled(started);
-      await local.rm(staging, { recursive: true, force: true });
+      // Release the requests opened ahead and never read.
+      await Promise.allSettled(opened.map(async (stream) => { await (await stream).cancel().catch(() => {}); }));
     }
   }
   await Promise.all(blockedScans);
@@ -1100,33 +1117,6 @@ async function readWorkspaceEvidenceBatch(
     remainingBytes -= bytes.byteLength;
   }
   return files;
-}
-
-/** Download one directory archive and verify the file at rest against its receipt before reading it. */
-async function downloadWorkspaceArchive(
-  fs: NonNullable<SandboxInstanceLike["fs"]>,
-  sourcePath: string,
-  target: string,
-  maxBytes: number,
-  signal: AbortSignal,
-): Promise<{ sizeBytes: number; sha256: string }> {
-  const receipt = await fs.downloadArchive!(sourcePath, target, { maxBytes, signal });
-  signal.throwIfAborted();
-  if (!receipt || !Number.isSafeInteger(receipt.sizeBytes) || !/^[a-f0-9]{64}$/i.test(receipt.sha256)) {
-    throw new Error("Tangle evidence workspace archive omitted its exact size or digest receipt");
-  }
-  const { createReadStream } = await import("node:fs");
-  const hash = createHash("sha256");
-  let size = 0;
-  for await (const chunk of createReadStream(target, { signal }) as AsyncIterable<Buffer>) {
-    hash.update(chunk);
-    size += chunk.byteLength;
-  }
-  const sha256 = receipt.sha256.toLowerCase();
-  if (size !== receipt.sizeBytes || hash.digest("hex") !== sha256) {
-    throw new Error(`Tangle evidence workspace archive does not match its receipt: ${sourcePath}`);
-  }
-  return { sizeBytes: size, sha256 };
 }
 
 /** The JSON reader has a smaller transport cap than an evidence archive. */
