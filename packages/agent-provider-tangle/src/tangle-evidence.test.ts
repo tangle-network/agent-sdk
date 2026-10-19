@@ -598,8 +598,21 @@ describe("Tangle evidence capture", () => {
       source.files.push({ sourceId: "source-1", rootScope: "session-home", path: ".config/opencode/node_modules/effect/index.js",
         kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
         sha256: installDigest, contentBase64: install.toString("base64") });
-      source.inventory.scannedFiles += 1;
-      source.inventory.reportedFiles += 1;
+      // Codex's downloaded caches keep metadata too; its session files keep their bytes.
+      const omitted = [
+        [".config/opencode/node_modules/effect/index.js", "harness-install"],
+        [".codex/plugins/cache/openai-curated/slides/1.0.0/reference.pptx", "harness-cache"],
+        [".codex/cache/remote_plugin_catalog/catalog.json", "harness-cache"],
+        [".codex/cache/codex_apps_tools/tools.json", "harness-cache"],
+      ] as const;
+      const kept = ".codex/sessions/2026/10/19/rollout.jsonl";
+      for (const path of [...omitted.slice(1).map(([path]) => path), kept]) {
+        source.files.push({ sourceId: "source-1", rootScope: "session-home", path,
+          kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
+          sha256: installDigest, contentBase64: install.toString("base64") });
+      }
+      source.inventory.scannedFiles += omitted.length + 1;
+      source.inventory.reportedFiles += omitted.length + 1;
       const exporting = box.session!.bind(box);
       box.session = (id) => ({
         ...(mode === "directory" ? exporting(id) : originalSession(id)),
@@ -650,15 +663,19 @@ describe("Tangle evidence capture", () => {
         expect(frames.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual(hasText);
         expect(decode(frames)).toEqual(expected);
 
-        expect(files.some((file) => file.includes("node_modules"))).toBe(false);
-        expect(manifest.contentRefs.some((reference: { path: string }) => reference.path.includes("node_modules"))).toBe(false);
-        expect(manifest.source.files.find((entry: { path: string }) => entry.path.includes("node_modules"))).toMatchObject({
-          sizeBytes: install.byteLength, sha256: installDigest, contentOmitted: "harness-install",
-        });
         const session = captured.provenance.sessions.find((entry) => entry.id === "session-1")!;
-        expect(session.nativeStore.entries.find((entry) => entry.path.includes("node_modules"))).toMatchObject({
-          sizeBytes: install.byteLength, sha256: installDigest, contentOmitted: "harness-install",
-        });
+        for (const [path, contentOmitted] of omitted) {
+          expect(files.some((file) => file.endsWith(path))).toBe(false);
+          expect(manifest.contentRefs.some((reference: { path: string }) => reference.path.endsWith(path))).toBe(false);
+          expect(manifest.source.files.find((entry: { path: string }) => entry.path === path)).toMatchObject({
+            sizeBytes: install.byteLength, sha256: installDigest, contentOmitted,
+          });
+          expect(session.nativeStore.entries.find((entry) => entry.path === path)).toMatchObject({
+            sizeBytes: install.byteLength, sha256: installDigest, contentOmitted,
+          });
+        }
+        expect(files.some((file) => file.endsWith(kept))).toBe(true);
+        expect(session.nativeStore.entries.find((entry) => entry.path === kept)).not.toHaveProperty("contentOmitted");
       } finally { await rm(directory, { recursive: true, force: true }); }
     },
   );

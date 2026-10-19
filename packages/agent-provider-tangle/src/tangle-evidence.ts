@@ -166,8 +166,8 @@ export interface TangleEnvironmentEvidence {
           rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
           mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
           sha256: string | null; linkTarget: string | null;
-          /** Metadata only: the bytes are a harness's own install, not session state. */
-          contentOmitted?: "harness-install";
+          /** Metadata only: the bytes are a harness's own install or cache, which it rebuilds on start. */
+          contentOmitted?: HarnessContentOmission;
         }>;
         excludedPaths: Array<{
           sourceId?: string;
@@ -654,8 +654,8 @@ async function captureSandboxEvidence(
           if (nativePaths.has(identity)) throw new Error("Tangle raw session repeats a native path");
           nativePaths.add(identity);
           if (!nativeStatMetadata(entry)) throw new Error("Tangle raw session entry metadata is invalid");
-          const harnessInstall = entry.kind === "file" && harnessInstallPath(path);
-          if (entry.kind === "file" && !harnessInstall) {
+          const omitted = entry.kind === "file" ? harnessContentOmission(entry.rootScope, path) : undefined;
+          if (entry.kind === "file" && !omitted) {
             const contentPath = "__retention__/sessions/" + id + "/native/" +
               (entry.sourceId === undefined ? "" : entry.sourceId + "/") + entry.rootScope + "/" + path;
             await retainNativeContent(entry, contentPath, entry.mode & 0o777);
@@ -677,7 +677,7 @@ async function captureSandboxEvidence(
             rootScope: entry.rootScope, path, kind: entry.kind, mode: entry.mode,
             uid: entry.uid, gid: entry.gid, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs,
             sizeBytes: entry.sizeBytes, sha256: entry.sha256 ?? null, linkTarget: entry.linkTarget ?? null,
-            ...(harnessInstall ? { contentOmitted: "harness-install" as const } : {}),
+            ...(omitted ? { contentOmitted: omitted } : {}),
           });
         }
         for (const exclusion of native.excluded) {
@@ -848,10 +848,11 @@ async function captureSandboxEvidence(
         manifestSource = {
           ...native,
           events: native.events.map((record) => withoutRepeatedFrameText(record, nativePartText)),
-          files: native.files.map((entry) => entry.kind !== "file" ? entry
-            : harnessInstallPath(entry.path)
-              ? { ...withoutNativeContent(entry), contentOmitted: "harness-install" }
-              : withoutNativeContent(entry)),
+          files: native.files.map((entry) => {
+            if (entry.kind !== "file") return entry;
+            const omitted = harnessContentOmission(entry.rootScope, entry.path);
+            return omitted ? { ...withoutNativeContent(entry), contentOmitted: omitted } : withoutNativeContent(entry);
+          }),
           processIo: frameMetadata,
           processSources: native.processSources.map(withoutNativeContent),
         };
@@ -1059,9 +1060,21 @@ function withoutRepeatedFrameText(record: unknown, previous: Map<string, string>
   return { ...record, frames: frames.map(compact) };
 }
 
-/** A harness's installed packages under its home, e.g. `.config/opencode/node_modules`. */
-function harnessInstallPath(path: string): boolean {
-  return path.split("/").includes("node_modules");
+type HarnessContentOmission = "harness-install" | "harness-cache";
+
+/**
+ * Codex caches under its home that it downloads again on start: plugin template assets and
+ * the remote plugin and apps catalogs. Session state (`.codex/sessions`, the thread sqlite,
+ * config) stays. One canary's capture was 84% these directories (186.8 MB of evidence).
+ */
+const HARNESS_CACHE_DIRECTORIES = [".codex/plugins/cache/", ".codex/cache/remote_plugin_catalog/", ".codex/cache/codex_apps_tools/"];
+
+/** Why a native file keeps only its metadata, or undefined when its bytes are session state. */
+function harnessContentOmission(rootScope: string, path: string): HarnessContentOmission | undefined {
+  // A harness's installed packages, e.g. `.config/opencode/node_modules`.
+  if (path.split("/").includes("node_modules")) return "harness-install";
+  if (rootScope === "session-home" && HARNESS_CACHE_DIRECTORIES.some((directory) => path.startsWith(directory))) return "harness-cache";
+  return undefined;
 }
 
 function withoutNativeContent(source: object): Record<string, unknown> {
