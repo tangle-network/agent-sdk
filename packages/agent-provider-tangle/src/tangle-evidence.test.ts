@@ -643,7 +643,9 @@ describe("Tangle evidence capture", () => {
 
         const manifest = await read(/\/raw-manifest\.json$/);
         expect(manifest.partText).toBe("delta-when-text-equals-previous-plus-delta");
-        const frames = manifest.source.events[0].frames.map((frame: { data: { part: Record<string, unknown>; delta: string } }) => frame.data);
+        const frames = manifest.source.events[0].frames
+          .map((frame: { data?: { part?: Record<string, unknown>; delta: string } }) => frame.data)
+          .filter((data: { part?: unknown } | undefined) => data?.part);
         expect(frames.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual(hasText);
         expect(decode(frames)).toEqual(expected);
 
