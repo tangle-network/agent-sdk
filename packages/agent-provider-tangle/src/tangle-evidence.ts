@@ -335,9 +335,10 @@ async function captureSandboxEvidence(
   const fs = boxFs as NonNullable<SandboxInstanceLike["fs"]> &
     Required<Pick<NonNullable<SandboxInstanceLike["fs"]>, "list" | "usage" | "readBatch">>;
   options.signal?.throwIfAborted();
-  const usage = workspaceScope === "none"
-    ? { complete: true, skippedEntries: 0, sizeBytes: 0, fileCount: 0, directoryCount: 0 }
-    : await fs.usage(workspaceRoot);
+  // The root listing is requested with the usage scan; neither depends on the other.
+  const [usage, rootEntries] = workspaceScope === "none"
+    ? [{ complete: true, skippedEntries: 0, sizeBytes: 0, fileCount: 0, directoryCount: 0 }, []]
+    : await Promise.all([fs.usage(workspaceRoot), fs.list(workspaceRoot, { all: true, long: true })]);
   if (!usage.complete || usage.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
   if (usage.sizeBytes > options.maxBytes) throw new Error("Tangle workspace exceeds evidence byte limit");
   const metadata: WorkspaceEntryMetadata[] = [];
@@ -414,11 +415,11 @@ async function captureSandboxEvidence(
   // workspace on 2026-10-19, and the serial batch reads most of the rest. Credential and
   // runtime-owned top-level directories are never archived, so their bytes stay in the box.
   const archives: Array<{ sourcePath: string; path: string }> = [];
+  // Credential subtree scans run alongside the archive downloads; each only adds to the totals.
+  const blockedScans: Array<Promise<void>> = [];
   if (workspaceScope === "environment") {
-    options.signal?.throwIfAborted();
-    const entries = await fs.list(workspaceRoot, { all: true, long: true });
-    if (!Array.isArray(entries)) throw new Error("Tangle workspace list is malformed");
-    for (const entry of entries) {
+    if (!Array.isArray(rootEntries)) throw new Error("Tangle workspace list is malformed");
+    for (const entry of rootEntries) {
       const sourcePath = canonicalEntryPath(entry.path);
       if (workspaceRoot !== "." && !sourcePath.startsWith(workspaceRoot + "/")) {
         throw new Error("Tangle workspace list returned a path outside its worker directory");
@@ -434,12 +435,15 @@ async function captureSandboxEvidence(
       else if (decision === "blocked") {
         // Nothing below a credential directory is read: one complete usage scan accounts for its
         // subtree against the workspace totals.
-        options.signal?.throwIfAborted();
-        const subtree = await fs.usage(sourcePath);
-        if (!subtree.complete || subtree.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
-        scannedDirectories += subtree.directoryCount;
-        scannedFiles += subtree.fileCount;
-        scannedSize += subtree.sizeBytes;
+        const scan = fs.usage(sourcePath).then((subtree) => {
+          if (!subtree.complete || subtree.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
+          scannedDirectories += subtree.directoryCount;
+          scannedFiles += subtree.fileCount;
+          scannedSize += subtree.sizeBytes;
+        });
+        // Awaited after the archives; a failure must not surface as unhandled before then.
+        scan.catch(() => {});
+        blockedScans.push(scan);
       }
     }
   }
@@ -467,6 +471,8 @@ async function captureSandboxEvidence(
     };
     try {
       for (let index = 0; index < WORKSPACE_ARCHIVE_DOWNLOADS; index++) start(index);
+      // Top-level files are read while the first archives download.
+      await flushWorkspaceFiles();
       for (const [index, archive] of archives.entries()) {
         const receipt = await started[index]!;
         start(index + WORKSPACE_ARCHIVE_DOWNLOADS);
@@ -539,6 +545,7 @@ async function captureSandboxEvidence(
       await local.rm(staging, { recursive: true, force: true });
     }
   }
+  await Promise.all(blockedScans);
   if (scannedFiles !== usage.fileCount || scannedDirectories !== usage.directoryCount || scannedSize !== usage.sizeBytes) {
     throw new Error("Tangle workspace inventory does not match the complete usage scan");
   }
