@@ -23,6 +23,7 @@ import {
   narrowTangleCapabilitiesToBackend,
 } from "./tangle-capabilities.js";
 import { sandboxInstanceAsEnvironment } from "./tangle-environment.js";
+import { tangleProfileValidator } from "./tangle-profile-validation.js";
 import {
   confidentialVerifierOption,
   createTangleWorkspaceBranching,
@@ -419,7 +420,7 @@ export function createTangleProvider(
     ...(exactProcess ? { exactProcess } : {}),
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
-    ...(options.validateProfile ? { validateProfile: options.validateProfile } : {}),
+    validateProfile: tangleProfileValidator(options.validateProfile),
     async create(input) {
       const { signal, ...material } = input;
       signal?.throwIfAborted();
