@@ -7,6 +7,7 @@ import type { AgentEnvironment } from "@tangle-network/agent-interface/environme
 import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttemptLike, TangleEvidenceSourceLike } from "./tangle-types.js";
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import { retainedCaptureAttribution } from "./tangle-retained-attribution.js";
+import { readWorkspaceArchive } from "./tangle-evidence-tar.js";
 
 const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
 const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
@@ -60,6 +61,10 @@ async function* bufferedExecutionEvents(session: ReplaySession, executionId: str
 // Match the Sidecar request limit without accumulating 100 large JSON payloads.
 const WORKSPACE_BATCH_FILES = 100;
 const WORKSPACE_BATCH_BYTES = 8 * 1024 * 1024;
+// Top-level directory archives downloaded ahead of the one being read.
+const WORKSPACE_ARCHIVE_DOWNLOADS = 4;
+// Tar header, PAX record and padding bytes an archive may add per member beyond its content.
+const WORKSPACE_ARCHIVE_ENTRY_OVERHEAD = 2048;
 interface WorkspaceFileRead {
   sourcePath: string;
   path: string;
@@ -132,7 +137,11 @@ export interface TangleEnvironmentEvidence {
     entries: WorkspaceEntryMetadata[];
     excludedPaths: Array<WorkspaceEntryMetadata & { reason: "credential-path" | "symlink" | "runtime-owned" }>;
     /** `complete` is false only when `workspaceScope` is `none`: no workspace was scanned. */
-    workspace: { scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: boolean };
+    workspace: {
+      scannedFiles: number; scannedDirectories: number; reportedFiles: number; reportedDirectories: number; complete: boolean;
+      /** One verified Sandbox archive receipt per top-level directory whose contents were read. */
+      archives: Array<{ path: string; sizeBytes: number; sha256: string }>;
+    };
     attempts: TangleEvidenceAttemptLike[];
     sessions: Array<{
       id: string;
@@ -334,7 +343,7 @@ async function captureSandboxEvidence(
   const metadata: WorkspaceEntryMetadata[] = [];
   const seenPaths = new Set<string>();
   const excludedPaths: TangleEnvironmentEvidence["provenance"]["excludedPaths"] = [];
-  const stack = workspaceScope === "none" ? [] : [workspaceRoot];
+  const archiveReceipts: TangleEnvironmentEvidence["provenance"]["workspace"]["archives"] = [];
   let scannedFiles = 0;
   let scannedDirectories = 0;
   let scannedEntries = 0;
@@ -358,65 +367,176 @@ async function captureSandboxEvidence(
     pending = [];
     pendingBytes = 0;
   };
-  while (stack.length) {
+  const readLater = async (entry: WorkspaceFileRead) => {
+    if (pending.length && (pending.length >= WORKSPACE_BATCH_FILES || pendingBytes + entry.size > WORKSPACE_BATCH_BYTES)) {
+      await flushWorkspaceFiles();
+    }
+    if (entry.size > options.maxBytes - capturedBytes - pendingBytes) throw new Error("Tangle evidence exceeds byte limit");
+    pending.push(entry);
+    pendingBytes += entry.size;
+  };
+  // Classify one entry, from the root listing or an archive member, exactly as the former
+  // directory-by-directory walk did: "walk" captures a directory's contents, "blocked" only
+  // accounts for them, "retain" captures a file, "omit" keeps metadata only.
+  const admit = (path: string, item: WorkspaceEntryMetadata): "walk" | "blocked" | "retain" | "omit" => {
+    if (++scannedEntries > MAX_ENTRIES) throw new Error("Tangle workspace entry limit exceeded");
+    if (seenPaths.has(path)) throw new Error("Tangle workspace inventory repeats a path");
+    seenPaths.add(path);
+    metadata.push(item);
+    const parts = path.split("/");
+    if (parts.includes(".sidecar")) {
+      excludedPaths.push({ ...item, reason: "runtime-owned" });
+      return "omit";
+    }
+    if (item.type === "directory") {
+      scannedDirectories++;
+      if (parts.some((part) => blockedNames.has(part))) {
+        excludedPaths.push({ ...item, reason: "credential-path" });
+        return "blocked";
+      }
+      return "walk";
+    }
+    scannedFiles++;
+    scannedSize += item.sizeBytes;
+    if (scannedSize > usage.sizeBytes) throw new Error("Tangle workspace inventory does not match the complete usage scan");
+    if (item.type === "symlink") {
+      excludedPaths.push({ ...item, reason: "symlink" });
+      return "omit";
+    }
+    if (parts.some((part) => blockedNames.has(part) || /^\.env\./.test(part))) {
+      excludedPaths.push({ ...item, reason: "credential-path" });
+      return "omit";
+    }
+    return "retain";
+  };
+  // The root is listed once. Each top-level directory then arrives as one archive stream: listing
+  // every directory cost about 0.5 s per request, 62-73 s of a 121 s capture of a 2,500-file
+  // workspace on 2026-10-19, and the serial batch reads most of the rest. Credential and
+  // runtime-owned top-level directories are never archived, so their bytes stay in the box.
+  const archives: Array<{ sourcePath: string; path: string }> = [];
+  if (workspaceScope === "environment") {
     options.signal?.throwIfAborted();
-    const directory = stack.pop()!;
-    const entries = await fs.list(directory, { all: true, long: true });
+    const entries = await fs.list(workspaceRoot, { all: true, long: true });
     if (!Array.isArray(entries)) throw new Error("Tangle workspace list is malformed");
     for (const entry of entries) {
-      if (++scannedEntries > MAX_ENTRIES) throw new Error("Tangle workspace entry limit exceeded");
       const sourcePath = canonicalEntryPath(entry.path);
       if (workspaceRoot !== "." && !sourcePath.startsWith(workspaceRoot + "/")) {
         throw new Error("Tangle workspace list returned a path outside its worker directory");
       }
       const path = workspaceRoot === "." ? sourcePath : canonicalEntryPath(sourcePath.slice(workspaceRoot.length + 1));
-      if (seenPaths.has(path)) throw new Error("Tangle workspace inventory repeats a path");
-      seenPaths.add(path);
       const expectedParent = sourcePath.includes("/") ? sourcePath.slice(0, sourcePath.lastIndexOf("/")) : ".";
-      if (expectedParent !== directory || entry.name !== path.split("/").at(-1)) throw new Error("Tangle workspace list returned a path outside its parent");
+      if (expectedParent !== workspaceRoot || entry.name !== path) throw new Error("Tangle workspace list returned a path outside its parent");
       if (!Number.isSafeInteger(entry.size) || entry.size < 0) throw new Error("Tangle workspace entry has invalid size");
       const item = entryMetadata(path, entry);
-      metadata.push(item);
-      if (path.split("/").includes(".sidecar")) {
-        excludedPaths.push({ ...item, reason: "runtime-owned" });
-        continue;
+      const decision = admit(path, item);
+      if (decision === "walk") archives.push({ sourcePath, path });
+      else if (decision === "retain") await readLater({ sourcePath, path, size: entry.size, mode: entry.permissions & 0o777 });
+      else if (decision === "blocked") {
+        // Nothing below a credential directory is read: one complete usage scan accounts for its
+        // subtree against the workspace totals.
+        options.signal?.throwIfAborted();
+        const subtree = await fs.usage(sourcePath);
+        if (!subtree.complete || subtree.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
+        scannedDirectories += subtree.directoryCount;
+        scannedFiles += subtree.fileCount;
+        scannedSize += subtree.sizeBytes;
       }
-      if (entry.isDir && !entry.isSymlink) {
-        scannedDirectories++;
-        if (path.split("/").some((part) => blockedNames.has(part))) {
-          excludedPaths.push({ ...item, reason: "credential-path" });
-          // Nothing below a credential directory is read, so none of it is listed either: one
-          // complete usage scan accounts for its subtree against the workspace totals. Listing it
-          // cost one request per directory; .opencode/node_modules alone was 271 of a capture's
-          // 302 list calls and about 100 s of each two-minute workspace capture on 2026-10-06.
-          options.signal?.throwIfAborted();
-          const subtree = await fs.usage(sourcePath);
-          if (!subtree.complete || subtree.skippedEntries !== 0) throw new Error("Tangle workspace usage scan is incomplete");
-          scannedDirectories += subtree.directoryCount;
-          scannedFiles += subtree.fileCount;
-          scannedSize += subtree.sizeBytes;
-          continue;
+    }
+  }
+  if (archives.length) {
+    if (!fs.downloadArchive) throw new Error("Tangle evidence requires workspace directory archive download");
+    const local = await import("node:fs/promises");
+    const { createReadStream } = await import("node:fs");
+    const { createGunzip } = await import("node:zlib");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const staging = await local.mkdtemp(join(tmpdir(), "tangle-evidence-"));
+    const downloads = new AbortController();
+    const cancel = () => downloads.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    const started: Array<Promise<{ file: string; sizeBytes: number; sha256: string }>> = [];
+    const start = (index: number) => {
+      if (index >= archives.length || started[index]) return;
+      const file = join(staging, `${index}.tar.gz`);
+      const download = downloadWorkspaceArchive(fs, archives[index]!.sourcePath, file,
+        options.maxBytes + MAX_ENTRIES * WORKSPACE_ARCHIVE_ENTRY_OVERHEAD, downloads.signal)
+        .then((receipt) => ({ file, ...receipt }));
+      // Awaited in order below; a later download failing first must not surface as unhandled.
+      download.catch(() => {});
+      started[index] = download;
+    };
+    try {
+      for (let index = 0; index < WORKSPACE_ARCHIVE_DOWNLOADS; index++) start(index);
+      for (const [index, archive] of archives.entries()) {
+        const receipt = await started[index]!;
+        start(index + WORKSPACE_ARCHIVE_DOWNLOADS);
+        archiveReceipts.push({ path: archive.path, sizeBytes: receipt.sizeBytes, sha256: receipt.sha256 });
+        const source = createReadStream(receipt.file);
+        const gunzip = createGunzip();
+        source.on("error", (error) => gunzip.destroy(error));
+        source.pipe(gunzip);
+        // Hard link members carry no body; they take the size of the member they name.
+        const fileSizes = new Map<string, number>();
+        try {
+          for await (const member of readWorkspaceArchive(gunzip)) {
+            options.signal?.throwIfAborted();
+            const name = canonicalEntryPath(member.name);
+            const sourcePath = `${archive.sourcePath}/${name}`;
+            const path = `${archive.path}/${name}`;
+            const size = member.type === "file" ? member.size
+              : member.type === "symlink" ? Buffer.byteLength(member.linkName)
+              : member.type === "link" ? fileSizes.get(member.linkName) : 0;
+            if (size === undefined) throw new Error("Tangle workspace archive links to an unknown member");
+            if (member.type === "file") fileSizes.set(name, size);
+            // The former walk never listed below a runtime-owned or credential directory; the
+            // usage scan counted credential subtrees, so their members are counted, not admitted.
+            const ancestors = path.split("/").slice(0, -1);
+            const stop = ancestors.find((part) => blockedNames.has(part));
+            if (stop === ".sidecar") continue;
+            if (stop !== undefined) {
+              if (member.type === "directory") {
+                scannedDirectories++;
+              } else {
+                scannedFiles++;
+                scannedSize += size;
+              }
+              if (scannedSize > usage.sizeBytes) throw new Error("Tangle workspace inventory does not match the complete usage scan");
+              continue;
+            }
+            const item: WorkspaceEntryMetadata = {
+              path,
+              type: member.type === "link" ? "file" : member.type,
+              sizeBytes: size,
+              mode: member.mode & 0o777,
+              owner: String(member.uid),
+              group: String(member.gid),
+              modifiedAt: new Date(member.mtime * 1000).toISOString(),
+              // The archive records no access time.
+              accessedAt: null,
+              symlinkTarget: null,
+            };
+            if (admit(path, item) !== "retain") continue;
+            if (member.type === "link") {
+              await readLater({ sourcePath, path, size, mode: item.mode });
+              continue;
+            }
+            if (size > options.maxBytes - capturedBytes - pendingBytes) throw new Error("Tangle evidence exceeds byte limit");
+            if (await writer.writeChunks(path, item.mode, member.body) !== size) {
+              throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
+            }
+            capturedBytes += size;
+          }
+        } finally {
+          gunzip.destroy();
+          source.destroy();
         }
-        stack.push(sourcePath);
-        continue;
+        await local.rm(receipt.file, { force: true });
       }
-      if (!entry.isFile && !entry.isSymlink) throw new Error("Tangle workspace contains an unsupported file type");
-      scannedFiles++;
-      scannedSize += entry.size;
-      if (entry.isSymlink) {
-        excludedPaths.push({ ...item, reason: "symlink" });
-        continue;
-      }
-      if (path.split("/").some((part) => blockedNames.has(part) || /^\.env\./.test(part))) {
-        excludedPaths.push({ ...item, reason: "credential-path" });
-        continue;
-      }
-      if (pending.length && (pending.length >= WORKSPACE_BATCH_FILES || pendingBytes + entry.size > WORKSPACE_BATCH_BYTES)) {
-        await flushWorkspaceFiles();
-      }
-      if (entry.size > options.maxBytes - capturedBytes - pendingBytes) throw new Error("Tangle evidence exceeds byte limit");
-      pending.push({ sourcePath, path, size: entry.size, mode: entry.permissions & 0o777 });
-      pendingBytes += entry.size;
+    } finally {
+      downloads.abort();
+      options.signal?.removeEventListener("abort", cancel);
+      await Promise.allSettled(started);
+      await local.rm(staging, { recursive: true, force: true });
     }
   }
   if (scannedFiles !== usage.fileCount || scannedDirectories !== usage.directoryCount || scannedSize !== usage.sizeBytes) {
@@ -912,7 +1032,7 @@ async function captureSandboxEvidence(
     capturedAt: new Date().toISOString(),
     entries: metadata.sort((a, b) => a.path.localeCompare(b.path)),
     excludedPaths,
-    workspace: { scannedFiles, scannedDirectories, reportedFiles: usage.fileCount, reportedDirectories: usage.directoryCount, complete: workspaceScope === "environment" },
+    workspace: { scannedFiles, scannedDirectories, reportedFiles: usage.fileCount, reportedDirectories: usage.directoryCount, complete: workspaceScope === "environment", archives: archiveReceipts },
     attempts,
     sessions,
     missing,
@@ -973,6 +1093,33 @@ async function readWorkspaceEvidenceBatch(
     remainingBytes -= bytes.byteLength;
   }
   return files;
+}
+
+/** Download one directory archive and verify the file at rest against its receipt before reading it. */
+async function downloadWorkspaceArchive(
+  fs: NonNullable<SandboxInstanceLike["fs"]>,
+  sourcePath: string,
+  target: string,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<{ sizeBytes: number; sha256: string }> {
+  const receipt = await fs.downloadArchive!(sourcePath, target, { maxBytes, signal });
+  signal.throwIfAborted();
+  if (!receipt || !Number.isSafeInteger(receipt.sizeBytes) || !/^[a-f0-9]{64}$/i.test(receipt.sha256)) {
+    throw new Error("Tangle evidence workspace archive omitted its exact size or digest receipt");
+  }
+  const { createReadStream } = await import("node:fs");
+  const hash = createHash("sha256");
+  let size = 0;
+  for await (const chunk of createReadStream(target, { signal }) as AsyncIterable<Buffer>) {
+    hash.update(chunk);
+    size += chunk.byteLength;
+  }
+  const sha256 = receipt.sha256.toLowerCase();
+  if (size !== receipt.sizeBytes || hash.digest("hex") !== sha256) {
+    throw new Error(`Tangle evidence workspace archive does not match its receipt: ${sourcePath}`);
+  }
+  return { sizeBytes: size, sha256 };
 }
 
 /** The JSON reader has a smaller transport cap than an evidence archive. */

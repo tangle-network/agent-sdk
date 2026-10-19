@@ -542,6 +542,12 @@ export interface SandboxInstanceLike {
       localPath: string,
       options?: { overwrite?: boolean; maxBytes?: number; expectedSize?: number; signal?: AbortSignal }
     ): Promise<void | { sizeBytes: number; sha256: string }>;
+    /** One tar.gz stream of a directory, written to `localPath`, with a receipt over its bytes. */
+    downloadArchive?(
+      remoteDir: string,
+      localPath: string,
+      options?: { maxBytes?: number; signal?: AbortSignal }
+    ): Promise<{ sizeBytes: number; sha256: string }>;
     stat(path: string): Promise<{ size: number; isFile: boolean }>;
     list?(path: string, options?: { all?: boolean; long?: boolean }): Promise<Array<{
       name: string;
