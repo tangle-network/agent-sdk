@@ -873,7 +873,9 @@ async function captureSandboxEvidence(
       }
       await writer.writeChunks("__retention__/sessions/" + id + "/raw-manifest.json", 0o600,
         evidenceJsonChunks({ kind: "tangle-native-session-evidence.v1", source: manifestSource,
-          contentEncoding: "base64", contentRefs, partText: PART_TEXT_ENCODING }));
+          contentEncoding: "base64", contentRefs,
+          // An unavailable capture keeps the producer's record unchanged.
+          ...(manifestSource === native ? {} : { partText: PART_TEXT_ENCODING }) }));
       capturedBytes = writer.byteLength;
     }
     sessions.push({
