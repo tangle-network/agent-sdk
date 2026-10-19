@@ -456,7 +456,7 @@ async function captureSandboxEvidence(
     options.signal?.addEventListener("abort", cancel, { once: true });
     const started: Array<Promise<{ file: string; sizeBytes: number; sha256: string }>> = [];
     const start = (index: number) => {
-      if (index >= archives.length || started[index]) return;
+      if (index >= archives.length || index < started.length) return;
       const file = join(staging, `${index}.tar.gz`);
       const download = downloadWorkspaceArchive(fs, archives[index]!.sourcePath, file,
         options.maxBytes + MAX_ENTRIES * WORKSPACE_ARCHIVE_ENTRY_OVERHEAD, downloads.signal)
