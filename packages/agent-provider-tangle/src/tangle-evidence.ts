@@ -350,6 +350,7 @@ async function captureSandboxEvidence(
   let scannedEntries = 0;
   let scannedSize = 0;
   let ignoredBytes = 0;
+  let archiveMembers = 0;
   let capturedBytes = 0;
   let pending: WorkspaceFileRead[] = [];
   let pendingBytes = 0;
@@ -487,7 +488,10 @@ async function captureSandboxEvidence(
       const fileSizes = new Map<string, number>();
       try {
         for await (const member of readWorkspaceArchive(gunzip)) {
-          options.signal?.throwIfAborted();
+          streams.signal.throwIfAborted();
+          // Every member counts, including those below credential and runtime-owned paths that
+          // are never admitted, so a stream of empty headers cannot run unbounded.
+          if (++archiveMembers > MAX_ENTRIES) throw new Error("Tangle workspace entry limit exceeded");
           const name = canonicalEntryPath(member.name);
           const sourcePath = `${archive.sourcePath}/${name}`;
           const path = `${archive.path}/${name}`;
@@ -513,7 +517,9 @@ async function captureSandboxEvidence(
               scannedFiles++;
               scannedSize += size;
             }
-            if (scannedSize > usage.sizeBytes) throw new Error("Tangle workspace inventory does not match the complete usage scan");
+            if (scannedSize > usage.sizeBytes || scannedFiles > usage.fileCount || scannedDirectories > usage.directoryCount) {
+              throw new Error("Tangle workspace inventory does not match the complete usage scan");
+            }
             continue;
           }
           const item: WorkspaceEntryMetadata = {
@@ -547,23 +553,31 @@ async function captureSandboxEvidence(
       archiveReceipts[index] = { path: archive.path, sizeBytes: archiveBytes, sha256: digest.digest("hex") };
     };
     let next = 0;
-    const worker = async () => {
+    // The first failure in time is the one reported; the others are its abort echoes.
+    let firstError: { error: unknown } | undefined;
+    const stopOnFailure = async (work: () => Promise<void>) => {
       try {
-        while (next < archives.length) await readArchive(next++);
+        await work();
       } catch (error) {
-        // Stop the other archive streams; the first failure is reported below.
+        firstError ??= { error };
         streams.abort(error);
-        throw error;
+      }
+    };
+    const worker = async () => {
+      while (next < archives.length) {
+        streams.signal.throwIfAborted();
+        await readArchive(next++);
       }
     };
     try {
       // Top-level files are read while the archives stream.
-      const settled = await Promise.allSettled([
-        flushWorkspaceFiles(),
-        ...Array.from({ length: Math.min(WORKSPACE_ARCHIVE_STREAMS, archives.length) }, worker),
+      await Promise.all([
+        stopOnFailure(flushWorkspaceFiles),
+        ...Array.from({ length: Math.min(WORKSPACE_ARCHIVE_STREAMS, archives.length) }, () => stopOnFailure(worker)),
       ]);
-      const failed = settled.find((result) => result.status === "rejected");
-      if (failed) throw (failed as PromiseRejectedResult).reason;
+      // Assigned inside the workers; read it through a wider type than the narrowed let.
+      const failure = firstError as { error: unknown } | undefined;
+      if (failure) throw failure.error;
     } finally {
       streams.abort();
       options.signal?.removeEventListener("abort", cancel);
