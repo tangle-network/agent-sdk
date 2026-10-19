@@ -791,36 +791,6 @@ describe("Tangle evidence capture", () => {
       .rejects.toThrow(/inventory does not reconcile/);
   });
 
-  function credentialTreeWorkspace(subtree: { complete?: boolean; opencodeDirectories?: number } = {}) {
-    const environment = fixture();
-    const fs = fixtureBoxes.get(environment)!.fs!;
-    const result = Buffer.from("found");
-    const dir = (path: string) => ({ path, name: path.split("/").at(-1)!, size: 0, isDir: true, isFile: false, isSymlink: false, permissions: 0o755 });
-    const listed: string[] = [];
-    const usages: Record<string, { sizeBytes: number; fileCount: number; directoryCount: number }> = {
-      // notes, .opencode, .config, and .opencode's node_modules, zod, v4 and v4/core.
-      ".": { sizeBytes: result.byteLength + 17 + 20, fileCount: 4, directoryCount: 7 },
-      ".opencode": { sizeBytes: 17, fileCount: 2, directoryCount: subtree.opencodeDirectories ?? 4 },
-      ".config": { sizeBytes: 20, fileCount: 1, directoryCount: 0 },
-    };
-    fs.usage = async (path = ".") => {
-      const totals = usages[path];
-      if (!totals) throw new Error(`fixture has no usage for ${path}`);
-      return { ...totals, complete: path === "." || (subtree.complete ?? true), skippedEntries: 0 };
-    };
-    fs.list = async (path) => {
-      listed.push(path);
-      if (path === ".") return [dir("notes"), dir(".opencode"), dir(".config")];
-      if (path === "notes") return [{ path: "notes/result.txt", name: "result.txt", size: result.byteLength, isDir: false, isFile: true, isSymlink: false, permissions: 0o644 }];
-      throw new Error(`listed inside a credential directory: ${path}`);
-    };
-    fs.readBatch = async (paths) => {
-      if (paths.some((path) => path !== "notes/result.txt")) throw new Error("credential read forbidden");
-      return { files: [{ path: "notes/result.txt", content: result.toString("base64"), encoding: "base64" as const, size: result.byteLength }], errors: [] };
-    };
-    return { environment, listed };
-  }
-
 });
 
 describe("bounded directory evidence", () => {
