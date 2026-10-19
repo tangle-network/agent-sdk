@@ -166,6 +166,8 @@ export interface TangleEnvironmentEvidence {
           rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
           mode: number; uid: number; gid: number; mtimeMs: number; ctimeMs: number; sizeBytes: number;
           sha256: string | null; linkTarget: string | null;
+          /** Metadata only: the bytes are a harness's own install, not session state. */
+          contentOmitted?: "harness-install";
         }>;
         excludedPaths: Array<{
           sourceId?: string;
@@ -489,6 +491,7 @@ async function captureSandboxEvidence(
     }
     const counts = { events: 0, messages: 0 };
     const eventCountsByExecutionId: Record<string, number> = {};
+    const transportPartText = new Map<string, string>();
     const events = new EvidenceJsonArray(undefined, async function* () {
       for (const executionId of executionIds) {
         eventCountsByExecutionId[executionId] = 0;
@@ -503,7 +506,7 @@ async function captureSandboxEvidence(
           }
           counts.events++;
           eventCountsByExecutionId[executionId] += 1;
-          yield { executionId, event };
+          yield { executionId, event: { ...event, data: withoutRepeatedPartText(event.data, transportPartText) as typeof event.data } };
         }
       }
     });
@@ -520,7 +523,7 @@ async function captureSandboxEvidence(
     });
     await writer.writeChunks(`__retention__/sessions/${id}.json`, 0o600,
       evidenceJsonChunks({ kind: "tangle-session-transport.v1", environmentId: box.id, sessionId: id,
-        executionIds, status, events, messages, messageScope: "session" }));
+        executionIds, status, events, messages, messageScope: "session", partText: PART_TEXT_ENCODING }));
     capturedBytes = writer.byteLength;
     let nativeSessionId: string | null = null;
     let sidecarImageDigest: string | null = null;
@@ -651,12 +654,15 @@ async function captureSandboxEvidence(
           if (nativePaths.has(identity)) throw new Error("Tangle raw session repeats a native path");
           nativePaths.add(identity);
           if (!nativeStatMetadata(entry)) throw new Error("Tangle raw session entry metadata is invalid");
-          if (entry.kind === "file") {
+          const harnessInstall = entry.kind === "file" && harnessInstallPath(path);
+          if (entry.kind === "file" && !harnessInstall) {
             const contentPath = "__retention__/sessions/" + id + "/native/" +
               (entry.sourceId === undefined ? "" : entry.sourceId + "/") + entry.rootScope + "/" + path;
             await retainNativeContent(entry, contentPath, entry.mode & 0o777);
             contentRefs.push({ jsonPointer: `/files/${index}/contentBase64`, path: contentPath });
             capturedBytes = writer.byteLength;
+          } else if (entry.kind === "file") {
+            // The entry, its size and its digest stay in the inventory below.
           } else if (entry.kind === "directory" || entry.kind === "symlink") {
             if (entry.contentBase64 !== undefined || entry.sha256 !== undefined ||
                 (entry.kind === "symlink" && (typeof entry.linkTarget !== "string" || entry.linkTarget.includes("\0")))) {
@@ -671,6 +677,7 @@ async function captureSandboxEvidence(
             rootScope: entry.rootScope, path, kind: entry.kind, mode: entry.mode,
             uid: entry.uid, gid: entry.gid, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs,
             sizeBytes: entry.sizeBytes, sha256: entry.sha256 ?? null, linkTarget: entry.linkTarget ?? null,
+            ...(harnessInstall ? { contentOmitted: "harness-install" as const } : {}),
           });
         }
         for (const exclusion of native.excluded) {
@@ -837,8 +844,10 @@ async function captureSandboxEvidence(
         for (const sourceId of missingSpoolSources) {
           missing.push(`Sandbox session ${id} has no original process source: ${sourceId}`);
         }
+        const nativePartText = new Map<string, string>();
         manifestSource = {
           ...native,
+          events: native.events.map((record) => withoutRepeatedFrameText(record, nativePartText)),
           files: native.files.map((entry) => entry.kind === "file" ? withoutNativeContent(entry) : entry),
           processIo: frameMetadata,
           processSources: native.processSources.map(withoutNativeContent),
@@ -864,7 +873,7 @@ async function captureSandboxEvidence(
       }
       await writer.writeChunks("__retention__/sessions/" + id + "/raw-manifest.json", 0o600,
         evidenceJsonChunks({ kind: "tangle-native-session-evidence.v1", source: manifestSource,
-          contentEncoding: "base64", contentRefs }));
+          contentEncoding: "base64", contentRefs, partText: PART_TEXT_ENCODING }));
       capturedBytes = writer.byteLength;
     }
     sessions.push({
@@ -1001,6 +1010,46 @@ async function downloadWorkspaceEvidenceFile(
 }
 
 /** Keep every source field; store validated binary content once in the archive. */
+/**
+ * A streamed text part arrives as `message.part.updated` carrying the whole text so far plus
+ * its `delta`, so retaining every update stores the text once per update. One 117 KB reasoning
+ * part over 12,965 updates made an 802 MB transport file and a 637 MB manifest on 2026-10-19
+ * (queens21-h22-malloc2-root-2-20261019b), past what a reader can parse. An update whose text is
+ * exactly the part's previous text plus its delta keeps the delta and drops the text; the text
+ * is the concatenation of the part's deltas in order. Any other update keeps its text.
+ */
+const PART_TEXT_ENCODING = "delta-when-text-equals-previous-plus-delta";
+
+function withoutRepeatedPartText(data: unknown, previous: Map<string, string>): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  const part = record.part;
+  if (record.type !== "message.part.updated" || !part || typeof part !== "object" || Array.isArray(part)) return data;
+  const { id, text } = part as Record<string, unknown>;
+  if (typeof id !== "string" || typeof text !== "string") return data;
+  const before = previous.get(id);
+  previous.set(id, text);
+  if (before === undefined || typeof record.delta !== "string" || before + record.delta !== text) return data;
+  const { text: _text, ...rest } = part as Record<string, unknown>;
+  return { ...record, part: { ...rest, textFromDeltas: true } };
+}
+
+function withoutRepeatedFrameText(record: unknown, previous: Map<string, string>): unknown {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+  const frames = (record as Record<string, unknown>).frames;
+  if (!Array.isArray(frames)) return record;
+  return {
+    ...record,
+    frames: frames.map((frame) => !frame || typeof frame !== "object" || Array.isArray(frame) ? frame
+      : { ...frame, data: withoutRepeatedPartText((frame as Record<string, unknown>).data, previous) }),
+  };
+}
+
+/** A harness's installed packages under its home, e.g. `.config/opencode/node_modules`. */
+function harnessInstallPath(path: string): boolean {
+  return path.split("/").includes("node_modules");
+}
+
 function withoutNativeContent(source: object): Record<string, unknown> {
   const metadata: Record<string, unknown> = { ...source };
   delete metadata.contentBase64;

@@ -574,6 +574,61 @@ describe("Tangle evidence capture", () => {
     expect(evidence.files.filter((file) => /\/(process-manifest|native-events)\.json$/.test(file.path))).toEqual([]);
   });
 
+  it("retains a streamed part's text once and a harness install's metadata without its bytes", async () => {
+    const environment = fixture({ native: true, partial: true });
+    const { box, originalSession, source } = await readFixtureSource(environment);
+    const texts = ["Let", "Let me", "Let me check"];
+    const update = (index: number) => ({
+      type: "message.part.updated",
+      part: { id: "part-1", sessionID: "native-1", messageID: "message-1", type: "reasoning", text: texts[index] },
+      delta: index === 0 ? texts[0] : texts[index]!.slice(texts[index - 1]!.length),
+    });
+    source.events[0]!.frames = texts.map((_, index) => ({ type: "message.part.updated", sessionId: "session-1", data: update(index) }));
+    const install = Buffer.from("module.exports = {}\n");
+    source.files.push({ sourceId: "source-1", rootScope: "session-home", path: ".config/opencode/node_modules/effect/index.js",
+      kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
+      sha256: "sha256:" + createHash("sha256").update(install).digest("hex"), contentBase64: install.toString("base64") });
+    source.inventory.scannedFiles += 1;
+    source.inventory.reportedFiles += 1;
+    box.session = (id) => ({
+      ...originalSession(id),
+      async rawEvidence() { return source; },
+      async *events() {
+        for (const [index] of texts.entries()) yield { id: String(index + 1), type: "message.part.updated", data: { executionId: "exec-1", ...update(index) } };
+        yield { id: "4", type: "execution.completed", data: { executionId: "exec-1" } };
+      },
+    });
+    const evidence = await captureTangleEnvironmentEvidence(environment, {
+      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
+    });
+
+    // The text is the concatenation of the part's deltas; only the first update carries it.
+    const expand = (parts: Array<{ part: Record<string, unknown>; delta: string }>) => {
+      let text = "";
+      return parts.map(({ part, delta }) => {
+        text = part.textFromDeltas ? text + delta : String(part.text);
+        return text;
+      });
+    };
+    const transport = JSON.parse(Buffer.from(evidence.files.find((file) => /__retention__\/sessions\/session-1\.json$/.test(file.path))!.bytes).toString());
+    expect(transport.partText).toBe("delta-when-text-equals-previous-plus-delta");
+    const transportParts = transport.events.map((entry: { event: { data: { part?: Record<string, unknown>; delta: string } } }) => entry.event.data)
+      .filter((data: { part?: unknown }) => data.part);
+    expect(transportParts.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual([true, false, false]);
+    expect(expand(transportParts)).toEqual(texts);
+
+    const manifest = JSON.parse(Buffer.from(evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!.bytes).toString());
+    expect(manifest.partText).toBe("delta-when-text-equals-previous-plus-delta");
+    expect(expand(manifest.source.events[0].frames.map((frame: { data: { part: Record<string, unknown>; delta: string } }) => frame.data))).toEqual(texts);
+
+    expect(evidence.files.some((file) => file.path.includes("node_modules"))).toBe(false);
+    expect(manifest.contentRefs.some((reference: { path: string }) => reference.path.includes("node_modules"))).toBe(false);
+    const session = evidence.provenance.sessions.find((entry) => entry.id === "session-1")!;
+    expect(session.nativeStore.entries.find((entry) => entry.path.includes("node_modules"))).toMatchObject({
+      sizeBytes: install.byteLength, sha256: "sha256:" + createHash("sha256").update(install).digest("hex"), contentOmitted: "harness-install",
+    });
+  });
+
   it("refuses a skipped-entry count that differs from the source manifest", async () => {
     const environment = fixture({ native: true, partial: true });
     const { box, originalSession, source } = await readFixtureSource(environment);
