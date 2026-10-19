@@ -61,7 +61,7 @@ async function* bufferedExecutionEvents(session: ReplaySession, executionId: str
 // Match the Sidecar request limit without accumulating 100 large JSON payloads.
 const WORKSPACE_BATCH_FILES = 100;
 const WORKSPACE_BATCH_BYTES = 8 * 1024 * 1024;
-// Top-level directory archive requests open ahead of the one being read.
+// Top-level directory archives read at once.
 const WORKSPACE_ARCHIVE_STREAMS = 4;
 // Tar header, PAX record and padding bytes an archive may add per member beyond its content.
 const WORKSPACE_ARCHIVE_ENTRY_OVERHEAD = 2048;
@@ -462,105 +462,113 @@ async function captureSandboxEvidence(
     options.signal?.addEventListener("abort", cancel, { once: true });
     if (options.signal?.aborted) cancel();
     const archiveLimit = options.maxBytes + MAX_ENTRIES * WORKSPACE_ARCHIVE_ENTRY_OVERHEAD;
-    const opened: Array<Promise<ReadableStream<Uint8Array>>> = [];
-    const open = (index: number) => {
-      if (index >= archives.length || index < opened.length) return;
-      const stream = fs.openArchive!(archives[index]!.sourcePath, { signal: streams.signal });
-      // Awaited in order below; a later request failing first must not surface as unhandled.
-      stream.catch(() => {});
-      opened.push(stream);
+    // Hard links are read through the batch path once every archive is done.
+    const linkReads: WorkspaceFileRead[] = [];
+    const readArchive = async (index: number) => {
+      const archive = archives[index]!;
+      // Each archive is read from the moment its request opens: a response body left unread
+      // waits on the Sidecar, and one that ends early arrives as a truncated stream.
+      const body = await fs.openArchive!(archive.sourcePath, { signal: streams.signal });
+      const digest = createHash("sha256");
+      let archiveBytes = 0;
+      const counted = async function* () {
+        for await (const chunk of body) {
+          archiveBytes += chunk.byteLength;
+          if (archiveBytes > archiveLimit) throw new Error("Tangle evidence workspace archive exceeds its byte limit");
+          digest.update(chunk);
+          yield chunk;
+        }
+      };
+      const source = Readable.from(counted());
+      const gunzip = createGunzip();
+      source.on("error", (error) => gunzip.destroy(error));
+      source.pipe(gunzip);
+      // Hard link members carry no body; they take the size of the member they name.
+      const fileSizes = new Map<string, number>();
+      try {
+        for await (const member of readWorkspaceArchive(gunzip)) {
+          options.signal?.throwIfAborted();
+          const name = canonicalEntryPath(member.name);
+          const sourcePath = `${archive.sourcePath}/${name}`;
+          const path = `${archive.path}/${name}`;
+          const size = member.type === "file" ? member.size
+            : member.type === "symlink" ? Buffer.byteLength(member.linkName)
+            : member.type === "link" ? fileSizes.get(member.linkName) : 0;
+          if (size === undefined) throw new Error("Tangle workspace archive links to an unknown member");
+          if (member.type === "file") fileSizes.set(name, size);
+          // The former walk never listed below a runtime-owned or credential directory; the
+          // usage scan counted credential subtrees, so their members are counted, not admitted.
+          const ancestors = path.split("/").slice(0, -1);
+          const stop = ancestors.find((part) => blockedNames.has(part));
+          if (stop === ".sidecar") {
+            // Never admitted or counted, but its declared bytes still bound the decompression.
+            ignoredBytes += size;
+            if (ignoredBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
+            continue;
+          }
+          if (stop !== undefined) {
+            if (member.type === "directory") {
+              scannedDirectories++;
+            } else {
+              scannedFiles++;
+              scannedSize += size;
+            }
+            if (scannedSize > usage.sizeBytes) throw new Error("Tangle workspace inventory does not match the complete usage scan");
+            continue;
+          }
+          const item: WorkspaceEntryMetadata = {
+            path,
+            type: member.type === "link" ? "file" : member.type,
+            sizeBytes: size,
+            mode: member.mode & 0o777,
+            owner: String(member.uid),
+            group: String(member.gid),
+            modifiedAt: new Date(member.mtime * 1000).toISOString(),
+            // The archive records no access time.
+            accessedAt: null,
+            symlinkTarget: null,
+          };
+          if (admit(path, item) !== "retain") continue;
+          if (member.type === "link") {
+            linkReads.push({ sourcePath, path, size, mode: item.mode });
+            continue;
+          }
+          if (size > options.maxBytes - capturedBytes) throw new Error("Tangle evidence exceeds byte limit");
+          if (await writer.writeChunks(path, item.mode, member.body) !== size) {
+            throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
+          }
+          capturedBytes += size;
+        }
+      } finally {
+        gunzip.destroy();
+        source.destroy();
+      }
+      // The reader drains gunzip to its end, so the digest covers every streamed byte.
+      archiveReceipts[index] = { path: archive.path, sizeBytes: archiveBytes, sha256: digest.digest("hex") };
+    };
+    let next = 0;
+    const worker = async () => {
+      try {
+        while (next < archives.length) await readArchive(next++);
+      } catch (error) {
+        // Stop the other archive streams; the first failure is reported below.
+        streams.abort(error);
+        throw error;
+      }
     };
     try {
-      // Requests for the next archives are open while one is read; their bodies wait unread.
-      for (let index = 0; index < WORKSPACE_ARCHIVE_STREAMS; index++) open(index);
-      // Top-level files are read while the first archives open.
-      await flushWorkspaceFiles();
-      for (const [index, archive] of archives.entries()) {
-        const body = await opened[index]!;
-        open(index + WORKSPACE_ARCHIVE_STREAMS);
-        const digest = createHash("sha256");
-        let archiveBytes = 0;
-        const counted = async function* () {
-          for await (const chunk of body) {
-            archiveBytes += chunk.byteLength;
-            if (archiveBytes > archiveLimit) throw new Error("Tangle evidence workspace archive exceeds its byte limit");
-            digest.update(chunk);
-            yield chunk;
-          }
-        };
-        const source = Readable.from(counted());
-        const gunzip = createGunzip();
-        source.on("error", (error) => gunzip.destroy(error));
-        source.pipe(gunzip);
-        // Hard link members carry no body; they take the size of the member they name.
-        const fileSizes = new Map<string, number>();
-        try {
-          for await (const member of readWorkspaceArchive(gunzip)) {
-            options.signal?.throwIfAborted();
-            const name = canonicalEntryPath(member.name);
-            const sourcePath = `${archive.sourcePath}/${name}`;
-            const path = `${archive.path}/${name}`;
-            const size = member.type === "file" ? member.size
-              : member.type === "symlink" ? Buffer.byteLength(member.linkName)
-              : member.type === "link" ? fileSizes.get(member.linkName) : 0;
-            if (size === undefined) throw new Error("Tangle workspace archive links to an unknown member");
-            if (member.type === "file") fileSizes.set(name, size);
-            // The former walk never listed below a runtime-owned or credential directory; the
-            // usage scan counted credential subtrees, so their members are counted, not admitted.
-            const ancestors = path.split("/").slice(0, -1);
-            const stop = ancestors.find((part) => blockedNames.has(part));
-            if (stop === ".sidecar") {
-              // Never admitted or counted, but its declared bytes still bound the decompression.
-              ignoredBytes += size;
-              if (ignoredBytes > options.maxBytes) throw new Error("Tangle evidence exceeds byte limit");
-              continue;
-            }
-            if (stop !== undefined) {
-              if (member.type === "directory") {
-                scannedDirectories++;
-              } else {
-                scannedFiles++;
-                scannedSize += size;
-              }
-              if (scannedSize > usage.sizeBytes) throw new Error("Tangle workspace inventory does not match the complete usage scan");
-              continue;
-            }
-            const item: WorkspaceEntryMetadata = {
-              path,
-              type: member.type === "link" ? "file" : member.type,
-              sizeBytes: size,
-              mode: member.mode & 0o777,
-              owner: String(member.uid),
-              group: String(member.gid),
-              modifiedAt: new Date(member.mtime * 1000).toISOString(),
-              // The archive records no access time.
-              accessedAt: null,
-              symlinkTarget: null,
-            };
-            if (admit(path, item) !== "retain") continue;
-            if (member.type === "link") {
-              await readLater({ sourcePath, path, size, mode: item.mode });
-              continue;
-            }
-            if (size > options.maxBytes - capturedBytes - pendingBytes) throw new Error("Tangle evidence exceeds byte limit");
-            if (await writer.writeChunks(path, item.mode, member.body) !== size) {
-              throw new Error(`Tangle evidence workspace file changed or was truncated: ${path}`);
-            }
-            capturedBytes += size;
-          }
-        } finally {
-          gunzip.destroy();
-          source.destroy();
-        }
-        // The reader drains gunzip to its end, so the digest covers every streamed byte.
-        archiveReceipts.push({ path: archive.path, sizeBytes: archiveBytes, sha256: digest.digest("hex") });
-      }
+      // Top-level files are read while the archives stream.
+      const settled = await Promise.allSettled([
+        flushWorkspaceFiles(),
+        ...Array.from({ length: Math.min(WORKSPACE_ARCHIVE_STREAMS, archives.length) }, worker),
+      ]);
+      const failed = settled.find((result) => result.status === "rejected");
+      if (failed) throw (failed as PromiseRejectedResult).reason;
     } finally {
       streams.abort();
       options.signal?.removeEventListener("abort", cancel);
-      // Release the requests opened ahead and never read.
-      await Promise.allSettled(opened.map(async (stream) => { await (await stream).cancel().catch(() => {}); }));
     }
+    for (const entry of linkReads) await readLater(entry);
   }
   await Promise.all(blockedScans);
   if (scannedFiles !== usage.fileCount || scannedDirectories !== usage.directoryCount || scannedSize !== usage.sizeBytes) {
