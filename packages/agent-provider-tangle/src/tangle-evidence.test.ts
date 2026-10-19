@@ -577,7 +577,9 @@ describe("Tangle evidence capture", () => {
   it.each(["memory", "directory"] as const)(
     "retains a streamed part's text once and a harness install's metadata without its bytes (%s)", async (mode) => {
       const environment = fixture({ native: true, partial: true });
-      const { box, originalSession, source } = await readFixtureSource(environment);
+      const { box, originalSession, source: memorySource } = await readFixtureSource(environment);
+      // The directory fixture reads its own fresh source; change the one it exports.
+      const source = mode === "directory" ? (await directoryExportFixture(environment)).source : memorySource;
       const texts = ["Let", "Let me", "Let me check"];
       const update = (index: number) => ({
         type: "message.part.updated",
@@ -598,7 +600,6 @@ describe("Tangle evidence capture", () => {
         sha256: installDigest, contentBase64: install.toString("base64") });
       source.inventory.scannedFiles += 1;
       source.inventory.reportedFiles += 1;
-      if (mode === "directory") await directoryExportFixture(environment);
       const exporting = box.session!.bind(box);
       box.session = (id) => ({
         ...(mode === "directory" ? exporting(id) : originalSession(id)),
