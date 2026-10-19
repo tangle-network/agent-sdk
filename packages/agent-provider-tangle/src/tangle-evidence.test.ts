@@ -583,7 +583,7 @@ describe("Tangle evidence capture", () => {
       part: { id: "part-1", sessionID: "native-1", messageID: "message-1", type: "reasoning", text: texts[index] },
       delta: index === 0 ? texts[0] : texts[index]!.slice(texts[index - 1]!.length),
     });
-    source.events[0]!.frames = texts.map((_, index) => ({ type: "message.part.updated", sessionId: "session-1", data: update(index) }));
+    (source.events[0] as { frames: unknown[] }).frames = texts.map((_, index) => ({ type: "message.part.updated", sessionId: "session-1", data: update(index) }));
     const install = Buffer.from("module.exports = {}\n");
     source.files.push({ sourceId: "source-1", rootScope: "session-home", path: ".config/opencode/node_modules/effect/index.js",
       kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
