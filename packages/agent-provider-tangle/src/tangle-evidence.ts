@@ -848,7 +848,10 @@ async function captureSandboxEvidence(
         manifestSource = {
           ...native,
           events: native.events.map((record) => withoutRepeatedFrameText(record, nativePartText)),
-          files: native.files.map((entry) => entry.kind === "file" ? withoutNativeContent(entry) : entry),
+          files: native.files.map((entry) => entry.kind !== "file" ? entry
+            : harnessInstallPath(entry.path)
+              ? { ...withoutNativeContent(entry), contentOmitted: "harness-install" }
+              : withoutNativeContent(entry)),
           processIo: frameMetadata,
           processSources: native.processSources.map(withoutNativeContent),
         };
@@ -1017,8 +1020,10 @@ async function downloadWorkspaceEvidenceFile(
  * its `delta`, so retaining every update stores the text once per update. One 117 KB reasoning
  * part over 12,965 updates made an 802 MB transport file and a 637 MB manifest on 2026-10-19
  * (queens21-h22-malloc2-root-2-20261019b), past what a reader can parse. An update whose text is
- * exactly the part's previous text plus its delta keeps the delta and drops the text; the text
- * is the concatenation of the part's deltas in order. Any other update keeps its text.
+ * exactly the part's previous text plus its delta keeps the delta and drops the text, marked
+ * `textFromDeltas`. Any other update (the first, a replayed duplicate, a reset) keeps its text.
+ * To read it: per part id, in file order, a marked update's text is that part's previous text
+ * plus its delta; an unmarked update's text is its own.
  */
 const PART_TEXT_ENCODING = "delta-when-text-equals-previous-plus-delta";
 
@@ -1039,12 +1044,19 @@ function withoutRepeatedPartText(data: unknown, previous: Map<string, string>): 
 function withoutRepeatedFrameText(record: unknown, previous: Map<string, string>): unknown {
   if (!record || typeof record !== "object" || Array.isArray(record)) return record;
   const frames = (record as Record<string, unknown>).frames;
+  const compact = (frame: unknown) => !frame || typeof frame !== "object" || Array.isArray(frame) ? frame
+    : { ...frame, data: withoutRepeatedPartText((frame as Record<string, unknown>).data, previous) };
+  // A directory capture streams its native frames from disk.
+  if (frames instanceof EvidenceJsonArray) {
+    return {
+      ...record,
+      frames: new EvidenceJsonArray(frames.count, async function* () {
+        for await (const frame of frames.entries()) yield compact(frame);
+      }),
+    };
+  }
   if (!Array.isArray(frames)) return record;
-  return {
-    ...record,
-    frames: frames.map((frame) => !frame || typeof frame !== "object" || Array.isArray(frame) ? frame
-      : { ...frame, data: withoutRepeatedPartText((frame as Record<string, unknown>).data, previous) }),
-  };
+  return { ...record, frames: frames.map(compact) };
 }
 
 /** A harness's installed packages under its home, e.g. `.config/opencode/node_modules`. */

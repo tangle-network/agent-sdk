@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
@@ -574,60 +574,90 @@ describe("Tangle evidence capture", () => {
     expect(evidence.files.filter((file) => /\/(process-manifest|native-events)\.json$/.test(file.path))).toEqual([]);
   });
 
-  it("retains a streamed part's text once and a harness install's metadata without its bytes", async () => {
-    const environment = fixture({ native: true, partial: true });
-    const { box, originalSession, source } = await readFixtureSource(environment);
-    const texts = ["Let", "Let me", "Let me check"];
-    const update = (index: number) => ({
-      type: "message.part.updated",
-      part: { id: "part-1", sessionID: "native-1", messageID: "message-1", type: "reasoning", text: texts[index] },
-      delta: index === 0 ? texts[0] : texts[index]!.slice(texts[index - 1]!.length),
-    });
-    (source.events[0] as { frames: unknown[] }).frames = texts.map((_, index) => ({ type: "message.part.updated", sessionId: "session-1", data: update(index) }));
-    const install = Buffer.from("module.exports = {}\n");
-    source.files.push({ sourceId: "source-1", rootScope: "session-home", path: ".config/opencode/node_modules/effect/index.js",
-      kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
-      sha256: "sha256:" + createHash("sha256").update(install).digest("hex"), contentBase64: install.toString("base64") });
-    source.inventory.scannedFiles += 1;
-    source.inventory.reportedFiles += 1;
-    box.session = (id) => ({
-      ...originalSession(id),
-      async rawEvidence() { return source; },
-      async *events() {
-        for (const [index] of texts.entries()) yield { id: String(index + 1), type: "message.part.updated", data: { executionId: "exec-1", ...update(index) } };
-        yield { id: "4", type: "execution.completed", data: { executionId: "exec-1" } };
-      },
-    });
-    const evidence = await captureTangleEnvironmentEvidence(environment, {
-      executionId: "exec-1", harness: "opencode", maxBytes: 100_000,
-    });
-
-    // The text is the concatenation of the part's deltas; only the first update carries it.
-    const expand = (parts: Array<{ part: Record<string, unknown>; delta: string }>) => {
-      let text = "";
-      return parts.map(({ part, delta }) => {
-        text = part.textFromDeltas ? text + delta : String(part.text);
-        return text;
+  it.each(["memory", "directory"] as const)(
+    "retains a streamed part's text once and a harness install's metadata without its bytes (%s)", async (mode) => {
+      const environment = fixture({ native: true, partial: true });
+      const { box, originalSession, source } = await readFixtureSource(environment);
+      const texts = ["Let", "Let me", "Let me check"];
+      const update = (index: number) => ({
+        type: "message.part.updated",
+        part: { id: "part-1", sessionID: "native-1", messageID: "message-1", type: "reasoning", text: texts[index] },
+        delta: index === 0 ? texts[0] : texts[index]!.slice(texts[index - 1]!.length),
       });
-    };
-    const transport = JSON.parse(Buffer.from(evidence.files.find((file) => /__retention__\/sessions\/session-1\.json$/.test(file.path))!.bytes).toString());
-    expect(transport.partText).toBe("delta-when-text-equals-previous-plus-delta");
-    const transportParts = transport.events.map((entry: { event: { data: { part?: Record<string, unknown>; delta: string } } }) => entry.event.data)
-      .filter((data: { part?: unknown }) => data.part);
-    expect(transportParts.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual([true, false, false]);
-    expect(expand(transportParts)).toEqual(texts);
+      // A second part interleaves, and a replayed update repeats a text without a matching delta.
+      const other = { type: "message.part.updated", part: { id: "part-2", type: "text", text: "ok" }, delta: "ok" };
+      const replay = update(1);
+      const updates = [update(0), other, update(1), replay, update(2)];
+      const expected = ["Let", "ok", "Let me", "Let me", "Let me check"];
+      const hasText = [true, true, false, true, false];
+      (source.events[0] as { frames: unknown[] }).frames = updates.map((data) => ({ type: "message.part.updated", sessionId: "session-1", data }));
+      const install = Buffer.from("module.exports = {}\n");
+      const installDigest = "sha256:" + createHash("sha256").update(install).digest("hex");
+      source.files.push({ sourceId: "source-1", rootScope: "session-home", path: ".config/opencode/node_modules/effect/index.js",
+        kind: "file", mode: 0o644, uid: 1000, gid: 1000, mtimeMs: 1, ctimeMs: 1, sizeBytes: install.byteLength,
+        sha256: installDigest, contentBase64: install.toString("base64") });
+      source.inventory.scannedFiles += 1;
+      source.inventory.reportedFiles += 1;
+      if (mode === "directory") await directoryExportFixture(environment);
+      const exporting = box.session.bind(box);
+      box.session = (id) => ({
+        ...(mode === "directory" ? exporting(id) : originalSession(id)),
+        ...(mode === "memory" ? { async rawEvidence() { return source; } } : {}),
+        async *events() {
+          for (const [index, data] of updates.entries()) yield { id: String(index + 1), type: "message.part.updated", data: { executionId: "exec-1", ...data } };
+          yield { id: "9", type: "execution.completed", data: { executionId: "exec-1" } };
+        },
+      });
+      const directory = await mkdtemp(join(tmpdir(), "capture-size-"));
+      try {
+        const options = { executionId: "exec-1", harness: "opencode" as const, maxBytes: 100_000 };
+        const captured = mode === "directory"
+          ? await captureTangleEnvironmentEvidenceToDirectory(environment, { ...options, destination: join(directory, "capture") })
+          : await captureTangleEnvironmentEvidence(environment, options);
+        const files = mode === "directory"
+          ? (await readdir(join(directory, "capture"), { recursive: true })).map((path) => String(path))
+          : captured.files.map((file) => file.path);
+        const read = async (pattern: RegExp) => {
+          const path = files.find((file) => pattern.test(file))!;
+          return JSON.parse(mode === "directory"
+            ? await readFile(join(directory, "capture", path), "utf8")
+            : Buffer.from(captured.files.find((file) => file.path === path)!.bytes).toString());
+        };
 
-    const manifest = JSON.parse(Buffer.from(evidence.files.find((file) => file.path.endsWith("/raw-manifest.json"))!.bytes).toString());
-    expect(manifest.partText).toBe("delta-when-text-equals-previous-plus-delta");
-    expect(expand(manifest.source.events[0].frames.map((frame: { data: { part: Record<string, unknown>; delta: string } }) => frame.data))).toEqual(texts);
+        // Decoding: per part id in file order, the previous rebuilt text plus the delta.
+        const decode = (datas: Array<{ part: Record<string, unknown>; delta: string }>) => {
+          const texts = new Map<unknown, string>();
+          return datas.map(({ part, delta }) => {
+            const text = part.textFromDeltas ? (texts.get(part.id) ?? "") + delta : String(part.text);
+            texts.set(part.id, text);
+            return text;
+          });
+        };
+        const transport = await read(/__retention__\/sessions\/session-1\.json$/);
+        expect(transport.partText).toBe("delta-when-text-equals-previous-plus-delta");
+        const transportParts = transport.events.map((entry: { event: { data: { part?: Record<string, unknown>; delta: string } } }) => entry.event.data)
+          .filter((data: { part?: unknown }) => data.part);
+        expect(transportParts.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual(hasText);
+        expect(decode(transportParts)).toEqual(expected);
 
-    expect(evidence.files.some((file) => file.path.includes("node_modules"))).toBe(false);
-    expect(manifest.contentRefs.some((reference: { path: string }) => reference.path.includes("node_modules"))).toBe(false);
-    const session = evidence.provenance.sessions.find((entry) => entry.id === "session-1")!;
-    expect(session.nativeStore.entries.find((entry) => entry.path.includes("node_modules"))).toMatchObject({
-      sizeBytes: install.byteLength, sha256: "sha256:" + createHash("sha256").update(install).digest("hex"), contentOmitted: "harness-install",
-    });
-  });
+        const manifest = await read(/\/raw-manifest\.json$/);
+        expect(manifest.partText).toBe("delta-when-text-equals-previous-plus-delta");
+        const frames = manifest.source.events[0].frames.map((frame: { data: { part: Record<string, unknown>; delta: string } }) => frame.data);
+        expect(frames.map((data: { part: Record<string, unknown> }) => "text" in data.part)).toEqual(hasText);
+        expect(decode(frames)).toEqual(expected);
+
+        expect(files.some((file) => file.includes("node_modules"))).toBe(false);
+        expect(manifest.contentRefs.some((reference: { path: string }) => reference.path.includes("node_modules"))).toBe(false);
+        expect(manifest.source.files.find((entry: { path: string }) => entry.path.includes("node_modules"))).toMatchObject({
+          sizeBytes: install.byteLength, sha256: installDigest, contentOmitted: "harness-install",
+        });
+        const session = captured.provenance.sessions.find((entry) => entry.id === "session-1")!;
+        expect(session.nativeStore.entries.find((entry) => entry.path.includes("node_modules"))).toMatchObject({
+          sizeBytes: install.byteLength, sha256: installDigest, contentOmitted: "harness-install",
+        });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    },
+  );
 
   it("refuses a skipped-entry count that differs from the source manifest", async () => {
     const environment = fixture({ native: true, partial: true });
