@@ -21,6 +21,8 @@ export interface PreparedNativeEvidence {
   native: RetainedNativeEvidence | undefined;
   payloads: WeakMap<object, NativePayloadFile>;
   directory?: string;
+  /** Wall time of the bounded export that copied the session's native store out of the sandbox. */
+  copyMs?: number;
   remove(): Promise<void>;
 }
 const MAX_ENTRIES = 100_000;
@@ -110,9 +112,11 @@ export async function prepareNativeDirectoryEvidence(session: SandboxSessionLike
   const destination = join(temporary, "export");
   const remove = () => rm(temporary, { recursive: true, force: true });
   try {
+    const copyStarted = performance.now();
     const response = record(await session.exportRawEvidence(destination, { maxBytes, maxFiles: MAX_ENTRIES, omitContent: NATIVE_OMIT_CONTENT_DIRECTORIES, signal }));
+    const copyMs = Math.round(performance.now() - copyStarted);
     if (response.status === "unavailable") {
-      return { native: response as unknown as RetainedNativeEvidence, payloads: new WeakMap(), remove };
+      return { native: response as unknown as RetainedNativeEvidence, payloads: new WeakMap(), copyMs, remove };
     }
     if ((response.status !== "captured" && response.status !== "partial") || response.directory !== destination ||
         typeof response.manifestPath !== "string" || !response.manifestPath.startsWith(destination + "/") ||
@@ -171,6 +175,6 @@ export async function prepareNativeDirectoryEvidence(session: SandboxSessionLike
     const { schema: _schema, ...legacyMetadata } = manifest;
     // The existing evidence validator checks all identity, attribution and completeness fields.
     const native = { ...legacyMetadata, files, processIo, processTerminals, processSources, events } as unknown as RetainedNativeEvidence;
-    return { native, payloads, directory: destination, remove };
+    return { native, payloads, directory: destination, copyMs, remove };
   } catch (error) { await remove(); throw error; }
 }

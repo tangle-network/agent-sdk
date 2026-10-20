@@ -811,11 +811,22 @@ describe("bounded directory evidence", () => {
       // The public directory API forwards the option: default syncs each staged file, false syncs none.
       if (syncStagedFiles === false) expect(sync).not.toHaveBeenCalled();
       else expect(sync).toHaveBeenCalled();
-      expect({ ...actual.provenance, capturedAt: expected.provenance.capturedAt }).toEqual(expected.provenance);
+      // Only the directory capture times its native copy; the rest of its provenance is identical.
+      const withoutCopyMs = (provenance: typeof actual.provenance) => ({
+        ...provenance,
+        capturedAt: expected.provenance.capturedAt,
+        sessions: provenance.sessions.map(({ nativeStore: { copyMs: _copyMs, ...nativeStore }, ...session }) => ({ ...session, nativeStore })),
+      });
+      expect(actual.provenance.sessions.length).toBeGreaterThan(0);
+      for (const session of actual.provenance.sessions) {
+        expect(Number.isSafeInteger(session.nativeStore.copyMs)).toBe(true);
+        expect(session.nativeStore.copyMs).toBeGreaterThanOrEqual(0);
+      }
+      expect(withoutCopyMs(actual.provenance)).toEqual(expected.provenance);
       for (const file of expected.files) {
         const bytes = await readFile(join(actual.directory, file.path));
         if (file.path === "__retention__/provenance.json") {
-          expect({ ...JSON.parse(bytes.toString()), capturedAt: expected.provenance.capturedAt }).toEqual(JSON.parse(Buffer.from(file.bytes).toString()));
+          expect(withoutCopyMs(JSON.parse(bytes.toString()))).toEqual(JSON.parse(Buffer.from(file.bytes).toString()));
         } else expect(bytes).toEqual(Buffer.from(file.bytes));
         expect((await stat(join(actual.directory, file.path))).mode & 0o777).toBe(file.mode);
       }
