@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.4.6
+
+### Patch Changes
+
+- 9485ff6: Directory evidence capture records `provenance.sessions[].nativeStore.copyMs`: the wall time of the bounded export that copied the session's native store out of the sandbox, so a consumer can measure native copy against a bar.
+
 ## 4.4.5
 
 ### Patch Changes
