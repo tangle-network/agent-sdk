@@ -171,6 +171,11 @@ export interface TangleEnvironmentEvidence {
           skippedEntries: number;
         } | null;
         complete: boolean;
+        /**
+         * Wall time, in ms, of the bounded export that copied this session's
+         * native store out of the sandbox. Directory capture only.
+         */
+        copyMs?: number;
         entries: Array<{
           sourceId?: string;
           rootScope: "session-home" | "workspace-session"; path: string; kind: "file" | "directory" | "symlink";
@@ -629,6 +634,7 @@ async function captureSandboxEvidence(
     };
     const nativeStore: TangleEnvironmentEvidence["provenance"]["sessions"][number]["nativeStore"] = {
       scope: "session", roots: [], inventory: null, complete: false, entries: [], excludedPaths: [],
+      ...(prepared?.copyMs === undefined ? {} : { copyMs: prepared.copyMs }),
     };
     const processStreams: TangleEnvironmentEvidence["provenance"]["sessions"][number]["processStreams"] = {
       complete: false, streamCount: 0, processCount: 0, terminalCount: 0,
