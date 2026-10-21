@@ -54,6 +54,10 @@
     "./interactions/mcp": {
       "import": "./dist/interactions/mcp-server.js",
       "types": "./src/interactions/mcp-server.ts"
+    },
+    "./node": {
+      "import": "./dist/node/index.js",
+      "types": "./src/node/index.ts"
     }
   },
   "typesVersions": {
@@ -108,6 +112,9 @@
       ],
       "*": [
         "src/index.ts"
+      ],
+      "node": [
+        "src/node/index.ts"
       ]
     }
   },

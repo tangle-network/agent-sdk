@@ -10,6 +10,8 @@ export {
   matchesChannel,
 } from "./channel-matching.js";
 
+export { isRecord } from "./record.js";
+
 export {
   createSessionTranslator,
   extractSessionId,

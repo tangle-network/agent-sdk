@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Kimi Code: one directory per session, `~/.kimi/sessions/<workdir hash>/<session id>/`, holding
  * `wire.jsonl` (the event stream this reader folds) and `context.jsonl` (the model context).
@@ -11,7 +12,7 @@
  * subagent's events arrive wrapped in `SubagentEvent`. The wire records no model.
  */
 import { basename, dirname, join } from 'node:path'
-import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
+import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
