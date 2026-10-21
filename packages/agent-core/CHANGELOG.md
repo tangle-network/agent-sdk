@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.13.0
+
+### Minor Changes
+
+- 7611296: Add `isRecord` to the root entry and `sha256Hex` and `shellQuote` in the new Node-only `@tangle-network/agent-core/node` subpath, so repos stop keeping their own copies. `sleep` and `withTimeout` were already exported from `./resilience`.
+
 ## 0.12.0
 
 ### Minor Changes
