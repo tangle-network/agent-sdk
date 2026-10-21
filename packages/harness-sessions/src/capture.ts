@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Reading the native sessions in a capture.
  *
@@ -11,7 +12,7 @@
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isRecord, str } from './builder.js'
+import { str } from './builder.js'
 import { opencodeSessionsInStore } from './formats/opencode.js'
 import { maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 import type { HarnessSession, HarnessSessionReader, NativeSessionCopy, RawEvidenceArchiveManifestV2, SessionRef } from './schema.js'

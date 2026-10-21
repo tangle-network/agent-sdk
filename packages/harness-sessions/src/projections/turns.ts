@@ -1,4 +1,4 @@
-import { isRecord } from '../builder.js'
+import { isRecord } from '@tangle-network/agent-core'
 import type { HarnessSession, ModelCall, SessionError, SessionMessage, SessionToolCall, TokenUsage } from '../schema.js'
 
 /** One tool invocation in a turn, previewed for storage beside a post. */

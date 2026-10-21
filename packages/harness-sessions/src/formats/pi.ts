@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Pi: `~/.pi/agent/sessions/<encoded cwd>/<timestamp>_<session id>.jsonl`, one entry per line.
  *
@@ -9,7 +10,7 @@
  * `toolCallId`. Entries form a tree through `parentId`; branches share one file.
  */
 import { basename, join } from 'node:path'
-import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
+import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'

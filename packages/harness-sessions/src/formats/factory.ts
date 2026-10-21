@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Factory Droid: `~/.factory/sessions/<encoded cwd>/<session id>.jsonl` plus a
  * `<session id>.settings.json` beside it.
@@ -10,7 +11,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { SessionBuilder, count, isRecord, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
+import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'

@@ -390,6 +390,9 @@ importers:
 
   packages/harness-sessions:
     dependencies:
+      '@tangle-network/agent-core':
+        specifier: workspace:^
+        version: link:../agent-core
       '@tangle-network/agent-trace-contract':
         specifier: ^2.0.0
         version: link:../agent-trace-contract

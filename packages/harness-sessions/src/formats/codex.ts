@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread id>.jsonl`, one
  * `{timestamp, type, payload}` record per line.
@@ -14,7 +15,6 @@ import {
   SessionBuilder,
   argumentsOf,
   count,
-  isRecord,
   sessionError,
   str,
   textOf,

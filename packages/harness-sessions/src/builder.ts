@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 import type {
   HarnessSession,
   ModelCall,
@@ -27,9 +28,6 @@ export function isoTime(value: unknown): string | null {
   }
   return null
 }
-
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export const str = (value: unknown): string | null => (typeof value === 'string' ? value : null)
 

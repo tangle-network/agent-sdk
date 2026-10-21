@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * OpenCode 1.x: one SQLite store for every session in the HOME,
  * `~/.local/share/opencode/opencode.db` (with `-wal` and `-shm` siblings while it is open).
@@ -13,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
-import { SessionBuilder, count, isRecord, isoTime, sessionError, str, usageOrNull, type BuildMode } from '../builder.js'
+import { SessionBuilder, count, isoTime, sessionError, str, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionError, SessionRef, TokenUsage } from '../schema.js'
 import { isMissing, withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, withinPath } from '../stores.js'

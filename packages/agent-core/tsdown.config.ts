@@ -14,6 +14,7 @@ export default defineConfig({
     "src/computer-use/index.ts",
     "src/interactions/index.ts",
     "src/interactions/mcp-server.ts",
+    "src/node/index.ts",
   ],
   format: ["esm"],
   dts: { eager: true },

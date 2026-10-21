@@ -1,3 +1,4 @@
+import { isRecord } from '@tangle-network/agent-core'
 /**
  * Claude Code: `~/.claude/projects/<cwd slug>/<session id>.jsonl`, one JSON record per line, and
  * each subagent's own transcript at `<session id>/subagents/agent-<agent id>.jsonl`.
@@ -9,7 +10,7 @@
  * the API answered with.
  */
 import { basename, join } from 'node:path'
-import { SessionBuilder, count, isRecord, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
+import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { runFold, type SessionFold } from './fold.js'
