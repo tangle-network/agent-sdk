@@ -188,6 +188,11 @@
         "import": "./dist/interactions/mcp-server.js",
         "types": "./dist/interactions/mcp-server.d.ts",
         "default": "./dist/interactions/mcp-server.js"
+      },
+      "./node": {
+        "import": "./dist/node/index.js",
+        "types": "./dist/node/index.d.ts",
+        "default": "./dist/node/index.js"
       }
     }
   },
