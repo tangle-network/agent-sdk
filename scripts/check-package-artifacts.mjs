@@ -599,6 +599,13 @@ try {
       packagesByName,
     );
     const exportsCheck = assertInstalledExports(directory, manifest);
+    for (const subpath of Object.keys(entry.manifest.exports ?? {})) {
+      if (!(subpath in (manifest.exports ?? {}))) {
+        throw new Error(
+          `${manifest.name} publishes without export ${subpath}; add it to publishConfig.exports`,
+        );
+      }
+    }
     exportCount += exportsCheck.specifiers.length;
     exportTargetCount += exportsCheck.targetCount;
     const optionalPeers = optionalPeerNames(manifest, packagesByName);
