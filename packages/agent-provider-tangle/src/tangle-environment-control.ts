@@ -11,6 +11,29 @@ import {
   backendFromTurnInput,
   backendRequestIdentity,
 } from "./tangle-prompt.js";
+import { awaitWithSignal } from "./tangle-contract-safety.js";
+import { assertOptionKeys } from "./tangle-environment-validation.js";
+
+/** Concurrent owners join one successful destroy; a failed request remains retryable. */
+export function environmentDestruction(box: SandboxInstanceLike, ephemeral = false) {
+  let destruction: Promise<void> | undefined;
+  return async (options?: { signal?: AbortSignal }): Promise<void> => {
+    if (!box.delete) throw new Error("Tangle sandbox client cannot delete this environment");
+    assertOptionKeys(options, ["signal"], "Tangle destroy");
+    options?.signal?.throwIfAborted();
+    destruction ??= awaitWithSignal(box.delete(ephemeral ? { ...options, until: "removed" } : options), options?.signal)
+      .then((receipt) => {
+        if (!ephemeral) return;
+        const proof = receipt as { outcome?: unknown; removal?: unknown } | null | undefined;
+        if (!proof || !["destroyed", "already_absent"].includes(String(proof.outcome)) || (proof.removal !== undefined && proof.removal !== "complete")) {
+          throw new Error("Tangle ephemeral sandbox removal was not confirmed");
+        }
+      })
+      .catch((error: unknown) => { destruction = undefined; throw error; });
+    await awaitWithSignal(destruction, options?.signal);
+    options?.signal?.throwIfAborted();
+  };
+}
 
 export function sessionPromptRequestDigest(
   input: AgentTurnInput,

@@ -653,6 +653,12 @@ const environment = await provider.exactProcess!.create({
 
 The adapter rejects ordinary sandboxes during create, recovery, and list operations.
 
+## Disposable workspaces
+
+Set `ephemeral: true` in `createTangleProvider` for work whose sandbox state should be discarded after execution. The provider sends the existing Sandbox `ephemeral` create option for every managed-agent environment it creates. Omission preserves the existing storage behavior.
+
+An ephemeral provider refuses `requireNativeSessionCapture: true` and workspace checkpoint restoration before provisioning, and offers no snapshot branching capability. Keep the deciding result outside the disposable workspace, then destroy the environment through the provider. Destruction requests `until: "removed"` and refuses an unknown or pending removal acknowledgement. This option does not delete a previously retained sandbox or its snapshots, and the caller still owns snapshot absence verification.
+
 ## Private session evidence
 
 Set `requireNativeSessionCapture: true` when the provider must retain complete native evidence.
