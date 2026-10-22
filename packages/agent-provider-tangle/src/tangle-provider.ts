@@ -55,6 +55,7 @@ import {
 } from "./tangle-contract-safety.js";
 
 function providerReadyTimeout(options: TangleProviderOptions): number {
+  boundedIdentifier(options.name ?? "tangle-sandbox", "Tangle provider name");
   if (options.requireNativeSessionCapture !== undefined && typeof options.requireNativeSessionCapture !== "boolean") {
     throw new Error("Tangle requireNativeSessionCapture must be a boolean");
   }
@@ -94,7 +95,6 @@ export function createTangleProvider(
     throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
   }
   const providerName = options.name ?? "tangle-sandbox";
-  boundedIdentifier(providerName, "Tangle provider name");
   const exactProcess = options.exactProcess
     ? createTangleExactProcessProvider({
         client: options.client,
@@ -367,6 +367,7 @@ export function createTangleProvider(
             ? {}
             : { resources: requestedResources }),
           credentialSource,
+          ...(options.ephemeral ? { ephemeral: true } : {}),
           ...(selectedProxySecrets === undefined ? {} : { proxySecrets: selectedProxySecrets }),
           ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
           ...(createOptions.backend?.model?.cliAuth === undefined ? {} : {
@@ -526,6 +527,7 @@ export function createTangleProvider(
               operation?.signal ? { signal: operation.signal } : undefined,
               {
                 ...confidentialVerifierOption(options.confidentialAttestationVerifier),
+                ...(options.ephemeral ? { ephemeral: true } : {}),
                 ...(reconnectBindings === undefined ? {} : { proxySecrets: reconnectBindings, rebindProxySecrets: true }),
                 ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
                 ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),

@@ -68,6 +68,7 @@ import {
   assertOptionKeys,
 } from "./tangle-environment-validation.js";
 import {
+  environmentDestruction,
   interruptExecutionAfterAbort,
 } from "./tangle-environment-control.js";
 import { dispatchEnvironmentRun } from "./tangle-environment-dispatch.js";
@@ -121,6 +122,7 @@ export async function sandboxInstanceAsEnvironment(
     rebindProxySecrets?: boolean;
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
+    ephemeral?: boolean;
     requireCliAuthReferences?: boolean;
     credentialSource?: ProfileCredentialSource;
     credentialHarness?: string;
@@ -360,7 +362,6 @@ export async function sandboxInstanceAsEnvironment(
     };
   };
   // The single destroy this handle performs, once it has been asked for.
-  let destruction: Promise<void> | undefined;
   const terminals =
     capabilities.interactiveTerminal?.attach === true
       ? createTangleTerminalRegistry(box)
@@ -677,41 +678,7 @@ export async function sandboxInstanceAsEnvironment(
       await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
       options?.signal?.throwIfAborted();
     },
-    ...(support.destroy
-      ? {
-          async destroy(options?: { signal?: AbortSignal }): Promise<void> {
-            if (!box.delete) throw new Error("Tangle sandbox client cannot delete this environment");
-            assertOptionKeys(options, ["signal"], "Tangle destroy");
-            options?.signal?.throwIfAborted();
-            // One environment has more than one owner of its end. A runtime
-            // that destroys on settle AND tears the executor down calls this
-            // twice for the same box, and the platform refuses the second
-            // DELETE with "A sandbox lifecycle operation is already in
-            // progress" while the first one's cleanup still holds the
-            // sandbox's lifecycle lease. Measured 2026-09-01 on
-            // `sandbox-b525e04a551b`: of two concurrent deletes one answered
-            // 200 `destroyed` and the other 409, and a third delete 0.4 s
-            // after the 200 was still refused. That refusal cost two
-            // completed agent turns their result
-            // (tangle-network/agent-sdk#280), because the second destroy ran
-            // in a caller's `finally` and its throw replaced the run's own
-            // outcome.
-            //
-            // So destroy is answered once per environment and every later
-            // caller joins that answer. This is not a retry and hides no
-            // platform error: a delete that fails is not remembered, and the
-            // next caller issues a real one.
-            destruction ??= awaitWithSignal(box.delete(options), options?.signal)
-              .then(() => undefined)
-              .catch((error: unknown) => {
-                destruction = undefined;
-                throw error;
-              });
-            await awaitWithSignal(destruction, options?.signal);
-            options?.signal?.throwIfAborted();
-          },
-        }
-      : {}),
+    ...(support.destroy ? { destroy: environmentDestruction(box, request?.ephemeral === true) } : {}),
   };
   if (proxySecretReceipt !== undefined) {
     Object.defineProperty(environment, "proxySecretReceipt", {

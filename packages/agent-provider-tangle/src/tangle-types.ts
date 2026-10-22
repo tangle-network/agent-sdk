@@ -625,7 +625,7 @@ export interface SandboxInstanceLike {
    * and preserves the workspace; nothing resumes it on access.
    */
   resume?(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<void>;
-  delete?(options?: { signal?: AbortSignal }): Promise<unknown>;
+  delete?(options?: { signal?: AbortSignal; until?: "removed" }): Promise<unknown>;
   /** Managed whole-workspace checkpoint operation. */
   snapshot?(options?: {
     tags?: string[];
