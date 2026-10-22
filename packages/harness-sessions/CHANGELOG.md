@@ -1,5 +1,19 @@
 # @tangle-network/harness-sessions
 
+## 0.2.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/harness-sessions` depends on the breaking release of `@tangle-network/agent-core`.
+
+### Patch Changes
+
+- c3c9372: Use `isRecord` from `@tangle-network/agent-core` instead of a private copy.
+- Updated dependencies [7611296]
+  - @tangle-network/agent-core@0.13.0
+
 ## 0.1.7
 
 ### Patch Changes
