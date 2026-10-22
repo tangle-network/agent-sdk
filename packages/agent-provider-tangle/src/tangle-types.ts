@@ -870,6 +870,8 @@ export interface TangleProviderOptions {
   defaultBackend?: BackendType;
   /** Require the selected Sandbox host to prove native session capture for every create. */
   requireNativeSessionCapture?: boolean;
+  /** Disposable managed-agent workspaces use Sandbox scratch storage and never restore a checkpoint. */
+  ephemeral?: boolean;
   /**
    * Available stored credentials selected through exact profile credential intent.
    * Managed profiles skip selectors and native references; explicit managed intent skips all references.

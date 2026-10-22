@@ -54,30 +54,38 @@ import {
   SANDBOX_LIST_PAGE_SIZE,
 } from "./tangle-contract-safety.js";
 
+function providerReadyTimeout(options: TangleProviderOptions): number {
+  if (options.requireNativeSessionCapture !== undefined && typeof options.requireNativeSessionCapture !== "boolean") {
+    throw new Error("Tangle requireNativeSessionCapture must be a boolean");
+  }
+  if (options.ephemeral !== undefined && typeof options.ephemeral !== "boolean") {
+    throw new Error("Tangle ephemeral must be a boolean");
+  }
+  if (options.ephemeral && options.requireNativeSessionCapture) {
+    throw new Error("Tangle ephemeral workspaces cannot require retained native-session capture");
+  }
+  const timeout = options.readyTimeoutMs ?? DEFAULT_TANGLE_READY_TIMEOUT_MS;
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error("Tangle readyTimeoutMs must be a positive number of milliseconds");
+  }
+  return timeout;
+}
+
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
+  const readyTimeoutMs = providerReadyTimeout(options);
   const resolveModelCredentials = typeof options.modelCredentials === "function"
     ? options.modelCredentials : undefined;
   const modelCredentials = resolveModelCredentials === undefined
     ? captureModelCredentials(options.modelCredentials as TangleModelCredentials | undefined)
     : undefined;
-  if (options.requireNativeSessionCapture !== undefined && typeof options.requireNativeSessionCapture !== "boolean") {
-    throw new Error("Tangle requireNativeSessionCapture must be a boolean");
-  }
   const mapCreateInput = options.mapCreateInput;
   if ((modelCredentials !== undefined || resolveModelCredentials !== undefined) && mapCreateInput !== undefined) {
     throw new Error("Tangle modelCredentials cannot be combined with mapCreateInput");
   }
   const providerName = options.name ?? "tangle-sandbox";
   boundedIdentifier(providerName, "Tangle provider name");
-  const readyTimeoutMs =
-    options.readyTimeoutMs ?? DEFAULT_TANGLE_READY_TIMEOUT_MS;
-  if (!Number.isFinite(readyTimeoutMs) || readyTimeoutMs <= 0) {
-    throw new Error(
-      "Tangle readyTimeoutMs must be a positive number of milliseconds",
-    );
-  }
   const exactProcess = options.exactProcess
     ? createTangleExactProcessProvider({
         client: options.client,
@@ -231,6 +239,7 @@ export function createTangleProvider(
     }
     const createOptions = deepFreeze(structuredClone({
       ...mappedOptions,
+      ...(options.ephemeral === undefined ? {} : { ephemeral: options.ephemeral }),
       ...(selectedProxySecrets === undefined ? {} : {
         metadata: { ...mappedOptions.metadata, [PROXY_SECRETS_METADATA_KEY]: selectedProxySecrets },
       }),
@@ -246,6 +255,9 @@ export function createTangleProvider(
     }
     assertMappedSecretNames(createOptions);
     const checkpoint = parsedWorkspace?.checkpoint;
+    if (options.ephemeral && checkpoint !== undefined) {
+      throw new Error("Tangle ephemeral workspaces cannot restore a retained checkpoint");
+    }
     if (checkpoint !== undefined) {
       // A checkpoint names a snapshot this provider took. Another provider's id means nothing to
       // Sandbox, and a mapper that drops the restore would return an empty workspace as if full.
