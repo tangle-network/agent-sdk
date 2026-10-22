@@ -71,6 +71,15 @@ function providerReadyTimeout(options: TangleProviderOptions): number {
   return timeout;
 }
 
+function ephemeralCapabilityCeiling(capabilities: AgentEnvironmentCapabilities, ephemeral: boolean): AgentEnvironmentCapabilities {
+  if (!ephemeral) return capabilities;
+  return {
+    ...capabilities,
+    branching: { checkpoint: false, fork: false, confidential: false },
+    create: { ...capabilities.create, workspaceCheckpoint: false },
+  };
+}
+
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
@@ -104,6 +113,7 @@ export function createTangleProvider(
         ? await options.capabilities()
         : options.capabilities
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
+    configured = ephemeralCapabilityCeiling(configured, options.ephemeral === true);
     const proxyCapability = proxySecretCapabilityFromDocument(await options.client.capabilities?.());
     // Configured adapter ceilings never confer authority that the connected API did not prove.
     configured = { ...configured, profile: { ...configured.profile },
@@ -390,7 +400,7 @@ export function createTangleProvider(
       throw error;
     }
   };
-  const workspaceBranching = options.client.get
+  const workspaceBranching = !options.ephemeral && options.client.get
     ? {
         async forEnvironment(
           sourceEnvironmentId: string,
