@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.4.7
+
+### Patch Changes
+
+- 2a85a28: Allow an explicitly ephemeral managed-agent provider to create disposable Sandbox workspaces. Reject retained native-session capture and checkpoint restoration for that provider.
+
 ## 4.4.6
 
 ### Patch Changes
