@@ -9,7 +9,10 @@ concurrency: release-${{ github.ref }}
 
 jobs:
   plan:
-    runs-on: [self-hosted, ci-public]
+    if: github.repository == 'tangle-network/agent-sdk' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
     permissions:
       contents: read
     outputs:
@@ -17,6 +20,8 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -49,8 +54,10 @@ jobs:
 
   version:
     needs: plan
-    if: needs.plan.outputs.version == 'true'
-    runs-on: [self-hosted, ci-public]
+    if: needs.plan.outputs.version == 'true' && github.repository == 'tangle-network/agent-sdk' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
     permissions:
       contents: write
       pull-requests: write
