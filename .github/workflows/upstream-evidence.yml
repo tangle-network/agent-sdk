@@ -1,7 +1,8 @@
 # Braid upstream-evidence checks.
 #
-# Braid reads GitHub API metadata only. Each required UP-id needs a check-run
-# with that exact name and a retained artifact from the package release ref.
+# Braid reads GitHub API metadata only. Each required UP-id needs a successful
+# owning check and a retained artifact from the package release ref. Its reader
+# admits only the known pinned caller names for reusable qualification bodies.
 # The release workflow creates an immutable ref for the package release commit,
 # so the checks run only for that commit or an explicit dispatch from main.
 #
