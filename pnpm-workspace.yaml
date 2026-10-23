@@ -6,7 +6,7 @@ catalog:
   tsdown: 0.23.0
   typescript: 7.0.2
   undici: 8.11.2
-  zod: 4.6.5
+  zod: 4.6.6
   vitest: 5.0.2
 
 # Packages whose public API contains AgentProfile must compile and test against
@@ -14,6 +14,9 @@ catalog:
 # was published against an older exact agent-interface version.
 overrides:
   "@tangle-network/agent-interface": workspace:*
+  # Older published Tangle packages in the dev graph still pin zod 4.6.5
+  # (GHSA-mrhx-c7xc-m3w5); hold every copy at the patched catalog version.
+  zod: "catalog:"
 # First-party releases skip the default minimum release age; this workspace
 # tracks their newest versions as soon as they publish.
 minimumReleaseAgeExclude:
