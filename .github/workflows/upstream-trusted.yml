@@ -1,0 +1,184 @@
+# Trusted release qualification body. Callers pin this reviewed body by SHA;
+# source commits remain bound to the original immutable release ref.
+name: Trusted upstream evidence
+
+on:
+  workflow_call:
+    inputs:
+      release_sha:
+        type: string
+        required: true
+    secrets:
+      TANGLE_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-commit:
+    if: github.repository == 'tangle-network/agent-sdk' && github.event_name == 'workflow_dispatch'
+    name: Detect release commit
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
+    outputs:
+      run: ${{ steps.release.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: release
+        name: Validate release commit
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$WORKFLOW_REF" == "refs/heads/main" ]]; then
+            :
+          elif [[ "$WORKFLOW_REF" =~ ^refs/tags/agent-sdk-release-[0-9a-f]{40}$ ]]; then
+            tag_sha="${WORKFLOW_REF#refs/tags/agent-sdk-release-}"
+            if [[ "$tag_sha" != "$RELEASE_SHA" ]]; then
+              echo "release ref $WORKFLOW_REF does not encode release SHA $RELEASE_SHA" >&2
+              exit 1
+            fi
+          else
+            echo "upstream evidence must dispatch from main or an immutable release ref, received $WORKFLOW_REF" >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_SHA" != "$WORKFLOW_SHA" ]]; then
+            echo "release_sha $RELEASE_SHA is not the workflow main SHA $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "checked out $(git rev-parse HEAD), expected $WORKFLOW_SHA" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD origin/main
+          if ! git diff --unified=0 HEAD^ HEAD -- 'packages/*/package.json' \
+            | grep -Eq '^\+  "version":'; then
+            echo "release SHA does not change a publishable package version" >&2
+            exit 1
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+  control-contracts:
+    name: ${{ matrix.check }}
+    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    needs: release-commit
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-01, UP-02, UP-11, UP-12, UP-13]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
+          if-no-files-found: error
+          # Retention exception: upstream release acceptance evidence is audited across releases.
+          retention-days: 90
+
+  cli-bridge:
+    name: ${{ matrix.check }}
+    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    needs: release-commit
+    timeout-minutes: 30
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-05, UP-06, UP-07, UP-08]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - id: cli-bridge-source
+        name: Validate allowlisted CLI Bridge source
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: drewstone/cli-bridge
+          EXPECTED_COMMIT: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
+        run: |
+          repository="$(jq -er '.cliBridge.repository' scripts/upstream-sources.json)"
+          commit="$(jq -er '.cliBridge.commit' scripts/upstream-sources.json)"
+          if [[ "$repository" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "CLI Bridge repository is not allowlisted: $repository" >&2
+            exit 1
+          fi
+          if [[ "$commit" != "$EXPECTED_COMMIT" || ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "CLI Bridge commit is not the allowlisted immutable pin" >&2
+            exit 1
+          fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.cli-bridge-source.outputs.repository }}
+          ref: ${{ steps.cli-bridge-source.outputs.commit }}
+          path: cli-bridge
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            cli-bridge/pnpm-lock.yaml
+      - name: Verify the qualified host supports the CLI Bridge filesystem jail
+        shell: bash
+        run: bwrap --unshare-user --ro-bind / / -- true
+      - run: pnpm install --frozen-lockfile
+        working-directory: cli-bridge
+      - run: pnpm rebuild better-sqlite3
+        working-directory: cli-bridge
+      - run: pnpm build
+        working-directory: cli-bridge
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
+        env:
+          CLI_BRIDGE_INTEGRATION_ROOT: ${{ github.workspace }}/cli-bridge
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
+          if-no-files-found: error
+          # Retention exception: upstream release acceptance evidence is audited across releases.
+          retention-days: 90
+
+  tangle:
+    if: needs.release-commit.outputs.run == 'true'
+    needs: release-commit
+    # Exact-main body is allowlisted for the isolated credential runner group.
+    uses: tangle-network/agent-sdk/.github/workflows/tangle-evidence.yml@84033272f7a806c42f3619166563b7cd3e3032d4 # reviewed credential boundary
+    with:
+      release_sha: ${{ github.sha }}
+    secrets:
+      TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
