@@ -33,7 +33,7 @@ concurrency:
 jobs:
   release-commit:
     name: Detect release commit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     outputs:
       run: ${{ steps.release.outputs.run }}
     steps:
@@ -84,7 +84,7 @@ jobs:
     name: ${{ matrix.check }}
     if: ${{ needs.release-commit.outputs.run == 'true' }}
     needs: release-commit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +106,7 @@ jobs:
           name: ${{ matrix.check }}-evidence
           path: artifacts/${{ matrix.check }}-*.json
           if-no-files-found: error
+          # Retention exception: upstream release acceptance evidence is audited across releases.
           retention-days: 90
 
   cli-bridge:
@@ -113,7 +114,7 @@ jobs:
     if: ${{ needs.release-commit.outputs.run == 'true' }}
     needs: release-commit
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     strategy:
       fail-fast: false
       matrix:
@@ -190,38 +191,15 @@ jobs:
           name: ${{ matrix.check }}-evidence
           path: artifacts/${{ matrix.check }}-*.json
           if-no-files-found: error
+          # Retention exception: upstream release acceptance evidence is audited across releases.
           retention-days: 90
 
   tangle:
-    name: ${{ matrix.check }}
-    if: ${{ needs.release-commit.outputs.run == 'true' }}
+    if: needs.release-commit.outputs.run == 'true'
     needs: release-commit
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        check: [UP-09, UP-14]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
-        env:
-          TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
-          TANGLE_SANDBOX_URL: ${{ vars.TANGLE_SANDBOX_URL }}
-          TANGLE_MODEL_PROVIDER: tangle-router
-          TANGLE_MODEL: tangle-router/glm-5.3
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.check }}-evidence
-          path: artifacts/${{ matrix.check }}-*.json
-          if-no-files-found: error
-          retention-days: 90
+    # Exact-main body is allowlisted for the isolated credential runner group.
+    uses: tangle-network/agent-sdk/.github/workflows/tangle-evidence.yml@main
+    with:
+      release_sha: ${{ github.sha }}
+    secrets:
+      TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}

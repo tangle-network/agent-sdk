@@ -8,7 +8,70 @@ on:
 concurrency: release-${{ github.ref }}
 
 jobs:
+  plan:
+    runs-on: [self-hosted, ci-public]
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read the Changesets release plan and registry
+        id: plan
+        run: |
+          pnpm exec changeset status --output "$RUNNER_TEMP/changeset-status.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const plan = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/changeset-status.json`, 'utf8'));
+          const version = plan.changesets.length > 0;
+          let publish = false;
+          if (!version) {
+            for (const dir of fs.readdirSync('packages', { withFileTypes: true })) {
+              const path = `packages/${dir.name}/package.json`;
+              if (!dir.isDirectory() || !fs.existsSync(path)) continue;
+              const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+              if (manifest.private) continue;
+              const url = `https://registry.npmjs.org/${encodeURIComponent(manifest.name)}/${encodeURIComponent(manifest.version)}`;
+              const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+              if (!response.ok && response.status !== 404) throw new Error(`Registry returned ${response.status} for ${manifest.name}`);
+              if (response.status === 404) publish = true;
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\npublish=${publish}\n`);
+          NODE
+
+  version:
+    needs: plan
+    if: needs.plan.outputs.version == 'true'
+    runs-on: [self-hosted, ci-public]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action@v2.1.2
+        with:
+          version-script: pnpm changeset:version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    # npm trusted publishing requires a GitHub-hosted runner.
     runs-on: ubuntu-latest
     permissions:
       actions: write
