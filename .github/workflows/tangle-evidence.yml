@@ -1,0 +1,64 @@
+name: Tangle upstream evidence
+
+on:
+  workflow_call:
+    inputs:
+      release_sha:
+        type: string
+        required: true
+    secrets:
+      TANGLE_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  tangle:
+    name: ${{ matrix.check }}
+    if: >-
+      github.repository == 'tangle-network/agent-sdk' &&
+      github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [UP-09, UP-14]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Require the exact merged release source
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$RELEASE_SHA" = "$WORKFLOW_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node scripts/upstream-check.mjs ${{ matrix.check }}
+        env:
+          TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
+          TANGLE_SANDBOX_URL: ${{ vars.TANGLE_SANDBOX_URL }}
+          TANGLE_MODEL_PROVIDER: tangle-router
+          TANGLE_MODEL: tangle-router/glm-5.3
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.check }}-evidence
+          path: artifacts/${{ matrix.check }}-*.json
+          if-no-files-found: error
+          # Retention exception: upstream release acceptance evidence is audited across releases.
+          retention-days: 90
