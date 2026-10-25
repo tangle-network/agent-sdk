@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  constants,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,9 +13,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Range, SemVer, satisfies } from "semver";
+import { tsc } from "./lib/packed-test-cohort.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -443,11 +448,102 @@ function assertInternalDependencyMetadata(source, packed, packagesByName) {
   }
 }
 
+function artifactOptions(args) {
+  const names = new Set();
+  let output;
+  for (let index = 0; index < args.length; index++) {
+    const flag = args[index];
+    const value = args[++index];
+    if ((flag !== "--package" && flag !== "--out") || !value || value.startsWith("--")) {
+      throw new Error("usage: check-package-artifacts.mjs [--package <exact-name>] [--out <fresh-directory>]");
+    }
+    if (flag === "--package") names.add(value);
+    else {
+      if (output !== undefined) throw new Error("--out may be supplied only once");
+      output = resolve(value);
+    }
+  }
+  return { names, output };
+}
+
+// A fresh private evidence directory is optional; no installed tree or npm cache is retained.
+function artifactEvidence(output, selected) {
+  if (output === undefined) return undefined;
+  if (typeof process.getuid !== "function") {
+    throw new Error("--out requires a platform with filesystem ownership verification");
+  }
+  mkdirSync(output, { mode: 0o700 });
+  const ownership = lstatSync(output);
+  if (!ownership.isDirectory() || ownership.uid !== process.getuid() || (ownership.mode & 0o077) !== 0) {
+    throw new Error("--out must be a fresh private directory owned by the current user");
+  }
+  const report = {
+    status: "running", phase: "setup", packages: selected.map((entry) => entry.manifest.name),
+    inputs: Object.fromEntries(["package.json", "pnpm-lock.yaml", "scripts/check-package-artifacts.mjs"].map((name) => [name, createHash("sha256").update(readFileSync(join(root, name))).digest("hex")])),
+    artifacts: [], installed: [],
+  };
+  const save = () => writeFileSync(join(output, "artifact-report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  const retain = (path, category) => {
+    const bytes = readFileSync(path);
+    const directory = join(output, category);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const destination = join(directory, basename(path));
+    if (resolve(path) !== destination) copyFileSync(path, destination, constants.COPYFILE_EXCL);
+    report.artifacts.push({
+      file: relative(output, destination).split(sep).join("/"), bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha512: createHash("sha512").update(bytes).digest("hex"),
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    });
+    save();
+  };
+  console.log(`ARTIFACT_EVIDENCE=${output}`);
+  save();
+  return { output, report, save, retain };
+}
+
+// Fixtures execute inside actual installed tarballs, never workspace source or export aliases.
+function assertInstalledGraphContracts(name, consumerDirectory, evidence) {
+  const portable = name === "@tangle-network/agent-interface";
+  if (!portable && name !== "@tangle-network/agent-trace-contract") return;
+  const fixtures = portable
+    ? ["portable-graph-consumer.mjs", "portable-graph-consumer-types.mts"]
+    : ["graph-trace-consumer.mjs"];
+  const category = `proof/${name.replace(/^@/, "").replaceAll("/", "-")}`;
+  const proof = evidence ? join(evidence.output, category) : join(consumerDirectory, "graph-proof");
+  mkdirSync(proof, { recursive: true, mode: 0o700 });
+  for (const fixture of fixtures) {
+    const target = join(consumerDirectory, fixture);
+    copyFileSync(join(root, "scripts", "fixtures", fixture), target, constants.COPYFILE_EXCL);
+    evidence?.retain(target, category);
+  }
+  if (portable) {
+    const output = run(tsc, ["--strict", "--skipLibCheck", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--noEmit", fixtures[1]], { cwd: consumerDirectory });
+    if (output) console.log(output);
+  }
+  const output = run(node, portable ? [fixtures[0], proof] : [fixtures[0]], {
+    cwd: consumerDirectory, env: portable ? {} : { SDK_TRACE_PROOF_DIR: proof },
+  });
+  console.log(output);
+  evidence?.retain(join(proof, portable ? "portable-graph.jsonl" : "trace.jsonl"), category);
+}
+
+const options = artifactOptions(process.argv.slice(2));
 const packages = publishablePackages();
 if (packages.length === 0) throw new Error("no publishable packages found");
 const packagesByName = new Map(
   packages.map((entry) => [entry.manifest.name, entry]),
 );
+for (const name of options.names) {
+  if (!packagesByName.has(name)) throw new Error(`unknown package selector: ${name}`);
+}
+const selectedPackages = options.names.size === 0
+  ? packages
+  : packages.filter((entry) => options.names.has(entry.manifest.name));
+const requiredPackages = new Set(selectedPackages.flatMap((entry) => [
+  entry.manifest.name, ...internalDependencyClosure(entry, packagesByName),
+]));
+const packagesToPack = packages.filter((entry) => requiredPackages.has(entry.manifest.name));
 
 for (const entry of packages) {
   const { name, scripts } = entry.manifest;
@@ -514,8 +610,11 @@ for (const entry of packages) {
   }
 }
 
-const temporaryRoot = mkdtempSync(join(tmpdir(), "agent-sdk-artifacts-"));
+const evidence = artifactEvidence(options.output, selectedPackages);
+let temporaryRoot;
+const failures = [];
 try {
+  temporaryRoot = mkdtempSync(join(tmpdir(), "agent-sdk-artifacts-"));
   const sourceTarballs = join(temporaryRoot, "source");
   const consumersRoot = join(temporaryRoot, "consumers");
   const repackedTarballs = join(temporaryRoot, "repacked");
@@ -525,7 +624,8 @@ try {
   }
 
   const tarballs = new Map();
-  for (const entry of packages) {
+  for (const entry of packagesToPack) {
+    if (evidence) { evidence.report.phase = `pack:${entry.manifest.name}`; evidence.save(); }
     const packed = runJson(
       pnpm,
       ["pack", "--json", "--pack-destination", sourceTarballs],
@@ -535,6 +635,7 @@ try {
       throw new Error(`failed to pack ${entry.manifest.name}`);
     }
     tarballs.set(entry.manifest.name, packed.filename);
+    evidence?.retain(packed.filename, "source");
   }
 
   const npmEnvironment = {
@@ -546,7 +647,8 @@ try {
   };
   let exportCount = 0;
   let exportTargetCount = 0;
-  for (const entry of packages) {
+  for (const entry of selectedPackages) {
+    if (evidence) { evidence.report.phase = `consumer:${entry.manifest.name}`; evidence.save(); }
     const consumerDirectory = join(
       consumersRoot,
       entry.manifest.name.replace(/^@/, "").replaceAll("/", "-"),
@@ -638,7 +740,20 @@ try {
       assertExactProfileDiffs(consumerDirectory);
       assertInstalledProxySecrets(consumerDirectory);
     }
+    if (evidence) {
+      const installed = run(npm, ["ls", "--all", "--json"], { cwd: consumerDirectory, env: npmEnvironment });
+      const category = `installed/${entry.manifest.name.replace(/^@/, "").replaceAll("/", "-")}`;
+      const metadata = join(consumerDirectory, "installed-dependencies.json");
+      writeFileSync(metadata, `${installed}\n`);
+      evidence.retain(metadata, category);
+      evidence.retain(join(directory, "package.json"), category);
+      evidence.report.installed.push({ name: manifest.name, version: manifest.version });
+      evidence.report.phase = `proof:${entry.manifest.name}`;
+      evidence.save();
+    }
+    assertInstalledGraphContracts(entry.manifest.name, consumerDirectory, evidence);
 
+    if (evidence) { evidence.report.phase = `repack:${entry.manifest.name}`; evidence.save(); }
     const packed = runJson(
       npm,
       [
@@ -658,11 +773,34 @@ try {
       throw new Error(`failed to repack ${entry.manifest.name}`);
     }
     assertRepackedExports(manifest, result.files ?? []);
+    evidence?.retain(join(repackedTarballs, result.filename), "repacked");
   }
 
   console.log(
-    `Checked ${packages.length} isolated packages, ${exportCount} exports, and ${exportTargetCount} export targets.`,
+    `Checked ${selectedPackages.length} isolated packages, ${exportCount} exports, and ${exportTargetCount} export targets.`,
   );
-} finally {
-  rmSync(temporaryRoot, { recursive: true, force: true });
+} catch (error) {
+  failures.push({ phase: evidence?.report.phase ?? "check", error });
 }
+if (temporaryRoot !== undefined) {
+  if (evidence) {
+    evidence.report.phase = "cleanup";
+    evidence.report.errors = failures.map(({ phase, error }) => ({ phase, error: String(error?.stack ?? error) }));
+    try { evidence.save(); }
+    catch (error) { failures.push({ phase: "cleanup-report", error }); }
+  }
+  try {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    failures.push({ phase: "cleanup", error });
+  }
+}
+if (evidence) {
+  evidence.report.status = failures.length > 0 ? "failed" : "passed";
+  evidence.report.errors = failures.map(({ phase, error }) => ({ phase, error: String(error?.stack ?? error) }));
+  evidence.report.phase = failures[0]?.phase ?? "complete";
+  try { evidence.save(); }
+  catch (error) { failures.push({ phase: "report", error }); }
+}
+if (failures.length === 1) throw failures[0].error;
+if (failures.length > 1) throw new AggregateError(failures.map(({ error }) => error), "artifact check, cleanup or evidence retention failed");
