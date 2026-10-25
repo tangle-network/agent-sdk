@@ -23,6 +23,14 @@ const STORE = STORES[FORMAT]
 const HARNESS = 'kimi-code'
 /** The event stream this reader folds; the store also holds context.jsonl and state.json. */
 const WIRE = '*/{id}/wire.jsonl'
+const CHILD_WIRE = '*/*/subagents/{id}/wire.jsonl'
+
+/** Kimi's producer places each agent's wire under its owning session's subagents directory. */
+function sessionIdentity(path: string): { id: string; parent: string | null } {
+  const directory = dirname(path)
+  const container = dirname(directory)
+  return { id: basename(directory), parent: basename(container) === 'subagents' ? basename(dirname(container)) : null }
+}
 
 function usageOf(value: unknown): TokenUsage | null {
   if (!isRecord(value)) return null
@@ -138,7 +146,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       case 'SubagentEvent': {
         subagentEvents += 1
         const agent = str(payload.agent_id)
-        if (agent) builder.child(agent, str(payload.parent_tool_call_id))
+        if (agent) builder.child(agent, str(payload.parent_tool_call_id) ?? str(payload.task_tool_call_id))
         break
       }
       default:
@@ -150,7 +158,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     flushToolArguments()
     builder.source(stats)
     if (compactions > 0) builder.gap(`${compactions} compactions replaced earlier context`)
-    if (subagentEvents > 0) builder.gap(`${subagentEvents} subagent events are logged in this session; each subagent is its own session`)
+    if (subagentEvents > 0) builder.gap(`${subagentEvents} wrapped subagent events were excluded from this session's own messages and usage; separate child wires must be read for child execution`)
     builder.inferEnding(aborted ? { at: (aborted as { at: string | null }).at, error: null } : undefined)
     return builder
   }
@@ -163,19 +171,22 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
   const root = join(home, STORE.root)
-  const pattern = storeGlob(WIRE, opts.nativeSessionId)
+  const pattern = storeGlob(WIRE)
+  const children = storeGlob(CHILD_WIRE)
   const refs: SessionRef[] = []
   for (const rel of await walkFiles(root)) {
-    if (!pattern.test(rel)) continue
+    if (!pattern.test(rel) && !children.test(rel)) continue
+    const { id, parent } = sessionIdentity(rel)
+    // A parent lookup includes its recorded child wires; a child lookup selects that agent.
+    if (opts.nativeSessionId && id !== opts.nativeSessionId && parent !== opts.nativeSessionId) continue
     const path = join(root, rel)
     const mtime = await mtimeMs(path)
     if (opts.sinceMs && mtime < opts.sinceMs) continue
     // Kimi keys the session directory by a hash of its working directory and records no cwd.
     if (opts.cwd) continue
-    const id = basename(dirname(path))
     const context = join(dirname(path), 'context.jsonl')
     const files = (await mtimeMs(context)) > 0 ? [path, context] : [path]
-    refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files, home, cwd: null, mtimeMs: mtime, parentNativeSessionId: null })
+    refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files, home, cwd: null, mtimeMs: mtime, parentNativeSessionId: parent })
   }
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
@@ -185,7 +196,7 @@ export const kimiReader: HarnessSessionReader = {
   aliases: ['kimi', 'kimi-cli'],
   formats: [FORMAT],
   stores: [STORE],
-  globs: { session: WIRE },
+  globs: { session: WIRE, children: CHILD_WIRE },
   evidence: EVIDENCE[FORMAT],
   locate: (home, opts = {}) => locate(home, opts),
   async read(ref, opts = {}) {
@@ -198,5 +209,6 @@ export const kimiReader: HarnessSessionReader = {
 
 /** A session read from its `wire.jsonl` outside a HOME layout. */
 export function kimiRefForFile(path: string): SessionRef {
-  return { harness: HARNESS, format: FORMAT, nativeSessionId: basename(dirname(path)), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }
+  const { id, parent } = sessionIdentity(path)
+  return { harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: parent }
 }
