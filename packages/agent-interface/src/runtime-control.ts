@@ -21,6 +21,18 @@ import { DurablePlanSchema } from "./plan.js";
 
 const stableIdSchema = boundedIdentifierSchema;
 
+/** Actual admitted Runtime run identity; neither coordinate grants authorization. */
+export interface RuntimeRunCoordinates {
+  readonly runId: string;
+  readonly namespace: string;
+}
+
+/** Coordinates are preserved verbatim; no trimming, defaulting or invented bound. */
+export const RuntimeRunCoordinatesSchema = z.strictObject({
+  runId: z.string().min(1),
+  namespace: z.string().min(1),
+}) satisfies z.ZodType<RuntimeRunCoordinates>;
+
 /** Provider-neutral coordinates sufficient to recreate control of one run. */
 export interface AgentRunControlRef {
   runId: string;

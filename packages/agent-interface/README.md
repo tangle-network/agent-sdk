@@ -60,7 +60,28 @@ To migrate a string cwd, wrap it in the base that owns its path.
 Use the repository base for Tangle and other portable workspace providers.
 Use the host base for CLI Bridge native process paths.
 
+## Portable graph records
+
+The root exports `GraphNode`, `GraphEdge`, `GraphTopology`, `StoredGraph` and
+`GraphRunRecord`, their schemas, and their budget, prompt, continuity and route
+types. These describe serialized graphs and observations without importing an
+execution engine. Runtime owns executable composition, graph integrity and
+digests, registry storage, replay authorization, accounting policy and algorithms.
+
+Graph schemas validate known JSON fields and retain the original input, including
+unknown additive fields. Embedded profiles pass the existing `agentProfileSchema`
+without replacing the raw profile with its parsed result. Validation introduces
+no defaults, normalization, sorting, synthesized accounting or graph hash.
+An observed graph can carry containment edges without directives and omit its
+budget; a running observation can omit completion and unknown usage channels.
+These facts do not make it executable or prove delivery, authorization or integrity.
+
 ## Durable runs, interactions, and context
+
+`RuntimeRunCoordinates` names the actual admitted Runtime `runId` and `namespace`.
+These are nonempty strings preserved verbatim, not provider control coordinates or
+authorization tokens. Old records without a recorded pair remain unknown; a caller
+must not reconstruct the namespace from a path, task, profile or trace identifier.
 
 `AgentTurnInput.profile` carries the exact `AgentProfile` for a turn through its canonical schema.
 Keep mounted resources and behavior in this typed field, separate from bounded `providerOptions` metadata.

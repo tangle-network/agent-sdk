@@ -80,6 +80,8 @@ export {
 } from "./environment-provider.js";
 export * from "./plan.js";
 export * from "./runtime-control.js";
+export * from "./graph.js";
+export * from "./graph-schema.js";
 export * from "./portable-context.js";
 export * from "./workspace-branching.js";
 export * from "./workspace-snapshot.js";
