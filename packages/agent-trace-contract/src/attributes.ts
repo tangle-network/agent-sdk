@@ -70,6 +70,10 @@ export const ATTR = Object.freeze({
   harness: "agent.harness",
   skillsDigest: "agent.skills.digest",
   directiveVariant: "agent.directive.variant",
+  // Proven declared graph scope; absent when no exact association is recorded.
+  graphDigest: "agent.graph.digest",
+  graphNodeId: "agent.graph.node_id",
+  graphTopologyDigest: "agent.graph.topology_digest",
 } as const);
 
 /**

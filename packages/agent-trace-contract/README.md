@@ -101,6 +101,9 @@ The rule for every one of them: **use the standard name wherever a standard exis
 | `agent.harness` | `ATTR.harness` | any | The harness that ran the agent, e.g. `claude-code` |
 | `agent.skills.digest` | `ATTR.skillsDigest` | any | Digest of the agent's skill set |
 | `agent.directive.variant` | `ATTR.directiveVariant` | any | The directive variant the agent was given |
+| `agent.graph.digest` | `ATTR.graphDigest` | graph-owned span | Exact verified declared design digest; absent when the full design is unknown |
+| `agent.graph.node_id` | `ATTR.graphNodeId` | authored graph node or its turn | The declared node id within the recorded graph topology; absent on synthetic managers |
+| `agent.graph.topology_digest` | `ATTR.graphTopologyDigest` | graph-owned span | Producer-domain topology digest; declared semantic adjacency is distinct from observed span containment |
 | `agent.link.kind` | `LINK_KIND_ATTR` | **link** | `steered_by` · `graded_by` · `retry_of` |
 
 An attribute is **absent**, never a placeholder.
