@@ -15,7 +15,7 @@ npm install @tangle-network/harness-sessions
 - The sidecar's harness session contract (agent-container `packages/cli-agent-registry`) imports `STORES` and `SessionFormatId` from here; it keeps no second copy of where a harness writes.
 - The capture path reads captures through `listCapture` / `readCapture`.
 - Discovery's trace gate, agent-eval, agent-record and the blog read sessions only through this package.
-- Its only dependencies are `@tangle-network/agent-trace-contract` and Node built-ins (`node:sqlite` for OpenCode).
+- Its dependencies are `@tangle-network/agent-core`, `@tangle-network/agent-trace-contract` and Node built-ins (`node:sqlite` for OpenCode).
 
 ## Formats
 
@@ -25,6 +25,8 @@ npm install @tangle-network/harness-sessions
 | `codex` | `codex.rollout-jsonl` | `rollout-*-{id}.jsonl` under `sessions/` and `archived_sessions/` of every Codex home (below) | turn context (the configured model) | per response (`last_token_usage`); session total from `total_token_usage` |
 | `opencode` | `opencode.sqlite` | `.local/share/opencode/opencode.db` (shared by every session) | session record (`providerID/modelID`) | per step (`step-finish`) |
 | `pi` | `pi.session-jsonl` | `.pi/agent/sessions/**/*_{id}.jsonl` | session record (`provider/model`) | per assistant message |
+| `kimi-code` | `kimi.session-dir` | `.kimi/sessions/*/{id}/wire.jsonl`, child wires at `*/{id}/subagents/*/wire.jsonl` | none in the wire | per step, excluding wrapped child events |
+| `factory-droids` | `factory.session-jsonl` | `.factory/sessions/*/{id}.jsonl` plus settings | configured model in settings (`turn-context`) | session total in settings |
 
 A HOME can hold several Codex homes, and `codexReader.locate` reads all of them (`codexHomes(home)` lists them):
 
@@ -35,7 +37,15 @@ A HOME can hold several Codex homes, and `codexReader.locate` reads all of them 
 
 Homes that resolve to one directory count once. A session copied into several homes (`acct move`) is one ref, its largest copy. A lookup by id takes the rollout whose name ends in the id; when no name does, it reads the `session_meta` of each rollout modified since the id's UUIDv7 time.
 
-Readers for Kimi, Factory, Gemini, Amp, Qwen, Copilot, Forge, Hermes, Prime and OpenClaw are added with the same real-data proof.
+`listReaders()` and the exported catalog own the complete installed format inventory.
+
+## Child execution evidence
+
+Kimi records a child `agent_id` and `parent_tool_call_id` on each wrapped `SubagentEvent`, and writes the child's own wire under the parent's `subagents/<agent_id>/` directory. `kimiReader.locate(home, { nativeSessionId: parentId })` returns the parent and these child refs. A child-ID lookup selects that child. The reader keeps wrapped child events out of the parent's messages and usage; read each returned child ref for its own recorded work. `kimiRefForFile` preserves the same parent binding when a child wire is read directly. A missing child wire remains missing execution evidence, even when its ID appears in the parent.
+
+Pi's session-header `parentSession` is fork/clone/handoff lineage; it does not prove a delegated subagent. The native reader does not turn it or conversation-entry `parentId` into subagent execution. Extension workflow execution remains a separate recorded source. Factory Droid also needs an explicit producer-recorded parent/child binding before this reader can expose delegated children. Neither reader guesses relationships from a tool name, working directory, timing, or current project.
+
+A bounded local capture inspection on 2026-10-25 found explicit Kimi child events and separate child wires. Its Pi and Factory Droid samples contained no explicit subagent binding: the latest 20 files per harness held 7,724 and 245 records respectively; an additional size-stratified selection read seven Pi files (8,229 records) and 20 Factory files (252 records). These are sample limits, not a claim that every producer version lacks the metadata. The remaining Pi/Factory child coverage is unknown. Closing it requires a retained parent/child capture with an explicit source binding, followed by a reader-to-OTLP integration proof; the graph-corpus integrating owner owns that follow-up.
 
 ## Use
 
@@ -77,5 +87,5 @@ harness-sessions read <file|home|capture> [--harness h] [--session id] [--summar
 
 ## Tests
 
-The fixtures are sessions that the real harness CLIs wrote while talking to the trace-proof scripted model; the tests assert that script.
+The baseline fixtures are sessions that the real harness CLIs wrote while talking to the trace-proof scripted model; the tests assert that script. The Kimi child fixture retains complete existing parent and child wire records with all content removed, IDs pseudonymized, and source hashes, record counts, redaction version and token counters recorded in `test/fixtures/kimi/provenance.json`. Its integration test exercises discovery, full/summary reads, in-memory input and contract-span projection, preserving parent and child usage separately.
 The proof against the readers this package replaces is a comparison over stored sessions, recorded with each release.
