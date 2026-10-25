@@ -70,11 +70,11 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.0.0"
+    "@tangle-network/agent-interface": "^5.7.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vitest": "catalog:"
   }
 }

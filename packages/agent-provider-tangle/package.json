@@ -52,7 +52,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.6.1"
+    "@tangle-network/agent-interface": "^5.7.1"
   },
   "peerDependencies": {
     "@tangle-network/sandbox": ">=0.60.88 <1.0.0"
@@ -64,10 +64,10 @@
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
-    "@tangle-network/agent-runtime": "0.292.3",
-    "@tangle-network/sandbox": "0.60.88",
+    "@tangle-network/agent-runtime": "0.349.0",
+    "@tangle-network/sandbox": "0.66.4",
     "@types/node": "catalog:",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vitest": "catalog:"
   }
 }

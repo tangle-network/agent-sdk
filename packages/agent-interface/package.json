@@ -151,7 +151,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/spdx-expression-parse": "4.0.0",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vitest": "catalog:"
   }
 }

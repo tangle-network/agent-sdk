@@ -80,13 +80,13 @@
     "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; pnpm run build && vitest run tests/cli-bridge.integration.test.ts"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.5.0",
+    "@tangle-network/agent-interface": "^5.7.1",
     "undici": "catalog:"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
     "@types/node": "catalog:",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vitest": "catalog:"
   }
 }
