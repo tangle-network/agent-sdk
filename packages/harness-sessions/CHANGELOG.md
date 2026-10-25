@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 0.2.1
+
+### Patch Changes
+
+- 1b27839: Discover Kimi's recorded child wire files with exact native parent IDs, preserve direct-file child binding, and exclude wrapped child events from parent usage. Prove the read-to-OTLP path with redacted real captures and document explicit Pi and Factory Droid child-evidence limits.
+
 ## 0.2.0
 
 ### Minor Changes
