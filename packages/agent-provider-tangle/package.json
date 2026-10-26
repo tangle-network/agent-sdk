@@ -67,7 +67,7 @@
     "@tangle-network/agent-runtime": "0.349.0",
     "@tangle-network/sandbox": "0.66.4",
     "@types/node": "catalog:",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vitest": "catalog:"
   }
 }
