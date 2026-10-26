@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.8.0
+
+### Minor Changes
+
+- 2a51f64: Export one canonical seat grammar and admit per-stage reasoning effort without changing omitted-field profile identity.
+
 ## 5.7.1
 
 ### Patch Changes
