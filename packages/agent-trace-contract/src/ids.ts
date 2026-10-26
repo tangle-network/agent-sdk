@@ -190,3 +190,32 @@ export function ensureNonZeroId(hex: string): string {
   if (!ALL_ZERO_PATTERN.test(hex)) return hex;
   return `${hex.slice(0, -1)}1`;
 }
+
+/**
+ * THE rule for putting an id on the wire as a trace id. Every producer calls
+ * this, so the same id lands in the same trace whichever process exported it:
+ *
+ * - a valid W3C trace id passes through unchanged, so an id received in an
+ *   inbound `traceparent` keeps joining its trace;
+ * - an id that becomes a valid W3C trace id once its dashes are removed (a
+ *   UUID) passes through without them, the wire id producers already emitted
+ *   for UUID run ids;
+ * - anything else is derived with {@link deriveHexId}.
+ *
+ * Never throws; the result always satisfies {@link isW3CTraceId}.
+ */
+export function toW3CTraceId(id: string): string {
+  return toW3CId(id, 16);
+}
+
+/** The span-id counterpart of {@link toW3CTraceId}: 16 hex characters, same three rules. */
+export function toW3CSpanId(id: string): string {
+  return toW3CId(id, 8);
+}
+
+function toW3CId(id: string, bytes: 16 | 8): string {
+  const valid = bytes === 16 ? isW3CTraceId : isW3CSpanId;
+  if (valid(id)) return id;
+  const dashless = typeof id === "string" ? id.replace(/-/g, "") : "";
+  return valid(dashless) ? dashless : deriveHexId(id, bytes);
+}

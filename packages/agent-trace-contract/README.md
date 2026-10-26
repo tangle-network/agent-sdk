@@ -25,9 +25,10 @@ This package holds only the **contract**: span shape, attribute names, the class
 **Entry points**, in the order a new consumer needs them:
 
 1. `resolveSpanKind(span)` to classify any span — never write a second classifier (see [Reading traces you did not write](#reading-traces-you-did-not-write)).
-2. `llmSpan` / `toolSpan` / `loopSpan` / `branchSpan` / `contractSpan` to emit conforming spans, plus `deriveHexId` for ids.
+2. `llmSpan` / `toolSpan` / `loopSpan` / `branchSpan` / `contractSpan` to emit conforming spans, plus `toW3CTraceId` / `toW3CSpanId` for wire ids.
 3. `validateTraceSpans(spans)` to check what a trace export can answer before trusting it.
 4. The `ATTR` map and the `*_ATTR_KEYS` candidate lists (`MODEL_ATTR_KEYS`, `INPUT_TOKEN_ATTR_KEYS`, …) to read attributes — never hardcode a key string.
+5. `@tangle-network/agent-trace-contract/otlp` to encode an OTLP/HTTP JSON export or decode its attributes — never write a second encoder (see [OTLP wire](#otlp-wire)).
 
 **Invariants a change here must preserve:**
 
@@ -82,6 +83,9 @@ The rule for every one of them: **use the standard name wherever a standard exis
 | `gen_ai.usage.output_tokens` | `ATTR.outputTokens` | LLM | Completion tokens |
 | `gen_ai.usage.cost_usd` | `ATTR.costUsd` | LLM | Cost of this call, USD |
 | `gen_ai.tool.name` | `ATTR.toolName` | TOOL | Which tool ran |
+| `gen_ai.tool.definitions` | `ATTR.toolDefinitions` | LLM | The tool definitions offered to the model |
+| `gen_ai.agent.name` | `ATTR.agentName` | AGENT | The agent instance's name |
+| `gen_ai.conversation.id` | `ATTR.conversationId` | any | The conversation or session the span belongs to |
 | `agent.loop.id` | `ATTR.loopId` | loop iteration | Stable id shared by every iteration of one loop |
 | `agent.loop.iteration` | `ATTR.iteration` | loop iteration | 1-based index within the loop |
 | `agent.loop.max_iterations` | `ATTR.maxIterations` | loop iteration | Budget the loop was allowed |
@@ -139,7 +143,27 @@ deriveHexId('audit-run-1', 8)   // '516c71b36b7f4b1f'                  span id
 It is **pinned**: the same string yields the same id in every process, every run, and any language that can encode UTF-8 — which is the whole point, because the two systems deriving an id for the same unit of work never talk to each other.
 `isW3CTraceId` / `isW3CSpanId` answer whether an id you already have is in the encoding.
 
+Every producer puts an id on the wire through **`toW3CTraceId(id)`** / **`toW3CSpanId(id)`**, the one rule:
+
+1. A valid W3C id passes through unchanged, so an id from an inbound `traceparent` keeps its trace.
+2. An id that is valid once its dashes are removed (a UUID) passes through without them.
+3. Anything else goes through `deriveHexId`.
+
+Two producers with two rules put one run under two trace ids, so do not write a third.
+
 `validateTraceSpans` reports a readable id as `non-hex-id`, severity **warn** — a trace you did not write still analyses fully, it just cannot be correlated with anything outside itself.
+
+## OTLP wire
+
+`@tangle-network/agent-trace-contract/otlp` is the OTLP/HTTP JSON encoding, both directions.
+It imports nothing but the id rule, so a Worker or a published SDK can take it without the validator.
+
+- `toOtlpAttributes(record, { doubles })` encodes attributes. A safe integer is `intValue` (a decimal string), any other finite number `doubleValue`, arrays and objects `arrayValue` / `kvlistValue`, and `null` the string `"null"`. `undefined`, `NaN` and the infinities have no OTLP value, so the key is left out.
+- `msToUnixNano(ms)` writes a timestamp, `otlpTraceExport(resource, scope, spans)` the request body, and `readOtlpPartialSuccess(body)` the spans a 2xx answer still refused.
+- `decodeOtlpAttributes(list)` reads an attribute list into plain JSON, camelCase or snake_case, and reports repeated keys.
+- `decodeOtlpTraceExport(body)` flattens a whole export (one collector file line) into one row per span: ids, numeric kind and status (absent when the export has none), scope, nanosecond times as the export's own strings, and resource attributes merged under span attributes. A span without a `traceId` or `spanId` is skipped.
+- Decoding is lossless by default (`attributeValues: 'rich'`): an int64 above 2^53 stays its exact decimal string, and every key, `__proto__` included, is an own property. `attributeValues: 'scalar'` keeps the flat-scalar reading agent-eval's analyst index uses.
+- `OtlpSpan`, `OtlpKeyValue`, `OtlpTraceExport`, `OTLP_SPAN_KIND` and `OTLP_STATUS_CODE` are the wire types and codes.
 
 ## Emit your first conforming trace
 
