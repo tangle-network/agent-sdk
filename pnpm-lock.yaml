@@ -389,7 +389,7 @@ importers:
   packages/harness-sessions:
     dependencies:
       '@tangle-network/agent-core':
-        specifier: ^0.13.2
+        specifier: ^0.14.0
         version: link:../agent-core
       '@tangle-network/agent-trace-contract':
         specifier: ^2.1.0

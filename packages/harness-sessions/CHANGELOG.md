@@ -1,5 +1,18 @@
 # @tangle-network/harness-sessions
 
+## 0.3.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/harness-sessions` depends on the breaking release of `@tangle-network/agent-core`.
+
+### Patch Changes
+
+- Updated dependencies [dffc705]
+  - @tangle-network/agent-core@0.14.0
+
 ## 0.2.1
 
 ### Patch Changes
