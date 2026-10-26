@@ -37,6 +37,9 @@ export const ATTR = Object.freeze({
   outputTokens: "gen_ai.usage.output_tokens",
   costUsd: "gen_ai.usage.cost_usd",
   toolName: "gen_ai.tool.name",
+  toolDefinitions: "gen_ai.tool.definitions",
+  agentName: "gen_ai.agent.name",
+  conversationId: "gen_ai.conversation.id",
   // loops — no semconv equivalent exists, so these are ours and namespaced
   loopId: "agent.loop.id",
   iteration: "agent.loop.iteration",

@@ -39,6 +39,8 @@ export {
   isW3CSpanId,
   isW3CTraceId,
   SPAN_ID_HEX_LENGTH,
+  toW3CSpanId,
+  toW3CTraceId,
   TRACE_ID_HEX_LENGTH,
 } from "./ids.js";
 export {

@@ -11,6 +11,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./src/index.ts"
+    },
+    "./otlp": {
+      "import": "./dist/otlp.js",
+      "types": "./src/otlp.ts"
     }
   },
   "repository": {
@@ -28,6 +32,11 @@
         "import": "./dist/index.js",
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./otlp": {
+        "import": "./dist/otlp.js",
+        "types": "./dist/otlp.d.ts",
+        "default": "./dist/otlp.js"
       }
     }
   },

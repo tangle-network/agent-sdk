@@ -6,6 +6,8 @@ import {
   isW3CSpanId,
   isW3CTraceId,
   SPAN_ID_HEX_LENGTH,
+  toW3CSpanId,
+  toW3CTraceId,
   TRACE_ID_HEX_LENGTH,
 } from "./ids.js";
 
@@ -167,5 +169,64 @@ describe("W3C id predicates", () => {
     expect(isW3CTraceId(null)).toBe(false);
     expect(isW3CSpanId(undefined)).toBe(false);
     expect(isW3CSpanId(12345)).toBe(false);
+  });
+});
+
+describe("toW3CTraceId / toW3CSpanId: the one wire-id rule", () => {
+  it("passes a valid W3C id through unchanged, so an inbound traceparent keeps its trace", () => {
+    const inboundTrace = deriveHexId("some-remote-root", 16);
+    const inboundSpan = deriveHexId("some-remote-span", 8);
+    expect(toW3CTraceId(inboundTrace)).toBe(inboundTrace);
+    expect(toW3CSpanId(inboundSpan)).toBe(inboundSpan);
+  });
+
+  it("strips the dashes from a UUID, the wire id producers already emitted for one", () => {
+    const uuid = "3f2c9a1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b";
+    expect(toW3CTraceId(uuid)).toBe("3f2c9a1e7b4d4e8f9a0b1c2d3e4f5a6b");
+    expect(toW3CSpanId("3f2c9a1e-7b4d4e8f")).toBe("3f2c9a1e7b4d4e8f");
+  });
+
+  it("derives every other id with deriveHexId", () => {
+    for (const input of REAL_IDS) {
+      expect(toW3CTraceId(input)).toBe(deriveHexId(input, 16));
+      expect(toW3CSpanId(input)).toBe(deriveHexId(input, 8));
+    }
+    // Hex a W3C parser refuses is not passed through: uppercase, the reserved
+    // all-zero id, and a dashed id that is still the wrong width.
+    for (const input of ["A".repeat(32), "0".repeat(32), "0000-0000", `${"a".repeat(31)}-`]) {
+      expect(toW3CTraceId(input)).toBe(deriveHexId(input, 16));
+      expect(isW3CTraceId(toW3CTraceId(input))).toBe(true);
+    }
+    expect(toW3CSpanId("0".repeat(16))).toBe(deriveHexId("0".repeat(16), 8));
+  });
+
+  it("never throws and always returns a valid id", () => {
+    for (const input of [42, null, undefined, {}] as unknown as string[]) {
+      expect(isW3CTraceId(toW3CTraceId(input))).toBe(true);
+      expect(isW3CSpanId(toW3CSpanId(input))).toBe(true);
+    }
+  });
+
+  /**
+   * One real-shaped id per producer, pinned. Before this rule the Sandbox SDK
+   * and agent-app hashed readable ids with a private FNV variant (the Sandbox
+   * SDK hashed valid hex and UUIDs too), while agent-eval derived UUIDs instead
+   * of stripping their dashes, so one run could land under two trace ids. Each
+   * producer now calls these functions; these values changing is a wire break.
+   */
+  it("gives every producer the same pinned id", () => {
+    // Sandbox SDK trace bundle id, and its root and first event span seeds.
+    expect(toW3CTraceId("sandbox:sandbox_trace:0")).toBe("7b1cf5c4f39e2237b7847d0c10a6f400");
+    expect(toW3CSpanId("sandbox:sandbox_trace:0:root")).toBe("ab4f4c0e616dd06f");
+    expect(toW3CSpanId("sandbox:sandbox_trace:0:0")).toBe("c4d2b6ab1f9cfb50");
+    // agent-app turn trace id (`turnTraceId` of `legal-agent:session-7:turn-3`).
+    expect(toW3CTraceId("legal-agent_session-7_turn-3")).toBe("47a090d914df951bf1894e53de2128b5");
+    // agent-eval run id.
+    expect(toW3CTraceId("vb-web-grounded-2026-08-01-cell-a")).toBe("5f9116b180649c3573fc13ef78c7f770");
+    // agent-runtime search cell trace and root span.
+    expect(toW3CTraceId("search-cell:run-42")).toBe("acfeffc92b690ffe920463469e929592");
+    expect(toW3CSpanId("search-cell:run-42")).toBe("a78e0008ef6d8bc4");
+    // A UUID run id, from any producer.
+    expect(toW3CTraceId("3f2c9a1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b")).toBe("3f2c9a1e7b4d4e8f9a0b1c2d3e4f5a6b");
   });
 });
