@@ -206,7 +206,11 @@ export function readOtlpPartialSuccess(body: string): {
     : { rejectedSpans: count };
 }
 
-/** A decoded attribute value: plain JSON. */
+/**
+ * A decoded attribute value: plain JSON. An `intValue` is a `number` when it is
+ * a safe integer and its exact decimal `string` otherwise, so an int64 above
+ * 2^53 never silently loses digits.
+ */
 export type OtlpDecodedValue =
   | string
   | number
@@ -225,9 +229,10 @@ export interface OtlpDecodedAttributes {
 /**
  * Decode one OTLP `AnyValue` into plain JSON. Accepts the camelCase field names
  * the OTLP/HTTP JSON spec uses and the snake_case ones SDKs that serialize the
- * protobuf field names send. `intValue` becomes a number when finite and stays
- * the decimal string otherwise; arrays and kvlists decode recursively; a shape
- * this does not know is kept as JSON rather than dropped. Never throws.
+ * protobuf field names send. `intValue` becomes a number when it is a safe
+ * integer and stays the exact decimal string otherwise; arrays and kvlists
+ * decode recursively; a shape this does not know is kept as JSON rather than
+ * dropped. Every key, `__proto__` included, is an own property. Never throws.
  */
 export function decodeOtlpAnyValue(value: unknown): OtlpDecodedValue {
   if (!isRecord(value)) return toJsonValue(value);
@@ -243,7 +248,7 @@ export function decodeOtlpAnyValue(value: unknown): OtlpDecodedValue {
   const intValue = value.intValue ?? value.int_value;
   if (intValue !== undefined) {
     const n = Number(intValue);
-    return Number.isFinite(n) ? n : String(intValue);
+    return Number.isSafeInteger(n) ? n : String(intValue);
   }
 
   const arrayValue = value.arrayValue ?? value.array_value;
@@ -275,10 +280,10 @@ export function decodeOtlpAttributes(list: unknown): OtlpDecodedAttributes {
     if (!isRecord(entry) || typeof entry.key !== "string") continue;
     const decoded = decodeOtlpAnyValue(entry.value);
     if (Object.hasOwn(attributes, entry.key)) {
-      duplicates[entry.key] ??= [attributes[entry.key] ?? null];
-      duplicates[entry.key]?.push(decoded);
+      const seen = Object.hasOwn(duplicates, entry.key) ? (duplicates[entry.key] as OtlpDecodedValue[]) : [attributes[entry.key] ?? null];
+      setOwn(duplicates, entry.key, [...seen, decoded]);
     }
-    attributes[entry.key] = decoded;
+    setOwn(attributes, entry.key, decoded);
   }
   return { attributes, duplicates };
 }
@@ -376,10 +381,15 @@ function toJsonValue(value: unknown): OtlpDecodedValue {
   if (Array.isArray(value)) return value.map(toJsonValue);
   if (isRecord(value)) {
     const out: Record<string, OtlpDecodedValue> = {};
-    for (const [key, item] of Object.entries(value)) out[key] = toJsonValue(item);
+    for (const [key, item] of Object.entries(value)) setOwn(out, key, toJsonValue(item));
     return out;
   }
   return String(value);
+}
+
+/** Assignment would send `__proto__` to the prototype setter; a data property keeps every key. */
+function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

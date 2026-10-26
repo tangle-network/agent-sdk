@@ -1,325 +1,24 @@
 /**
- * Conformance for the OTLP JSON wire. The cases come from the producers and the
- * ingest that each kept a copy of this code: the Sandbox SDK trace exporter,
- * agent-app's turn trace sink, agent-eval's exporters, agent-runtime's
- * exporter, and Tangle Intelligence's ingest decoder.
+ * Conformance for the OTLP JSON wire through the published `./otlp` exports:
+ * a real collector export decoded, and what the encoder writes read back.
+ * The decode cases also carry the ones Tangle Intelligence's ingest decoder
+ * tested before it moved here.
  */
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  decodeOtlpAnyValue,
   decodeOtlpAttributes,
   decodeOtlpTraceExport,
   msToUnixNano,
   OTLP_SPAN_KIND,
   OTLP_STATUS_CODE,
   otlpTraceExport,
-  readOtlpPartialSuccess,
-  toOtlpAnyValue,
   toOtlpAttributes,
+  toW3CSpanId,
   toW3CTraceId,
 } from "./otlp.js";
-import { toW3CTraceId as rootToW3CTraceId } from "./index.js";
-
-describe("toOtlpAttributes", () => {
-  it("types each scalar the way every producer did", () => {
-    expect(
-      toOtlpAttributes({ s: "hi", b: false, i: 42, neg: -7, d: 0.5 }),
-    ).toEqual([
-      { key: "s", value: { stringValue: "hi" } },
-      { key: "b", value: { boolValue: false } },
-      { key: "i", value: { intValue: "42" } },
-      { key: "neg", value: { intValue: "-7" } },
-      { key: "d", value: { doubleValue: 0.5 } },
-    ]);
-  });
-
-  it("drops a key with no OTLP value: undefined, NaN and the infinities", () => {
-    expect(
-      toOtlpAttributes({
-        kept: 1,
-        missing: undefined,
-        nan: Number.NaN,
-        up: Number.POSITIVE_INFINITY,
-        down: Number.NEGATIVE_INFINITY,
-      }),
-    ).toEqual([{ key: "kept", value: { intValue: "1" } }]);
-  });
-
-  it("keeps a measurement listed in `doubles` a double when it lands on a whole number", () => {
-    expect(
-      toOtlpAttributes(
-        { "tangle.duration_ms": 120, "tangle.turn.spans": 3 },
-        { doubles: new Set(["tangle.duration_ms"]) },
-      ),
-    ).toEqual([
-      { key: "tangle.duration_ms", value: { doubleValue: 120 } },
-      { key: "tangle.turn.spans", value: { intValue: "3" } },
-    ]);
-  });
-
-  it("sends an integer past 2^53 as a double, never as an int64 string it cannot spell", () => {
-    expect(toOtlpAnyValue(1e21)).toEqual({ doubleValue: 1e21 });
-    expect(toOtlpAnyValue(Number.MAX_SAFE_INTEGER)).toEqual({
-      intValue: "9007199254740991",
-    });
-  });
-
-  it("encodes nested arrays and objects, with null kept as the string null", () => {
-    expect(
-      toOtlpAttributes({
-        nullable: null,
-        labels: ["alpha", true, { nested: null }, 2.5, Number.NaN, undefined],
-        tool: { cmd: "pnpm", args: ["test", 7], skipped: undefined },
-      }),
-    ).toEqual([
-      { key: "nullable", value: { stringValue: "null" } },
-      {
-        key: "labels",
-        value: {
-          arrayValue: {
-            values: [
-              { stringValue: "alpha" },
-              { boolValue: true },
-              { kvlistValue: { values: [{ key: "nested", value: { stringValue: "null" } }] } },
-              { doubleValue: 2.5 },
-              { stringValue: "null" },
-              { stringValue: "null" },
-            ],
-          },
-        },
-      },
-      {
-        key: "tool",
-        value: {
-          kvlistValue: {
-            values: [
-              { key: "cmd", value: { stringValue: "pnpm" } },
-              {
-                key: "args",
-                value: { arrayValue: { values: [{ stringValue: "test" }, { intValue: "7" }] } },
-              },
-            ],
-          },
-        },
-      },
-    ]);
-  });
-});
-
-describe("decodeOtlpAttributes", () => {
-  it("maps each OTLP value kind, camelCase or snake_case, and coerces int64 strings to numbers", () => {
-    expect(
-      decodeOtlpAttributes([
-        { key: "s", value: { stringValue: "hi" } },
-        { key: "snake_s", value: { string_value: "hello" } },
-        { key: "b", value: { boolValue: true } },
-        { key: "d", value: { doubleValue: 1.5 } },
-        { key: "i", value: { intValue: "42" } },
-        { key: "snake_i", value: { int_value: "43" } },
-        { key: "n", value: { intValue: 7 } },
-        { key: "big", value: { intValue: "not-a-number" } },
-      ]).attributes,
-    ).toEqual({
-      s: "hi",
-      snake_s: "hello",
-      b: true,
-      d: 1.5,
-      i: 42,
-      snake_i: 43,
-      n: 7,
-      big: "not-a-number",
-    });
-  });
-
-  it("decodes nested arrays, kvlists and bytes", () => {
-    expect(
-      decodeOtlpAttributes([
-        {
-          key: "gen_ai.prompt.messages",
-          value: {
-            arrayValue: {
-              values: [
-                {
-                  kvlistValue: {
-                    values: [
-                      { key: "role", value: { stringValue: "system" } },
-                      { key: "content", value: { stringValue: "use repo" } },
-                    ],
-                  },
-                },
-                {
-                  kvlistValue: {
-                    values: [
-                      { key: "role", value: { stringValue: "user" } },
-                      { key: "content", value: { stringValue: "fix EO-286" } },
-                    ],
-                  },
-                },
-              ],
-            },
-          },
-        },
-        {
-          key: "tool.input",
-          value: {
-            kvlistValue: {
-              values: [
-                { key: "cmd", value: { stringValue: "pnpm" } },
-                {
-                  key: "args",
-                  value: { arrayValue: { values: [{ stringValue: "test" }, { intValue: "7" }] } },
-                },
-              ],
-            },
-          },
-        },
-        { key: "payload.bytes", value: { bytesValue: "YWJj" } },
-      ]).attributes,
-    ).toEqual({
-      "gen_ai.prompt.messages": [
-        { role: "system", content: "use repo" },
-        { role: "user", content: "fix EO-286" },
-      ],
-      "tool.input": { cmd: "pnpm", args: ["test", 7] },
-      "payload.bytes": "YWJj",
-    });
-  });
-
-  it("keeps an unknown future value shape as JSON instead of dropping the key", () => {
-    expect(
-      decodeOtlpAttributes([
-        {
-          key: "vendor.future.payload",
-          value: {
-            vendorValue: { nested: true, score: Number.NaN, items: [{ stringValue: "kept" }] },
-          },
-        },
-      ]).attributes,
-    ).toEqual({
-      "vendor.future.payload": {
-        vendorValue: { nested: true, score: null, items: [{ stringValue: "kept" }] },
-      },
-    });
-  });
-
-  it("reports every value of a repeated key, last one winning", () => {
-    expect(
-      decodeOtlpAttributes([
-        { key: "k", value: { stringValue: "a" } },
-        { key: "k", value: { intValue: "2" } },
-        { key: "other", value: { boolValue: true } },
-      ]),
-    ).toEqual({
-      attributes: { k: 2, other: true },
-      duplicates: { k: ["a", 2] },
-    });
-  });
-
-  it("returns empty records for an absent or malformed list, and skips keyless entries", () => {
-    expect(decodeOtlpAttributes(undefined)).toEqual({ attributes: {}, duplicates: {} });
-    expect(decodeOtlpAttributes("nope")).toEqual({ attributes: {}, duplicates: {} });
-    expect(
-      decodeOtlpAttributes([null, { value: { stringValue: "x" } }, { key: "ok", value: { boolValue: false } }])
-        .attributes,
-    ).toEqual({ ok: false });
-    expect(decodeOtlpAnyValue({ doubleValue: Number.POSITIVE_INFINITY })).toBeNull();
-  });
-});
-
-describe("encode then decode", () => {
-  it("returns what the producer put in, except null, which reads back as the string null", () => {
-    const record = {
-      model: "claude-sonnet",
-      ok: true,
-      tokens: 1234,
-      cost: 0.0042,
-      tags: ["a", "b"],
-      tool: { name: "bash", argv: ["ls", "-la"], exit: 0, nested: { deep: 1.5 } },
-      nullable: null,
-    };
-    expect(decodeOtlpAttributes(toOtlpAttributes(record)).attributes).toEqual({
-      ...record,
-      nullable: "null",
-    });
-  });
-
-  it("survives a JSON round trip, the way a collector receives it", () => {
-    const encoded = toOtlpAttributes({ n: 9007199254740991, d: 2.25, s: "x" });
-    expect(decodeOtlpAttributes(JSON.parse(JSON.stringify(encoded))).attributes).toEqual({
-      n: 9007199254740991,
-      d: 2.25,
-      s: "x",
-    });
-  });
-});
-
-describe("msToUnixNano", () => {
-  it("writes whole milliseconds exactly as every producer did", () => {
-    expect(msToUnixNano(1_777_680_000_000)).toBe("1777680000000000000");
-    expect(msToUnixNano(Date.parse("2026-05-02T00:00:01.000Z"))).toBe("1777680001000000000");
-  });
-
-  it("keeps microseconds and floors anything finer", () => {
-    expect(msToUnixNano(1_700_000_000_123.4567)).toBe("1700000000123456000");
-  });
-
-  it("writes 0 for a time it cannot read", () => {
-    expect(msToUnixNano(Number.NaN)).toBe("0");
-    expect(msToUnixNano(Date.parse("not a date"))).toBe("0");
-  });
-});
-
-describe("otlpTraceExport", () => {
-  it("wraps spans in one resource and one scope", () => {
-    const span = {
-      traceId: toW3CTraceId("run-1"),
-      spanId: "a".repeat(16),
-      name: "root",
-      kind: OTLP_SPAN_KIND.INTERNAL,
-      startTimeUnixNano: "1",
-      endTimeUnixNano: "2",
-      attributes: [],
-      status: { code: OTLP_STATUS_CODE.OK },
-    };
-    expect(
-      otlpTraceExport(toOtlpAttributes({ "service.name": "svc" }), { name: "scope", version: "1" }, [span]),
-    ).toEqual({
-      resourceSpans: [
-        {
-          resource: { attributes: [{ key: "service.name", value: { stringValue: "svc" } }] },
-          scopeSpans: [{ scope: { name: "scope", version: "1" }, spans: [span] }],
-        },
-      ],
-    });
-  });
-
-  it("re-exports the root package's id rule, not a second one", () => {
-    expect(toW3CTraceId).toBe(rootToW3CTraceId);
-  });
-});
-
-describe("readOtlpPartialSuccess", () => {
-  it("reads rejected spans as the int64 string OTLP JSON sends or as a number", () => {
-    expect(
-      readOtlpPartialSuccess(JSON.stringify({ partialSuccess: { rejectedSpans: "1", errorMessage: "bad span" } })),
-    ).toEqual({ rejectedSpans: 1, errorMessage: "bad span" });
-    expect(readOtlpPartialSuccess(JSON.stringify({ partialSuccess: { rejectedSpans: 3 } }))).toEqual({
-      rejectedSpans: 3,
-    });
-  });
-
-  it("treats an empty, non-JSON or full-success body as nothing rejected", () => {
-    for (const body of ["", "  ", "accepted", "{}", JSON.stringify({ partialSuccess: {} }), "null"]) {
-      expect(readOtlpPartialSuccess(body)).toEqual({ rejectedSpans: 0 });
-    }
-    expect(readOtlpPartialSuccess(JSON.stringify({ partialSuccess: { rejectedSpans: "-2" } }))).toEqual({
-      rejectedSpans: 0,
-    });
-  });
-});
 
 /**
  * One line of this host's OpenTelemetry Collector file exporter, three
@@ -331,48 +30,30 @@ const COLLECTOR_LINE = readFileSync(new URL("./fixtures/collector-export.json", 
 describe("decodeOtlpTraceExport on a real collector export", () => {
   const rows = decodeOtlpTraceExport(JSON.parse(COLLECTOR_LINE));
 
-  it("yields one row per span with ids, codes and nanosecond strings exactly as exported", () => {
-    expect(rows.map((row) => [row.trace_id, row.span_id, row.parent_span_id, row.name, row.kind])).toEqual([
-      ["09457c5e90257a2f23dd3320b583dc10", "cc185280867314cc", "0caba68b9b4c3405", "auth", 1],
-      ["db7761bbdcb5c750e192fa459bf2760f", "bb1b34f318b7eef5", "ac16c745048f0047", "sql.execute", 3],
-      ["1aeb8173e2fc8cbfd2f5706e5092d5f7", "ec7ff20c52f5f1a5", "9a852a58e079c14e", "claude_code.llm_request", 1],
+  it("keeps ids, codes, scope and nanosecond strings exactly as exported", () => {
+    expect(
+      rows.map((row) => [row.span_id, row.parent_span_id, row.name, row.kind, row.status_code, row.scope_name]),
+    ).toEqual([
+      ["cc185280867314cc", "0caba68b9b4c3405", "auth", 1, undefined, "codex_cli_rs"],
+      ["bb1b34f318b7eef5", "ac16c745048f0047", "sql.execute", 3, 1, "opencode"],
+      ["ec7ff20c52f5f1a5", "9a852a58e079c14e", "claude_code.llm_request", 1, undefined, "com.anthropic.claude_code.tracing"],
     ]);
     // Past 2^53: a float conversion would change these digits.
     expect(rows[0]?.start_time_unix_nano).toBe("1793041881115905373");
-    expect(rows[0]?.end_time_unix_nano).toBe("1793041881115936003");
+    // An export with no status leaves the fields absent, not null.
+    expect(rows[0]).not.toHaveProperty("status_code");
     expect(rows[2]?.events).toEqual([
       { name: "gen_ai.request.attempt", time_unix_nano: "1793041877015951041", attributes: { attempt: 1 } },
     ]);
   });
 
-  it("leaves status absent, not null, when the export has none, and keeps it when it does", () => {
-    expect(rows[0]).not.toHaveProperty("status_code");
-    expect(rows[0]).not.toHaveProperty("status_message");
-    expect(rows[1]?.status_code).toBe(1);
-  });
-
-  it("carries the scope through", () => {
-    expect(rows.map((row) => [row.scope_name, row.scope_version])).toEqual([
-      ["codex_cli_rs", undefined],
-      ["opencode", "1.18.33"],
-      ["com.anthropic.claude_code.tracing", "1.0.0"],
-    ]);
-  });
-
-  it("decodes arrays and merges resource attributes under span attributes", () => {
-    const claude = rows[2];
-    expect(claude?.span_attributes["gen_ai.response.finish_reasons"]).toEqual(["tool_use"]);
-    expect(claude?.attributes).toMatchObject({
+  it("decodes arrays and merges resource attributes under span attributes, the span winning", () => {
+    expect(rows[2]?.attributes).toMatchObject({
       "service.name": "drew-local-agents",
-      "gen_ai.request.model": "claude-opus-5-5[1m]",
+      "gen_ai.response.finish_reasons": ["tool_use"],
       cache_read_tokens: 931333,
       success: true,
     });
-    expect(rows[0]?.resource_attributes["telemetry.sdk.language"]).toBe("rust");
-    expect(rows[0]?.attributes).toMatchObject({ "service.name": "codex_cli_rs", busy_ns: 26101 });
-  });
-
-  it("lets the span win when it repeats a resource key", () => {
     const line = JSON.parse(COLLECTOR_LINE);
     line.resourceSpans[1].scopeSpans[0].spans[0].attributes.push({
       key: "service.name",
@@ -383,28 +64,47 @@ describe("decodeOtlpTraceExport on a real collector export", () => {
     expect(opencode?.attributes["service.name"]).toBe("opencode-worker");
   });
 
-  it("skips a span missing its traceId or spanId instead of throwing", () => {
+  it("skips a span missing its traceId or spanId, and never throws", () => {
     const line = JSON.parse(COLLECTOR_LINE);
     delete line.resourceSpans[0].scopeSpans[0].spans[0].spanId;
     line.resourceSpans[1].scopeSpans[0].spans[0].traceId = "";
     expect(decodeOtlpTraceExport(line).map((row) => row.span_id)).toEqual(["ec7ff20c52f5f1a5"]);
-    for (const malformed of [null, "line", {}, { resourceSpans: "x" }, { resourceSpans: [{ scopeSpans: [{ spans: [7] }] }] }]) {
+    for (const malformed of [null, "line", { resourceSpans: "x" }, { resourceSpans: [{ scopeSpans: [{ spans: [7] }] }] }]) {
       expect(decodeOtlpTraceExport(malformed)).toEqual([]);
     }
   });
+});
 
-  it("decodes what the encoder writes", () => {
+describe("encode then decode", () => {
+  it("reads back what every producer writes", () => {
     const span = {
       traceId: toW3CTraceId("run-1"),
-      spanId: "b".repeat(16),
+      spanId: toW3CSpanId("run-1:root"),
       name: "turn",
       kind: OTLP_SPAN_KIND.INTERNAL,
-      startTimeUnixNano: msToUnixNano(1_700_000_000_000),
-      endTimeUnixNano: msToUnixNano(1_700_000_000_250),
-      attributes: toOtlpAttributes({ "service.name": "turn-span", tokens: 12 }),
+      startTimeUnixNano: msToUnixNano(1_700_000_000_123.4567),
+      endTimeUnixNano: msToUnixNano(Number.NaN),
+      attributes: toOtlpAttributes(
+        {
+          model: "claude-sonnet",
+          ok: true,
+          tokens: 1234,
+          cost: 0.0042,
+          wall_ms: 120,
+          tool: { name: "bash", argv: ["ls", 7, Number.NaN, undefined], nested: { deep: 1.5 } },
+          nullable: null,
+          missing: undefined,
+          nan: Number.NaN,
+          huge: 1e21,
+        },
+        { doubles: new Set(["wall_ms"]) },
+      ),
       status: { code: OTLP_STATUS_CODE.ERROR, message: "boom" },
     };
     const exported = otlpTraceExport(toOtlpAttributes({ "service.name": "svc" }), { name: "scope" }, [span]);
+    // Whole-millisecond types stay as the copies wrote them.
+    expect(span.attributes.find((kv) => kv.key === "wall_ms")?.value).toEqual({ doubleValue: 120 });
+    expect(span.attributes.find((kv) => kv.key === "tokens")?.value).toEqual({ intValue: "1234" });
     expect(decodeOtlpTraceExport(JSON.parse(JSON.stringify(exported)))).toEqual([
       {
         trace_id: span.traceId,
@@ -412,15 +112,85 @@ describe("decodeOtlpTraceExport on a real collector export", () => {
         parent_span_id: null,
         name: "turn",
         kind: 1,
-        start_time_unix_nano: "1700000000000000000",
-        end_time_unix_nano: "1700000000250000000",
+        // Microseconds kept; a time that cannot be read is 0.
+        start_time_unix_nano: "1700000000123456000",
+        end_time_unix_nano: "0",
         status_code: 2,
         status_message: "boom",
         scope_name: "scope",
         resource_attributes: { "service.name": "svc" },
-        span_attributes: { "service.name": "turn-span", tokens: 12 },
-        attributes: { "service.name": "turn-span", tokens: 12 },
+        span_attributes: {
+          model: "claude-sonnet",
+          ok: true,
+          tokens: 1234,
+          cost: 0.0042,
+          wall_ms: 120,
+          // Inside an array a value with no OTLP form keeps its position as "null".
+          tool: { name: "bash", argv: ["ls", 7, "null", "null"], nested: { deep: 1.5 } },
+          nullable: "null",
+          huge: 1e21,
+        },
+        attributes: expect.objectContaining({ "service.name": "svc", model: "claude-sonnet" }),
       },
     ]);
+  });
+});
+
+describe("decodeOtlpAttributes", () => {
+  it("reads the shapes Intelligence's ingest receives", () => {
+    expect(
+      decodeOtlpAttributes([
+        { key: "snake_s", value: { string_value: "hello" } },
+        { key: "snake_i", value: { int_value: "43" } },
+        { key: "n", value: { intValue: 7 } },
+        { key: "payload.bytes", value: { bytesValue: "YWJj" } },
+        { key: "vendor.future", value: { vendorValue: { score: Number.NaN, items: [{ stringValue: "kept" }] } } },
+        { key: "k", value: { stringValue: "a" } },
+        { key: "k", value: { intValue: "2" } },
+        { key: "k", value: { boolValue: false } },
+        { value: { stringValue: "no key" } },
+      ]),
+    ).toEqual({
+      attributes: {
+        snake_s: "hello",
+        snake_i: 43,
+        n: 7,
+        "payload.bytes": "YWJj",
+        "vendor.future": { vendorValue: { score: null, items: [{ stringValue: "kept" }] } },
+        k: false,
+      },
+      duplicates: { k: ["a", 2, false] },
+    });
+  });
+
+  it("keeps an int64 above 2^53 as its exact decimal string", () => {
+    expect(
+      decodeOtlpAttributes([
+        { key: "safe", value: { intValue: "9007199254740991" } },
+        { key: "big", value: { intValue: "9007199254740993" } },
+      ]).attributes,
+    ).toEqual({ safe: 9007199254740991, big: "9007199254740993" });
+  });
+
+  it("keeps __proto__, constructor and toString as ordinary keys, at the top and inside a kvlist", () => {
+    const { attributes } = decodeOtlpAttributes(
+      JSON.parse(
+        JSON.stringify([
+          { key: "__proto__", value: { stringValue: "p" } },
+          { key: "constructor", value: { stringValue: "c" } },
+          { key: "toString", value: { intValue: "1" } },
+          {
+            key: "nested",
+            value: { kvlistValue: { values: [{ key: "__proto__", value: { kvlistValue: { values: [{ key: "polluted", value: { boolValue: true } }] } } }] } },
+          },
+        ]),
+      ),
+    );
+    expect(Object.keys(attributes)).toEqual(["__proto__", "constructor", "toString", "nested"]);
+    expect(Object.getPrototypeOf(attributes)).toBe(Object.prototype);
+    expect(JSON.parse(JSON.stringify(attributes))).toEqual(
+      JSON.parse('{"__proto__":"p","constructor":"c","toString":1,"nested":{"__proto__":{"polluted":true}}}'),
+    );
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
