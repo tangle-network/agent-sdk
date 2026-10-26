@@ -1,5 +1,12 @@
 # @tangle-network/harness-sessions
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [85a6694]
+  - @tangle-network/agent-core@1.0.0
+
 ## 1.0.0
 
 ### Major Changes
