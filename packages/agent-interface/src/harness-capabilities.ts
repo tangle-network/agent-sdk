@@ -353,8 +353,8 @@ export function snapHarnessToModel(
  *   - claude-code: `--effort` accepts `low|medium|high|xhigh|max`; canonical `ultracode` maps to
  *     native `max`. It cannot express `none` or `minimal`, and an unsupported value is warned about
  *     and silently replaced with the default rather than rejected — so the set must not overstate.
- *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh`; canonical `none` maps to
- *     `off` and `ultracode` clamps to `xhigh`, its top rung.
+ *   - pi: `--thinking` accepts `off|minimal|low|medium|high|xhigh|max` (pi 1.4.0
+ *     `cli/args.js`); canonical `none` maps to `off` and `ultracode` to `max`.
  *   - prime: the prime fork of the pi line accepts the same `--thinking` set
  *     (`off|minimal|low|medium|high|xhigh|max`); canonical `none` maps to `off` and `ultracode` to
  *     `max`.
@@ -434,42 +434,48 @@ export function reasoningEffortsFor(
  *     `low`, and `ultracode` becomes its ceiling `max`.
  *   - codex — `-c model_reasoning_effort="<value>"`; it takes the canonical rungs directly and
  *     names its ceiling `ultra`.
- *   - pi — `--thinking <value>`; `none` becomes `off` and `ultracode` clamps to `xhigh`, the
- *     highest rung the pi line accepts.
- *   - prime — `--thinking <value>`; the fork carries `max` above `xhigh`, so `ultracode` reaches
- *     `max`. This is the one rung where prime and pi differ.
+ *   - pi, prime and openclaw — `--thinking <value>`; `none` becomes `off` and `ultracode` reaches
+ *     `max` (pi 1.4.0 `cli/args.js`, the prime fork's `cli/args.ts`, openclaw `agent --help`).
  *   - kimi-code — the control is the FLAG itself, `--thinking` or `--no-thinking`, because kimi's
  *     thinking switch is binary. `medium` is its default and passes no flag at all.
- *   - opencode — the router-backed variant name is the canonical rung unchanged.
+ *   - opencode — `--variant <value>`, forwarded verbatim as the provider's reasoning effort; `none`
+ *     omits the flag, as the sandbox adapter does. No
+ *     provider spells `ultracode`, so it becomes the model's ceiling: `max` for GLM (Z.ai answers
+ *     400 code 1210 for anything outside `none…max`) and `xhigh` for every other model (GPT-6
+ *     answers `max` with 400). Pass `model` so this rung resolves; without it `xhigh` is sent.
  *
  * A harness with no entry applies NO native control: either it derives thinking from the model
  * (gemini's `--thinking-budget`) or it plumbs no thinking flag at all (see
  * {@link harnessHonorsEffort}). Both answer `null`, which is what their receipts carry — so an
  * unknown harness is never asserted to have applied a control it cannot apply.
  */
+const thinkingRung = (effort: ReasoningEffort) => {
+  if (effort === "none") return "off";
+  return effort === "ultracode" ? "max" : effort;
+};
+
 const harnessNativeReasoningControl: Partial<
-  Record<HarnessType, (effort: ReasoningEffort) => string | null>
+  Record<HarnessType, (effort: ReasoningEffort, model?: string) => string | null>
 > = {
   "claude-code": (effort) => {
     if (effort === "none" || effort === "minimal") return "low";
     return effort === "ultracode" ? "max" : effort;
   },
   codex: (effort) => (effort === "ultracode" ? "ultra" : effort),
-  pi: (effort) => {
-    if (effort === "none") return "off";
-    return effort === "ultracode" ? "xhigh" : effort;
-  },
-  prime: (effort) => {
-    if (effort === "none") return "off";
-    return effort === "ultracode" ? "max" : effort;
-  },
+  pi: thinkingRung,
+  prime: thinkingRung,
+  openclaw: thinkingRung,
   "kimi-code": (effort) => {
     if (effort === "medium") return null;
     return effort === "none" || effort === "minimal" || effort === "low"
       ? "--no-thinking"
       : "--thinking";
   },
-  opencode: (effort) => effort,
+  opencode: (effort, model) => {
+    if (effort === "none") return null;
+    if (effort !== "ultracode") return effort;
+    return /(?:^|\/)glm-/iu.test(model ?? "") ? "max" : "xhigh";
+  },
 };
 
 /**
@@ -483,9 +489,10 @@ const harnessNativeReasoningControl: Partial<
 export function nativeReasoningControl(
   harness: HarnessType,
   effort: ReasoningEffort | null,
+  model?: string,
 ): string | null {
   if (effort === null) return null;
-  return harnessNativeReasoningControl[harness]?.(effort) ?? null;
+  return harnessNativeReasoningControl[harness]?.(effort, model) ?? null;
 }
 
 // ── Per-turn selector support (does the harness honor the chat pickers?) ──────
