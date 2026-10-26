@@ -1,5 +1,53 @@
 # @tangle-network/harness-sessions
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [85a6694]
+  - @tangle-network/agent-core@1.0.0
+
+## 1.0.0
+
+### Major Changes
+
+- 1e75516: Release 1.0.0 with the same API as 0.4.0 and 0.4.1; no code changes. From here a breaking change is a major release, and a caret range (`^1.0.0`) takes every later compatible release, so a consumer no longer needs a release of its own for each minor of this package.
+
+### Patch Changes
+
+- Updated dependencies [67b07b2]
+  - @tangle-network/agent-trace-contract@2.2.0
+
+## 0.4.1
+
+### Patch Changes
+
+- 835fa6d: Refuse selected Kimi session paths that are links, directories or special files instead of reporting absent conversation. Recheck the opened JSONL descriptor without following its final link or blocking on a FIFO, including when a previously located file is replaced before read. Preserve exact native-ID selection and context companion inventory.
+
+## 0.4.0
+
+### Minor Changes
+
+- d08fd3f: Read current Kimi flat session wires alongside retained legacy sessions through the existing reader, CLI and capture APIs. Preserve the full native session ID, count loop messages, tools and usage once, keep requested models separate from unproven served identity, and require an explicit native ending. Store-specific reader globs let capture consumers select the recorded layout.
+
+### Patch Changes
+
+- Updated dependencies [31aaa09]
+  - @tangle-network/agent-core@0.15.0
+
+## 0.3.0
+
+### Minor Changes
+
+- Move to the new breaking release of a dependency. This is a minor release, so `^0.x` consumers stay on the previous line until they move.
+  
+  - `@tangle-network/harness-sessions` depends on the breaking release of `@tangle-network/agent-core`.
+
+### Patch Changes
+
+- Updated dependencies [dffc705]
+  - @tangle-network/agent-core@0.14.0
+
 ## 0.2.1
 
 ### Patch Changes

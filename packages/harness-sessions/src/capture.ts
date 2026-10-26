@@ -80,7 +80,8 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'no_reader_for_harness', nativeSessionId: copy.nativeSessionId })
       continue
     }
-    const store = reader.stores.find((s) => s.format === copy.format) ?? reader.stores[0]!
+    const stores = reader.stores.filter((s) => s.format === copy.format)
+    const store = stores.find((s) => copy.files.some((f) => storePathOf(f).includes(`${s.root}/`))) ?? stores[0] ?? reader.stores[0]!
     const inStore = (path: string): string | null => {
       const marker = `${store.root}/`
       const index = path.indexOf(marker)
@@ -106,8 +107,9 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       }
       continue
     }
-    const main = storeGlob(reader.globs.session, copy.nativeSessionId)
-    const nested = reader.globs.children ? [storeGlob(reader.globs.children, copy.nativeSessionId)] : []
+    const globs = store.globs ?? reader.globs
+    const main = storeGlob(globs.session, copy.nativeSessionId)
+    const nested = globs.children ? [storeGlob(globs.children, copy.nativeSessionId)] : []
     const mainFile = copy.files.find((f) => { const rel = inStore(storePathOf(f)); return rel !== null && main.test(rel) })
     if (!mainFile) {
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'native_session_file_missing', nativeSessionId: copy.nativeSessionId })

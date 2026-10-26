@@ -3,7 +3,7 @@
 Runtime primitives for talking to Tangle agents:
 
 - **Auth** — issue and verify scoped access tokens for sidecar/session access.
-- **SSE** — parse agent event streams (`SSEChunkParser`, `parseSSEStream`, `parseSSEData`).
+- **SSE** — parse and frame event streams (`SSEFrameParser`, `streamSSEFrames`, `encodeSSEFrame`, `SSEChunkParser`, `parseSSEStream`); dependency-free, so Worker and browser bundles can take it.
 - **Transport** — connection-manager and transport interfaces.
 - **Resilience** — retries, timeouts, and circuit breakers.
 - **Telemetry** — GenAI attribute and token-usage helpers.

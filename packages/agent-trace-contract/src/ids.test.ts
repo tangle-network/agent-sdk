@@ -6,6 +6,8 @@ import {
   isW3CSpanId,
   isW3CTraceId,
   SPAN_ID_HEX_LENGTH,
+  toW3CSpanId,
+  toW3CTraceId,
   TRACE_ID_HEX_LENGTH,
 } from "./ids.js";
 
@@ -167,5 +169,27 @@ describe("W3C id predicates", () => {
     expect(isW3CTraceId(null)).toBe(false);
     expect(isW3CSpanId(undefined)).toBe(false);
     expect(isW3CSpanId(12345)).toBe(false);
+  });
+});
+
+/**
+ * One real-shaped id per producer, pinned. Before this rule the Sandbox SDK
+ * and agent-app hashed readable ids with a private FNV variant, and agent-eval
+ * derived UUIDs instead of stripping their dashes, so one run could land under
+ * two trace ids. These values changing is a wire break.
+ */
+describe("toW3CTraceId / toW3CSpanId give every producer the same id", () => {
+  it.each([
+    ["Sandbox SDK trace", toW3CTraceId("sandbox:sandbox_trace:0"), "7b1cf5c4f39e2237b7847d0c10a6f400"],
+    ["Sandbox SDK root span", toW3CSpanId("sandbox:sandbox_trace:0:root"), "ab4f4c0e616dd06f"],
+    ["agent-app turn", toW3CTraceId("legal-agent_session-7_turn-3"), "47a090d914df951bf1894e53de2128b5"],
+    ["agent-eval run", toW3CTraceId("vb-web-grounded-2026-08-01-cell-a"), "5f9116b180649c3573fc13ef78c7f770"],
+    ["agent-runtime search cell", toW3CTraceId("search-cell:run-42"), "acfeffc92b690ffe920463469e929592"],
+    ["agent-runtime root span", toW3CSpanId("search-cell:run-42"), "a78e0008ef6d8bc4"],
+    ["UUID run id, dashes stripped", toW3CTraceId("3f2c9a1e-7b4d-4e8f-9a0b-1c2d3e4f5a6b"), "3f2c9a1e7b4d4e8f9a0b1c2d3e4f5a6b"],
+    ["inbound traceparent id, unchanged", toW3CTraceId("7a91903a901193487c8e289eaa5c0ebf"), "7a91903a901193487c8e289eaa5c0ebf"],
+    ["reserved all-zero id, derived", toW3CTraceId("0".repeat(32)), deriveHexId("0".repeat(32), 16)],
+  ])("%s", (_producer, actual, expected) => {
+    expect(actual).toBe(expected);
   });
 });

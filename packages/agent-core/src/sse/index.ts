@@ -1,8 +1,29 @@
 /**
  * SSE Utilities
  *
- * Shared SSE parsing and stream usage extraction for the SDK.
- * Used by sdk-telemetry, sdk-memory, and other consumers.
+ * The one Server-Sent Events wire-format implementation: frame parsing and
+ * framing, plus the JSON event layer and stream usage extraction built on it.
+ * Everything here is pure ECMAScript over `ReadableStream`/`TextDecoder`
+ * globals and imports nothing, so Node, browser and Cloudflare Worker bundles
+ * can take this subpath without pulling a dependency.
+ *
+ * Frame parser guarantees (WHATWG Server-Sent Events, §9.2 "Interpreting an
+ * event stream"):
+ *   - Buffers frames that straddle chunk boundaries; `push()` emits only
+ *     complete frames and `flush()` dispatches a trailing frame whose
+ *     terminating blank line never arrived.
+ *   - Accepts LF and CRLF line terminators interchangeably. Bare CR is
+ *     intentionally not treated as a terminator: no known emitter uses
+ *     it, and supporting it would risk splitting payloads that
+ *     legitimately contain CR.
+ *   - Joins multi-line `data:` fields with "\n" (§9.2.6 step 3).
+ *   - Skips comment lines (a leading ":") — the heartbeat mechanism.
+ *   - Ignores `retry:` and unrecognized fields.
+ *   - Strips one leading U+FEFF (BOM) from the stream.
+ *   - Applies the `event:`/`id:` state of a frame only to that frame.
+ *
+ * The frame layer does no JSON parsing, reconnect/`Last-Event-ID` tracking or
+ * event-type filtering; `SSEChunkParser` adds JSON payload handling on top.
  */
 
 /** Raw SSE event data from stream */
@@ -81,7 +102,254 @@ export function parseSSEData(rawData: string): SSEEventData | null {
 }
 
 // ============================================================================
-// Stream Parsing (chunked SSE)
+// Frame Parsing and Framing
+// ============================================================================
+
+/**
+ * One parsed SSE frame: the fields accumulated between blank lines.
+ *
+ * `event` and `id` share no memory with the chunk the frame arrived in, so a
+ * consumer can keep them as long as it keeps its events. `data` can share
+ * that memory: parse it, and keep what the parse returns.
+ */
+export interface SSEFrame {
+  /** Value of the `event:` field; "" when the frame carries none. */
+  event: string;
+  /** `data:` field lines joined with "\n". */
+  data: string;
+  /** Value of the `id:` field; undefined when the frame carries none. */
+  id?: string;
+}
+
+/**
+ * A copy of `value` that shares no memory with the string it was cut from.
+ *
+ * V8 can return a short substring of a long string as a view that keeps the
+ * whole string alive. Consumers keep event names and ids as long as they keep
+ * events, so a view would keep every chunk its frame arrived in alive.
+ */
+function detached(value: string): string {
+  return value === "" ? value : (JSON.parse(JSON.stringify(value)) as string);
+}
+
+/** Options for {@link streamSSEFrames}. */
+export interface SSEStreamOptions {
+  /**
+   * Aborts the read loop. When the signal fires, the generator throws a
+   * `DOMException` named "AbortError" so consumers can distinguish a
+   * cancellation from a clean end-of-stream without inspecting signal
+   * state.
+   */
+  signal?: AbortSignal;
+  /**
+   * The longest silence the stream may keep, read before each chunk read.
+   * Any bytes reset it, comment heartbeats included, because a heartbeat is
+   * the producer saying the connection is still live. A read that outlasts it
+   * throws {@link SSEStreamSilentError}. `undefined` waits without bound, which
+   * suits a producer that promises no heartbeat.
+   */
+  idleMs?: () => number | undefined;
+}
+
+/**
+ * Thrown when a stream sends no bytes for longer than its `idleMs`. A
+ * producer that heartbeats would have written in that time, so the
+ * connection is dead even though it never closed: a half-open TCP connection
+ * or a stalled proxy hold the socket open while nothing arrives.
+ */
+export class SSEStreamSilentError extends Error {
+  override readonly name = "SSEStreamSilentError";
+  readonly idleMs: number;
+  constructor(idleMs: number) {
+    super(`SSE stream sent no bytes for ${idleMs} ms`);
+    this.idleMs = idleMs;
+  }
+}
+
+/**
+ * Incremental SSE frame parser. Feed decoded text via `push()`; call
+ * `flush()` when the stream ends.
+ */
+export class SSEFrameParser {
+  private buffer = "";
+  private frameEvent = "";
+  private frameId: string | undefined;
+  private frameDataLines: string[] | null = null;
+  private bomChecked = false;
+
+  /**
+   * Append a decoded text chunk and return every frame the chunk
+   * completes. Frame state survives across calls: one frame can
+   * straddle any number of chunks.
+   */
+  push(chunk: string): SSEFrame[] {
+    let text = chunk;
+    if (!this.bomChecked && text.length > 0) {
+      this.bomChecked = true;
+      // The spec's decode step strips one leading BOM. Without this the
+      // first field line of a BOM'd stream is never recognized.
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    }
+    this.buffer += text;
+    const lines = this.buffer.split("\n");
+    // The last element holds a line whose terminator has not arrived
+    // yet; keep it for the next push.
+    this.buffer = lines.pop() ?? "";
+    return this.processLines(lines);
+  }
+
+  /**
+   * End-of-stream: process the unterminated trailing line, then
+   * dispatch a dangling frame that never got its blank line.
+   * Well-behaved servers end frames with "\n\n", but some close early.
+   */
+  flush(): SSEFrame[] {
+    const rest = this.buffer;
+    this.buffer = "";
+    const frames = rest.length > 0 ? this.processLines([rest]) : [];
+    const dangling = this.dispatch();
+    if (dangling) frames.push(dangling);
+    return frames;
+  }
+
+  private processLines(lines: string[]): SSEFrame[] {
+    const frames: SSEFrame[] = [];
+    for (const rawLine of lines) {
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+      if (line === "") {
+        const frame = this.dispatch();
+        if (frame) frames.push(frame);
+        continue;
+      }
+      // Comment lines (heartbeats) carry no fields.
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("data:")) {
+        // The spec removes one optional leading space from the value.
+        let value = line.slice(5);
+        if (value.startsWith(" ")) value = value.slice(1);
+        if (this.frameDataLines === null) this.frameDataLines = [];
+        this.frameDataLines.push(value);
+        continue;
+      }
+      if (line.startsWith("event:")) {
+        this.frameEvent = line.slice(6).trim();
+        continue;
+      }
+      if (line.startsWith("id:")) {
+        this.frameId = line.slice(3).trim();
+      }
+      // `retry:` and unrecognized fields carry no event payload.
+    }
+    return frames;
+  }
+
+  /**
+   * Dispatch the accumulated frame. A frame with no `data:` field (an
+   * `event:`/`id:`-only frame, or a bare comment) produces nothing, and
+   * its field state is consumed and reset either way.
+   */
+  private dispatch(): SSEFrame | null {
+    const dataLines = this.frameDataLines;
+    const frame: SSEFrame | null = dataLines
+      ? {
+          event: detached(this.frameEvent),
+          data: dataLines.join("\n"),
+          id: this.frameId ? detached(this.frameId) : undefined,
+        }
+      : null;
+    this.frameEvent = "";
+    this.frameId = undefined;
+    this.frameDataLines = null;
+    return frame;
+  }
+}
+
+/**
+ * Serialize one frame to its wire form. Multi-line `data` becomes one
+ * `data:` line per source line so the payload survives the trip without
+ * premature frame dispatch.
+ */
+export function encodeSSEFrame(frame: {
+  data: string;
+  event?: string;
+  id?: string;
+}): string {
+  let out = "";
+  if (frame.event !== undefined) out += `event: ${frame.event}\n`;
+  if (frame.id !== undefined) out += `id: ${frame.id}\n`;
+  for (const line of frame.data.split("\n")) out += `data: ${line}\n`;
+  return `${out}\n`;
+}
+
+/**
+ * Read a streaming SSE response body into parsed frames.
+ *
+ * @throws `TypeError` when the body is missing.
+ * @throws `DOMException` with `name === "AbortError"` on cancellation —
+ *   including the WHATWG-fetch variant where an aborted body resolves
+ *   `done: true` instead of rejecting the read.
+ */
+export async function* streamSSEFrames(
+  body: ReadableStream<Uint8Array> | null | undefined,
+  options?: SSEStreamOptions,
+): AsyncGenerator<SSEFrame> {
+  if (!body) {
+    throw new TypeError("SSE stream has no response body");
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const parser = new SSEFrameParser();
+  const { signal, idleMs } = options ?? {};
+  const read = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    const limit = idleMs?.();
+    if (limit === undefined) return reader.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new SSEStreamSilentError(limit)),
+          limit,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
+  let completed = false;
+  try {
+    for (;;) {
+      if (signal?.aborted) {
+        throw new DOMException("SSE stream aborted", "AbortError");
+      }
+      const { done, value } = await read();
+      if (done) {
+        if (signal?.aborted) {
+          throw new DOMException("SSE stream aborted", "AbortError");
+        }
+        break;
+      }
+      for (const frame of parser.push(
+        decoder.decode(value, { stream: true }),
+      )) {
+        yield frame;
+      }
+    }
+    // A final decode() flushes a partial multi-byte character left in
+    // the decoder; flush() then dispatches a dangling frame.
+    for (const frame of parser.push(decoder.decode())) yield frame;
+    for (const frame of parser.flush()) yield frame;
+    completed = true;
+  } finally {
+    // Returning early (a consumer that breaks on a terminal event)
+    // closes the generator but does not by itself cancel a locked fetch
+    // body. Cancel before releasing so the connection is not leaked
+    // until the server times out.
+    if (!completed) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+// ============================================================================
+// JSON Event Parsing (chunked SSE)
 // ============================================================================
 
 export interface SSEParserOptions<T = unknown> {
@@ -99,87 +367,37 @@ export interface ParsedSSEEvent<T = unknown> {
 }
 
 /**
- * Incremental SSE parser for chunked streams.
- * Feed decoded string chunks via push(); call flush() on stream end.
+ * Incremental JSON event parser for chunked streams, framed by
+ * {@link SSEFrameParser}. Feed decoded string chunks via push(); call flush()
+ * on stream end. Frames whose trimmed data is empty produce no event.
  */
 export class SSEChunkParser<T = unknown> {
-  private buffer = "";
-  private currentEvent: { id?: string; event?: string; data?: string } = {};
-  private options: SSEParserOptions<T>;
+  private readonly frames = new SSEFrameParser();
+  private readonly options: SSEParserOptions<T>;
 
   constructor(options: SSEParserOptions<T> = {}) {
     this.options = options;
   }
 
   push(chunk: string): ParsedSSEEvent<T>[] {
-    this.buffer += chunk;
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() ?? "";
-    return this.processLines(lines);
+    return this.toEvents(this.frames.push(chunk));
   }
 
   flush(): ParsedSSEEvent<T>[] {
-    const lines = this.buffer ? [this.buffer] : [];
-    this.buffer = "";
-    const events = this.processLines(lines);
-    const finalEvent = this.parseCurrentEvent();
-    if (finalEvent) {
-      events.push(finalEvent);
-      this.currentEvent = {};
-    }
-    return events;
+    return this.toEvents(this.frames.flush());
   }
 
-  private processLines(lines: string[]): ParsedSSEEvent<T>[] {
+  private toEvents(frames: SSEFrame[]): ParsedSSEEvent<T>[] {
     const events: ParsedSSEEvent<T>[] = [];
-
-    for (const rawLine of lines) {
-      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-
-      if (line.startsWith(":")) {
-        continue;
-      }
-
-      if (line === "") {
-        const parsed = this.parseCurrentEvent();
-        if (parsed) {
-          events.push(parsed);
-        }
-        this.currentEvent = {};
-        continue;
-      }
-
-      if (line.startsWith("id:")) {
-        this.currentEvent.id = line.slice(3).trim();
-        continue;
-      }
-
-      if (line.startsWith("event:")) {
-        this.currentEvent.event = line.slice(6).trim();
-        continue;
-      }
-
-      if (line.startsWith("data:")) {
-        let value = line.slice(5);
-        if (value.startsWith(" ")) {
-          value = value.slice(1);
-        }
-        this.currentEvent.data =
-          this.currentEvent.data !== undefined
-            ? `${this.currentEvent.data}\n${value}`
-            : value;
-      }
+    for (const frame of frames) {
+      const event = this.toEvent(frame);
+      if (event) events.push(event);
     }
-
     return events;
   }
 
-  private parseCurrentEvent(): ParsedSSEEvent<T> | null {
-    if (this.currentEvent.data === undefined) {
-      return null;
-    }
-
-    const rawData = this.currentEvent.data.trim();
+  private toEvent(frame: SSEFrame): ParsedSSEEvent<T> | null {
+    const rawData = frame.data.trim();
     if (!rawData) {
       return null;
     }
@@ -208,8 +426,8 @@ export class SSEChunkParser<T = unknown> {
     return {
       data,
       rawData,
-      eventId: this.currentEvent.id,
-      eventType: this.currentEvent.event,
+      eventId: frame.id,
+      eventType: frame.event || undefined,
     };
   }
 }

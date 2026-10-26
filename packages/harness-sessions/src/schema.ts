@@ -9,23 +9,11 @@
  */
 
 /** One native session format. The id names the harness family and the on-disk layout. */
-export type SessionFormatId =
-  | 'claude-code.projects-jsonl'
-  | 'codex.rollout-jsonl'
-  | 'opencode.sqlite'
-  | 'pi.session-jsonl'
-  | 'kimi.session-dir'
-  | 'factory.session-jsonl'
-  | 'gemini.chat-json'
-  | 'amp.thread-json'
-  | 'forge.sqlite'
-  | 'hermes.state-sqlite'
-  | 'prime.session-jsonl'
-  | 'openclaw.session-jsonl'
+export type SessionFormatId = (typeof import('./catalog.js').SESSION_FORMAT_IDS)[number]
 
 /**
- * Where a harness keeps its sessions, relative to the HOME it ran with. The sidecar's harness
- * session contract imports these declarations; it does not keep a second copy.
+ * Where a harness keeps its sessions, relative to the HOME it ran with. Capture consumers can
+ * share these declarations; consumer adoption of a producer layout is a separate change.
  */
 export interface NativeSessionStore {
   /** Relative to the execution's private runtime HOME. Normalized, never absolute, never `..`. */
@@ -37,11 +25,13 @@ export interface NativeSessionStore {
   /** True when one store holds every session in the HOME (opencode.db). Readers select by id. */
   shared: boolean
   format: SessionFormatId
+  /** Reader files when this layout differs from the harness's default globs. */
+  globs?: { session: string; children?: string }
 }
 
 /** Where a format's served-model, usage and ending-error evidence comes from. */
 export interface SessionEvidenceSources {
-  /** `none`: the harness records no model at all (Kimi's wire log); served models stay empty. */
+  /** `none`: no proven served identity (including Kimi request labels); served models stay empty. */
   servedModel: 'provider-response' | 'session-record' | 'turn-context' | 'none'
   usage: 'per-response' | 'cumulative' | 'session-total'
   endingError: 'session-record' | 'none'
@@ -227,8 +217,8 @@ export interface HarnessSessionReader {
   formats: readonly SessionFormatId[]
   stores: readonly NativeSessionStore[]
   /**
-   * Globs under the first store's root: the file this reader folds for one session, and for a
-   * harness that writes each subagent's transcript separately, those files.
+   * Default globs under each store's root, unless that store supplies its own globs: the session
+   * file and, when the harness writes subagent transcripts separately, those files.
    */
   globs: { session: string; children?: string }
   evidence: SessionEvidenceSources
