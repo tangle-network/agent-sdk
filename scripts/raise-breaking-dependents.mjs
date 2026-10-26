@@ -44,10 +44,10 @@ for (const file of readdirSync(changesetDir)) {
 const isZero = (name) => packages.get(name)?.version.startsWith("0.") ?? false;
 // The release that is breaking for this package's own consumers.
 const breakingType = (name) => (isZero(name) ? "minor" : "major");
-const isBreaking = (name) => {
-  const type = planned.get(name) ?? "none";
-  return type === "major" || (type === "minor" && isZero(name));
-};
+// A major on a 0.x package is its 1.0 graduation: the same API under a stable
+// version, so its dependents keep their release type. Changesets still moves
+// their range to ^1.0.0 and gives them a patch.
+const isBreaking = (name) => (planned.get(name) ?? "none") === breakingType(name);
 
 // A raised dependent is itself breaking for its own dependents.
 const raised = new Map();
