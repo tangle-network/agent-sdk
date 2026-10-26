@@ -3,47 +3,59 @@ import {
   REASONING_EFFORTS,
   type ReasoningEffort,
 } from "./agent-profile.js";
-import type { HarnessType } from "./harness.js";
+import { resolveHarnessType, type HarnessType } from "./harness.js";
 
-/**
- * The unified harness capability layer — the single source of truth for:
- *   1. harness ↔ model compatibility (which models a harness can run),
- *   2. reasoning-effort support (which thinking levels a harness/model expresses), and
- *   3. system-prompt intents (whether a harness can replace its own prompt, add to it, or neither).
- *
- * All are facets of the same question — "what can this (harness, model) pair actually do" — and
- * apply to BOTH harness-backed systems (CLIs that speak a vendor wire, like claude-code, codex and kimi-code) AND
- * router-backed systems (opencode, cli-base: any model the router serves). Lifted here so the
- * cli-bridge backends, the sandbox UI pickers, and the router all read one truth instead of each
- * hand-rolling a divergent copy.
- *
- * Grounded in the native CLI controls (Codex is `minimal..ultra`, Kimi is binary on/off, Claude is
- * `low..max`, cli-base has no agent) — NOT a guessed matrix. The
- * per-MODEL reasoning capability (does this specific model reason at all) is dynamic catalog data the
- * caller supplies.
- */
+/** Canonical harness/model, effort and prompt controls. Model-specific capability comes from the serving catalog. */
 
 /** low → high. `none` = thinking off; `ultracode` = max (claude-code mode). */
 export const reasoningLadder: readonly ReasoningEffort[] = REASONING_EFFORTS;
 
+/** A command's model selector, before account or serving-catalog resolution. */
+export interface SeatSpec {
+  readonly harness: HarnessType;
+  readonly model: string;
+  readonly provider: string | null;
+  readonly reasoningEffort?: ReasoningEffort;
+}
+
+export class SeatSpecError extends Error {
+  constructor(readonly code: "SEAT_SYNTAX" | "UNKNOWN_HARNESS" | "SEAT_EFFORT_UNSUPPORTED" | "MODEL_PROVIDER_MISMATCH", message: string) {
+    super(message);
+    this.name = "SeatSpecError";
+  }
+}
+
+/** Parse harness/model[@effort] without credentials, account selection or model substitution. */
+export function parseSeatSpec(value: string): SeatSpec {
+  const match = /^([^/\s@]+)\/([^/\s@][^\s@]*)(?:@([^\s@]+))?$/u.exec(value);
+  if (!match) throw new SeatSpecError("SEAT_SYNTAX", "Expected harness/model[@effort]");
+  const [, name, model, effort] = match;
+  const harness = resolveHarnessType(name);
+  if (!harness) throw new SeatSpecError("UNKNOWN_HARNESS", `Unknown harness '${name}'`);
+  if (effort !== undefined && !REASONING_EFFORTS.includes(effort as ReasoningEffort))
+    throw new SeatSpecError("SEAT_SYNTAX", `Unknown reasoning effort '${effort}'; use ${REASONING_EFFORTS.join(", ")}`);
+  const reasoningEffort = effort as ReasoningEffort | undefined;
+  if (reasoningEffort !== undefined && (!harnessHonorsEffort(harness) || !harnessReasoningEfforts(harness).includes(reasoningEffort)))
+    throw new SeatSpecError("SEAT_EFFORT_UNSUPPORTED", `Harness ${harness} cannot honor reasoning effort '${reasoningEffort}'`);
+  const support = harnessModelSupport(harness, model, { reasoningEffort });
+  if (!support.supported) throw new SeatSpecError("MODEL_PROVIDER_MISMATCH", support.message);
+  return { harness, model, provider: support.provider, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
+}
+
+/** Preserve the authored model and distinguish inherited effort from explicit none. */
+export function formatSeatSpec(seat: Pick<SeatSpec, "harness" | "model" | "reasoningEffort">): string {
+  return `${seat.harness}/${seat.model}${seat.reasoningEffort === undefined ? "" : `@${seat.reasoningEffort}`}`;
+}
+
 // ── Harness ↔ model compatibility ────────────────────────────────────────────
 
 /**
- * Provider prefixes a harness is vendor-locked to (canonical-id prefix, e.g. `moonshot`). A harness
- * with no entry is router-backed: it runs any model, except the measured exclusions in
- * {@link harnessModelExclusions}.
- *
- * `claude-code` and `codex` are deliberately absent. Their CLIs speak a vendor wire (Anthropic
- * Messages, OpenAI Responses), but the Tangle Router passes only that vendor's own models through
- * natively and translates every other model on those wires to chat completions (text, images and
- * function tools, streamed or not; hosted tools are dropped), so both run any router-served model.
- * A caller's own vendor key or login still serves that vendor's models alone, which this table does
- * not see. Which harness a vendor's model adopts when the caller names none is
- * {@link vendorHarness}, a separate fact.
- *
- * `nanoclaw` is deliberately absent despite the "claw" name: its runner routes every provider through
- * the Tangle router (canonical model id straight to the gateway), so it is router-backed like
- * `opencode` — not Anthropic-locked.
+ * Vendor locks, before the measured {@link harnessModelExclusions}. Absent means router-backed.
+ * Claude Code and Codex run any Router model: their native vendor wire passes through for vendor
+ * models and translates others to chat completions (including images/tools; hosted tools drop).
+ * A caller's vendor key/login remains vendor-limited; this table does not know credentials.
+ * NanoClaw also routes every provider through the Router, so it has no Anthropic lock.
+ * {@link vendorHarness} chooses a default harness; it is not a provider restriction.
  */
 const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {
   "kimi-code": ["moonshot"],
@@ -353,19 +365,7 @@ export function snapHarnessToModel(
 const harnessReasoningEffortsOverride: Partial<
   Record<HarnessType, readonly ReasoningEffort[]>
 > = {
-  codex: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
   "claude-code": ["low", "medium", "high", "xhigh", "ultracode"],
-  pi: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
-  prime: ["none", "minimal", "low", "medium", "high", "xhigh", "ultracode"],
-  openclaw: [
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "ultracode",
-  ],
   "kimi-code": ["none", "high"],
 };
 

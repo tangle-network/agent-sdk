@@ -33,3 +33,9 @@ export const harnessTypeSchema = z.enum([
 
 /** One declaration owns runtime validation and the compile-time vocabulary. */
 export type HarnessType = z.infer<typeof harnessTypeSchema>;
+
+/** Command spellings resolve to canonical identities; authored profile schemas stay strict. */
+export function resolveHarnessType(value: string): HarnessType | null {
+  const parsed = harnessTypeSchema.safeParse(value === "claude" ? "claude-code" : value === "kimi" ? "kimi-code" : value);
+  return parsed.success ? parsed.data : null;
+}

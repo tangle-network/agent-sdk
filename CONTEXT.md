@@ -1,5 +1,7 @@
 # Portable context
 
+**Seat specification.** A command selector written as `harness/model[@effort]`, parsed into canonical harness identity, unchanged model text, resolved-or-unknown provider and optional reasoning effort. It names no account or credential and is distinct from an authored profile's account-selection stage.
+
 **Local plan.** `PortableContextPlan` contains the complete immutable source, every inclusion or omission, and the selected output. The caller retains it for review and acceptance. Its full source never belongs in a destination transfer request.
 
 **Transfer plan.** `PortableContextTransferPlan` contains the selected typed output, individual commitments to selected source parts and attachments, and a combined commitment to the complete local source and decisions. Omitted parts and explanations have no individual hashes. The destination verifies the accepted digest and selected output without receiving omitted content. Avoid using local plan and transfer plan interchangeably.

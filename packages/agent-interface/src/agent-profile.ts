@@ -153,21 +153,13 @@ export const REASONING_EFFORTS = Object.freeze([
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
-/**
- * Model selection hints for backends.
- */
+/** Model selection hints for backends. */
 export interface AgentProfileModelHints {
-  /**
-   * Preferred default model (format depends on backend, commonly "provider/model").
-   */
+  /** Preferred default model, commonly provider/model. */
   default?: string;
-  /**
-   * Preferred small/cheap model for lightweight work.
-   */
+  /** Preferred small/cheap model for lightweight work. */
   small?: string;
-  /**
-   * Optional provider preference hint.
-   */
+  /** Optional provider preference hint. */
   provider?: string;
   /**
    * Reasoning/thinking effort hint — a first-class, portable model dimension (not buried in
@@ -176,25 +168,13 @@ export interface AgentProfileModelHints {
    * This is a quality dial, not a spend limit. It never bounds token count.
    */
   reasoningEffort?: ReasoningEffort;
-  /**
-   * Maximum visible answer tokens a backend may bill for one completion.
-   * A positive integer. Independent of the reasoning and total ceilings.
-   */
+  /** Positive maximum billed visible answer tokens per completion, independent of reasoning/total ceilings. */
   maxVisibleOutputTokens?: number;
-  /**
-   * Maximum hidden reasoning tokens a backend may bill for one completion.
-   * A positive integer, separate from visible answer tokens.
-   */
+  /** Positive maximum billed hidden reasoning tokens per completion, separate from visible answer tokens. */
   maxReasoningTokens?: number;
-  /**
-   * Maximum total billed completion tokens for visible answer and hidden
-   * reasoning tokens together. A positive integer. When it is set with either
-   * single ceiling, that single ceiling must not exceed it.
-   */
+  /** Positive total ceiling for billed visible/hidden completion tokens; neither individual ceiling may exceed it. */
   maxTotalOutputTokens?: number;
-  /**
-   * Backend-agnostic model metadata/hints.
-   */
+  /** Backend-agnostic model metadata/hints. */
   metadata?: Record<string, unknown>;
 }
 
@@ -206,6 +186,8 @@ export interface AgentProfileSeat {
   provider: string;
   /** Exact model requested from this provider. */
   model: string;
+  /** Override profile.model.reasoningEffort for this stage; omission inherits, none disables thinking. */
+  reasoningEffort?: ReasoningEffort;
   /** Select all eligible accounts in account-manager order, or one named account. */
   selector: { kind: "all-eligible" } | { kind: "seat"; id: string };
   /** Replace the profile-level native tool map for this stage; `{}` clears it. */

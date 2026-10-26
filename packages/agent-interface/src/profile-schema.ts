@@ -154,6 +154,7 @@ export const agentProfileSeatSchema = z.strictObject({
   harness: harnessTypeSchema,
   provider: z.string().regex(/^[a-z][a-z0-9-]*$/),
   model: z.string().min(1).refine((value) => value.trim() === value, "model must be canonical"),
+  reasoningEffort: reasoningEffortSchema.optional(),
   selector: z.union([
     z.strictObject({ kind: z.literal("all-eligible") }),
     z.strictObject({ kind: z.literal("seat"), id: z.string().min(1).refine((value) => value.trim() === value, "seat id must be canonical") }),
@@ -528,6 +529,9 @@ export const agentProfileSchema = z
           first.model !== profile.model?.default) {
         context.addIssue({ code: "custom", path: ["seats", 0], message: "first seat must match profile harness, model.provider, and model.default" });
       }
+      if (first.reasoningEffort !== undefined && first.reasoningEffort !== profile.model?.reasoningEffort) {
+        context.addIssue({ code: "custom", path: ["seats", 0, "reasoningEffort"], message: "first seat reasoningEffort must match profile model.reasoningEffort" });
+      }
       if (first.tools !== undefined &&
           canonicalAgentProfileJson(first.tools) !== canonicalAgentProfileJson(profile.tools)) {
         context.addIssue({ code: "custom", path: ["seats", 0, "tools"], message: "first seat tools must match profile tools" });
@@ -544,14 +548,14 @@ export const agentProfileSchema = z
         if (!harnessHonorsModel(seat.harness)) {
           context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness does not honor an exact model choice" });
         }
-        const support = harnessModelSupport(seat.harness, seat.model, { reasoningEffort: profile.model?.reasoningEffort });
+        const effort = seat.reasoningEffort ?? profile.model?.reasoningEffort;
+        const support = harnessModelSupport(seat.harness, seat.model, { reasoningEffort: effort });
         if (!support.supported) {
           context.addIssue({ code: "custom", path: ["seats", index, "model"], message: support.message });
         }
-        const effort = profile.model?.reasoningEffort;
         if (effort !== undefined && (!harnessHonorsEffort(seat.harness) ||
             !harnessReasoningEfforts(seat.harness).includes(effort))) {
-          context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot honor profile reasoning effort" });
+          context.addIssue({ code: "custom", path: ["seats", index, "reasoningEffort"], message: "seat harness cannot honor the stage reasoning effort" });
         }
         const prompt = harnessSystemPromptIntents(seat.harness);
         if (profile.prompt?.systemPrompt !== undefined && !prompt.replace) {
