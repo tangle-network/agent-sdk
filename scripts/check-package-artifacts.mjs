@@ -106,7 +106,7 @@ for (const [input, harness, model, provider, effort] of [
   assert.equal(Object.hasOwn(parsed, "reasoningEffort"), effort !== undefined);
   assert.deepEqual(parseSeatSpec(formatSeatSpec(parsed)), parsed);
 }
-for (const input of ["", "codex/", "codex//model", "codex/model@", "codex/model@high@low", " codex/model", "codex/a b", "codex/model@invented"]) {
+for (const input of ["", "codex/", "codex//model", "codex/model@", "codex/model@high@low", " codex/model", "codex/a b", "codex/a" + String.fromCharCode(0), "codex/model@invented"]) {
   assert.throws(() => parseSeatSpec(input), (error) => error instanceof SeatSpecError && error.code === "SEAT_SYNTAX");
 }
 assert.throws(() => parseSeatSpec("invented/model"), { code: "UNKNOWN_HARNESS" });
