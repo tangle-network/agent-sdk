@@ -51,7 +51,6 @@ function usageOf(value: unknown): TokenUsage | null {
 export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
   let turn = 0
-  let calls = 0
   let step: { call: ModelCall; messageId: string } | null = null
   let lastToolCall: { id: string; text: string } | null = null
   let aborted: { at: string | null } | null = null
@@ -64,8 +63,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
 
   const openStep = (at: string | null): { call: ModelCall; messageId: string } => {
     if (step) return step
-    calls += 1
-    const id = `${builder.nativeSessionId}:turn:${turn}:step:${calls}`
+    const id = `${builder.nativeSessionId}:turn:${turn}:step:${builder.modelCalls.length + 1}`
     const call = builder.modelCall({ id, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: null, error: null })
     builder.message({ id: `${id}:message`, role: 'assistant', actor: 'agent', at, modelCallId: id, parts: [] })
     step = { call, messageId: `${id}:message` }
@@ -163,9 +161,8 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       }
       case 'StepRetry': {
         // A failed attempt Kimi retried: a model call that returned no answer.
-        calls += 1
         builder.modelCall({
-          id: `${builder.nativeSessionId}:turn:${turn}:retry:${calls}`, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: null,
+          id: `${builder.nativeSessionId}:turn:${turn}:retry:${builder.modelCalls.length + 1}`, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: null,
           error: sessionError(str(payload.error_type) ?? 'retry', `${str(payload.error_type) ?? 'error'}${payload.status_code ? ` (status ${String(payload.status_code)})` : ''}`, at, count(payload.status_code)),
         })
         break
@@ -226,17 +223,17 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
     const root = join(home, store.root)
     const pattern = storeGlob('globs' in store ? store.globs.session : WIRE)
     const children = storeGlob(CHILD_WIRE)
-    for (const rel of await walkFiles(root)) {
-      if (!pattern.test(rel) && !children.test(rel)) continue
+    const matches = (rel: string): boolean => {
       const { id, parent } = sessionIdentity(rel)
-      // A parent lookup includes its recorded child wires; a child lookup selects that agent.
-      if (opts.nativeSessionId && id !== opts.nativeSessionId && parent !== opts.nativeSessionId) continue
+      return (pattern.test(rel) || children.test(rel)) && (!opts.nativeSessionId || id === opts.nativeSessionId || parent === opts.nativeSessionId)
+    }
+    for (const rel of await walkFiles(root, undefined, matches)) {
       const path = join(root, rel)
       const mtime = await mtimeMs(path)
       if (opts.sinceMs && mtime < opts.sinceMs) continue
       const context = join(dirname(path), 'context.jsonl')
       const files = (await mtimeMs(context)) > 0 ? [path, context] : [path]
-      const ref: SessionRef = { harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files, home, cwd: null, mtimeMs: mtime, parentNativeSessionId: parent }
+      const ref: SessionRef = { ...kimiRefForFile(path), files, home, mtimeMs: mtime }
       if (opts.cwd) {
         ref.cwd = (await fold(ref, 'summary', {})).cwd
         if (ref.cwd === null || !withinPath(ref.cwd, opts.cwd)) continue

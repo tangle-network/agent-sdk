@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, rmSync } from 'node:fs'
-import { copyFile, mkdtemp, realpath, stat } from 'node:fs/promises'
+import { constants, rmSync } from 'node:fs'
+import { copyFile, mkdtemp, open, realpath, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -87,43 +87,50 @@ export async function* readJsonlRecords(
     return value as Record<string, unknown>
   }
 
-  const stream = createReadStream(path, { highWaterMark: 1 << 20, signal: options.signal })
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    hash.update(chunk)
-    stats.bytes += chunk.length
-    let start = 0
-    for (;;) {
-      const index = chunk.indexOf(NEWLINE, start)
-      if (index === -1) break
-      let line: Buffer
-      if (pendingBytes > 0) {
-        pending.push(chunk.subarray(start, index))
-        line = Buffer.concat(pending)
-        pending = []
-        pendingBytes = 0
-      } else {
-        line = chunk.subarray(start, index)
+  if (typeof constants.O_NOFOLLOW !== 'number' || typeof constants.O_NONBLOCK !== 'number') throw new Error('Safe native JSONL reads require O_NOFOLLOW and O_NONBLOCK')
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    if (!(await file.stat()).isFile()) throw new Error(`${path}: native session must be a regular file`)
+    const stream = file.createReadStream({ highWaterMark: 1 << 20, signal: options.signal, autoClose: false })
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      hash.update(chunk)
+      stats.bytes += chunk.length
+      let start = 0
+      for (;;) {
+        const index = chunk.indexOf(NEWLINE, start)
+        if (index === -1) break
+        let line: Buffer
+        if (pendingBytes > 0) {
+          pending.push(chunk.subarray(start, index))
+          line = Buffer.concat(pending)
+          pending = []
+          pendingBytes = 0
+        } else {
+          line = chunk.subarray(start, index)
+        }
+        const record = parse(line, true)
+        if (record !== undefined) {
+          stats.line = lineNumber
+          yield record
+        }
+        start = index + 1
       }
-      const record = parse(line, true)
+      if (start < chunk.length) {
+        pending.push(chunk.subarray(start))
+        pendingBytes += chunk.length - start
+      }
+    }
+    if (pendingBytes > 0) {
+      const record = parse(Buffer.concat(pending), false)
       if (record !== undefined) {
         stats.line = lineNumber
         yield record
       }
-      start = index + 1
     }
-    if (start < chunk.length) {
-      pending.push(chunk.subarray(start))
-      pendingBytes += chunk.length - start
-    }
+    stats.sha256 = `sha256:${hash.digest('hex')}`
+  } finally {
+    await file.close()
   }
-  if (pendingBytes > 0) {
-    const record = parse(Buffer.concat(pending), false)
-    if (record !== undefined) {
-      stats.line = lineNumber
-      yield record
-    }
-  }
-  stats.sha256 = `sha256:${hash.digest('hex')}`
 }
 
 export function newSourceStats(path: string): SourceStats {
