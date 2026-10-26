@@ -6,7 +6,7 @@ catalog:
   tsdown: 0.23.2
   typescript: 6.0.3
   undici: 8.12.3
-  zod: 4.6.7
+  zod: ^4.6.6
   vitest: 5.0.5
 
 # Packages whose public API contains AgentProfile must compile and test against
