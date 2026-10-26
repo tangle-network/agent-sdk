@@ -12,8 +12,10 @@ across subscriptions. Each stage pins a harness, provider, model, and account
 selector. `all-eligible` lets the account manager choose each available seat in
 its own order; `seat` names one account. The first stage must equal the profile's
 top-level `harness`, `model.provider`, and `model.default`, so the initial run
-cannot silently change its authored model. The profile's reasoning effort and
-system prompt intent must be supported by every stage. The executor must check
+cannot silently change its authored model. Each stage inherits `model.reasoningEffort`
+unless it declares `reasoningEffort`; explicit `none` disables thinking where the
+harness supports it. An explicit first-stage effort must equal the profile's.
+Every stage must support its effective effort and the profile's system prompt intent. The executor must check
 the remaining profile capabilities and resolve seats before spend.
 
 An omitted `seats` field preserves the legacy single-provider policy. For each
@@ -21,6 +23,13 @@ segment, the executor keeps the authored profile for identity and builds a
 provider-facing projection without `seats`, setting its top-level harness and
 model to the selected stage. A cross-provider continuation requires an explicit
 stage in the authored chain.
+
+`parseSeatSpec("codex/gpt-6.1-sol@xhigh")` and `formatSeatSpec(spec)` share the
+`harness/model[@effort]` command grammar. They are exported at the package root
+and `harness-capabilities`. `claude` and `kimi` resolve to canonical harness names;
+the authored model remains unchanged, including explicit provider prefixes.
+The parsed `provider` is null when the model's provider is unknown. These pure
+helpers do not choose accounts, rank models, load credentials, or fill omitted effort.
 
 Each later stage may replace the profile-level `tools` and `permissions` maps.
 An explicit `{}` removes those profile-level controls for that stage; an omitted

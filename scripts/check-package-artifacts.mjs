@@ -85,6 +85,57 @@ for (const key of ["__proto__", "constructor", "prototype", "owner"]) {
 `], { cwd: consumerDirectory });
 }
 
+function assertInstalledSeatSpecs(consumerDirectory) {
+  run(node, ["--input-type=module", "--eval", `
+import assert from "node:assert/strict";
+import { agentProfileSchema, canonicalAgentProfileDigest, parseSeatSpec, formatSeatSpec, SeatSpecError } from "@tangle-network/agent-interface";
+import * as capabilities from "@tangle-network/agent-interface/harness-capabilities";
+
+assert.equal(parseSeatSpec, capabilities.parseSeatSpec);
+assert.equal(formatSeatSpec, capabilities.formatSeatSpec);
+for (const [input, harness, model, provider, effort] of [
+  ["codex/gpt-6.1-sol@xhigh", "codex", "gpt-6.1-sol", "openai", "xhigh"],
+  ["claude/anthropic/claude-sonnet-5-5@low", "claude-code", "anthropic/claude-sonnet-5-5", "anthropic", "low"],
+  ["kimi/moonshot/kimi-k2.6@none", "kimi-code", "moonshot/kimi-k2.6", "moonshot", "none"],
+  ["opencode/acme/namespace/custom-model", "opencode", "acme/namespace/custom-model", "acme", undefined],
+  ["codex/local-custom", "codex", "local-custom", null, undefined],
+]) {
+  const expected = { harness, model, provider, ...(effort === undefined ? {} : { reasoningEffort: effort }) };
+  const parsed = parseSeatSpec(input);
+  assert.deepEqual(parsed, expected);
+  assert.equal(Object.hasOwn(parsed, "reasoningEffort"), effort !== undefined);
+  assert.deepEqual(parseSeatSpec(formatSeatSpec(parsed)), parsed);
+}
+for (const input of ["", "codex/", "codex//model", "codex/openai/", "opencode/custom//model", "opencode/custom/", "codex/model@", "codex/model@high@low", " codex/model", "codex/a b", "codex/a" + String.fromCharCode(0), "codex/model@invented"]) {
+  assert.throws(() => parseSeatSpec(input), (error) => error instanceof SeatSpecError && error.code === "SEAT_SYNTAX");
+}
+assert.throws(() => parseSeatSpec("invented/model"), { code: "UNKNOWN_HARNESS" });
+assert.throws(() => formatSeatSpec({ harness: "codex", model: "openai/" }), { code: "SEAT_SYNTAX" });
+assert.throws(() => parseSeatSpec("claude/model@none"), { code: "SEAT_EFFORT_UNSUPPORTED" });
+assert.throws(() => parseSeatSpec("kimi/moonshot/kimi-k2.6@xhigh"), { code: "SEAT_EFFORT_UNSUPPORTED" });
+assert.throws(() => parseSeatSpec("kimi/openai/gpt-6.1-sol"), { code: "MODEL_PROVIDER_MISMATCH" });
+
+const first = { harness: "codex", provider: "openai", model: "openai/gpt-6.1-sol", selector: { kind: "all-eligible" } };
+const base = { harness: first.harness, model: { provider: first.provider, default: first.model }, seats: [first] };
+const decoded = agentProfileSchema.parse(base);
+assert.deepEqual(decoded, base);
+assert.equal(Object.hasOwn(decoded.seats[0], "reasoningEffort"), false);
+assert.equal(canonicalAgentProfileDigest(decoded), canonicalAgentProfileDigest(base));
+const profiled = { ...base, model: { ...base.model, reasoningEffort: "xhigh" } };
+const fallback = { harness: "kimi-code", provider: "moonshot", model: "moonshot/kimi-k2.6", selector: { kind: "all-eligible" } };
+assert.equal(agentProfileSchema.safeParse({ ...profiled, seats: [first, fallback] }).success, false);
+const explicit = { ...profiled, seats: [first, { ...fallback, reasoningEffort: "none" }] };
+assert.deepEqual(agentProfileSchema.parse(explicit), explicit);
+assert.equal(agentProfileSchema.safeParse({ ...profiled, seats: [{ ...first, reasoningEffort: "none" }] }).success, false);
+assert.equal(agentProfileSchema.safeParse({ ...base, seats: [{ ...first, reasoningEffort: "none" }] }).success, false);
+assert.equal(agentProfileSchema.safeParse({ ...profiled, seats: [{ ...first, reasoningEffort: "xhigh" }] }).success, true);
+const pi = { ...fallback, harness: "pi", provider: "anthropic", model: "anthropic/claude-sonnet-5-5" };
+assert.equal(agentProfileSchema.safeParse({ ...profiled, seats: [first, { ...pi, reasoningEffort: "none" }] }).success, true);
+assert.equal(agentProfileSchema.safeParse({ ...profiled, seats: [first, { ...pi, reasoningEffort: "high" }] }).success, false);
+console.log("Packed public Interface: canonical seat grammar, stage effort and omitted-field identity passed.");
+`], { cwd: consumerDirectory });
+}
+
 function optionalPeerNames(manifest, packagesByName) {
   return Object.keys(manifest.peerDependencies ?? {}).filter(
     (name) =>
@@ -616,6 +667,7 @@ try {
     );
     if (manifest.name === "@tangle-network/agent-interface") {
       assertInstalledProfileRecordKeys(consumerDirectory);
+      assertInstalledSeatSpecs(consumerDirectory);
     }
     if (optionalPeers.length > 0) {
       run(
