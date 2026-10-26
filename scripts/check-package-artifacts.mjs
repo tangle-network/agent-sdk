@@ -97,7 +97,7 @@ for (const [input, harness, model, provider, effort] of [
   ["codex/gpt-6.1-sol@xhigh", "codex", "gpt-6.1-sol", "openai", "xhigh"],
   ["claude/anthropic/claude-sonnet-5-5@low", "claude-code", "anthropic/claude-sonnet-5-5", "anthropic", "low"],
   ["kimi/moonshot/kimi-k2.6@none", "kimi-code", "moonshot/kimi-k2.6", "moonshot", "none"],
-  ["opencode/acme/custom-model", "opencode", "acme/custom-model", "acme", undefined],
+  ["opencode/acme/namespace/custom-model", "opencode", "acme/namespace/custom-model", "acme", undefined],
   ["codex/local-custom", "codex", "local-custom", null, undefined],
 ]) {
   const expected = { harness, model, provider, ...(effort === undefined ? {} : { reasoningEffort: effort }) };
@@ -106,10 +106,11 @@ for (const [input, harness, model, provider, effort] of [
   assert.equal(Object.hasOwn(parsed, "reasoningEffort"), effort !== undefined);
   assert.deepEqual(parseSeatSpec(formatSeatSpec(parsed)), parsed);
 }
-for (const input of ["", "codex/", "codex//model", "codex/model@", "codex/model@high@low", " codex/model", "codex/a b", "codex/a" + String.fromCharCode(0), "codex/model@invented"]) {
+for (const input of ["", "codex/", "codex//model", "codex/openai/", "opencode/custom//model", "opencode/custom/", "codex/model@", "codex/model@high@low", " codex/model", "codex/a b", "codex/a" + String.fromCharCode(0), "codex/model@invented"]) {
   assert.throws(() => parseSeatSpec(input), (error) => error instanceof SeatSpecError && error.code === "SEAT_SYNTAX");
 }
 assert.throws(() => parseSeatSpec("invented/model"), { code: "UNKNOWN_HARNESS" });
+assert.throws(() => formatSeatSpec({ harness: "codex", model: "openai/" }), { code: "SEAT_SYNTAX" });
 assert.throws(() => parseSeatSpec("claude/model@none"), { code: "SEAT_EFFORT_UNSUPPORTED" });
 assert.throws(() => parseSeatSpec("kimi/moonshot/kimi-k2.6@xhigh"), { code: "SEAT_EFFORT_UNSUPPORTED" });
 assert.throws(() => parseSeatSpec("kimi/openai/gpt-6.1-sol"), { code: "MODEL_PROVIDER_MISMATCH" });

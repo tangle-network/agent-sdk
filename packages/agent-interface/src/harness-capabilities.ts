@@ -28,7 +28,7 @@ export class SeatSpecError extends Error {
 /** Parse harness/model[@effort] without credentials, account selection or model substitution. */
 export function parseSeatSpec(value: string): SeatSpec {
   const match = /^([^/\s@]+)\/([^/\s@][^\s@]*)(?:@([^\s@]+))?$/u.exec(value);
-  if (!match || /[\u0000-\u001f\u007f]/u.test(value)) throw new SeatSpecError("SEAT_SYNTAX", "Expected harness/model[@effort]");
+  if (!match || /[\u0000-\u001f\u007f]/u.test(value) || match[2].split("/").some((part) => !part)) throw new SeatSpecError("SEAT_SYNTAX", "Expected harness/model[@effort]");
   const [, name, model, effort] = match;
   const harness = resolveHarnessType(name);
   if (!harness) throw new SeatSpecError("UNKNOWN_HARNESS", `Unknown harness '${name}'`);
@@ -44,7 +44,9 @@ export function parseSeatSpec(value: string): SeatSpec {
 
 /** Preserve the authored model and distinguish inherited effort from explicit none. */
 export function formatSeatSpec(seat: Pick<SeatSpec, "harness" | "model" | "reasoningEffort">): string {
-  return `${seat.harness}/${seat.model}${seat.reasoningEffort === undefined ? "" : `@${seat.reasoningEffort}`}`;
+  const value = `${seat.harness}/${seat.model}${seat.reasoningEffort === undefined ? "" : `@${seat.reasoningEffort}`}`;
+  parseSeatSpec(value);
+  return value;
 }
 
 // ── Harness ↔ model compatibility ────────────────────────────────────────────
