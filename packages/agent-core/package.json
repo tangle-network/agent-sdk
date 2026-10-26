@@ -47,6 +47,10 @@
       "import": "./dist/telemetry/index.js",
       "types": "./src/telemetry/index.ts"
     },
+    "./server-timing": {
+      "import": "./dist/server-timing/index.js",
+      "types": "./src/server-timing/index.ts"
+    },
     "./interactions": {
       "import": "./dist/interactions/index.js",
       "types": "./src/interactions/index.ts"
@@ -100,6 +104,9 @@
       ],
       "types/*": [
         "src/types/*"
+      ],
+      "server-timing": [
+        "src/server-timing/index.ts"
       ],
       "interactions": [
         "src/interactions/index.ts"
@@ -178,6 +185,11 @@
         "import": "./dist/telemetry/index.js",
         "types": "./dist/telemetry/index.d.ts",
         "default": "./dist/telemetry/index.js"
+      },
+      "./server-timing": {
+        "import": "./dist/server-timing/index.js",
+        "types": "./dist/server-timing/index.d.ts",
+        "default": "./dist/server-timing/index.js"
       },
       "./interactions": {
         "import": "./dist/interactions/index.js",
