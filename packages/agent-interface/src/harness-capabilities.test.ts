@@ -408,7 +408,7 @@ describe("nativeReasoningControl", () => {
       "--no-thinking", "--no-thinking", "--no-thinking", null, "--thinking", "--thinking", "--thinking",
     ]);
     expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("opencode", e))).toEqual([
-      "none", "minimal", "low", "medium", "high", "xhigh", "xhigh",
+      null, "minimal", "low", "medium", "high", "xhigh", "xhigh",
     ]);
   });
 
@@ -431,10 +431,12 @@ describe("nativeReasoningControl", () => {
     }
   });
 
-  it("applies a native control for every effort a controlled harness admits", () => {
+  it("applies a native control for every effort above none that a controlled harness admits", () => {
     // An admitted rung that reaches the process as no control runs at the CLI's default effort.
+    // opencode `none` alone omits its flag (the sandbox adapter's production behavior).
     for (const harness of ["claude-code", "codex", "pi", "prime", "openclaw", "kimi-code", "opencode"] as const) {
       for (const effort of harnessReasoningEfforts(harness)) {
+        if (harness === "opencode" && effort === "none") continue;
         expect(nativeReasoningControl(harness, effort), `${harness} ${effort}`).not.toBeNull();
       }
     }

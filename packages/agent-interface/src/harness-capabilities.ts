@@ -438,7 +438,8 @@ export function reasoningEffortsFor(
  *     `max` (pi 1.4.0 `cli/args.js`, the prime fork's `cli/args.ts`, openclaw `agent --help`).
  *   - kimi-code — the control is the FLAG itself, `--thinking` or `--no-thinking`, because kimi's
  *     thinking switch is binary. `medium` is its default and passes no flag at all.
- *   - opencode — `--variant <value>`, forwarded verbatim as the provider's reasoning effort. No
+ *   - opencode — `--variant <value>`, forwarded verbatim as the provider's reasoning effort; `none`
+ *     omits the flag, as the sandbox adapter does. No
  *     provider spells `ultracode`, so it becomes the model's ceiling: `max` for GLM (Z.ai answers
  *     400 code 1210 for anything outside `none…max`) and `xhigh` for every other model (GPT-6
  *     answers `max` with 400). Pass `model` so this rung resolves; without it `xhigh` is sent.
@@ -471,6 +472,7 @@ const harnessNativeReasoningControl: Partial<
       : "--thinking";
   },
   opencode: (effort, model) => {
+    if (effort === "none") return null;
     if (effort !== "ultracode") return effort;
     return /(?:^|\/)glm-/iu.test(model ?? "") ? "max" : "xhigh";
   },
