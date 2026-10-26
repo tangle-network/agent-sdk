@@ -4,11 +4,14 @@
  * agent-app's turn trace sink, agent-eval's exporters, agent-runtime's
  * exporter, and Tangle Intelligence's ingest decoder.
  */
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
   decodeOtlpAnyValue,
   decodeOtlpAttributes,
+  decodeOtlpTraceExport,
   msToUnixNano,
   OTLP_SPAN_KIND,
   OTLP_STATUS_CODE,
@@ -315,5 +318,109 @@ describe("readOtlpPartialSuccess", () => {
     expect(readOtlpPartialSuccess(JSON.stringify({ partialSuccess: { rejectedSpans: "-2" } }))).toEqual({
       rejectedSpans: 0,
     });
+  });
+});
+
+/**
+ * One line of this host's OpenTelemetry Collector file exporter, three
+ * producers (Codex CLI, OpenCode, Claude Code), each span copied verbatim with
+ * only its non-identifying attributes kept.
+ */
+const COLLECTOR_LINE = readFileSync(new URL("./fixtures/collector-export.json", import.meta.url), "utf8");
+
+describe("decodeOtlpTraceExport on a real collector export", () => {
+  const rows = decodeOtlpTraceExport(JSON.parse(COLLECTOR_LINE));
+
+  it("yields one row per span with ids, codes and nanosecond strings exactly as exported", () => {
+    expect(rows.map((row) => [row.trace_id, row.span_id, row.parent_span_id, row.name, row.kind])).toEqual([
+      ["09457c5e90257a2f23dd3320b583dc10", "cc185280867314cc", "0caba68b9b4c3405", "auth", 1],
+      ["db7761bbdcb5c750e192fa459bf2760f", "bb1b34f318b7eef5", "ac16c745048f0047", "sql.execute", 3],
+      ["1aeb8173e2fc8cbfd2f5706e5092d5f7", "ec7ff20c52f5f1a5", "9a852a58e079c14e", "claude_code.llm_request", 1],
+    ]);
+    // Past 2^53: a float conversion would change these digits.
+    expect(rows[0]?.start_time_unix_nano).toBe("1793041881115905373");
+    expect(rows[0]?.end_time_unix_nano).toBe("1793041881115936003");
+    expect(rows[2]?.events).toEqual([
+      { name: "gen_ai.request.attempt", time_unix_nano: "1793041877015951041", attributes: { attempt: 1 } },
+    ]);
+  });
+
+  it("leaves status absent, not null, when the export has none, and keeps it when it does", () => {
+    expect(rows[0]).not.toHaveProperty("status_code");
+    expect(rows[0]).not.toHaveProperty("status_message");
+    expect(rows[1]?.status_code).toBe(1);
+  });
+
+  it("carries the scope through", () => {
+    expect(rows.map((row) => [row.scope_name, row.scope_version])).toEqual([
+      ["codex_cli_rs", undefined],
+      ["opencode", "1.18.33"],
+      ["com.anthropic.claude_code.tracing", "1.0.0"],
+    ]);
+  });
+
+  it("decodes arrays and merges resource attributes under span attributes", () => {
+    const claude = rows[2];
+    expect(claude?.span_attributes["gen_ai.response.finish_reasons"]).toEqual(["tool_use"]);
+    expect(claude?.attributes).toMatchObject({
+      "service.name": "drew-local-agents",
+      "gen_ai.request.model": "claude-opus-5-5[1m]",
+      cache_read_tokens: 931333,
+      success: true,
+    });
+    expect(rows[0]?.resource_attributes["telemetry.sdk.language"]).toBe("rust");
+    expect(rows[0]?.attributes).toMatchObject({ "service.name": "codex_cli_rs", busy_ns: 26101 });
+  });
+
+  it("lets the span win when it repeats a resource key", () => {
+    const line = JSON.parse(COLLECTOR_LINE);
+    line.resourceSpans[1].scopeSpans[0].spans[0].attributes.push({
+      key: "service.name",
+      value: { stringValue: "opencode-worker" },
+    });
+    const [, opencode] = decodeOtlpTraceExport(line);
+    expect(opencode?.resource_attributes["service.name"]).toBe("opencode");
+    expect(opencode?.attributes["service.name"]).toBe("opencode-worker");
+  });
+
+  it("skips a span missing its traceId or spanId instead of throwing", () => {
+    const line = JSON.parse(COLLECTOR_LINE);
+    delete line.resourceSpans[0].scopeSpans[0].spans[0].spanId;
+    line.resourceSpans[1].scopeSpans[0].spans[0].traceId = "";
+    expect(decodeOtlpTraceExport(line).map((row) => row.span_id)).toEqual(["ec7ff20c52f5f1a5"]);
+    for (const malformed of [null, "line", {}, { resourceSpans: "x" }, { resourceSpans: [{ scopeSpans: [{ spans: [7] }] }] }]) {
+      expect(decodeOtlpTraceExport(malformed)).toEqual([]);
+    }
+  });
+
+  it("decodes what the encoder writes", () => {
+    const span = {
+      traceId: toW3CTraceId("run-1"),
+      spanId: "b".repeat(16),
+      name: "turn",
+      kind: OTLP_SPAN_KIND.INTERNAL,
+      startTimeUnixNano: msToUnixNano(1_700_000_000_000),
+      endTimeUnixNano: msToUnixNano(1_700_000_000_250),
+      attributes: toOtlpAttributes({ "service.name": "turn-span", tokens: 12 }),
+      status: { code: OTLP_STATUS_CODE.ERROR, message: "boom" },
+    };
+    const exported = otlpTraceExport(toOtlpAttributes({ "service.name": "svc" }), { name: "scope" }, [span]);
+    expect(decodeOtlpTraceExport(JSON.parse(JSON.stringify(exported)))).toEqual([
+      {
+        trace_id: span.traceId,
+        span_id: span.spanId,
+        parent_span_id: null,
+        name: "turn",
+        kind: 1,
+        start_time_unix_nano: "1700000000000000000",
+        end_time_unix_nano: "1700000000250000000",
+        status_code: 2,
+        status_message: "boom",
+        scope_name: "scope",
+        resource_attributes: { "service.name": "svc" },
+        span_attributes: { "service.name": "turn-span", tokens: 12 },
+        attributes: { "service.name": "turn-span", tokens: 12 },
+      },
+    ]);
   });
 });

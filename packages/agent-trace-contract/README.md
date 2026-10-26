@@ -161,6 +161,7 @@ It imports nothing but the id rule, so a Worker or a published SDK can take it w
 - `toOtlpAttributes(record, { doubles })` encodes attributes. A safe integer is `intValue` (a decimal string), any other finite number `doubleValue`, arrays and objects `arrayValue` / `kvlistValue`, and `null` the string `"null"`. `undefined`, `NaN` and the infinities have no OTLP value, so the key is left out.
 - `msToUnixNano(ms)` writes a timestamp, `otlpTraceExport(resource, scope, spans)` the request body, and `readOtlpPartialSuccess(body)` the spans a 2xx answer still refused.
 - `decodeOtlpAttributes(list)` reads an attribute list into plain JSON, camelCase or snake_case, and reports repeated keys.
+- `decodeOtlpTraceExport(body)` flattens a whole export (one collector file line) into one row per span: ids, numeric kind and status (absent when the export has none), scope, nanosecond times as the export's own strings, and resource attributes merged under span attributes. A span without a `traceId` or `spanId` is skipped.
 - `OtlpSpan`, `OtlpKeyValue`, `OtlpTraceExport`, `OTLP_SPAN_KIND` and `OTLP_STATUS_CODE` are the wire types and codes.
 
 ## Emit your first conforming trace

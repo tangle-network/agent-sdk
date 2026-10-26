@@ -1,9 +1,10 @@
 /**
  * `@tangle-network/agent-trace-contract/otlp`: the OTLP/HTTP JSON wire for trace
  * exports, both directions. Producers encode attributes, timestamps and the
- * export envelope here and read the collector's answer here; ingest routes
- * decode attribute lists here. One encoder means the same attribute reaches a
- * collector with the same value type whichever producer sent it.
+ * export envelope here and read the collector's answer here; ingest routes and
+ * flatteners decode attribute lists and whole exports here. One encoder means
+ * the same attribute reaches a collector with the same value type whichever
+ * producer sent it; one decoder means every reader sees the same row.
  *
  * A leaf subpath: it imports only `./ids.js`, has no dependencies and touches
  * no Node API, so a Worker, a browser bundle and a published SDK can take it
@@ -280,6 +281,92 @@ export function decodeOtlpAttributes(list: unknown): OtlpDecodedAttributes {
     attributes[entry.key] = decoded;
   }
   return { attributes, duplicates };
+}
+
+/** One span from an export, flattened: ids, names, codes and nanosecond times exactly as the export carried them. */
+export interface OtlpFlatSpan {
+  trace_id: string;
+  span_id: string;
+  /** `null` for a root span (absent or empty `parentSpanId`). */
+  parent_span_id: string | null;
+  name: string;
+  /** The numeric OTLP kind; absent when the export has none. */
+  kind?: number;
+  /** Unix nanoseconds as the export's decimal string, never converted through a float; absent when the export has none. */
+  start_time_unix_nano?: string;
+  end_time_unix_nano?: string;
+  /** The numeric OTLP status code; absent when the export has none. */
+  status_code?: number;
+  status_message?: string;
+  scope_name?: string;
+  scope_version?: string;
+  resource_attributes: Record<string, OtlpDecodedValue>;
+  span_attributes: Record<string, OtlpDecodedValue>;
+  /** Resource attributes merged with span attributes; the span wins on a key clash. */
+  attributes: Record<string, OtlpDecodedValue>;
+  events?: Array<{ name: string; time_unix_nano?: string; attributes: Record<string, OtlpDecodedValue> }>;
+}
+
+/**
+ * Flatten an OTLP trace export (`{ resourceSpans: [...] }`, one collector file
+ * line) into one row per span. A span without a string `traceId` and
+ * `spanId` is skipped. Never throws: a malformed export yields no rows.
+ */
+export function decodeOtlpTraceExport(body: unknown): OtlpFlatSpan[] {
+  const rows: OtlpFlatSpan[] = [];
+  for (const resourceSpans of arrayField(body, "resourceSpans")) {
+    const resource = isRecord(resourceSpans) ? resourceSpans.resource : undefined;
+    const resourceAttributes = decodeOtlpAttributes(isRecord(resource) ? resource.attributes : undefined).attributes;
+    for (const scopeSpans of arrayField(resourceSpans, "scopeSpans")) {
+      const scope: Record<string, unknown> = isRecord(scopeSpans) && isRecord(scopeSpans.scope) ? scopeSpans.scope : {};
+      for (const span of arrayField(scopeSpans, "spans")) {
+        if (!isRecord(span)) continue;
+        const { traceId, spanId } = span;
+        if (typeof traceId !== "string" || !traceId || typeof spanId !== "string" || !spanId) continue;
+        const spanAttributes = decodeOtlpAttributes(span.attributes).attributes;
+        const status: Record<string, unknown> = isRecord(span.status) ? span.status : {};
+        const events = Array.isArray(span.events) ? span.events.filter(isRecord) : undefined;
+        rows.push({
+          trace_id: traceId,
+          span_id: spanId,
+          parent_span_id: typeof span.parentSpanId === "string" && span.parentSpanId ? span.parentSpanId : null,
+          name: typeof span.name === "string" ? span.name : "",
+          ...(typeof span.kind === "number" ? { kind: span.kind } : {}),
+          ...optionalNano("start_time_unix_nano", span.startTimeUnixNano),
+          ...optionalNano("end_time_unix_nano", span.endTimeUnixNano),
+          ...(typeof status.code === "number" ? { status_code: status.code } : {}),
+          ...(typeof status.message === "string" ? { status_message: status.message } : {}),
+          ...(typeof scope.name === "string" ? { scope_name: scope.name } : {}),
+          ...(typeof scope.version === "string" ? { scope_version: scope.version } : {}),
+          resource_attributes: resourceAttributes,
+          span_attributes: spanAttributes,
+          attributes: { ...resourceAttributes, ...spanAttributes },
+          ...(events
+            ? {
+                events: events.map((event) => ({
+                  name: typeof event.name === "string" ? event.name : "",
+                  ...optionalNano("time_unix_nano", event.timeUnixNano),
+                  attributes: decodeOtlpAttributes(event.attributes).attributes,
+                })),
+              }
+            : {}),
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/** A nanosecond time kept as the export's own decimal string; a JSON number (some SDKs send one) is written back as digits. */
+function optionalNano<K extends string>(key: K, value: unknown): Partial<Record<K, string>> {
+  if (typeof value === "string" && /^\d+$/.test(value)) return { [key]: value } as Record<K, string>;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return { [key]: String(value) } as Record<K, string>;
+  return {};
+}
+
+function arrayField(value: unknown, key: string): unknown[] {
+  const field = isRecord(value) ? value[key] : undefined;
+  return Array.isArray(field) ? field : [];
 }
 
 function toJsonValue(value: unknown): OtlpDecodedValue {
