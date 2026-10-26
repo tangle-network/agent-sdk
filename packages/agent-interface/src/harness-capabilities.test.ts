@@ -399,27 +399,43 @@ describe("nativeReasoningControl", () => {
     expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("codex", e))).toEqual([
       "none", "minimal", "low", "medium", "high", "xhigh", "ultra",
     ]);
-    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("pi", e))).toEqual([
-      "off", "minimal", "low", "medium", "high", "xhigh", "xhigh",
-    ]);
-    expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("prime", e))).toEqual([
-      "off", "minimal", "low", "medium", "high", "xhigh", "max",
-    ]);
+    for (const harness of ["pi", "prime", "openclaw"] as const) {
+      expect(REASONING_EFFORTS.map((e) => nativeReasoningControl(harness, e))).toEqual([
+        "off", "minimal", "low", "medium", "high", "xhigh", "max",
+      ]);
+    }
     expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("kimi-code", e))).toEqual([
       "--no-thinking", "--no-thinking", "--no-thinking", null, "--thinking", "--thinking", "--thinking",
     ]);
     expect(REASONING_EFFORTS.map((e) => nativeReasoningControl("opencode", e))).toEqual([
-      ...REASONING_EFFORTS,
+      "none", "minimal", "low", "medium", "high", "xhigh", "xhigh",
     ]);
+  });
+
+  it("resolves opencode's ultracode to the model's own ceiling", () => {
+    // Z.ai refuses `ultracode` with 400 code 1210 and accepts `max`; GPT-6 refuses `max`.
+    expect(nativeReasoningControl("opencode", "ultracode", "zai/glm-5.3")).toBe("max");
+    expect(nativeReasoningControl("opencode", "ultracode", "glm-4.6")).toBe("max");
+    expect(nativeReasoningControl("opencode", "ultracode", "openai/gpt-6")).toBe("xhigh");
+    expect(nativeReasoningControl("opencode", "high", "zai/glm-5.3")).toBe("high");
   });
 
   it("answers null for a harness that applies no native control", () => {
     // gemini derives thinking from the model, and the rest plumb no thinking flag. Asserting a
     // token for them refuses a legitimate run, which is why the default is `null`, not the request.
     for (const harness of harnessTypeSchema.options) {
-      if (["claude-code", "codex", "pi", "prime", "kimi-code", "opencode"].includes(harness)) continue;
+      if (["claude-code", "codex", "pi", "prime", "openclaw", "kimi-code", "opencode"].includes(harness)) continue;
       for (const effort of REASONING_EFFORTS) {
         expect(nativeReasoningControl(harness, effort)).toBeNull();
+      }
+    }
+  });
+
+  it("applies a native control for every effort a controlled harness admits", () => {
+    // An admitted rung that reaches the process as no control runs at the CLI's default effort.
+    for (const harness of ["claude-code", "codex", "pi", "prime", "openclaw", "kimi-code", "opencode"] as const) {
+      for (const effort of harnessReasoningEfforts(harness)) {
+        expect(nativeReasoningControl(harness, effort), `${harness} ${effort}`).not.toBeNull();
       }
     }
   });
