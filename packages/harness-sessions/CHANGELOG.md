@@ -1,5 +1,16 @@
 # @tangle-network/harness-sessions
 
+## 0.4.0
+
+### Minor Changes
+
+- d08fd3f: Read current Kimi flat session wires alongside retained legacy sessions through the existing reader, CLI and capture APIs. Preserve the full native session ID, count loop messages, tools and usage once, keep requested models separate from unproven served identity, and require an explicit native ending. Store-specific reader globs let capture consumers select the recorded layout.
+
+### Patch Changes
+
+- Updated dependencies [31aaa09]
+  - @tangle-network/agent-core@0.15.0
+
 ## 0.3.0
 
 ### Minor Changes

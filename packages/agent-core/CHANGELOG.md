@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 0.15.0
+
+### Minor Changes
+
+- 31aaa09: Add the `./server-timing` subpath: `parseServerTiming`, `parseServerTimingDurations` and `formatServerTiming`, the one Server-Timing header parse and format. It follows RFC 9110 quoted strings, so an escaped quote or backslash inside a `desc` no longer splits the header, and it imports nothing, so Node, browser and Worker bundles can use it.
+
 ## 0.14.0
 
 ### Minor Changes
