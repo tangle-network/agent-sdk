@@ -37,7 +37,7 @@ function harnessOfFile(path: string): string | null {
   if (/(^|\/)\.claude\/projects\//u.test(path)) return 'claude-code'
   if (/(^|\/)\.codex\/sessions\//u.test(path) || /rollout-[^/]*\.jsonl$/u.test(path)) return 'codex'
   if (/(^|\/)\.pi\/agent\/sessions\//u.test(path)) return 'pi'
-  if (/(^|\/)\.kimi\/sessions\/.+\/wire\.jsonl$/u.test(path)) return 'kimi-code'
+  if (/(^|\/)\.kimi(?:-code)?\/sessions\/.+\/wire\.jsonl$/u.test(path)) return 'kimi-code'
   if (/(^|\/)\.factory\/sessions\//u.test(path)) return 'factory-droids'
   return null
 }

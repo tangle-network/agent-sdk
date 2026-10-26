@@ -20,102 +20,49 @@ export const SESSION_FORMAT_IDS = [
   'hermes.state-sqlite',
   'prime.session-jsonl',
   'openclaw.session-jsonl',
-] as const satisfies readonly SessionFormatId[]
+] as const
+
+/** One catalog declaration owns append-only defaults and shared SQLite copy semantics. */
+function store<const F extends SessionFormatId, const Files extends readonly string[]>(
+  format: F, root: string, files: Files, write: NativeSessionStore['write'] = 'jsonl-append',
+) {
+  return { format, root, files, write, shared: write === 'sqlite-wal' }
+}
 
 /** Store layouts, relative to the HOME a harness ran with. */
 export const STORES = {
-  'claude-code.projects-jsonl': {
-    root: '.claude/projects',
-    files: ['*/{id}.jsonl', '*/{id}/subagents/**/*.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'claude-code.projects-jsonl',
-  },
-  'codex.rollout-jsonl': {
-    root: '.codex/sessions',
-    files: ['*/*/*/rollout-*-{id}.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'codex.rollout-jsonl',
-  },
-  'opencode.sqlite': {
-    root: '.local/share/opencode',
-    files: ['opencode.db', 'opencode.db-wal', 'opencode.db-shm'],
-    write: 'sqlite-wal',
-    shared: true,
-    format: 'opencode.sqlite',
-  },
-  'pi.session-jsonl': {
-    root: '.pi/agent/sessions',
-    files: ['**/*_{id}.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'pi.session-jsonl',
-  },
+  'claude-code.projects-jsonl': store('claude-code.projects-jsonl', '.claude/projects', [
+    '*/{id}.jsonl', '*/{id}/subagents/**/*.jsonl',
+  ]),
+  'codex.rollout-jsonl': store('codex.rollout-jsonl', '.codex/sessions', ['*/*/*/rollout-*-{id}.jsonl']),
+  'opencode.sqlite': store('opencode.sqlite', '.local/share/opencode', [
+    'opencode.db', 'opencode.db-wal', 'opencode.db-shm',
+  ], 'sqlite-wal'),
+  'pi.session-jsonl': store('pi.session-jsonl', '.pi/agent/sessions', ['**/*_{id}.jsonl']),
   // A session directory: wire.jsonl (the event stream read here), context.jsonl and its rotated
   // context_N.jsonl copies, and state.json.
-  'kimi.session-dir': {
-    root: '.kimi/sessions',
-    files: ['*/{id}/**', '*/{id}.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'kimi.session-dir',
-  },
-  'factory.session-jsonl': {
-    root: '.factory/sessions',
-    files: ['*/{id}.jsonl', '*/{id}.settings.json'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'factory.session-jsonl',
-  },
-  'gemini.chat-json': {
-    root: '.gemini/tmp',
-    files: ['*/chats/session-*{id}*.json'],
-    write: 'json-rewrite',
-    shared: false,
-    format: 'gemini.chat-json',
-  },
-  'amp.thread-json': {
-    root: '.local/share/amp/threads',
-    files: ['{id}.json'],
-    write: 'json-rewrite',
-    shared: false,
-    format: 'amp.thread-json',
-  },
-  'forge.sqlite': {
-    root: '.forge',
-    files: ['.forge.db', '.forge.db-wal', '.forge.db-shm'],
-    write: 'sqlite-wal',
-    shared: true,
-    format: 'forge.sqlite',
-  },
-  'hermes.state-sqlite': {
-    root: '.hermes',
-    files: ['state.db', 'state.db-wal', 'state.db-shm'],
-    write: 'sqlite-wal',
-    shared: true,
-    format: 'hermes.state-sqlite',
-  },
-  'prime.session-jsonl': {
-    root: '.prime-provider/prime-agent-dirs',
-    files: ['**/*_{id}.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'prime.session-jsonl',
-  },
-  'openclaw.session-jsonl': {
-    root: '.openclaw/agents',
-    files: ['**/{id}.jsonl'],
-    write: 'jsonl-append',
-    shared: false,
-    format: 'openclaw.session-jsonl',
-  },
+  'kimi.session-dir': store('kimi.session-dir', '.kimi/sessions', ['*/{id}/**', '*/{id}.jsonl']),
+  'factory.session-jsonl': store('factory.session-jsonl', '.factory/sessions', [
+    '*/{id}.jsonl', '*/{id}.settings.json',
+  ]),
+  'gemini.chat-json': store('gemini.chat-json', '.gemini/tmp', ['*/chats/session-*{id}*.json'], 'json-rewrite'),
+  'amp.thread-json': store('amp.thread-json', '.local/share/amp/threads', ['{id}.json'], 'json-rewrite'),
+  'forge.sqlite': store('forge.sqlite', '.forge', ['.forge.db', '.forge.db-wal', '.forge.db-shm'], 'sqlite-wal'),
+  'hermes.state-sqlite': store('hermes.state-sqlite', '.hermes', ['state.db', 'state.db-wal', 'state.db-shm'], 'sqlite-wal'),
+  'prime.session-jsonl': store('prime.session-jsonl', '.prime-provider/prime-agent-dirs', ['**/*_{id}.jsonl']),
+  'openclaw.session-jsonl': store('openclaw.session-jsonl', '.openclaw/agents', ['**/{id}.jsonl']),
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
+
+/** Kimi Code's current and retained legacy layouts; the legacy catalog entry stays stable. */
+export const KIMI_STORES = [
+  { ...STORES['kimi.session-dir'], root: '.kimi-code/sessions', files: ['wd_*/{id}/**'], globs: { session: 'wd_*/{id}/agents/main/wire.jsonl' } },
+  STORES['kimi.session-dir'],
+] as const satisfies readonly NativeSessionStore[]
 
 /**
  * Where each format's served model, usage and ending error come from. `turn-context` means the
  * model the harness was configured or asked for (Codex `turn_context`, OpenCode's message
- * `modelID`, Factory's settings); `none` means the session records no model at all.
+ * `modelID`, Factory's settings); `none` means no served identity is proven by the records.
  */
 export const EVIDENCE = {
   'claude-code.projects-jsonl': { servedModel: 'provider-response', usage: 'per-response', endingError: 'session-record' },

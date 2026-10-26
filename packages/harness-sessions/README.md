@@ -12,7 +12,7 @@ npm install @tangle-network/harness-sessions
 
 ## Where this fits
 
-- The sidecar's harness session contract (agent-container `packages/cli-agent-registry`) imports `STORES` and `SessionFormatId` from here; it keeps no second copy of where a harness writes.
+- The catalog serves `STORES` and `SessionFormatId` for capture consumers. The sidecar's harness session contract (agent-container `packages/cli-agent-registry`) currently mirrors these declarations; its native-version adoption remains a separate consumer change.
 - The capture path reads captures through `listCapture` / `readCapture`.
 - Discovery's trace gate, agent-eval, agent-record and the blog read sessions only through this package.
 - Its dependencies are `@tangle-network/agent-core`, `@tangle-network/agent-trace-contract` and Node built-ins (`node:sqlite` for OpenCode).
@@ -25,7 +25,7 @@ npm install @tangle-network/harness-sessions
 | `codex` | `codex.rollout-jsonl` | `rollout-*-{id}.jsonl` under `sessions/` and `archived_sessions/` of every Codex home (below) | turn context (the configured model) | per response (`last_token_usage`); session total from `total_token_usage` |
 | `opencode` | `opencode.sqlite` | `.local/share/opencode/opencode.db` (shared by every session) | session record (`providerID/modelID`) | per step (`step-finish`) |
 | `pi` | `pi.session-jsonl` | `.pi/agent/sessions/**/*_{id}.jsonl` | session record (`provider/model`) | per assistant message |
-| `kimi-code` | `kimi.session-dir` | `.kimi/sessions/*/{id}/wire.jsonl`, child wires at `*/{id}/subagents/*/wire.jsonl` | none in the wire | per step, excluding wrapped child events |
+| `kimi-code` | `kimi.session-dir` | `.kimi-code/sessions/wd_<hash>/{id}/agents/main/wire.jsonl`; retained `.kimi/sessions/*/{id}/wire.jsonl` and child wires | requested model recorded separately; served identity unknown | per step, excluding mirrored and wrapped child events |
 | `factory-droids` | `factory.session-jsonl` | `.factory/sessions/*/{id}.jsonl` plus settings | configured model in settings (`turn-context`) | session total in settings |
 
 A HOME can hold several Codex homes, and `codexReader.locate` reads all of them (`codexHomes(home)` lists them):
@@ -38,6 +38,10 @@ A HOME can hold several Codex homes, and `codexReader.locate` reads all of them 
 Homes that resolve to one directory count once. A session copied into several homes (`acct move`) is one ref, its largest copy. A lookup by id takes the rollout whose name ends in the id; when no name does, it reads the `session_meta` of each rollout modified since the id's UUIDv7 time.
 
 `listReaders()` and the exported catalog own the complete installed format inventory.
+
+Kimi uses the full `session_<uuid>` directory as its native ID, not the agent directory `main`. `kimiReader.stores` (also `KIMI_STORES` from the catalog entry) declares both layouts; the existing `STORES['kimi.session-dir']` remains the legacy declaration for consumers that still run that producer. A store's optional `globs` overrides the reader's default file globs, including when reading a v2 capture whose payload names are flat. No state or configuration sidecar is needed to read the current wire.
+
+The current flat wire records prompts and loop steps alongside appended message snapshots, usage mirrors and a token-counting context summary. The fold takes prompt input and loop content/tools/step usage once; it preserves separately recorded injected user context. `llm.request` supplies `requestedModel`, without promoting configured or usage labels into served identity. Explicit native endings map completed to completed, cancelled/prompt-aborted to aborted, and failed/blocked to error; an assistant-looking prefix stays open. A later matching prompt ending preserves the turn's structured error. Unknown ending reasons stay open with an integrity gap. Recorded step counters of zero remain zero, while absent usage remains unknown. The retained fixture proves the completed and prefix cases; failure/abort mappings follow the official producer schema and await real failure captures. Nonzero accounting and new-format child-agent discovery remain unproved.
 
 ## Child execution evidence
 
@@ -87,5 +91,5 @@ harness-sessions read <file|home|capture> [--harness h] [--session id] [--summar
 
 ## Tests
 
-The baseline fixtures are sessions that the real harness CLIs wrote while talking to the trace-proof scripted model; the tests assert that script. The Kimi child fixture retains complete existing parent and child wire records with all content removed, IDs pseudonymized, and source hashes, record counts, redaction version and token counters recorded in `test/fixtures/kimi/provenance.json`. Its integration test exercises discovery, full/summary reads, in-memory input and contract-span projection, preserving parent and child usage separately.
+The baseline fixtures are sessions that the real harness CLIs wrote while talking to the trace-proof scripted model; the tests assert that script. The Kimi child fixture retains complete existing parent and child wire records with all content removed, IDs pseudonymized, and source hashes, record counts, redaction version and token counters recorded in `test/fixtures/kimi/provenance.json`. Its integration test exercises discovery, full/summary reads, in-memory input and contract-span projection, preserving parent and child usage separately. The current Kimi fixture in `test/fixtures/kimi2/` retains all 33 actual records through agent-eval's share pipeline and content minimization, with provenance alongside it. Its real-file integration covers both store layouts, direct-file CLI identity, v2 capture joins, projections, and incomplete prefixes without invoking a native harness or model.
 The proof against the readers this package replaces is a comparison over stored sessions, recorded with each release.
