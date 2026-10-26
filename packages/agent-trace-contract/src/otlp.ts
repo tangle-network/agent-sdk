@@ -219,6 +219,17 @@ export type OtlpDecodedValue =
   | OtlpDecodedValue[]
   | { [key: string]: OtlpDecodedValue };
 
+export interface OtlpDecodeOptions {
+  /**
+   * `'rich'` (default) is lossless: an int64 is a number when it is a safe
+   * integer and its exact string otherwise, and arrays, kvlists and bytes
+   * decode. `'scalar'` keeps the flat-scalar reading agent-eval's analyst
+   * index was built on: `intValue` is `Number(intValue)`, an array, kvlist or
+   * bytes value is `''`, and only the camelCase fields are read.
+   */
+  attributeValues?: "rich" | "scalar";
+}
+
 export interface OtlpDecodedAttributes {
   /** Each key's value; the last occurrence wins. */
   attributes: Record<string, OtlpDecodedValue>;
@@ -272,13 +283,14 @@ export function decodeOtlpAnyValue(value: unknown): OtlpDecodedValue {
 }
 
 /** Decode an OTLP `KeyValue[]` into a record, keeping every value of a repeated key in `duplicates`. Entries without a string key are skipped. */
-export function decodeOtlpAttributes(list: unknown): OtlpDecodedAttributes {
+export function decodeOtlpAttributes(list: unknown, options: OtlpDecodeOptions = {}): OtlpDecodedAttributes {
+  const decode = options.attributeValues === "scalar" ? decodeScalarValue : decodeOtlpAnyValue;
   const attributes: Record<string, OtlpDecodedValue> = {};
   const duplicates: Record<string, OtlpDecodedValue[]> = {};
   if (!Array.isArray(list)) return { attributes, duplicates };
   for (const entry of list) {
     if (!isRecord(entry) || typeof entry.key !== "string") continue;
-    const decoded = decodeOtlpAnyValue(entry.value);
+    const decoded = decode(entry.value);
     if (Object.hasOwn(attributes, entry.key)) {
       const seen = Object.hasOwn(duplicates, entry.key) ? (duplicates[entry.key] as OtlpDecodedValue[]) : [attributes[entry.key] ?? null];
       setOwn(duplicates, entry.key, [...seen, decoded]);
@@ -286,6 +298,15 @@ export function decodeOtlpAttributes(list: unknown): OtlpDecodedAttributes {
     setOwn(attributes, entry.key, decoded);
   }
   return { attributes, duplicates };
+}
+
+function decodeScalarValue(value: unknown): OtlpDecodedValue {
+  if (!isRecord(value)) return "";
+  if (value.stringValue !== undefined) return value.stringValue as OtlpDecodedValue;
+  if (value.intValue !== undefined) return Number(value.intValue);
+  if (value.doubleValue !== undefined) return value.doubleValue as OtlpDecodedValue;
+  if (value.boolValue !== undefined) return value.boolValue as OtlpDecodedValue;
+  return "";
 }
 
 /** One span from an export, flattened: ids, names, codes and nanosecond times exactly as the export carried them. */
@@ -309,7 +330,9 @@ export interface OtlpFlatSpan {
   span_attributes: Record<string, OtlpDecodedValue>;
   /** Resource attributes merged with span attributes; the span wins on a key clash. */
   attributes: Record<string, OtlpDecodedValue>;
-  events?: Array<{ name: string; time_unix_nano?: string; attributes: Record<string, OtlpDecodedValue> }>;
+  /** Present when the export carried the field; an event's `attributes` likewise. */
+  scope_attributes?: Record<string, OtlpDecodedValue>;
+  events?: Array<{ name: string; time_unix_nano?: string; attributes?: Record<string, OtlpDecodedValue> }>;
 }
 
 /**
@@ -317,18 +340,19 @@ export interface OtlpFlatSpan {
  * line) into one row per span. A span without a string `traceId` and
  * `spanId` is skipped. Never throws: a malformed export yields no rows.
  */
-export function decodeOtlpTraceExport(body: unknown): OtlpFlatSpan[] {
+export function decodeOtlpTraceExport(body: unknown, options: OtlpDecodeOptions = {}): OtlpFlatSpan[] {
+  const decode = (list: unknown) => decodeOtlpAttributes(list, options).attributes;
   const rows: OtlpFlatSpan[] = [];
   for (const resourceSpans of arrayField(body, "resourceSpans")) {
     const resource = isRecord(resourceSpans) ? resourceSpans.resource : undefined;
-    const resourceAttributes = decodeOtlpAttributes(isRecord(resource) ? resource.attributes : undefined).attributes;
+    const resourceAttributes = decode(isRecord(resource) ? resource.attributes : undefined);
     for (const scopeSpans of arrayField(resourceSpans, "scopeSpans")) {
       const scope: Record<string, unknown> = isRecord(scopeSpans) && isRecord(scopeSpans.scope) ? scopeSpans.scope : {};
       for (const span of arrayField(scopeSpans, "spans")) {
         if (!isRecord(span)) continue;
         const { traceId, spanId } = span;
         if (typeof traceId !== "string" || !traceId || typeof spanId !== "string" || !spanId) continue;
-        const spanAttributes = decodeOtlpAttributes(span.attributes).attributes;
+        const spanAttributes = decode(span.attributes);
         const status: Record<string, unknown> = isRecord(span.status) ? span.status : {};
         const events = Array.isArray(span.events) ? span.events.filter(isRecord) : undefined;
         rows.push({
@@ -343,6 +367,7 @@ export function decodeOtlpTraceExport(body: unknown): OtlpFlatSpan[] {
           ...(typeof status.message === "string" ? { status_message: status.message } : {}),
           ...(typeof scope.name === "string" ? { scope_name: scope.name } : {}),
           ...(typeof scope.version === "string" ? { scope_version: scope.version } : {}),
+          ...(Array.isArray(scope.attributes) ? { scope_attributes: decode(scope.attributes) } : {}),
           resource_attributes: resourceAttributes,
           span_attributes: spanAttributes,
           attributes: { ...resourceAttributes, ...spanAttributes },
@@ -351,7 +376,7 @@ export function decodeOtlpTraceExport(body: unknown): OtlpFlatSpan[] {
                 events: events.map((event) => ({
                   name: typeof event.name === "string" ? event.name : "",
                   ...optionalNano("time_unix_nano", event.timeUnixNano),
-                  attributes: decodeOtlpAttributes(event.attributes).attributes,
+                  ...(Array.isArray(event.attributes) ? { attributes: decode(event.attributes) } : {}),
                 })),
               }
             : {}),

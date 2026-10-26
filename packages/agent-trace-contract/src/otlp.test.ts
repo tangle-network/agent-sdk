@@ -99,6 +99,8 @@ describe("encode then decode", () => {
         },
         { doubles: new Set(["wall_ms"]) },
       ),
+      // An event the producer wrote without attributes reads back without them.
+      events: [{ timeUnixNano: msToUnixNano(1_700_000_000_200), name: "retry" }],
       status: { code: OTLP_STATUS_CODE.ERROR, message: "boom" },
     };
     const exported = otlpTraceExport(toOtlpAttributes({ "service.name": "svc" }), { name: "scope" }, [span]);
@@ -131,6 +133,7 @@ describe("encode then decode", () => {
           huge: 1e21,
         },
         attributes: expect.objectContaining({ "service.name": "svc", model: "claude-sonnet" }),
+        events: [{ name: "retry", time_unix_nano: "1700000000200000000" }],
       },
     ]);
   });
@@ -192,5 +195,70 @@ describe("decodeOtlpAttributes", () => {
       JSON.parse('{"__proto__":"p","constructor":"c","toString":1,"nested":{"__proto__":{"polluted":true}}}'),
     );
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe("attributeValues: 'scalar', agent-eval's analyst reading", () => {
+  it("reads agent-eval's flatten fixture the way its flattener did", () => {
+    // tests/otlp-flatten.test.ts in agent-eval, the export its exporter writes.
+    const [row] = decodeOtlpTraceExport(
+      {
+        resourceSpans: [
+          {
+            resource: { attributes: [{ key: "service.name", value: { stringValue: "agent-x" } }] },
+            scopeSpans: [
+              {
+                scope: { name: "@tangle-network/agent-eval", version: "0.3.0" },
+                spans: [
+                  {
+                    traceId: "t1",
+                    spanId: "s1",
+                    name: "llm.call",
+                    kind: 3,
+                    startTimeUnixNano: "1700000000000000000",
+                    endTimeUnixNano: "1700000001000000000",
+                    attributes: [
+                      { key: "llm.model", value: { stringValue: "claude-sonnet" } },
+                      { key: "llm.tokens.in", value: { intValue: "1200" } },
+                      { key: "span.kind", value: { stringValue: "llm" } },
+                    ],
+                    status: { code: 2, message: "rate_limited" },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { attributeValues: "scalar" },
+    );
+    expect(row).toMatchObject({
+      trace_id: "t1",
+      parent_span_id: null,
+      kind: 3,
+      status_code: 2,
+      status_message: "rate_limited",
+      resource_attributes: { "service.name": "agent-x" },
+      span_attributes: { "llm.model": "claude-sonnet", "llm.tokens.in": 1200, "span.kind": "llm" },
+    });
+  });
+
+  it("reads arrays, kvlists and bytes as '' and int64 through Number, on the real collector line", () => {
+    const line = JSON.parse(COLLECTOR_LINE);
+    line.resourceSpans[2].scopeSpans[0].spans[0].attributes.push(
+      { key: "big", value: { intValue: "9007199254740993" } },
+      { key: "kv", value: { kvlistValue: { values: [] } } },
+      { key: "raw", value: { bytesValue: "YWJj" } },
+      { key: "snake", value: { string_value: "ignored" } },
+    );
+    const claude = decodeOtlpTraceExport(line, { attributeValues: "scalar" })[2];
+    expect(claude?.span_attributes).toMatchObject({
+      "gen_ai.response.finish_reasons": "",
+      big: 9007199254740992,
+      kv: "",
+      raw: "",
+      snake: "",
+      cache_read_tokens: 931333,
+    });
   });
 });
