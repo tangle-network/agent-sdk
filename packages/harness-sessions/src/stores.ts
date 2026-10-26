@@ -2,14 +2,13 @@ import type { Dirent } from 'node:fs'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
-import { CODEX_HOME_RULE, isCodexHome, storeGlob } from './catalog.js'
-import type { NativeSessionStore } from './schema.js'
+import { CODEX_HOME_RULE, isCodexHome } from './catalog.js'
 import { isMissing } from './source.js'
 
 export { assertStoreRoot, CODEX_HOME_RULE, EVIDENCE, isCodexHome, SESSION_FORMAT_IDS, STORES, storeGlob, withinPath } from './catalog.js'
 
-/** Every file under `dir`, as paths relative to it with `/` separators. Missing dirs yield none. */
-export async function walkFiles(dir: string, signal?: AbortSignal): Promise<string[]> {
+/** Regular files under `dir`; an optional matcher refuses selected unsafe entries before descent. */
+export async function walkFiles(dir: string, signal?: AbortSignal, matches?: (path: string) => boolean): Promise<string[]> {
   const out: string[] = []
   const visit = async (current: string): Promise<void> => {
     signal?.throwIfAborted()
@@ -22,8 +21,11 @@ export async function walkFiles(dir: string, signal?: AbortSignal): Promise<stri
     }
     for (const entry of entries) {
       const path = join(current, entry.name)
+      const rel = relative(dir, path).split(sep).join('/')
+      const matched = matches?.(rel)
+      if (matched && !entry.isFile()) throw new Error(`${path}: native session must be a regular file, not a directory, link or special file`)
       if (entry.isDirectory()) await visit(path)
-      else if (entry.isFile()) out.push(relative(dir, path).split(sep).join('/'))
+      else if (entry.isFile() && matched !== false) out.push(rel)
     }
   }
   await visit(dir)
@@ -46,13 +48,6 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (it
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
   return results
-}
-
-/** Files under `home` that one store glob matches, as absolute paths. */
-export async function storeFiles(home: string, store: NativeSessionStore, glob: string, nativeSessionId?: string): Promise<string[]> {
-  const root = join(home, store.root)
-  const pattern = storeGlob(glob, nativeSessionId)
-  return (await walkFiles(root)).filter((path) => pattern.test(path)).map((path) => join(root, path))
 }
 
 export async function mtimeMs(path: string): Promise<number> {
