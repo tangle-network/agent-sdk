@@ -313,7 +313,7 @@ function decodeScalarValue(value: unknown): OtlpDecodedValue {
 export interface OtlpFlatSpan {
   trace_id: string;
   span_id: string;
-  /** `null` for a root span (absent or empty `parentSpanId`). */
+  /** `parentSpanId` as exported, `''` included; `null` only when the field is absent. Root normalization is the reader's. */
   parent_span_id: string | null;
   name: string;
   /** The numeric OTLP kind; absent when the export has none. */
@@ -358,7 +358,7 @@ export function decodeOtlpTraceExport(body: unknown, options: OtlpDecodeOptions 
         rows.push({
           trace_id: traceId,
           span_id: spanId,
-          parent_span_id: typeof span.parentSpanId === "string" && span.parentSpanId ? span.parentSpanId : null,
+          parent_span_id: typeof span.parentSpanId === "string" ? span.parentSpanId : null,
           name: typeof span.name === "string" ? span.name : "",
           ...(typeof span.kind === "number" ? { kind: span.kind } : {}),
           ...optionalNano("start_time_unix_nano", span.startTimeUnixNano),

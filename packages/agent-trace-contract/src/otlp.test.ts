@@ -69,6 +69,13 @@ describe("decodeOtlpTraceExport on a real collector export", () => {
     delete line.resourceSpans[0].scopeSpans[0].spans[0].spanId;
     line.resourceSpans[1].scopeSpans[0].spans[0].traceId = "";
     expect(decodeOtlpTraceExport(line).map((row) => row.span_id)).toEqual(["ec7ff20c52f5f1a5"]);
+  });
+
+  it("keeps parentSpanId raw: an empty string stays empty, only an absent field is null", () => {
+    const line = JSON.parse(COLLECTOR_LINE);
+    line.resourceSpans[0].scopeSpans[0].spans[0].parentSpanId = "";
+    delete line.resourceSpans[1].scopeSpans[0].spans[0].parentSpanId;
+    expect(decodeOtlpTraceExport(line).map((row) => row.parent_span_id)).toEqual(["", null, "9a852a58e079c14e"]);
     for (const malformed of [null, "line", { resourceSpans: "x" }, { resourceSpans: [{ scopeSpans: [{ spans: [7] }] }] }]) {
       expect(decodeOtlpTraceExport(malformed)).toEqual([]);
     }
