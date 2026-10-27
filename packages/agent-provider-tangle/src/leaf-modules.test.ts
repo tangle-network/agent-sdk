@@ -1,3 +1,4 @@
+import { TangleCredentialCapacityError } from "./model-credential-capacity.js";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentExactProcessLaunch,
@@ -1553,4 +1554,42 @@ describe("Tangle split leaf modules", () => {
       { limit: 1_000, offset: 1_000 },
     ]);
   });
+});
+
+it("turns an exhausted native subscription quota into the typed capacity refusal", () => {
+  const record = validatedSandboxPromptResult({
+    success: false,
+    status: "failed",
+    durationMs: 1,
+    error: "You've hit your weekly limit · resets Nov 1, 9pm (UTC)",
+    errorCode: "provider_quota_exhausted",
+    statusCode: 429,
+    resetAt: "2026-11-01T21:00:00.000Z",
+  } as never);
+  const thrown = (() => {
+    try {
+      agentTurnResultFromPromptRecord(record, { sessionId: "session-1" });
+    } catch (error) {
+      return error;
+    }
+  })();
+  expect(thrown).toBeInstanceOf(TangleCredentialCapacityError);
+  expect(thrown).toMatchObject({
+    code: "provider_quota_exhausted",
+    reason: "exhausted",
+    resetAt: "2026-11-01T21:00:00.000Z",
+    status: 429,
+  });
+  expect(
+    agentTurnResultFromPromptRecord(
+      validatedSandboxPromptResult({
+        success: false,
+        status: "failed",
+        durationMs: 1,
+        error: "slow down",
+        errorCode: "rate_limit_error",
+      } as never),
+      { sessionId: "session-1" },
+    ),
+  ).toMatchObject({ success: false, error: "slow down" });
 });
