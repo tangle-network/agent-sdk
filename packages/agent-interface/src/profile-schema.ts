@@ -35,7 +35,7 @@ import {
   looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
-import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
+import { assertAgentProfileValue, canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 import {
   harnessHonorsEffort,
   harnessHonorsModel,
@@ -484,9 +484,12 @@ export const agentProfileTrainingSchema = z.strictObject({
 
 export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
   ownPropertyRecordSchema(z.unknown(), {
-    prepareValue: (key, value) => key === "training" ? value :
-      value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })
-        ? structuredClone(value) : z.NEVER,
+    prepareValue: (key, value) => {
+      if (key === "training") return value;
+      if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })) return structuredClone(value);
+      assertAgentProfileValue(value, [key]);
+      return z.NEVER;
+    },
   }).superRefine((metadata, context) => {
     if (!Object.hasOwn(metadata, "training")) return;
     const result = agentProfileTrainingSchema.safeParse(metadata.training);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CONTRACT_MAX_IDENTIFIER_LENGTH, CONTRACT_MAX_MAP_ENTRIES } from "./contract-limits.js";
 import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
+import { AgentProfileValueError } from "./agent-profile-canonical.js";
 
 /**
  * Zod records currently assign parsed values onto an ordinary object. The
@@ -36,7 +37,15 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
           context.addIssue({ code: "custom", message: "record entries must be data properties" });
           return z.NEVER;
         }
-        const entry = prepareValue ? prepareValue(key, descriptor.value) : descriptor.value;
+        let entry: unknown;
+        try {
+          entry = prepareValue ? prepareValue(key, descriptor.value) : descriptor.value;
+        } catch (error) {
+          // Only a profile-value refusal is a validation issue; any other throw is a defect.
+          if (!(error instanceof AgentProfileValueError)) throw error;
+          context.addIssue({ code: "custom", path: [...error.path], message: error.message });
+          return z.NEVER;
+        }
         if (entry === z.NEVER) {
           context.addIssue({ code: "custom", message: "record value exceeds the contract bounds or is not portable JSON" });
           return z.NEVER;
