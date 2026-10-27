@@ -36,6 +36,9 @@ async function fixture(code: string, status = 503) {
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: {}, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
+    } else if (path.endsWith("/messages/turns")) {
+      response.writeHead(204);
+      response.end();
     } else if (path.endsWith("/agents/run/stream") && request.method === "POST") {
       response.writeHead(status);
       response.end(JSON.stringify({ status: "error", code, message: "Sandbox Hub credential is temporarily unavailable." }));
@@ -57,14 +60,14 @@ async function fixture(code: string, status = 503) {
 it("preserves positive predispatch refusal through the real SDK without relaxing native reconnect", async () => {
   const { provider, environment, requests } = await fixture("HUB_CREDENTIAL_REFRESH_FAILED");
   const error = await environment.dispatch!({ prompt: "research", turnId: "root:0", profile }).catch((error: unknown) => error);
-  expect(error).toMatchObject({ status: 503, code: "HUB_CREDENTIAL_REFRESH_FAILED", dispatchFailureDisposition: "not-admitted" });
+  expect(error, JSON.stringify(requests)).toMatchObject({ status: 503, code: "HUB_CREDENTIAL_REFRESH_FAILED", dispatchFailureDisposition: "not-admitted" });
   await expect(provider.get!(environment.id)).rejects.toThrow(/requires the current selected backend before reconnect/);
   expect(requests.filter((request) => request === "POST /v1/sandboxes/sandbox-predispatch/runtime/agents/run/stream")).toHaveLength(1);
 });
 
 it.each([["SERVER_ERROR", 503], ["HUB_CREDENTIAL_REFRESH_FAILED", 502]])("keeps ambiguous %s HTTP %s failures uncertain", async (code, status) => {
-  const { environment } = await fixture(code, status);
+  const { environment, requests } = await fixture(code, status);
   const error = await environment.dispatch!({ prompt: "research", turnId: "root:0", profile }).catch((error: unknown) => error);
-  expect(error).toMatchObject({ status, code });
+  expect(error, JSON.stringify(requests)).toMatchObject({ status, code });
   expect(error).not.toHaveProperty("dispatchFailureDisposition");
 });
