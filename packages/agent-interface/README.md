@@ -424,3 +424,5 @@ must validate source ownership and active generation bindings for its own runtim
 before admitting a knowledge tool. A profile copied to another owner does not
 confer access. Hosts unable to resolve the saved pins must fail closed rather than
 inline JSON into instructions, substitute a newer generation or silently omit them.
+
+Profile collection admission uses the shared [contract limits](src/contract-limits.ts) before parsing elements or encoding record keys. Training receipts and knowledge references retain their own typed limits in [the profile schema](src/profile-schema.ts). Opaque metadata must be bounded portable data; accessors are refused. Snapshot validation precedes the detached copy, which preserves explicit undefined fields and isolates nested metadata. The generic serialized-JSON byte bound is not a whole-profile transport limit.

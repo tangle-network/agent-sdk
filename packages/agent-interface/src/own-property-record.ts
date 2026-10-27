@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONTRACT_MAX_IDENTIFIER_LENGTH, CONTRACT_MAX_MAP_ENTRIES } from "./contract-limits.js";
 import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
 
 /**
@@ -10,9 +11,34 @@ import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
  */
 export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
   valueSchema: ValueSchema,
+  { maxEntries = CONTRACT_MAX_MAP_ENTRIES, admitValue }: {
+    maxEntries?: number;
+    admitValue?: (key: string, value: unknown) => boolean;
+  } = {},
 ): z.ZodType<Record<string, z.output<ValueSchema>>> {
   return z.preprocess(
-    encodeOwnRecordKeys,
+    (value, context) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return [];
+      let entries = 0;
+      for (const key in value) {
+        if (!Object.hasOwn(value, key)) continue;
+        if (++entries > maxEntries || key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) {
+          context.addIssue({ code: "custom", message: "record exceeds the contract bounds" });
+          return z.NEVER;
+        }
+      }
+      const encoded: Record<string, unknown> = Object.create(null);
+      for (const [key, entry] of Object.entries(value)) {
+        if (admitValue && !admitValue(key, entry)) {
+          context.addIssue({ code: "custom", message: "record value exceeds the contract bounds or is not portable JSON" });
+          return z.NEVER;
+        }
+        encoded[encodeRecordKey(key)] = entry;
+      }
+      return encoded;
+    },
     z.record(
       z
         .string()
@@ -34,19 +60,6 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
       return restored;
     }),
   ) as z.ZodType<Record<string, z.output<ValueSchema>>>;
-}
-
-function encodeOwnRecordKeys(value: unknown): unknown {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return [];
-  const encoded: Record<string, unknown> = Object.create(null);
-  for (const [key, entry] of Object.entries(value)) {
-    encoded[encodeRecordKey(key)] = entry;
-  }
-  return encoded;
 }
 
 function encodeRecordKey(value: string): string {

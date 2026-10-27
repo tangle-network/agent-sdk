@@ -1,5 +1,7 @@
 import { agentCandidateSecretRefSchema } from "./agent-candidate-schema-common.js";
 import { z } from "zod";
+import { CONTRACT_MAX_ARRAY_LENGTH, isBoundedJsonMaterial } from "./contract-limits.js";
+
 import { ownPropertyRecordSchema } from "./own-property-record.js";
 import { ProxySecretsSchema } from "./proxy-secrets.js";
 import { agentProfileKnowledgeRefsSchema } from "./profile-knowledge.js";
@@ -47,6 +49,10 @@ import {
   type SandboxSizePreset,
 } from "./sandbox-size.js";
 
+const profileOpaqueValueSchema = z.custom<unknown>(
+  (value) => value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true }),
+  { message: "profile metadata exceeds contract bounds or is not portable JSON" },
+);
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
   "deny",
@@ -82,11 +88,11 @@ export const agentProfileFileMountSchema = z.strictObject({
 
 export const agentProfileResourcesSchema = z.strictObject({
   knowledge: agentProfileKnowledgeRefsSchema.optional(),
-  files: z.array(agentProfileFileMountSchema).optional(),
-  tools: z.array(agentProfileResourceRefSchema).optional(),
-  skills: z.array(agentProfileResourceRefSchema).optional(),
-  agents: z.array(agentProfileResourceRefSchema).optional(),
-  commands: z.array(agentProfileResourceRefSchema).optional(),
+  files: z.array(agentProfileFileMountSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  tools: z.array(agentProfileResourceRefSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  skills: z.array(agentProfileResourceRefSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  agents: z.array(agentProfileResourceRefSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+  commands: z.array(agentProfileResourceRefSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
   instructions: z
     .union([z.string(), agentProfileResourceRefSchema])
     .optional(),
@@ -143,7 +149,7 @@ export const agentProfileModelHintsBaseSchema = z.strictObject({
   maxVisibleOutputTokens: z.number().int().positive().optional(),
   maxReasoningTokens: z.number().int().positive().optional(),
   maxTotalOutputTokens: z.number().int().positive().optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 export const agentProfileModelHintsSchema =
@@ -172,7 +178,7 @@ export const agentProfileSeatSchema = z.strictObject({
 export const agentProfilePromptSchema = z.strictObject({
   systemPrompt: z.string().optional(),
   appendSystemPrompt: z.string().optional(),
-  instructions: z.array(z.string()).optional(),
+  instructions: z.array(z.string()).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
 });
 
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
@@ -249,7 +255,7 @@ export const agentSubagentProfileSchema = z.strictObject({
   tools: ownPropertyRecordSchema(z.boolean()).optional(),
   permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
   maxSteps: z.number().optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 export const agentProfileHookCommandSchema = z.strictObject({
@@ -266,7 +272,7 @@ export const agentProfileModeSchema = z.strictObject({
   prompt: z.string().optional(),
   tools: ownPropertyRecordSchema(z.boolean()).optional(),
   permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 export const agentProfileConfidentialSchema = z.strictObject({
@@ -298,7 +304,7 @@ const agentProfileLocalMcpServerSchema = z.strictObject({
     isSafeExecutable,
     "local MCP command must be a canonical public executable",
   ),
-  args: z.array(agentProfileConfigValueSchema).optional(),
+  args: z.array(agentProfileConfigValueSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
   env: agentProfileEnvironmentSchema.optional(),
   cwd: z
     .string()
@@ -310,7 +316,7 @@ const agentProfileLocalMcpServerSchema = z.strictObject({
   url: z.undefined().optional(),
   headers: z.undefined().optional(),
   enabled: z.literal(true).optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 const agentProfileRemoteMcpServerSchema = z.strictObject({
@@ -322,7 +328,7 @@ const agentProfileRemoteMcpServerSchema = z.strictObject({
   url: remoteMcpUrlSchema,
   headers: agentProfileHeaderSchema.optional(),
   enabled: z.literal(true).optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 const agentProfileDisabledMcpServerSchema = z.strictObject({
@@ -334,7 +340,7 @@ const agentProfileDisabledMcpServerSchema = z.strictObject({
   cwd: z.undefined().optional(),
   url: z.undefined().optional(),
   headers: z.undefined().optional(),
-  metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+  metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
 });
 
 export const agentProfileMcpServerSchema: z.ZodType<AgentProfileMcpServer> =
@@ -346,11 +352,11 @@ export const agentProfileMcpServerSchema: z.ZodType<AgentProfileMcpServer> =
 
 export const agentProfileConnectionSchema = z.strictObject({
   connectionId: z.string().min(1),
-  capabilities: z.array(z.string().min(1)).min(1),
+  capabilities: z.array(z.string().min(1)).max(CONTRACT_MAX_ARRAY_LENGTH).min(1),
   alias: z.string().min(1).optional(),
 });
 
-const removeListSchema = z.union([z.literal(true), z.array(z.string().min(1))]);
+const removeListSchema = z.union([z.literal(true), z.array(z.string().min(1)).max(CONTRACT_MAX_ARRAY_LENGTH)]);
 
 export const agentProfilePromptRemovalSchema = z.strictObject({
   systemPrompt: z.literal(true).optional(),
@@ -427,10 +433,8 @@ export const agentTrainingDatasetIdentitySchema = z.strictObject({
 
 export const agentTrainingParametersSchema = ownPropertyRecordSchema(
   z.union([z.string().max(2_048).pipe(publicProfileConfigStringSchema), z.number().finite(), z.boolean(), z.null()]),
+  { maxEntries: 100 },
 ).superRefine((parameters, context) => {
-  if (Object.keys(parameters).length > 100) {
-    context.addIssue({ code: "custom", message: "at most 100 public training parameters are allowed" });
-  }
   for (const name of Object.keys(parameters)) {
     if (!trainingIdentitySchema.safeParse(name).success || isCredentialBearingProfileConfigName(name)) {
       context.addIssue({ code: "custom", path: [name], message: "training parameter name must be public and non-credential" });
@@ -479,13 +483,15 @@ export const agentProfileTrainingSchema = z.strictObject({
 }) satisfies z.ZodType<AgentProfileTraining>;
 
 export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
-  ownPropertyRecordSchema(z.unknown()).superRefine((metadata, context) => {
+  ownPropertyRecordSchema(z.unknown(), {
+    admitValue: (key, value) => key === "training" || value === undefined ||
+      isBoundedJsonMaterial(value, { dataPropertiesOnly: true }),
+  }).superRefine((metadata, context) => {
     if (!Object.hasOwn(metadata, "training")) return;
     const result = agentProfileTrainingSchema.safeParse(metadata.training);
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message });
-      }
+    if (result.success) metadata.training = result.data;
+    else for (const issue of result.error.issues) {
+      context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message });
     }
   });
 
@@ -499,26 +505,26 @@ export const agentProfileSchema = z
     name: z.string().optional(),
     description: z.string().optional(),
     version: z.string().optional(),
-    tags: z.array(z.string()).optional(),
+    tags: z.array(z.string()).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
     prompt: agentProfilePromptSchema.optional(),
     model: agentProfileModelHintsSchema.optional(),
     harness: harnessTypeSchema.optional(),
-    seats: z.array(agentProfileSeatSchema).nonempty().optional(),
+    seats: z.array(agentProfileSeatSchema).max(CONTRACT_MAX_ARRAY_LENGTH).nonempty().optional(),
     proxySecrets: ProxySecretsSchema.optional(),
     permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
     tools: ownPropertyRecordSchema(z.boolean()).optional(),
     mcp: ownPropertyRecordSchema(agentProfileMcpServerSchema).optional(),
-    connections: z.array(agentProfileConnectionSchema).optional(),
+    connections: z.array(agentProfileConnectionSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
     subagents: ownPropertyRecordSchema(agentSubagentProfileSchema).optional(),
     resources: agentProfileResourcesSchema.optional(),
     hooks: ownPropertyRecordSchema(
-      z.array(agentProfileHookCommandSchema),
+      z.array(agentProfileHookCommandSchema).max(CONTRACT_MAX_ARRAY_LENGTH),
     ).optional(),
     modes: ownPropertyRecordSchema(agentProfileModeSchema).optional(),
     confidential: agentProfileConfidentialSchema.optional(),
     metadata: agentProfileMetadataSchema.optional(),
     extensions: ownPropertyRecordSchema(
-      z.union([ownPropertyRecordSchema(z.unknown()), z.undefined()]),
+      z.union([ownPropertyRecordSchema(profileOpaqueValueSchema), z.undefined()]),
     ).optional(),
   })
   .superRefine((profile, context) => {
@@ -673,13 +679,13 @@ export const agentProfileDiffSchema: z.ZodType<AgentProfileDiff> = z.strictObjec
           "optimizer",
           "compound",
         ]),
-        artifacts: z.array(z.string().min(1)).optional(),
-        notes: z.array(z.string()).optional(),
+        artifacts: z.array(z.string().min(1)).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
+        notes: z.array(z.string()).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
       })
       .optional(),
     set: agentProfileSchema.optional(),
     remove: agentProfileDiffRemovalSchema.optional(),
-    metadata: ownPropertyRecordSchema(z.unknown()).optional(),
+    metadata: ownPropertyRecordSchema(profileOpaqueValueSchema).optional(),
   },
 );
 
