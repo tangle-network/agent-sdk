@@ -12,11 +12,13 @@ const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `s
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
 async function fixture(code: string, status = 503) {
   const requests: string[] = [];
+  let baseUrl = "";
   let metadata: unknown;
   const info = () => ({
     id: "sandbox-predispatch", status: "running", createdAt: new Date(0).toISOString(), metadata,
     filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
     filesystemIncarnationProvenance: "fresh", filesystemIncarnationReadiness: "ready",
+    connection: { runtimeUrl: `${baseUrl}/v1/sandboxes/sandbox-predispatch/runtime`, authToken: "fixture-runtime-token", edgeStatus: "ready" },
     captureProof: proof, createReceipt: { outcome: "created", idempotencyKeyApplied: true, captureProof: proof },
   });
   const server = createServer(async (request, response) => {
@@ -46,7 +48,8 @@ async function fixture(code: string, status = 503) {
   cleanups.push(() => new Promise<void>((resolve, reject) => { server.closeAllConnections(); server.close((error) => error ? reject(error) : resolve()); }));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
-  const provider = createTangleProvider({ client: new Sandbox({ baseUrl: `http://127.0.0.1:${address.port}`, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
+  baseUrl = `http://127.0.0.1:${address.port}`;
+  const provider = createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture" });
   return { provider, environment, requests };
 }
