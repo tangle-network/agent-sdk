@@ -175,8 +175,7 @@ try {
   assert.equal(containerReads, 0);
   const nestedSparse = agentProfileSchema.safeParse({ model: { metadata: { hint: [, 0] } } });
   assert.ok(!nestedSparse.success && nestedSparse.error.issues.some((issue) =>
-    // Record keys reach issue paths hex-encoded by own-property-record (pre-existing), so match the frame around them.
-    /sparse array hole/.test(issue.message) && issue.path.slice(0, 2).join(".") === "model.metadata" && issue.path.at(-1) === 0),
+    /sparse array hole/.test(issue.message) && issue.path.join(".") === "model.metadata.hint.0"),
     "nested metadata keeps its path-specific refusal");
   let lateReads = 0;
   const mutable = { score: 1 };

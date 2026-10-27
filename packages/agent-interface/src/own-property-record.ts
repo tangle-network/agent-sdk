@@ -62,7 +62,13 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
           "record keys must contain valid Unicode",
         ),
       valueSchema,
-    ).transform((record) => {
+    // Issues carry the encoded key Zod saw; report the caller's key. `when` runs this after value issues too.
+    ).superRefine((_record, context) => {
+      for (const issue of context.issues) {
+        const key = issue.path?.[0];
+        if (typeof key === "string" && /^[ui](?:[0-9a-f]{4})*$/.test(key)) issue.path![0] = decodeRecordKey(key);
+      }
+    }, { when: () => true }).transform((record) => {
       const restored: Record<string, z.output<ValueSchema>> = {};
       for (const [encodedKey, value] of Object.entries(record)) {
         Object.defineProperty(restored, decodeRecordKey(encodedKey), {
