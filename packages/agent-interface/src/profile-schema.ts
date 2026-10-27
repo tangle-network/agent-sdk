@@ -51,13 +51,12 @@ import {
 
 const profileOpaqueValueSchema = z.unknown().transform((value, context) => {
   if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })) return structuredClone(value);
-  try {
-    assertAgentProfileValue(value, []);
-    context.addIssue({ code: "custom", message: "profile metadata exceeds contract bounds or is not portable JSON" });
-  } catch (error) {
+  try { assertAgentProfileValue(value, []); } catch (error) {
     if (!(error instanceof AgentProfileValueError)) throw error;
     context.addIssue({ code: "custom", path: [...error.path], message: error.message });
+    return z.NEVER;
   }
+  context.addIssue({ code: "custom", message: "profile metadata exceeds contract bounds or is not portable JSON" });
   return z.NEVER;
 });
 export const agentProfilePermissionValueSchema = z.enum([
