@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.1
+
+### Patch Changes
+
+- 76e55a3: Validation issues inside own-property records now report the caller's record key in their path instead of the internal hex-encoded key.
+
 ## 5.10.0
 
 ### Minor Changes
