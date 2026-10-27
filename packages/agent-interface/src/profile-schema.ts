@@ -50,7 +50,7 @@ import {
 } from "./sandbox-size.js";
 
 const profileOpaqueValueSchema = z.unknown().transform((value, context) => {
-  if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })) return structuredClone(value);
+  if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true, content: true })) return structuredClone(value);
   try { assertAgentProfileValue(value, []); } catch (error) {
     if (!(error instanceof AgentProfileValueError)) throw error;
     context.addIssue({ code: "custom", path: [...error.path], message: error.message });
@@ -492,7 +492,7 @@ export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
   ownPropertyRecordSchema(z.unknown(), {
     prepareValue: (key, value) => {
       if (key === "training") return value;
-      if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })) return structuredClone(value);
+      if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true, content: true })) return structuredClone(value);
       assertAgentProfileValue(value, [key]);
       return z.NEVER;
     },

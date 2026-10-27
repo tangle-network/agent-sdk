@@ -173,6 +173,13 @@ try {
   } });
   assert.equal(agentProfileSchema.safeParse({ metadata: container }).success, false);
   assert.equal(containerReads, 0);
+  // Runtime copies node profiles into graph metadata; a valid inline file above one string's
+  // length must survive that copy, bounded by the serialized budget instead (discovery-lab #2513).
+  const largeFile = { path: "scale.md", resource: { kind: "inline", name: "scale", content: "x".repeat(36_372) } };
+  const nodeProfile = { name: "critic", resources: { files: [largeFile] } };
+  assert.equal(agentProfileSchema.safeParse(nodeProfile).success, true);
+  assert.equal(agentProfileSchema.safeParse({ metadata: { agentRuntimeGraph: { nodes: [{ id: "critic", profile: nodeProfile }] } } }).success, true);
+  assert.equal(agentProfileSchema.safeParse({ metadata: { payload: "x".repeat(1_048_577) } }).success, false);
   const nestedSparse = agentProfileSchema.safeParse({ model: { metadata: { hint: [, 0] } } });
   assert.ok(!nestedSparse.success && nestedSparse.error.issues.some((issue) =>
     /sparse array hole/.test(issue.message) && issue.path.join(".") === "model.metadata.hint.0"),
