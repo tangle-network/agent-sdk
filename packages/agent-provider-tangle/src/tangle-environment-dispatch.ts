@@ -128,7 +128,7 @@ export function dispatchEnvironmentRun(
       // Recover an older SDK's omitted reuse reference from server status; validate every binding below.
       const status = await awaitWithSignal(box.session(expectedSessionId).status({ signal: input.signal }), input.signal);
       const echoedRef = status && typeof status === "object" && !Array.isArray(status) && "runControlRef" in status ? status.runControlRef : undefined;
-      dispatched = { ...receipt, runControlRef: echoedRef };
+      if (echoedRef !== undefined) dispatched = { ...receipt, runControlRef: echoedRef };
     }
     let reference: AgentSessionRef;
     try {
