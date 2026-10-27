@@ -148,6 +148,20 @@ try {
   assert.equal(lateReads, 1);
   assert.deepEqual(isolated.metadata.payload, { score: 1 });
 
+  const proxyBindings = Array.from({ length: api.CONTRACT_MAX_ARRAY_LENGTH }, (_, i) => ({
+    envName: `SECRET_${i}`, secretRef: { kind: "secret-ref", key: `service-key-${i}` },
+    hosts: ["service.example.com"], presentation: { type: "bearer" },
+  }));
+  const parentMap = (count) => Object.fromEntries(proxyBindings.slice(0, count).map((binding) => [binding.envName, null]));
+  for (const count of [257, api.CONTRACT_MAX_ARRAY_LENGTH]) {
+    assert.equal(api.ProxySecretParentsSchema.safeParse(parentMap(count)).success, true);
+    assert.equal(api.isProxySecretParentsTotal(proxyBindings.slice(0, count), parentMap(count)), true);
+  }
+  assert.equal(api.ProxySecretParentsSchema.safeParse({ ...parentMap(proxyBindings.length), EXTRA: null }).success, false);
+  assert.equal(api.ProxySecretParentsSchema.safeParse({ "invalid-name": null }).success, false);
+  assert.equal(api.ProxySecretParentsSchema.safeParse({ SECRET_0: 7 }).success, false);
+  assert.equal(api.isProxySecretParentsTotal(proxyBindings, parentMap(proxyBindings.length - 1)), false);
+
   const cycle = {}; cycle.self = cycle;
   assert.throws(() => snapshotAgentProfile({ metadata: { cycle } }));
   let accessorReads = 0;
@@ -162,7 +176,7 @@ try {
     fileAndHttpRefusals: cases.length, validTrainingTasks: 10_000, sourceMutationDetached: true,
     canonicalDigestUnchanged: true, recordGetterReadsBeforeRefusal: reads, opaqueAccessorReads: accessorReads,
     malformedTrainingDepth: 20_000, unadmittedTrainingGetterReads: unadmittedReads,
-    metadataContainerGetterReads: containerReads, lateMutationDetached: true,
+    proxyParentContractPreserved: api.CONTRACT_MAX_ARRAY_LENGTH, metadataContainerGetterReads: containerReads, lateMutationDetached: true,
     undefinedOwnKeyOverflowRefused: true, boundedUndefinedFieldsPreserved: 256 }));
 } finally {
   await new Promise((done) => server.close(done));

@@ -66,9 +66,8 @@ export const ProxySecretsSchema = z.array(ProxySecretBindingSchema).max(CONTRACT
  * Strings select an API-verified parent sandbox; null explicitly selects independent issuance.
  * When present, every destination in the final effective selection must have exactly one key.
  */
-export const ProxySecretParentsSchema = ownPropertyRecordSchema(boundedIdentifierSchema.nullable())
-  .refine((parents) => Object.keys(parents).length <= CONTRACT_MAX_ARRAY_LENGTH &&
-    Object.keys(parents).every((name) => envNameSchema.safeParse(name).success), "invalid parent selection keys");
+export const ProxySecretParentsSchema = ownPropertyRecordSchema(boundedIdentifierSchema.nullable(), { maxEntries: CONTRACT_MAX_ARRAY_LENGTH })
+  .refine((parents) => Object.keys(parents).every((name) => envNameSchema.safeParse(name).success), "invalid parent selection keys");
 export type ProxySecretParents = z.infer<typeof ProxySecretParentsSchema>;
 
 /** Shape and totality only; the API verifies issuer authority and durable immutable pins. */
