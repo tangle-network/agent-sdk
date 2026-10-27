@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.5.0
+
+### Minor Changes
+
+- 01fcf5a: Admit Sandbox 1.x: the `@tangle-network/sandbox` peer range is `>=0.60.88 <2.0.0`. Sandbox 1.0 ships the 0.69 API, so a consumer on Sandbox 1.x installs this provider without a peer conflict, and later compatible Sandbox 1.x releases need no provider release.
+
 ## 4.4.7
 
 ### Patch Changes
