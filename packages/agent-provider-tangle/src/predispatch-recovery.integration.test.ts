@@ -35,7 +35,7 @@ async function fixture(code: string, status = 503) {
     } else if (path === "/v1/sandboxes/sandbox-predispatch") {
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
-      response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
+      response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: {}, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
     } else if (path.endsWith("/agents/run/stream") && request.method === "POST") {
       response.writeHead(status);
       response.end(JSON.stringify({ status: "error", code, message: "Sandbox Hub credential is temporarily unavailable." }));
