@@ -11,9 +11,9 @@ import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
  */
 export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
   valueSchema: ValueSchema,
-  { maxEntries = CONTRACT_MAX_MAP_ENTRIES, admitValue }: {
+  { maxEntries = CONTRACT_MAX_MAP_ENTRIES, prepareValue }: {
     maxEntries?: number;
-    admitValue?: (key: string, value: unknown) => boolean;
+    prepareValue?: (key: string, value: unknown) => unknown;
   } = {},
 ): z.ZodType<Record<string, z.output<ValueSchema>>> {
   return z.preprocess(
@@ -30,8 +30,14 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
         }
       }
       const encoded: Record<string, unknown> = Object.create(null);
-      for (const [key, entry] of Object.entries(value)) {
-        if (admitValue && !admitValue(key, entry)) {
+      for (const key of Object.keys(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !("value" in descriptor)) {
+          context.addIssue({ code: "custom", message: "record entries must be data properties" });
+          return z.NEVER;
+        }
+        const entry = prepareValue ? prepareValue(key, descriptor.value) : descriptor.value;
+        if (entry === z.NEVER) {
           context.addIssue({ code: "custom", message: "record value exceeds the contract bounds or is not portable JSON" });
           return z.NEVER;
         }

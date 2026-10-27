@@ -97,8 +97,8 @@ function boundedJson(value: unknown, options: {
   while (pending.length) {
     const item = pending.pop()!;
     const current = item.value;
-    if (current === undefined && item.omitUndefined) continue;
     if ((!item.leave || !options.material) && ++nodes > CONTRACT_MAX_JSON_NODES) return false;
+    if (current === undefined && item.omitUndefined) continue;
     if (item.leave) {
       ancestors.delete(current as object);
       continue;
@@ -125,14 +125,17 @@ function boundedJson(value: unknown, options: {
         (array && options.content && prototype !== Array.prototype && prototype !== null)) return false;
     if (options.content || options.dataPropertiesOnly) {
       const keys = Reflect.ownKeys(current).filter((key) => !array || key !== "length");
-      if (array && keys.length !== current.length) return false;
+      if (array ? keys.length !== current.length : keys.length > CONTRACT_MAX_MAP_ENTRIES) return false;
       let entries = 0;
       for (const key of keys) {
         if (typeof key !== "string" || (!array && key.length > CONTRACT_MAX_IDENTIFIER_LENGTH)) return false;
         if (array && (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= current.length || Number(key) >= 4_294_967_295)) return false;
         const descriptor = Object.getOwnPropertyDescriptor(current, key);
         if (!descriptor?.enumerable || !("value" in descriptor)) return false;
-        if (!array && descriptor.value === undefined && options.omitUndefinedObjectFields) continue;
+        if (!array && descriptor.value === undefined && options.omitUndefinedObjectFields) {
+          if (++nodes > CONTRACT_MAX_JSON_NODES) return false;
+          continue;
+        }
         if (++entries > (array ? CONTRACT_MAX_ARRAY_LENGTH : CONTRACT_MAX_MAP_ENTRIES)) return false;
         if (!array && !addBytes(serializedJsonStringBytes(key) + 1)) return false;
         pending.push({ value: descriptor.value, depth: item.depth + 1 });

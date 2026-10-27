@@ -52,7 +52,7 @@ import {
 const profileOpaqueValueSchema = z.custom<unknown>(
   (value) => value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true }),
   { message: "profile metadata exceeds contract bounds or is not portable JSON" },
-);
+).transform((value) => structuredClone(value));
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
   "deny",
@@ -484,14 +484,18 @@ export const agentProfileTrainingSchema = z.strictObject({
 
 export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
   ownPropertyRecordSchema(z.unknown(), {
-    admitValue: (key, value) => key === "training" || value === undefined ||
-      isBoundedJsonMaterial(value, { dataPropertiesOnly: true }),
+    prepareValue: (key, value) => key === "training" ? value :
+      value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })
+        ? structuredClone(value) : z.NEVER,
   }).superRefine((metadata, context) => {
     if (!Object.hasOwn(metadata, "training")) return;
     const result = agentProfileTrainingSchema.safeParse(metadata.training);
     if (result.success) metadata.training = result.data;
-    else for (const issue of result.error.issues) {
-      context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message });
+    else {
+      delete metadata.training;
+      for (const issue of result.error.issues) {
+        context.addIssue({ code: "custom", path: ["training", ...issue.path], message: issue.message, continue: false });
+      }
     }
   });
 

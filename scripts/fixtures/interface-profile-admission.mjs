@@ -22,9 +22,9 @@ const server = createServer(async (request, response) => {
     for await (const chunk of request) chunks.push(chunk);
     const result = agentProfileSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
     response.writeHead(result.success ? 200 : 400, { "content-type": "application/json" });
-    response.end(JSON.stringify(result.success ? { success: true } : { issues: result.error.issues.length }));
+    response.end(JSON.stringify(result.success ? { success: true } : { issues: result.error.issues }));
   } catch {
-    response.writeHead(400).end();
+    response.writeHead(500).end();
   }
 });
 try {
@@ -45,6 +45,8 @@ try {
     assert.ok(result.error.issues.length <= 3, "invalid children must not amplify errors");
     const response = await fetch(endpoint, { method: "POST", body: await readFile(file) });
     assert.equal(response.status, 400);
+    const rejection = await response.json();
+    assert.ok(Array.isArray(rejection.issues) && rejection.issues.length > 0 && rejection.issues.length <= 3);
   }
   let reads = 0;
   const tooMany = {};
@@ -53,6 +55,38 @@ try {
   });
   assert.equal(agentProfileSchema.safeParse({ tools: tooMany }).success, false);
   assert.equal(reads, 0, "cardinality admission must precede reading or encoding entries");
+
+  // Malformed training must abort before the outer profile's recursive record walk.
+  const malformedTraining = '{"metadata":{"training":{"receipt":{},"ancestors":[],"unknown":' +
+    '{"next":'.repeat(20_000) + 'null' + '}'.repeat(20_000) + '}}}';
+  const malformedFile = join(directory, "malformed-training.json");
+  await writeFile(malformedFile, malformedTraining);
+  const malformed = agentProfileSchema.safeParse(JSON.parse(await readFile(malformedFile, "utf8")));
+  assert.equal(malformed.success, false);
+  assert.ok(malformed.error.issues.length > 0 && malformed.error.issues.length <= 32);
+  const malformedResponse = await fetch(endpoint, { method: "POST", body: await readFile(malformedFile) });
+  assert.equal(malformedResponse.status, 400);
+  const malformedIssues = (await malformedResponse.json()).issues;
+  assert.ok(Array.isArray(malformedIssues) && malformedIssues.length > 0 && malformedIssues.length <= 32,
+    "a bounded validation result, not a caught stack overflow");
+  let unadmittedReads = 0;
+  const unadmittedTraining = { receipt: {}, ancestors: [] };
+  Object.defineProperty(unadmittedTraining, "unknown", {
+    enumerable: true, get() { unadmittedReads++; throw new Error("unadmitted training was traversed"); },
+  });
+  assert.equal(agentProfileSchema.safeParse({ metadata: { training: unadmittedTraining } }).success, false);
+  assert.equal(unadmittedReads, 0);
+  const omittedKeys = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`key${i}`, undefined]));
+  assert.equal(agentProfileSchema.safeParse({ metadata: { payload: omittedKeys(257) } }).success, false);
+  assert.throws(() => snapshotAgentProfile({ metadata: { payload: omittedKeys(257) } }));
+  const aggregateOmissions = Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`map${i}`, omittedKeys(256)]));
+  assert.equal(agentProfileSchema.safeParse({ metadata: { payload: aggregateOmissions } }).success, false);
+  assert.equal(api.isBoundedEventContentJson(aggregateOmissions, { omitUndefinedObjectFields: true }), false);
+  const boundedOmissions = { metadata: { payload: omittedKeys(256) } };
+  assert.equal(Object.keys(snapshotAgentProfile(boundedOmissions).metadata.payload).length, 256);
+  assert.equal(api.canonicalAgentProfileDigest(boundedOmissions), api.canonicalAgentProfileDigest({ metadata: { payload: {} } }));
+  assert.equal(api.isBoundedEventContentJson(omittedKeys(257), { omitUndefinedObjectFields: true }), false);
+  assert.equal(api.isBoundedEventContentJson(omittedKeys(256), { omitUndefinedObjectFields: true }), true);
 
   const tasks = Array.from({ length: 10_000 }, (_, i) => ({
     benchmark: "retained", task: `task-${String(i).padStart(5, "0")}`, contentDigest: hash(`task-${i}`),
@@ -96,6 +130,24 @@ try {
   assert.equal(agentProfileSchema.safeParse({ metadata: { training: { receipt, ancestors: [], unknown: true } } }).success, false);
   assert.equal(agentProfileSchema.safeParse({ resources: { knowledge: Array(17).fill({ sourceId: "x", generation: `kg_${"0".repeat(64)}` }) } }).success, false);
 
+  let containerReads = 0;
+  const container = {};
+  Object.defineProperty(container, "payload", { enumerable: true, get() {
+    containerReads++; throw new Error("metadata container getter executed");
+  } });
+  assert.equal(agentProfileSchema.safeParse({ metadata: container }).success, false);
+  assert.equal(containerReads, 0);
+  let lateReads = 0;
+  const mutable = { score: 1 };
+  const lateProfile = { metadata: { payload: mutable } };
+  Object.defineProperty(lateProfile, "extensions", { enumerable: true, get() {
+    lateReads++; mutable.score = 2; mutable.unadmitted = JSON.parse('{"next":'.repeat(20_000) + 'null' + '}'.repeat(20_000));
+    return undefined;
+  } });
+  const isolated = snapshotAgentProfile(lateProfile);
+  assert.equal(lateReads, 1);
+  assert.deepEqual(isolated.metadata.payload, { score: 1 });
+
   const cycle = {}; cycle.self = cycle;
   assert.throws(() => snapshotAgentProfile({ metadata: { cycle } }));
   let accessorReads = 0;
@@ -108,7 +160,10 @@ try {
   assert.equal(schemas.agentProfileJsonSchema.type, "object");
   console.log(JSON.stringify({ result: "PASS", installedPublicPackage: require.resolve("@tangle-network/agent-interface"),
     fileAndHttpRefusals: cases.length, validTrainingTasks: 10_000, sourceMutationDetached: true,
-    canonicalDigestUnchanged: true, recordGetterReadsBeforeRefusal: reads, opaqueAccessorReads: accessorReads }));
+    canonicalDigestUnchanged: true, recordGetterReadsBeforeRefusal: reads, opaqueAccessorReads: accessorReads,
+    malformedTrainingDepth: 20_000, unadmittedTrainingGetterReads: unadmittedReads,
+    metadataContainerGetterReads: containerReads, lateMutationDetached: true,
+    undefinedOwnKeyOverflowRefused: true, boundedUndefinedFieldsPreserved: 256 }));
 } finally {
   await new Promise((done) => server.close(done));
   await rm(directory, { recursive: true, force: true });
