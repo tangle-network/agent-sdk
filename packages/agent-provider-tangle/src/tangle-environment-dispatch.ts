@@ -42,17 +42,10 @@ export function dispatchEnvironmentRun(
       ) {
         throw new Error("Tangle control reference does not match this environment");
       }
-      if (
-        input.sessionId !== undefined &&
-        input.sessionId !== callerControlRef.sessionId
-      ) {
-        throw new Error("Tangle sessionId conflicts with the control reference");
-      }
-      if (
-        input.executionId !== undefined &&
-        input.executionId !== callerControlRef.executionId
-      ) {
-        throw new Error("Tangle executionId conflicts with the control reference");
+      for (const field of ["sessionId", "executionId"] as const) {
+        if (input[field] !== undefined && input[field] !== callerControlRef[field]) {
+          throw new Error(`Tangle ${field} conflicts with the control reference`);
+        }
       }
     }
     const expectedSessionId =
@@ -128,6 +121,15 @@ export function dispatchEnvironmentRun(
       }
       throw error;
     }
+    const receipt = dispatched as Record<string, unknown> | undefined;
+    if (receipt?.dispatched === false && receipt.alreadyExisted === true &&
+        receipt.sessionId === expectedSessionId && receipt.executionId === expectedExecutionId &&
+        receipt.runControlRef === undefined && callerControlRef === undefined && box.session) {
+      // Recover an older SDK's omitted reuse reference from server status; validate every binding below.
+      const status = await awaitWithSignal(box.session(expectedSessionId).status({ signal: input.signal }), input.signal);
+      const echoedRef = status && typeof status === "object" && !Array.isArray(status) && "runControlRef" in status ? status.runControlRef : undefined;
+      dispatched = { ...receipt, runControlRef: echoedRef };
+    }
     let reference: AgentSessionRef;
     try {
       reference = sessionRefFromSandboxDispatch(
@@ -158,12 +160,10 @@ export function dispatchEnvironmentRun(
       }
       throw error;
     }
-    const boundReference = reference;
     if (input.signal?.aborted && input.detach !== true) {
-      await interruptAfterAbort(box, boundReference);
-      input.signal.throwIfAborted();
+      await interruptAfterAbort(box, reference);
     }
     input.signal?.throwIfAborted();
-    return boundReference;
+    return reference;
   };
 }

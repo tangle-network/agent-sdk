@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
+import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
 
@@ -15,7 +16,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
   let admit = false, selected = false;
-  let run: Record<string, any> | undefined, statusReads = 0;
+  let run: { executionId: string; sessionId: string; turnId: string; runControlRef: AgentExactRunControlRef } | undefined, statusReads = 0;
   let baseUrl = "";
   let metadata: unknown;
   const info = () => ({
@@ -60,9 +61,9 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString());
       const executionId = request.headers["x-execution-id"];
-      if (executionId !== input.runControlRef?.executionId) throw new Error("SDK dispatch execution identity differs from its control reference");
+      if (typeof executionId !== "string" || executionId !== input.runControlRef?.executionId) throw new Error("SDK dispatch execution identity differs from its control reference");
       dispatches.push(input);
-      if (lostReply && !run) run = { ...input, executionId };
+      if (lostReply && !run) run = { executionId, sessionId: input.sessionId, turnId: input.turnId, runControlRef: input.runControlRef };
       if (admit) {
         selected = true;
         response.setHeader("content-type", "text/event-stream");
@@ -128,7 +129,7 @@ it.each([false, true])("recovers the authoritative reference after a lost reply 
   expect(state().run!.executionId).toBe(reference.controlRef!.executionId);
 });
 
-it.each<RefFault>(["missing", "environment", "digest", "execution-race", "read-failure"])("retains the admitted execution when status authority is %s", async (fault) => {
+it.each(["missing", "environment", "digest", "execution-race", "read-failure"] as const)("retains the admitted execution when status authority is %s", async (fault) => {
   const { environment, reconnect, dispatches, state } = await fixture("SERVER_ERROR", 503, true, fault);
   const turn = { prompt: "research", turnId: "root:0", profile };
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
