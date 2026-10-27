@@ -10,10 +10,12 @@ const profile = { name: "root", harness: "claude-code" as const };
 const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
-async function fixture(code: string, status = 503) {
+type RefFault = "missing" | "environment" | "digest" | "execution-race" | "read-failure";
+async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false) {
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
   let admit = false, selected = false;
+  let run: Record<string, any> | undefined, statusReads = 0;
   let baseUrl = "";
   let metadata: unknown;
   const info = () => ({
@@ -41,8 +43,18 @@ async function fixture(code: string, status = 503) {
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: {}, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
     } else if (path.endsWith("/messages/turns")) {
-      response.writeHead(204);
-      response.end();
+      if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: true, status: "success", executionId: run.executionId, durationMs: 1 } }));
+      else { response.writeHead(204); response.end(); }
+    } else if (run && path.endsWith(`/agents/sessions/${run.sessionId}`)) {
+      statusReads++;
+      if (refFault === "read-failure" && statusReads > 1) {
+        response.writeHead(503); response.end(JSON.stringify({ code: "SERVER_ERROR", message: "status unavailable" })); return;
+      }
+      const ref = { ...run.runControlRef };
+      if (refFault === "environment") ref.environmentId = "another-box";
+      if (refFault === "digest") ref.requestDigest = `sha256:${"f".repeat(64)}`;
+      if (refFault === "execution-race" && statusReads > 1) ref.executionId = "another-execution";
+      response.end(JSON.stringify({ id: run.sessionId, status: completed ? "completed" : "running", activeExecutionId: run.executionId, latestExecutionId: ref.executionId, ...(refFault === "missing" ? {} : { runControlRef: ref }) }));
     } else if (path.endsWith("/agents/run/stream") && request.method === "POST") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -50,6 +62,7 @@ async function fixture(code: string, status = 503) {
       const executionId = request.headers["x-execution-id"];
       if (executionId !== input.runControlRef?.executionId) throw new Error("SDK dispatch execution identity differs from its control reference");
       dispatches.push(input);
+      if (lostReply && !run) run = { ...input, executionId };
       if (admit) {
         selected = true;
         response.setHeader("content-type", "text/event-stream");
@@ -73,7 +86,7 @@ async function fixture(code: string, status = 503) {
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
   const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture" });
-  return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; } };
+  return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
@@ -100,4 +113,27 @@ it.each([["SERVER_ERROR", 503], ["HUB_CREDENTIAL_REFRESH_FAILED", 502]])("preser
   const { environment, requests } = await fixture(code, status);
   const error = await environment.dispatch!({ prompt: "research", turnId: "root:0", profile }).catch((error: unknown) => error);
   expect(error, JSON.stringify(requests)).toMatchObject({ status, code });
+});
+
+it.each([false, true])("recovers the authoritative reference after a lost reply (completed=%s)", async (completed) => {
+  const { environment, reconnect, creates, dispatches, state } = await fixture("SERVER_ERROR", 503, true, undefined, completed);
+  const turn = { prompt: "research", turnId: "root:0", profile };
+  await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
+  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const reference = await recovered.dispatch!(turn);
+  expect(reference.controlRef).toEqual(state().run!.runControlRef);
+  expect(reference.metadata).toMatchObject({ dispatched: false, alreadyExisted: true });
+  expect(creates).toHaveLength(2);
+  expect(dispatches).toHaveLength(1);
+  expect(state().run!.executionId).toBe(reference.controlRef!.executionId);
+});
+
+it.each<RefFault>(["missing", "environment", "digest", "execution-race", "read-failure"])("retains the admitted execution when status authority is %s", async (fault) => {
+  const { environment, reconnect, dispatches, state } = await fixture("SERVER_ERROR", 503, true, fault);
+  const turn = { prompt: "research", turnId: "root:0", profile };
+  await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
+  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  await expect(recovered.dispatch!(turn)).rejects.toThrow(fault === "read-failure" ? /status unavailable/ : /exact.*control reference/);
+  expect(dispatches).toHaveLength(1);
+  expect(state().run).toBeDefined();
 });
