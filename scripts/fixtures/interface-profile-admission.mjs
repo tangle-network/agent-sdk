@@ -122,13 +122,49 @@ try {
   assert.ok(Object.isFrozen(snapshot.metadata.nested));
   const response = await fetch(endpoint, { method: "POST", body: JSON.stringify(snapshot) });
   assert.equal(response.status, 200);
-  const excess = { ...receipt.dataset, tasks: Array(10_001).fill(receipt.dataset.tasks[1]) };
-  assert.equal(agentTrainingDatasetIdentitySchema.safeParse(excess).success, false);
-  assert.equal(schemas.agentProfileTrainingSchema.safeParse({ receipt, ancestors: Array(9).fill(receipt) }).success, false);
-  const parameters = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`param${i}`, 0]));
-  assert.equal(schemas.agentTrainingParametersSchema.safeParse(parameters).success, false);
-  assert.equal(agentProfileSchema.safeParse({ metadata: { training: { receipt, ancestors: [], unknown: true } } }).success, false);
-  assert.equal(agentProfileSchema.safeParse({ resources: { knowledge: Array(17).fill({ sourceId: "x", generation: `kg_${"0".repeat(64)}` }) } }).success, false);
+  // Every negative starts from admitted detached data, independent of source-mutation controls.
+  const pristineReceipt = structuredClone(snapshot.metadata.training.receipt);
+  const exactArrayBound = (result, maximum, path) => {
+    assert.equal(result.success, false);
+    assert.equal(result.error.issues.length, 1);
+    const issue = result.error.issues[0];
+    assert.equal(issue.code, "too_big");
+    assert.equal(issue.origin, "array");
+    assert.equal(issue.maximum, maximum);
+    assert.deepEqual(issue.path, path);
+  };
+  const excessTasks = [...pristineReceipt.dataset.tasks, {
+    benchmark: "retained", task: "task-10000", contentDigest: hash("task-10000"),
+  }];
+  exactArrayBound(agentTrainingDatasetIdentitySchema.safeParse({ ...pristineReceipt.dataset,
+    tasks: excessTasks, taskSetDigest: digest(excessTasks) }), 10_000, ["tasks"]);
+  const linkedTraining = (ancestors) => {
+    const chain = [];
+    const tasks = pristineReceipt.dataset.tasks.slice(0, 1);
+    for (let i = ancestors; i >= 0; i--) chain.unshift({ ...pristineReceipt,
+      executionRef: hash(`chain-${i}`), parentReceiptDigest: chain.length ? digest(chain[0]) : null,
+      dataset: { ...pristineReceipt.dataset, tasks, taskSetDigest: digest(tasks) },
+    });
+    return { receipt: chain[0], ancestors: chain.slice(1) };
+  };
+  assert.equal(schemas.agentProfileTrainingSchema.safeParse(linkedTraining(8)).success, true);
+  exactArrayBound(schemas.agentProfileTrainingSchema.safeParse(linkedTraining(9)), 8, ["ancestors"]);
+  const parameters = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`param${i}`, 0]));
+  assert.equal(schemas.agentTrainingParametersSchema.safeParse(parameters(100)).success, true);
+  const excessParameters = schemas.agentTrainingParametersSchema.safeParse(parameters(101));
+  assert.equal(excessParameters.success, false);
+  assert.deepEqual(excessParameters.error.issues.map(({ code, path, message }) => ({ code, path, message })),
+    [{ code: "custom", path: [], message: "record exceeds the contract bounds" }]);
+  const unknownTraining = agentProfileSchema.safeParse({ metadata: {
+    training: { receipt: pristineReceipt, ancestors: [], unknown: true },
+  } });
+  assert.equal(unknownTraining.success, false);
+  assert.ok(unknownTraining.error.issues.some((issue) => issue.message.includes("unknown")));
+  const knowledge = (count) => Array.from({ length: count }, (_, i) => ({
+    sourceId: `source_${i}`, generation: `kg_${i.toString(16).padStart(64, "0")}`,
+  }));
+  assert.equal(agentProfileSchema.safeParse({ resources: { knowledge: knowledge(16) } }).success, true);
+  exactArrayBound(agentProfileSchema.safeParse({ resources: { knowledge: knowledge(17) } }), 16, ["resources", "knowledge"]);
 
   let containerReads = 0;
   const container = {};
@@ -176,6 +212,7 @@ try {
     fileAndHttpRefusals: cases.length, validTrainingTasks: 10_000, sourceMutationDetached: true,
     canonicalDigestUnchanged: true, recordGetterReadsBeforeRefusal: reads, opaqueAccessorReads: accessorReads,
     malformedTrainingDepth: 20_000, unadmittedTrainingGetterReads: unadmittedReads,
+    pristineLimitControls: true, validLinkedAncestors: 8, distinctKnowledgeBoundary: 16,
     proxyParentContractPreserved: api.CONTRACT_MAX_ARRAY_LENGTH, metadataContainerGetterReads: containerReads, lateMutationDetached: true,
     undefinedOwnKeyOverflowRefused: true, boundedUndefinedFieldsPreserved: 256 }));
 } finally {
