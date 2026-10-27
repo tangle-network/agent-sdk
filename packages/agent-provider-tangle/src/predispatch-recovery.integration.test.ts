@@ -13,7 +13,7 @@ const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `s
 async function fixture(code: string, status = 503) {
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
-  let admit = false;
+  let admit = false, selected = false;
   let baseUrl = "";
   let metadata: unknown;
   const info = () => ({
@@ -47,15 +47,18 @@ async function fixture(code: string, status = 503) {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString());
+      const executionId = request.headers["x-execution-id"];
+      if (executionId !== input.runControlRef?.executionId) throw new Error("SDK dispatch execution identity differs from its control reference");
       dispatches.push(input);
       if (admit) {
+        selected = true;
         response.setHeader("content-type", "text/event-stream");
-        response.end(`event: execution.started\ndata: ${JSON.stringify({ executionId: input.executionId, sessionId: input.sessionId, runControlRef: input.runControlRef })}\n\n`);
+        response.end(`event: execution.started\ndata: ${JSON.stringify({ executionId, sessionId: input.sessionId, runControlRef: input.runControlRef })}\n\n`);
       } else {
         response.writeHead(status);
         response.end(JSON.stringify({ status: "error", code, message: "Sandbox Hub credential is temporarily unavailable." }));
       }
-    } else if (path.endsWith("/backend") && admit) {
+    } else if (path.endsWith("/backend") && selected) {
       response.end(JSON.stringify({ type: "claude-code" }));
     } else {
       response.writeHead(404);
@@ -88,6 +91,7 @@ it("starts the refused turn after original-key create replay without requiring a
   expect(creates.map((input) => input.idempotencyKey)).toEqual(["runtime:fixture", "runtime:fixture"]);
   expect(dispatches).toHaveLength(2);
   expect(dispatches[1]).toEqual(dispatches[0]);
+  expect(requests.filter((request) => request.endsWith("/backend"))).toHaveLength(1);
   expect(reference.controlRef).toEqual(dispatches[0]!.runControlRef);
   expect(reference.metadata).toMatchObject({ dispatched: true });
 });

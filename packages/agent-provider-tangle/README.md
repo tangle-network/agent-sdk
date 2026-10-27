@@ -41,6 +41,9 @@ Use the typed field for large profiles; generic provider metadata keeps its exis
 
 Exact execution replay preserves the admitted request and its digest.
 An explicit replay override cannot replace the selected account, credential channel, or harness.
+Before dispatch admission, replay the original `create` and turn with their original idempotency keys.
+Native-capture `get()` requires an already selected backend; it is not the entrypoint for an intent whose first dispatch was refused.
+A backend 404 alone does not prove that a prior execution ran nothing or authorize replacing it under new keys.
 
 ## Workspace file reads
 
