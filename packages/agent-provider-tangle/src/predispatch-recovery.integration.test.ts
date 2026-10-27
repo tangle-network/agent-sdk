@@ -46,7 +46,7 @@ async function fixture(code: string, status = 503) {
   cleanups.push(() => new Promise<void>((resolve, reject) => { server.closeAllConnections(); server.close((error) => error ? reject(error) : resolve()); }));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
-  const provider = createTangleProvider({ client: new Sandbox({ baseUrl: `http://127.0.0.1:${address.port}`, apiKey: "fixture-key" }), requireNativeSessionCapture: true });
+  const provider = createTangleProvider({ client: new Sandbox({ baseUrl: `http://127.0.0.1:${address.port}`, apiKey: "fixture-key" }), modelCredentials: { apiKey: "fixture-model-key" }, requireNativeSessionCapture: true });
   const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture" });
   return { provider, environment, requests };
 }
