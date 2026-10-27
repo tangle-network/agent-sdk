@@ -67,12 +67,16 @@ export function isBoundedEventContentJson(
   return boundedJson(value, { content: true, omitUndefinedObjectFields });
 }
 
-/** Digest material omits undefined object fields; portable profile values require data properties. */
+/**
+ * Digest material omits undefined object fields; portable profile values require data properties.
+ * `content` bounds strings by the serialized UTF-8 budget instead of each string's length, for
+ * opaque values that may legitimately copy unbounded typed fields such as inline file content.
+ */
 export function isBoundedJsonMaterial(
   value: unknown,
-  { dataPropertiesOnly = false }: { dataPropertiesOnly?: boolean } = {},
+  { dataPropertiesOnly = false, content = false }: { dataPropertiesOnly?: boolean; content?: boolean } = {},
 ): boolean {
-  return boundedJson(value, { material: true, omitUndefinedObjectFields: true, dataPropertiesOnly });
+  return boundedJson(value, { material: true, omitUndefinedObjectFields: true, dataPropertiesOnly, content });
 }
 
 /** One iterative walker owns structural admission; typed domains keep their own schema limits. */
