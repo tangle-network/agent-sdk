@@ -23,65 +23,9 @@ export const boundedIdentifierSchema = boundedStringSchema
     "identifier cannot have outer whitespace",
   );
 
-/**
- * Validate JSON without asking Zod to recursively copy an attacker-sized
- * value. This is intentionally iterative so depth and collection limits are
- * checked before canonical serialization.
- */
+/** Admit ordinary JSON before recursive parsing, copying or hashing. */
 export function isBoundedJsonValue(value: unknown): boolean {
-  const pending: Array<{
-    value: unknown;
-    depth: number;
-    leave?: boolean;
-  }> = [{ value, depth: 0 }];
-  const ancestors = new Set<object>();
-  let nodes = 0;
-  while (pending.length > 0) {
-    const item = pending.pop();
-    if (!item) continue;
-    nodes += 1;
-    if (nodes > CONTRACT_MAX_JSON_NODES) return false;
-    const current = item.value;
-    if (item.leave) {
-      ancestors.delete(current as object);
-      continue;
-    }
-    if (current === undefined) return false;
-    if (current === null || typeof current === "boolean") continue;
-    if (typeof current === "string") {
-      if (current.length > CONTRACT_MAX_STRING_LENGTH) return false;
-      continue;
-    }
-    if (typeof current === "number") {
-      if (!Number.isFinite(current)) return false;
-      continue;
-    }
-    if (typeof current !== "object" || item.depth >= CONTRACT_MAX_JSON_DEPTH) {
-      return false;
-    }
-    if (ancestors.has(current)) return false;
-    ancestors.add(current);
-    pending.push({ value: current, depth: item.depth, leave: true });
-    if (Array.isArray(current)) {
-      if (current.length > CONTRACT_MAX_ARRAY_LENGTH) return false;
-      for (const entry of current) {
-        pending.push({ value: entry, depth: item.depth + 1 });
-      }
-      continue;
-    }
-    const prototype = Object.getPrototypeOf(current);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    const keys = Object.keys(current);
-    if (keys.length > CONTRACT_MAX_MAP_ENTRIES) return false;
-    for (const key of keys) {
-      if (key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) return false;
-      pending.push({
-        value: (current as Record<string, unknown>)[key],
-        depth: item.depth + 1,
-      });
-    }
-  }
-  return true;
+  return boundedJson(value);
 }
 
 /** Exact serialized JSON UTF-8 byte count for one string scalar. */
@@ -115,16 +59,29 @@ function serializedJsonStringBytes(value: string): number {
   return bytes;
 }
 
-/**
- * Validate provider event and terminal content. Unlike ordinary metadata,
- * content may contain a single large transcript or tool result. It remains
- * finite, plain JSON with the normal structural limits, and its complete JSON
- * representation is capped exactly by UTF-8 bytes.
- */
+/** Event content permits large strings within the exact serialized UTF-8 budget. */
 export function isBoundedEventContentJson(
   value: unknown,
   { omitUndefinedObjectFields = false }: { omitUndefinedObjectFields?: boolean } = {},
 ): boolean {
+  return boundedJson(value, { content: true, omitUndefinedObjectFields });
+}
+
+/** Digest material omits undefined object fields; portable profile values require data properties. */
+export function isBoundedJsonMaterial(
+  value: unknown,
+  { dataPropertiesOnly = false }: { dataPropertiesOnly?: boolean } = {},
+): boolean {
+  return boundedJson(value, { material: true, omitUndefinedObjectFields: true, dataPropertiesOnly });
+}
+
+/** One iterative walker owns structural admission; typed domains keep their own schema limits. */
+function boundedJson(value: unknown, options: {
+  content?: boolean;
+  material?: boolean;
+  omitUndefinedObjectFields?: boolean;
+  dataPropertiesOnly?: boolean;
+} = {}): boolean {
   const pending: Array<{
     value: unknown;
     depth: number;
@@ -136,147 +93,67 @@ export function isBoundedEventContentJson(
   const ancestors = new Set<object>();
   let nodes = 0;
   let bytes = 0;
-  const addBytes = (additional: number) => {
-    bytes += additional;
-    return bytes <= CONTRACT_MAX_JSON_BYTES;
-  };
-  while (pending.length > 0) {
-    const item = pending.pop();
-    if (!item) continue;
+  const addBytes = (count: number) => !options.content || (bytes += count) <= CONTRACT_MAX_JSON_BYTES;
+  while (pending.length) {
+    const item = pending.pop()!;
     const current = item.value;
-    if (current === undefined && item.omitUndefined === true) continue;
-    nodes += 1;
-    if (nodes > CONTRACT_MAX_JSON_NODES) return false;
+    if ((!item.leave || !options.material) && ++nodes > CONTRACT_MAX_JSON_NODES) return false;
+    if (current === undefined && item.omitUndefined) continue;
     if (item.leave) {
       ancestors.delete(current as object);
       continue;
     }
-    if (current === null) {
-      if (!addBytes(4)) return false;
-      continue;
-    }
-    if (typeof current === "boolean") {
-      if (!addBytes(current ? 4 : 5)) return false;
+    if (current === null || typeof current === "boolean") {
+      if (!addBytes(current === null ? 4 : current ? 4 : 5)) return false;
       continue;
     }
     if (typeof current === "string") {
-      if (!addBytes(serializedJsonStringBytes(current))) return false;
+      if (options.content ? !addBytes(serializedJsonStringBytes(current)) : current.length > CONTRACT_MAX_STRING_LENGTH) return false;
       continue;
     }
     if (typeof current === "number") {
-      if (!Number.isFinite(current)) return false;
-      if (!addBytes(JSON.stringify(current).length)) return false;
+      if (!Number.isFinite(current) || !addBytes(JSON.stringify(current).length)) return false;
       continue;
     }
-    if (typeof current !== "object" || item.depth >= CONTRACT_MAX_JSON_DEPTH) {
-      return false;
-    }
-    if (ancestors.has(current)) return false;
+    if (typeof current !== "object" || item.depth >= CONTRACT_MAX_JSON_DEPTH || ancestors.has(current)) return false;
     ancestors.add(current);
     pending.push({ value: current, depth: item.depth, leave: true });
-    if (Array.isArray(current)) {
-      if (current.length > CONTRACT_MAX_ARRAY_LENGTH) return false;
-      if (!addBytes(2 + Math.max(current.length - 1, 0))) return false;
-      const prototype = Object.getPrototypeOf(current);
-      if (prototype !== Array.prototype && prototype !== null) return false;
-      const keys = Reflect.ownKeys(current);
-      const entryKeys = keys.filter((key) => key !== "length");
-      if (entryKeys.length !== current.length) return false;
-      if (entryKeys.some((key) => {
-        if (typeof key !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(key)) return true;
-        const index = Number(key);
-        return !Number.isSafeInteger(index) || index < 0 || index >= current.length || index >= 4_294_967_295;
-      })) {
-        return false;
-      }
-      for (const key of entryKeys) {
+    const array = Array.isArray(current);
+    if (array && current.length > CONTRACT_MAX_ARRAY_LENGTH) return false;
+    const prototype = Object.getPrototypeOf(current);
+    if ((!array && prototype !== Object.prototype && prototype !== null) ||
+        (array && options.content && prototype !== Array.prototype && prototype !== null)) return false;
+    if (options.content || options.dataPropertiesOnly) {
+      const keys = Reflect.ownKeys(current).filter((key) => !array || key !== "length");
+      if (array ? keys.length !== current.length : keys.length > CONTRACT_MAX_MAP_ENTRIES) return false;
+      let entries = 0;
+      for (const key of keys) {
+        if (typeof key !== "string" || (!array && key.length > CONTRACT_MAX_IDENTIFIER_LENGTH)) return false;
+        if (array && (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= current.length || Number(key) >= 4_294_967_295)) return false;
         const descriptor = Object.getOwnPropertyDescriptor(current, key);
-        if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) return false;
+        if (!descriptor?.enumerable || !("value" in descriptor)) return false;
+        if (!array && descriptor.value === undefined && options.omitUndefinedObjectFields) {
+          if (++nodes > CONTRACT_MAX_JSON_NODES) return false;
+          continue;
+        }
+        if (++entries > (array ? CONTRACT_MAX_ARRAY_LENGTH : CONTRACT_MAX_MAP_ENTRIES)) return false;
+        if (!array && !addBytes(serializedJsonStringBytes(key) + 1)) return false;
         pending.push({ value: descriptor.value, depth: item.depth + 1 });
       }
-      continue;
-    }
-    const prototype = Object.getPrototypeOf(current);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    const entries: Array<[string, PropertyDescriptor]> = [];
-    for (const key of Reflect.ownKeys(current)) {
-      if (typeof key !== "string" || key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) return false;
-      const descriptor = Object.getOwnPropertyDescriptor(current, key);
-      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) return false;
-      if (descriptor.value === undefined && omitUndefinedObjectFields) continue;
-      entries.push([key, descriptor]);
-      if (entries.length > CONTRACT_MAX_MAP_ENTRIES) return false;
-    }
-    if (!addBytes(2 + Math.max(entries.length - 1, 0))) return false;
-    for (const [key, descriptor] of entries) {
-      if (!addBytes(serializedJsonStringBytes(key) + 1)) return false;
-      pending.push({
-        value: descriptor.value,
-        depth: item.depth + 1,
-        omitUndefined: omitUndefinedObjectFields,
-      });
-    }
-  }
-  return true;
-}
-
-/** Validate digest input while matching JSON's omission of undefined object fields. */
-export function isBoundedJsonMaterial(value: unknown): boolean {
-  const pending: Array<{
-    value: unknown;
-    depth: number;
-    omitUndefined?: boolean;
-    leave?: boolean;
-  }> = [{ value, depth: 0 }];
-  const ancestors = new Set<object>();
-  let nodes = 0;
-  while (pending.length > 0) {
-    const item = pending.pop();
-    if (!item) continue;
-    if (item.leave) {
-      ancestors.delete(item.value as object);
-      continue;
-    }
-    if (item.value === undefined) {
-      if (item.omitUndefined === true) continue;
-      return false;
-    }
-    nodes += 1;
-    if (nodes > CONTRACT_MAX_JSON_NODES) return false;
-    const current = item.value;
-    if (current === null || typeof current === "boolean") continue;
-    if (typeof current === "string") {
-      if (current.length > CONTRACT_MAX_STRING_LENGTH) return false;
-      continue;
-    }
-    if (typeof current === "number") {
-      if (!Number.isFinite(current)) return false;
-      continue;
-    }
-    if (typeof current !== "object" || item.depth >= CONTRACT_MAX_JSON_DEPTH) {
-      return false;
-    }
-    if (ancestors.has(current)) return false;
-    ancestors.add(current);
-    pending.push({ value: current, depth: item.depth, leave: true });
-    if (Array.isArray(current)) {
-      if (current.length > CONTRACT_MAX_ARRAY_LENGTH) return false;
-      for (const entry of current) {
-        pending.push({ value: entry, depth: item.depth + 1 });
+      if (!addBytes(2 + Math.max(entries - 1, 0))) return false;
+    } else if (array) {
+      for (const entry of current) pending.push({ value: entry, depth: item.depth + 1 });
+    } else {
+      const keys = Object.keys(current);
+      if (keys.length > CONTRACT_MAX_MAP_ENTRIES) return false;
+      for (const key of keys) {
+        if (key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) return false;
+        pending.push({
+          value: (current as Record<string, unknown>)[key],
+          depth: item.depth + 1,
+          omitUndefined: options.omitUndefinedObjectFields,
+        });
       }
-      continue;
-    }
-    const prototype = Object.getPrototypeOf(current);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    const keys = Object.keys(current);
-    if (keys.length > CONTRACT_MAX_MAP_ENTRIES) return false;
-    for (const key of keys) {
-      if (key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) return false;
-      pending.push({
-        value: (current as Record<string, unknown>)[key],
-        depth: item.depth + 1,
-        omitUndefined: true,
-      });
     }
   }
   return true;

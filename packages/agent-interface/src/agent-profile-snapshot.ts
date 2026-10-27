@@ -11,7 +11,7 @@ import { agentProfileSchema } from "./profile-schema.js";
  * existing canonical profile JSON domain fail instead of becoming mutable state.
  */
 export function snapshotAgentProfile(value: unknown): AgentProfile {
-  const parsed = agentProfileSchema.parse(structuredClone(value));
+  const parsed = structuredClone(agentProfileSchema.parse(value));
   canonicalAgentProfileValue(parsed);
   return deepFreeze(parsed);
 }
