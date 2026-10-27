@@ -66,14 +66,10 @@ function normalizeAgentProfileValue(
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor) return refuse("cannot be a sparse array hole", [...path, key]);
     if (!("value" in descriptor)) return refuse("must be a data property", [...path, key]);
-    return normalizeAgentProfileValue(descriptor.value, [...path, key], nextAncestors, bounds);
+    const normalized = normalizeAgentProfileValue(descriptor.value, [...path, key], nextAncestors, bounds);
+    return normalized === undefined && typeof key === "number" ? refuse("cannot be undefined", [...path, key]) : normalized;
   };
-  if (Array.isArray(value)) {
-    return Array.from({ length: value.length }, (_, index) => {
-      const normalized = entry(index);
-      return normalized === undefined ? refuse("cannot be undefined", [...path, index]) : normalized;
-    });
-  }
+  if (Array.isArray(value)) return Array.from({ length: value.length }, (_, index) => entry(index)!);
   const material: Record<string, AgentCandidateJsonValue> = Object.create(null);
   for (const key of Object.keys(value)) {
     if (!isWellFormedUnicode(key)) refuse("has a record key that is not valid Unicode");
