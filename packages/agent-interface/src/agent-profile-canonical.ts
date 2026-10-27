@@ -31,8 +31,9 @@ export function canonicalAgentProfileValue(
 
 /**
  * Throw the path-specific reason a value refused by the bounded admission walker is
- * not profile JSON. Reads no accessor and stops at the same contract node and depth
- * bounds, so hostile input stays cheap; returns when only a size bound failed.
+ * not profile JSON. Reads no accessor and throws at the contract node and depth
+ * bounds, so hostile input stays cheap; returns only when the refusal was a bound
+ * this walker does not model, such as string or entry length.
  */
 export function assertAgentProfileValue(value: unknown, path: ProfilePath): void {
   normalizeAgentProfileValue(value, path, new Set<object>(), { nodes: CONTRACT_MAX_JSON_NODES, base: path.length });

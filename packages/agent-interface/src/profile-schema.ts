@@ -35,7 +35,7 @@ import {
   looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
 import { harnessTypeSchema } from "./harness.js";
-import { assertAgentProfileValue, canonicalAgentProfileJson } from "./agent-profile-canonical.js";
+import { AgentProfileValueError, assertAgentProfileValue, canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 import {
   harnessHonorsEffort,
   harnessHonorsModel,
@@ -49,10 +49,17 @@ import {
   type SandboxSizePreset,
 } from "./sandbox-size.js";
 
-const profileOpaqueValueSchema = z.custom<unknown>(
-  (value) => value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true }),
-  { message: "profile metadata exceeds contract bounds or is not portable JSON" },
-).transform((value) => structuredClone(value));
+const profileOpaqueValueSchema = z.unknown().transform((value, context) => {
+  if (value === undefined || isBoundedJsonMaterial(value, { dataPropertiesOnly: true })) return structuredClone(value);
+  try {
+    assertAgentProfileValue(value, []);
+    context.addIssue({ code: "custom", message: "profile metadata exceeds contract bounds or is not portable JSON" });
+  } catch (error) {
+    if (!(error instanceof AgentProfileValueError)) throw error;
+    context.addIssue({ code: "custom", path: [...error.path], message: error.message });
+  }
+  return z.NEVER;
+});
 export const agentProfilePermissionValueSchema = z.enum([
   "allow",
   "deny",
