@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 2.0.2
+
+### Patch Changes
+
+- a10c10e: Raise the `@tangle-network/agent-interface` floor to `^5.10.2` (bounded profile admission, Zod 54404), so an install whose lock still holds an earlier Interface fails instead of resolving silently.
+
 ## 2.0.1
 
 ### Patch Changes
