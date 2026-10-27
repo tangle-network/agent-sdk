@@ -55,7 +55,7 @@
     "@tangle-network/agent-interface": "^5.7.1"
   },
   "peerDependencies": {
-    "@tangle-network/sandbox": ">=0.60.88 <1.0.0"
+    "@tangle-network/sandbox": ">=0.60.88 <2.0.0"
   },
   "peerDependenciesMeta": {
     "@tangle-network/sandbox": {
