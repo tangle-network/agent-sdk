@@ -67,10 +67,10 @@ describe("packed Tangle exact-session control", () => {
       manifestOf("@tangle-network/agent-provider-tangle")
         .peerDependencies as Record<string, string>
     )["@tangle-network/sandbox"];
-    // The packed range always names one floor, ">=X <1.0.0". Reading the floor
+    // The packed range always names one floor, ">=X <2.0.0". Reading the floor
     // keeps this check on the published contract instead of a literal that
     // drifts every time the provider raises its Sandbox requirement.
-    const floor = /^>=(\d+)\.(\d+)\.(\d+) <1\.0\.0$/.exec(peerRange);
+    const floor = /^>=(\d+)\.(\d+)\.(\d+) <2\.0\.0$/.exec(peerRange);
     expect(floor).not.toBeNull();
     const installed = /^(\d+)\.(\d+)\.(\d+)/.exec(
       String(manifestOf("@tangle-network/sandbox").version),
