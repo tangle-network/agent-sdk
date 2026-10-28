@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.5.3
+
+### Patch Changes
+
+- 607d8dd: Recover the authoritative control reference from session status when an older Sandbox SDK omits it from an exact reused-dispatch receipt, preserving all original identity and request-digest checks.
+- Updated dependencies [ec369ee]
+  - @tangle-network/agent-interface@5.10.3
+
 ## 4.5.2
 
 ### Patch Changes
