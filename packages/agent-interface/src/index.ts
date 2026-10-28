@@ -143,3 +143,5 @@ export * from "./native-session-event.js";
 export * from "./learning-state.js";
 
 export * from "./proxy-secrets.js";
+
+export * from "./speaker.js";
