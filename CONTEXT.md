@@ -1,5 +1,7 @@
 # Portable context
 
+**Interaction snapshot.** A current owner read separates outstanding requests from durable response delivery states. An empty request list does not prove delivery, resolution, or owner availability. _Avoid_: deriving pending decisions from transcript text or treating a recorded response as a native effect.
+
 **Seat specification.** A command selector written as `harness/model[@effort]`, parsed into canonical harness identity, unchanged model text, resolved-or-unknown provider and optional reasoning effort. It names no account or credential and is distinct from an authored profile's account-selection stage.
 
 **Local plan.** `PortableContextPlan` contains the complete immutable source, every inclusion or omission, and the selected output. The caller retains it for review and acceptance. Its full source never belongs in a destination transfer request.

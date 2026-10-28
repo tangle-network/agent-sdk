@@ -12,7 +12,7 @@ import { agentProfileSchema } from "./profile-schema.js";
 import type { InputPart } from "./parts.js";
 import type { StreamEvent } from "./stream-events.js";
 import { TokenUsageSchema, type TokenUsage } from "./execution-types.js";
-import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type RequestedInteractions } from "./interaction.js";
+import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type InteractionStateReader, type RequestedInteractions } from "./interaction.js";
 import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type ContextTransferResult, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentExactRunControlRef, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
 import type {
@@ -295,7 +295,7 @@ export interface AgentEnvironmentEvent {
   providerEvent?: unknown;
 }
 
-export interface AgentSession {
+export interface AgentSession extends InteractionStateReader {
   readonly id: string;
   readonly controlRef?: AgentRunControlRef;
   status(options?: { signal?: AbortSignal }): Promise<AgentSessionStatus | null>;
