@@ -4,6 +4,7 @@
  * leaves behind. A writer process stands in for a running OpenCode: it holds the store open with a
  * child session committed only to the write-ahead log.
  */
+import { DatabaseSync } from 'node:sqlite'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
@@ -11,7 +12,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileS
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { opencodeReader, opencodeSessionsInStore, type HarnessSession } from '../src/index.js'
+import { listCapture, opencodeReader, opencodeSessionsInStore, type HarnessSession, type NativeSessionCopy } from '../src/index.js'
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'opencode', 'opencode.db')
 const ROOT = 'ses_ef7195eb2ffeZVueR3r0KnCUON'
@@ -150,4 +151,22 @@ describe('OpenCode store read in place', () => {
     expect(result.session.messages).toEqual(live.messages)
     expect(result.session.integrity.sourceFiles[0]!.sha256).toBe(live.integrity.sourceFiles[0]!.sha256)
   })
+})
+
+
+it('capture ownership includes deep SQLite descendants in newest-first order and excludes independent roots', async () => {
+  const { home: h, dir } = home(), db = new DatabaseSync(join(dir, 'opencode.db'))
+  try {
+    db.prepare('UPDATE session SET time_updated=1 WHERE id=?').run(ROOT)
+    const add = db.prepare('INSERT INTO session(id,project_id,slug,directory,title,version,time_created,time_updated,parent_id) SELECT ?,project_id,slug,directory,title,version,time_created,?,? FROM session WHERE id=?')
+    add.run('child', 2, ROOT, ROOT); add.run('grandchild', 3, 'child', ROOT); add.run('independent', 4, null, ROOT)
+  } finally { db.close() }
+  const copy = { harness: 'opencode', format: 'opencode.sqlite', executionId: 'exec-family', attempt: 1, nativeSessionId: ROOT, files: [{ path: '.local/share/opencode/opencode.db' }] } as NativeSessionCopy
+  const listing = await listCapture(h, { schema: 'tangle.raw-evidence-archive.v2', nativeSessions: [copy] })
+  expect(listing.missing).toEqual([])
+  expect(new Set(listing.sessions.map(s => s.ref.nativeSessionId))).toEqual(new Set([ROOT, 'child', 'grandchild']))
+  expect(listing.sessions.filter(s => s.recordedId).map(s => s.ref.nativeSessionId)).toEqual([ROOT])
+  const absent = await listCapture(h, { schema: 'tangle.raw-evidence-archive.v2', nativeSessions: [{ ...copy, nativeSessionId: 'absent' }] })
+  expect(absent.sessions).toEqual([])
+  expect(absent.missing[0]?.reason).toBe('native_session_not_in_store')
 })
