@@ -5,6 +5,12 @@ agents, the sidecar, and provider adapters: capabilities, agent profiles,
 message parts, and harness descriptors. This is the canonical home for those
 shapes; higher-level packages import from here rather than redefining them.
 
+`partitionBySpeaker` and its `Speaker`, `SpeakerPart`, `SpeakerState` and
+`SpeakerSection` types are available from the root and the server-safe `/speaker`
+entry. Stored parts follow their preceding speaker; explicit live `speaker` tags
+win over position. Repeated headers update the same section, unowned parts come
+first, and input objects retain their identity. UI chat re-exports this contract.
+
 ## Authored subscription seats
 
 `AgentProfile.seats` is an optional ordered chain for continuing one logical agent

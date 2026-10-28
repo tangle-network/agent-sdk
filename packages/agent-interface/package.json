@@ -54,6 +54,10 @@
     "./learning-state": {
       "import": "./dist/learning-state.js",
       "types": "./src/learning-state.ts"
+    },
+    "./speaker": {
+      "import": "./dist/speaker.js",
+      "types": "./src/speaker.ts"
     }
   },
   "repository": {
@@ -126,6 +130,11 @@
         "import": "./dist/learning-state.js",
         "types": "./dist/learning-state.d.ts",
         "default": "./dist/learning-state.js"
+      },
+      "./speaker": {
+        "import": "./dist/speaker.js",
+        "types": "./dist/speaker.d.ts",
+        "default": "./dist/speaker.js"
       }
     }
   },
