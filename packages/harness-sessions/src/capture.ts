@@ -1,14 +1,6 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Reading the native sessions in a capture.
- *
- * The sidecar's raw-evidence archive v2 lists each execution's native session copies in
- * `nativeSessions[]`, with the harness, the session id recorded at spawn, the copy kind and the
- * files. A capture taken before v2 (provider-tangle's retention layout, `tangle-native-session-
- * evidence.v1`) has no such list: it holds each execution's private runtime HOME under
- * `__retention__/sessions/<sandbox session>/native/<source>/<root scope>/`, and its manifest names
- * the harness and, once an attempt settled, the native session ids. Both are read through the
- * store layouts the readers declare; no consumer matches session paths itself.
+/** Read sidecar v2 native copies and historical provider retention through their
+ * declared stores, preserving recorded execution identities and native families.
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -96,9 +88,14 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       }
       const path = join(archiveDir, db.path)
       const refs = await opencodeSessionsInStore(path, null, {})
+      const children = new Map<string, string[]>()
+      for (const ref of refs) if (ref.parentNativeSessionId) {
+        const group = children.get(ref.parentNativeSessionId) ?? []
+        group.push(ref.nativeSessionId); children.set(ref.parentNativeSessionId, group)
+      }
       const ids = new Set([copy.nativeSessionId])
-      // Child sessions of the execution's session live in the same store.
-      for (const ref of refs) if (ref.parentNativeSessionId && ids.has(ref.parentNativeSessionId)) ids.add(ref.nativeSessionId)
+      // Set iteration visits newly added children once, independent of store order.
+      for (const id of ids) for (const child of children.get(id) ?? []) ids.add(child)
       for (const ref of refs.filter((r) => ids.has(r.nativeSessionId))) {
         listing.sessions.push(captured({ ...ref, truncated }, copy, ref.nativeSessionId === copy.nativeSessionId, archiveDir, path))
       }
