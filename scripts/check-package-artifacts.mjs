@@ -36,19 +36,16 @@ function runProcess(command, args, options = {}) {
 
 function run(command, args, options = {}) {
   const result = runProcess(command, args, options);
-  if (result.status !== 0) {
-    throw new Error(
-      [
-        `${command} ${args.join(" ")} exited ${result.status}`,
-        result.stdout.trim(),
-        result.stderr.trim(),
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }
+  const failure = [`${command} ${args.join(" ")} exited ${result.status}`, result.stdout.trim(), result.stderr.trim()];
+  if (result.status !== 0) throw new Error(failure.filter(Boolean).join("\n"));
   return result.stdout.trim();
 }
+
+// agent-runtime's release admission, at a reviewed revision, on each exact tarball: it refuses a
+// major that names no incompatibility and a release on a superseded line.
+const ADMIT = `set -e; git init -q; git fetch -q --depth=1 https://github.com/tangle-network/agent-runtime.git 85422a7f723fd137963ab25355f0fdedcc8ac4d9
+git checkout -q FETCH_HEAD -- scripts; npm install -s --no-save --no-package-lock oxc-parser@0.155.0
+for tarball; do node scripts/check-version-bump.mjs --archive "$tarball"; done`;
 
 // Verify record-key semantics through the installed package, not workspace aliases.
 function assertInstalledProfileRecordKeys(consumerDirectory) {
@@ -571,7 +568,8 @@ try {
   const consumersRoot = join(temporaryRoot, "consumers");
   const repackedTarballs = join(temporaryRoot, "repacked");
   const npmCache = join(temporaryRoot, "npm-cache");
-  for (const directory of [sourceTarballs, consumersRoot, repackedTarballs]) {
+  const admission = join(temporaryRoot, "admission");
+  for (const directory of [sourceTarballs, consumersRoot, repackedTarballs, admission]) {
     mkdirSync(directory, { recursive: true });
   }
 
@@ -587,6 +585,7 @@ try {
     }
     tarballs.set(entry.manifest.name, packed.filename);
   }
+  console.log(run("bash", ["-c", ADMIT, "admit", ...tarballs.values()], { cwd: admission }));
 
   const npmEnvironment = {
     npm_config_audit: "false",

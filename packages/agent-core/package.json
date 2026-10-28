@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Core transport interfaces, event utilities, auth, SSE parsing, and resilience primitives for talking to Tangle agents",
   "type": "module",
   "license": "MIT",
@@ -221,7 +221,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.8.1",
+    "@tangle-network/agent-interface": "^5.10.2",
     "@tangle-network/agent-trace-contract": "^2.1.0",
     "zod": "catalog:"
   },

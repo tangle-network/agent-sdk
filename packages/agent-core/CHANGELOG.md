@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 1.0.1
+
+### Patch Changes
+
+- a10c10e: Raise the `@tangle-network/agent-interface` floor to `^5.10.2` (bounded profile admission, Zod 54404), so an install whose lock still holds an earlier Interface fails instead of resolving silently.
+
 ## 1.0.0
 
 ### Major Changes

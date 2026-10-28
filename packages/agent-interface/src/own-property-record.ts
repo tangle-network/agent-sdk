@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { CONTRACT_MAX_IDENTIFIER_LENGTH, CONTRACT_MAX_MAP_ENTRIES } from "./contract-limits.js";
 import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
+import { AgentProfileValueError } from "./agent-profile-canonical.js";
 
 /**
  * Zod records currently assign parsed values onto an ordinary object. The
@@ -10,9 +12,48 @@ import { isWellFormedUnicode } from "./agent-candidate-schema-common.js";
  */
 export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
   valueSchema: ValueSchema,
+  { maxEntries = CONTRACT_MAX_MAP_ENTRIES, prepareValue }: {
+    maxEntries?: number;
+    prepareValue?: (key: string, value: unknown) => unknown;
+  } = {},
 ): z.ZodType<Record<string, z.output<ValueSchema>>> {
   return z.preprocess(
-    encodeOwnRecordKeys,
+    (value, context) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return [];
+      let entries = 0;
+      for (const key in value) {
+        if (!Object.hasOwn(value, key)) continue;
+        if (++entries > maxEntries || key.length > CONTRACT_MAX_IDENTIFIER_LENGTH) {
+          context.addIssue({ code: "custom", message: "record exceeds the contract bounds" });
+          return z.NEVER;
+        }
+      }
+      const encoded: Record<string, unknown> = Object.create(null);
+      for (const key of Object.keys(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !("value" in descriptor)) {
+          context.addIssue({ code: "custom", message: "record entries must be data properties" });
+          return z.NEVER;
+        }
+        let entry: unknown;
+        try {
+          entry = prepareValue ? prepareValue(key, descriptor.value) : descriptor.value;
+        } catch (error) {
+          // Only a profile-value refusal is a validation issue; any other throw is a defect.
+          if (!(error instanceof AgentProfileValueError)) throw error;
+          context.addIssue({ code: "custom", path: [...error.path], message: error.message });
+          return z.NEVER;
+        }
+        if (entry === z.NEVER) {
+          context.addIssue({ code: "custom", message: "record value exceeds the contract bounds or is not portable JSON" });
+          return z.NEVER;
+        }
+        encoded[encodeRecordKey(key)] = entry;
+      }
+      return encoded;
+    },
     z.record(
       z
         .string()
@@ -21,7 +62,13 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
           "record keys must contain valid Unicode",
         ),
       valueSchema,
-    ).transform((record) => {
+    // Issues carry the encoded key Zod saw; report the caller's key. `when` runs this after value issues too.
+    ).superRefine((_record, context) => {
+      for (const issue of context.issues) {
+        const key = issue.path?.[0];
+        if (typeof key === "string" && /^[ui](?:[0-9a-f]{4})*$/.test(key)) issue.path![0] = decodeRecordKey(key);
+      }
+    }, { when: () => true }).transform((record) => {
       const restored: Record<string, z.output<ValueSchema>> = {};
       for (const [encodedKey, value] of Object.entries(record)) {
         Object.defineProperty(restored, decodeRecordKey(encodedKey), {
@@ -34,19 +81,6 @@ export function ownPropertyRecordSchema<ValueSchema extends z.ZodType>(
       return restored;
     }),
   ) as z.ZodType<Record<string, z.output<ValueSchema>>>;
-}
-
-function encodeOwnRecordKeys(value: unknown): unknown {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return [];
-  const encoded: Record<string, unknown> = Object.create(null);
-  for (const [key, entry] of Object.entries(value)) {
-    encoded[encodeRecordKey(key)] = entry;
-  }
-  return encoded;
 }
 
 function encodeRecordKey(value: string): string {

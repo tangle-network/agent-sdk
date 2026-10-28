@@ -1,5 +1,25 @@
 # @tangle-network/agent-interface
 
+## 5.10.2
+
+### Patch Changes
+
+- 20cdccc: Profile metadata bounds strings by the 1 MiB serialized budget instead of 16 KiB per string, so metadata that copies a valid profile (such as a graph node with a large inline file) is admitted again; node, depth, entry and accessor bounds are unchanged.
+
+## 5.10.1
+
+### Patch Changes
+
+- 76e55a3: Validation issues inside own-property records now report the caller's record key in their path instead of the internal hex-encoded key.
+
+## 5.10.0
+
+### Minor Changes
+
+- 0d05379: Admit profile collections before element validation and record-key copying using the shared contract limits. Preserve typed training and knowledge limits, strict-object schema APIs and canonical identity. Snapshot validation now precedes the detached copy; opaque metadata must be bounded portable data without accessors.
+  
+  `canonicalAgentProfileValue`, `canonicalAgentProfileJson` and `canonicalAgentProfileDigest` now refuse accessor properties instead of reading them, and every profile-value refusal is an exported `AgentProfileValueError` carrying the offending path; profile metadata parse issues report that nested path and reason.
+
 ## 5.9.0
 
 ### Minor Changes

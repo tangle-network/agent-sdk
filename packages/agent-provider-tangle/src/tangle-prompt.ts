@@ -27,6 +27,7 @@ import {
   contextTransferResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
+import { TangleCredentialCapacityError } from "./model-credential-capacity.js";
 import {
   assertBoundedJson,
   boundedString,
@@ -805,6 +806,17 @@ export function agentTurnResultFromPromptRecord(
     )
   ) {
     throw new Error("Tangle prompt result context receipt does not match its request");
+  }
+  // The harness's own subscription quota is spent: the same typed refusal the
+  // credential owner gives before dispatch, with when it resets.
+  if (!record.success && record.errorCode === "provider_quota_exhausted") {
+    const resetAt = record.resetAt;
+    throw new TangleCredentialCapacityError(
+      "provider_quota_exhausted",
+      "exhausted",
+      typeof resetAt === "string" && new Date(resetAt).toISOString() === resetAt ? resetAt : undefined,
+      429,
+    );
   }
   const usage = tokenUsageFromData(record);
   const awaiting = AWAITING_STATUSES.has(record.status);
