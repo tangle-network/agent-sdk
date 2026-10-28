@@ -43,7 +43,7 @@ function run(command, args, options = {}) {
 
 // agent-runtime's release admission, at a reviewed revision, on each exact tarball: it refuses a
 // major that names no incompatibility and a release on a superseded line.
-const ADMIT = `set -e; git init -q; git fetch -q --depth=1 https://github.com/tangle-network/agent-runtime.git 85422a7f723fd137963ab25355f0fdedcc8ac4d9
+const ADMIT = `set -e; git init -q; git fetch -q --depth=1 https://github.com/tangle-network/agent-runtime.git 7f5928447fb1cc89b23fd34b16494639d61223a5
 git checkout -q FETCH_HEAD -- scripts; npm install -s --no-save --no-package-lock oxc-parser@0.155.0
 for tarball; do node scripts/check-version-bump.mjs --archive "$tarball"; done`;
 
