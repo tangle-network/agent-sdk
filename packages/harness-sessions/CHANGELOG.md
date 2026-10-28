@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.2
+
+### Patch Changes
+
+- 35a02ee: Select every descendant of a recorded OpenCode native root regardless of SQLite update order. Preserve missing-root diagnostics and exclude independent roots.
+
 ## 1.0.1
 
 ### Patch Changes
