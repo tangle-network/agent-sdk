@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.3
+
+### Patch Changes
+
+- ec369ee: Share server-safe transcript speaker grouping with UI rendering and history projection.
+
 ## 5.10.2
 
 ### Patch Changes
