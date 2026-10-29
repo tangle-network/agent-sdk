@@ -31,6 +31,7 @@ import {
 } from "./retained-run-state.js";
 import {
   CliBridgeRequestRejectedError,
+  openCliBridgeStream,
   streamCliBridgeTurn,
 } from "./retained-stream.js";
 import {
@@ -226,32 +227,9 @@ export async function dispatchCliBridgeTurn(
         },
       );
     } else {
-      const response = await transport.fetch(
-        `${trimSlash(options.baseUrl)}/v1/chat/completions`,
-        {
-          method: "POST",
-          headers: {
-            ...requestHeaders(options),
-            accept: "text/event-stream",
-            ...(run.sessionId ? { "x-session-id": run.sessionId } : {}),
-          },
-          body: run.requestBody,
-          ...(signal ? { signal } : {}),
-        },
-      );
-      if (!response.ok) {
-        let detail = "request rejected";
-        try {
-          detail = await readBoundedCliBridgeResponse(
-            response,
-            MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
-            signal,
-          );
-        } catch {
-          // The HTTP status already proves this request was rejected.
-        }
-        throw new CliBridgeRequestRejectedError(response.status, detail);
-      }
+      const response = await openCliBridgeStream([
+        options, { ...prepared.turn, sessionId: run.sessionId }, run.requestBody, transport, run.id, undefined, signal,
+      ]);
       accepted = true;
       if (!response.body) throw new Error("cli-bridge response body is empty");
       responseBody = response.body;

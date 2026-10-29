@@ -63,54 +63,10 @@ export async function* streamCliBridgeTurn(
   readAuthoritativeRun?: () => Promise<CliBridgeRunSnapshot | null>,
   validateCanonicalEvent?: (event: AgentEnvironmentEvent) => void,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  const reconnect = requestBody === undefined;
   const replay = retainedReplayRequest(lastEventId);
-  const response = await transport.fetch(
-    reconnect
-      ? `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(runId)}/events`
-      : `${trimSlash(options.baseUrl)}/v1/chat/completions`,
-    {
-      method: reconnect ? "GET" : "POST",
-      headers: {
-        ...requestHeaders(options),
-        accept: "text/event-stream",
-        ...(!reconnect && turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
-        ...(replay.serverCursor === undefined
-          ? {}
-          : { "last-event-id": replay.serverCursor }),
-      },
-      ...(requestBody === undefined ? {} : { body: requestBody }),
-      ...(signal ? { signal } : {}),
-    },
+  const response = await openCliBridgeStream(
+    [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse],
   );
-  if (!response.ok) {
-    let detail = "request rejected";
-    try {
-      detail = await readBoundedCliBridgeResponse(
-        response,
-        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
-        signal,
-      );
-    } catch {
-      // The HTTP status already proves this request was rejected.
-    }
-    throw new CliBridgeRequestRejectedError(response.status, detail);
-  }
-  try {
-    onResponse?.(response);
-  } catch (error) {
-    if (response.body) {
-      try {
-        await detachCliBridgeReader(response.body);
-      } catch (detachError) {
-        throw new AggregateError(
-          [error, detachError],
-          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
-        );
-      }
-    }
-    throw error;
-  }
   if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
@@ -335,6 +291,61 @@ export async function* streamCliBridgeTurn(
       cancelledTerminalSeen, terminalFrame, text, modelRequestsKnown, observedModelRequests, servedModel, systemFingerprint },
     replay.anchor,
   );
+}
+
+/** Both dispatch and live readers use the same admission and bounded HTTP refusal. */
+export async function openCliBridgeStream(
+  [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse]: Parameters<typeof streamCliBridgeTurn>,
+): Promise<CliBridgeResponse> {
+  const reconnect = requestBody === undefined;
+  const replay = retainedReplayRequest(lastEventId);
+  const response = await transport.fetch(
+    reconnect
+      ? `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(runId)}/events`
+      : `${trimSlash(options.baseUrl)}/v1/chat/completions`,
+    {
+      method: reconnect ? "GET" : "POST",
+      headers: {
+        ...requestHeaders(options),
+        accept: "text/event-stream",
+        ...(!reconnect && turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
+        ...(replay.serverCursor === undefined
+          ? {}
+          : { "last-event-id": replay.serverCursor }),
+      },
+      ...(requestBody === undefined ? {} : { body: requestBody }),
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok) {
+    let detail = "request rejected";
+    try {
+      detail = await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
+      );
+    } catch {
+      // The HTTP status already proves this request was rejected.
+    }
+    throw new CliBridgeRequestRejectedError(response.status, detail);
+  }
+  try {
+    onResponse?.(response);
+  } catch (error) {
+    if (response.body) {
+      try {
+        await detachCliBridgeReader(response.body);
+      } catch (detachError) {
+        throw new AggregateError(
+          [error, detachError],
+          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+        );
+      }
+    }
+    throw error;
+  }
+  return response;
 }
 
 /** Confirm terminal authority before releasing the final frame and its cumulative receipt. */
