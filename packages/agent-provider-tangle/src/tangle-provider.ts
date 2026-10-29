@@ -31,6 +31,7 @@ import {
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
 import { captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
+import { normalizeTangleBackend } from "./tangle-prompt.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
   awaitSandboxRunning,
@@ -215,7 +216,7 @@ export function createTangleProvider(
     if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
       throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     }
-    const { proxySecrets: _legacy, secrets: selection, ...mapped } = mappedInput;
+    const { proxySecrets: _legacy, secrets: selection, ...mapped } = { ...mappedInput, backend: normalizeTangleBackend(mappedInput.backend, true) };
     const secrets = sandboxSecretBindings(selection, selectedProxySecrets, mapped.env);
     const mappedOptions = { ...mapped, ...(secrets === undefined ? {} : { secrets }) };
     for (const entry of requestedSecrets ?? []) {
@@ -225,8 +226,7 @@ export function createTangleProvider(
       }
     }
     assertMappedCreateOptions(mappedOptions);
-    // A custom mapper builds its own backend; requested routing must survive it.
-    const mappedRouting = mappedOptions.backend?.routing ?? mappedOptions.backend?.model?.routing;
+    const mappedRouting = mappedOptions.backend?.model?.routing;
     if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
       throw new Error("Tangle mapped create options must carry exactly the requested providerOptions.routing");
     }

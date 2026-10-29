@@ -20,7 +20,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import {
   agentProfileSchema,
-  canonicalAgentProfileDigest,
+  canonicalAgentProfileDigest, canonicalCandidateDigest,
   boundedEventContentRecordSchema,
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
@@ -157,47 +157,11 @@ export async function preparePromptOptions(
   return { ...options, sessionId, backend, expectedPublicProfileRequestDigest, expectedSecretProfileReceipt };
 }
 
-/**
- * The `BackendConfig` fields this adapter forwards to Sandbox prompt options.
- *
- * A turn may carry any of them and nothing else. An undeclared field is
- * refused instead of forwarded, because the SDK drops what it does not
- * declare: the turn would then run on different settings with no error
- * anywhere, which is the silent substitution the SDK's own `model` field
- * exists to prevent.
- */
+/** Canonical backend controls plus the legacy model aliases folded below. */
 const SANDBOX_BACKEND_FIELD_LIST = [
-  "runtimeAttachments",
-  "runtimeSecrets",
-  "modelId",
-  "provider",
-  "apiKey",
-  "baseUrl",
-  "maxThinkingTokens",
-  "mode",
-  "apiKeyEnv",
-  "cliAuth",
-  "authMode",
-  "authFiles",
-  "type",
-  "profile",
-  "model",
-  "server",
-  "interactions",
-  "metadata",
-  // Creation-only: the SDK normalizer refuses it on a turn.
-  "routing",
+  "runtimeAttachments", "runtimeSecrets", "type", "profile", "model", "server", "interactions", "metadata",
 ] as const;
 
-const SANDBOX_BACKEND_FIELDS = new Set<string>(SANDBOX_BACKEND_FIELD_LIST);
-
-/**
- * The `BackendConfig["model"]` fields the Sandbox prompt options declare.
- *
- * This is the block that carries per-turn credentials — `authMode: "oauth"`
- * with `authFiles` for a subscription seat — so it is checked field by field
- * rather than passed through as opaque JSON.
- */
 const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
   "provider",
   "model",
@@ -213,16 +177,11 @@ const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
   "routing",
 ] as const;
 
-const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(
-  SANDBOX_BACKEND_MODEL_FIELD_LIST,
-);
+const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(SANDBOX_BACKEND_MODEL_FIELD_LIST);
+const SANDBOX_BACKEND_FIELDS = new Set<string>([...SANDBOX_BACKEND_FIELD_LIST,
+  ...SANDBOX_BACKEND_MODEL_FIELD_LIST.map((field) => field === "model" ? "modelId" : field)]);
 
-/**
- * These lists cover the SDK's field sets, restated as values because a
- * TypeScript type cannot be read at run time. This pin keeps them exact in
- * both directions: a field the SDK adds, renames, or removes fails the build
- * here rather than reaching a caller as a wrong refusal or a silent drop.
- */
+/** SDK canonical fields stay exhaustive; legacy aliases are explicitly projected into model. */
 type Exhaustive<T extends never> = T;
 
 type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
@@ -237,7 +196,7 @@ type FieldDifference<T, Fields extends readonly PropertyKey[]> =
 
 // Each SDK field set must match its runtime allowlist in both directions.
 export type SandboxBackendFieldCoverage = Exhaustive<
-  | FieldDifference<BackendConfig, typeof SANDBOX_BACKEND_FIELD_LIST>
+  | FieldDifference<Omit<BackendConfig, Exclude<(typeof SANDBOX_BACKEND_MODEL_FIELD_LIST)[number], "model"> | "modelId">, typeof SANDBOX_BACKEND_FIELD_LIST>
   | FieldDifference<SandboxBackendModel, typeof SANDBOX_BACKEND_MODEL_FIELD_LIST>
   | FieldDifference<SandboxAuthFile, typeof SANDBOX_AUTH_FILE_FIELD_LIST>
 >;
@@ -266,19 +225,27 @@ export function backendFromTurnProviderOptions(
   return sandboxPromptBackend(providerOptions.backend);
 }
 
-function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
-  const source = plainRecord(value, "Tangle prompt backend options");
-  assertDeclaredFields(source, SANDBOX_BACKEND_FIELDS, "Tangle prompt backend options");
-  // Normalization can omit falsy nested values or replace them with flat fields.
-  // Reject malformed declarations before that loses the caller's input.
-  for (const field of ["model", "server"] as const) {
-    if (source[field] !== undefined) {
-      plainRecord(source[field], `Tangle prompt backend ${field} options`);
-    }
+export function normalizeTangleBackend(value: unknown, allowRouting = false): BackendConfig | undefined {
+  if (value === undefined) return undefined;
+  const source = plainRecord(value, "Tangle backend options"), canonical = { ...source };
+  assertDeclaredFields(source, SANDBOX_BACKEND_FIELDS, "Tangle backend options");
+  const model = source.model === undefined ? {} : { ...plainRecord(source.model, "Tangle backend model") };
+  assertDeclaredFields(model, SANDBOX_BACKEND_MODEL_FIELDS, "Tangle backend model");
+  for (const field of SANDBOX_BACKEND_MODEL_FIELD_LIST) {
+    const alias = field === "model" ? "modelId" : field, selected = source[alias];
+    if (selected === undefined) continue;
+    if (model[field] !== undefined && canonicalCandidateDigest(model[field]) !== canonicalCandidateDigest(selected))
+      throw new Error(`Tangle backend ${alias} conflicts with model.${field}`);
+    model[field] = selected;
+    delete canonical[alias];
   }
-  const present = normalizeRuntimeBackendConfig(source as Partial<BackendConfig>, {
-    allowRuntimeSecrets: true,
-  }) ?? {};
+  if (source.model !== undefined || Object.keys(model).length) canonical.model = model;
+  if (canonical.server !== undefined) plainRecord(canonical.server, "Tangle backend server");
+  return normalizeRuntimeBackendConfig(canonical, { allowRuntimeSecrets: true, allowRouting });
+}
+
+function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
+  const present = normalizeTangleBackend(value) ?? {};
   const backend = {
     ...(present.type === undefined
       ? {}

@@ -17,7 +17,7 @@ const exposed = { name: "READABLE_NAME", exposeInBox: true as const };
 /** Actual Sandbox HTTP transport; this peer checks wire delivery, not proxy enforcement. */
 async function fixture() {
   let baseUrl = "", metadata: unknown;
-  const requests: string[] = [], creates: Record<string, unknown>[] = [], stored = new Map<string, string>();
+  const requests: string[] = [], creates: Record<string, unknown>[] = [], turns: Record<string, unknown>[] = [], stored = new Map<string, string>();
   const info = () => ({
     id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata,
     filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
@@ -44,6 +44,8 @@ async function fixture() {
       response.end(JSON.stringify(info()));
     } else if (path === "/v1/sandboxes/sandbox-bindings") {
       response.end(JSON.stringify(info()));
+    } else if (path.endsWith("/agents/run/stream")) {
+      turns.push(body); response.setHeader("content-type", "text/event-stream"); response.end(`event: result\ndata: ${JSON.stringify({ executionId: body.executionId ?? request.headers["x-execution-id"], success: true, status: "success", response: "fixture", durationMs: 1 })}\n\nevent: done\ndata: {"outcome":{"type":"completed"}}\n\n`);
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false }, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
     } else {
@@ -57,9 +59,8 @@ async function fixture() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
-  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored };
+  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored, turns };
 }
-
 it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("forwards explicit selection modes without inventing consent (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
   const provider = createTangleProvider({ client });
@@ -72,7 +73,6 @@ it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets:
   expect(requests.some((request) => request.endsWith("/egress"))).toBe(false);
   expect(requests).not.toContain("GET /v1/capabilities");
 });
-
 it("lowers authored and runtime declarations onto the same stored host entries", async () => {
   const { client, creates } = await fixture();
   const basic = { ...binding("GIT_TOKEN"), presentation: { type: "basic" as const, username: "git" } };
@@ -87,13 +87,11 @@ it("lowers authored and runtime declarations onto the same stored host entries",
   ]);
   expect(creates[0]).not.toHaveProperty("proxySecrets");
 });
-
 it("deduplicates identical declarations across profile and runtime input", async () => {
   const { client, creates } = await fixture();
   await createTangleProvider({ client }).create({ profile: { ...profile, proxySecrets: [binding()] }, proxySecrets: [binding()] });
   expect(creates[0]!.secrets).toEqual([selected()]);
 });
-
 it.each([
   { ...binding(), methods: ["POST"] },
   { ...binding(), paths: ["/v1/events"] },
@@ -107,7 +105,6 @@ it.each([
   await expect(createTangleProvider({ client }).create({ profile, proxySecrets: [declaration] })).rejects.toThrow(/cannot enforce/);
   expect(creates).toHaveLength(0);
 });
-
 it.each([
   { secrets: [selected()], env: { REPORTS_TOKEN: "inline-readable" } },
   { secrets: ["REPORTS_TOKEN"], proxySecrets: [binding()] },
@@ -120,7 +117,6 @@ it.each([
   await expect(createTangleProvider({ client }).create({ profile, ...input })).rejects.toThrow();
   expect(creates).toHaveLength(0);
 });
-
 it.each([
   { requested: selected(), secrets: undefined }, { requested: selected(), secrets: ["REPORTS_TOKEN"] },
   { requested: selected(), secrets: [{ ...selected(), host: "other.example.com" }] },
@@ -135,7 +131,6 @@ it.each([
   await expect(provider.create({ profile, secrets: [requested] })).rejects.toThrow();
   expect(creates).toHaveLength(0);
 });
-
 it.each([{ secrets: ["REPORTS_TOKEN"] }, { secrets: [{ ...selected(), host: "other.example.com" }] }])(
   "refuses a custom mapper that loses a portable declaration (%j)", async ({ secrets }) => {
     const { client, creates } = await fixture();
@@ -171,13 +166,19 @@ it("refuses value-bearing maps and undeclared host binding fields before allocat
   }
   expect(creates).toHaveLength(0);
 });
-it("normalizes equivalent direct and portable bindings regardless of property order or default header", async () => {
-  const { client, creates } = await fixture();
-  await createTangleProvider({ client }).create({ profile,
-    secrets: [{ host, name: "REPORTS_TOKEN" }], proxySecrets: [binding()],
-  });
-  expect(creates[0]!.secrets).toHaveLength(1);
+it("keeps semantic host identity and legacy model intent canonical across SDK versions", async () => {
+  const { client, creates, turns } = await fixture();
+  const routing = { only: ["fixture-router"], allowFallbacks: false }, model = { provider: "openai", model: "fixture-model", apiKeyEnv: "MODEL_TOKEN", baseUrl: "https://model.example.com" };
+  const environment = await createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "opencode", profile, modelId: model.model, provider: model.provider, apiKeyEnv: model.apiKeyEnv, baseUrl: model.baseUrl, routing }, secrets: [{ name: "REPORTS_TOKEN", host }] }) })
+    .create({ profile, secrets: [{ host, name: "REPORTS_TOKEN" }], proxySecrets: [binding()], providerOptions: { routing } });
   expect(creates[0]!.secrets).toEqual([expect.objectContaining({ name: "REPORTS_TOKEN", host })]);
+  expect(creates[0]!.backend).toMatchObject({ model: { ...model, routing } });
+  for await (const _ of environment.stream({ prompt: "Transport intent only", providerOptions: { backend: { type: "opencode", modelId: model.model, provider: model.provider, apiKeyEnv: model.apiKeyEnv, baseUrl: model.baseUrl } } })) {}
+  expect(turns[0]!.backend).toMatchObject({ model });
+  for (const backend of [{ modelId: "first", model: { model: "other" } }, { routing }, { unsupported: true }]) {
+    await expect((async () => { for await (const _ of environment.stream({ prompt: "Refuse before HTTP", providerOptions: { backend } })) {} })()).rejects.toThrow();
+  }
+  expect(turns).toHaveLength(1);
 });
 
 it("injects lowered portable bindings into a custom mapper's SDK request", async () => {

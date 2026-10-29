@@ -1,6 +1,6 @@
 import type { CliAuthReference } from "@tangle-network/sandbox/auth";
 import type {
-  BackendRegistryEntry,
+  BackendConfig, BackendRegistryEntry,
   BackendRegistryResponse,
   BackendType,
   CreateSandboxOptions,
@@ -65,7 +65,7 @@ export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
-export type TangleCreateSandboxOptions = Omit<CreateSandboxOptions, "secrets"> & { secrets?: "all" | Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>; proxySecrets?: ProxySecretBinding[] };
+export type TangleCreateSandboxOptions = Omit<CreateSandboxOptions, "secrets" | "backend"> & { backend?: BackendConfig & Omit<NonNullable<BackendConfig["model"]>, "model"> & { modelId?: string }; secrets?: "all" | Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>; proxySecrets?: ProxySecretBinding[] };
 
 export interface SandboxClientLike {
   readonly secrets?: AgentEnvironmentProvider["secrets"];
