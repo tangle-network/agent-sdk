@@ -219,12 +219,10 @@ export function environmentEventFromSandboxEvent(
   const terminal = record.type === "result" || record.type === "done";
   const sourceData = record.data as Record<string, unknown>;
   const data = terminal ? projectAgentTerminalRecord(sourceData) : sourceData;
-  const { id, ...envelope } = record;
-  const providerEvent = {
-    ...envelope,
-    ...(id === undefined ? {} : { id }),
-    ...(terminal ? { data } : {}),
-  };
+  const descriptors = Object.getOwnPropertyDescriptors(record);
+  if (descriptors.id && "value" in descriptors.id && descriptors.id.value === undefined) delete descriptors.id;
+  if (terminal) descriptors.data = { value: data, enumerable: true, configurable: true, writable: true };
+  const providerEvent = Object.create(Object.getPrototypeOf(record), descriptors) as Record<string, unknown>;
   assertBoundedRecord(providerEvent);
   if (Object.prototype.hasOwnProperty.call(data, "contextTransferReceipt")) {
     throw new Error(

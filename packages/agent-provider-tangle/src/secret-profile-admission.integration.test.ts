@@ -138,7 +138,7 @@ async function fixture(fault?: "prepare-refused" | "invalid-receipt" | "active",
         response.writeHead(200, { "content-type": "text/event-stream" });
         const started = `event: execution.started\ndata: ${JSON.stringify({ executionId, sessionId: body.sessionId, runControlRef: body.runControlRef })}\n\n`;
         // The active case withholds terminal delivery; only the admission is public.
-        response.end(fault === "active" ? started : started + `event: result\ndata: ${JSON.stringify({ success: true, status: "success", executionId, response: run.text, durationMs: 1 })}\n\nevent: done\ndata: {}\n\n`);
+        response.end(fault === "active" ? started : started + `event: result\ndata: ${JSON.stringify({ success: true, status: "success", executionId, response: run.text, durationMs: 1 })}\n\nevent: done\ndata: {"outcome":{"type":"completed"}}\n\n`);
         return;
       }
       return answer(404, { code: "NOT_FOUND", message: "unknown fixture route" });
@@ -192,7 +192,7 @@ it.each([{ cwd: undefined, repoUrl: undefined }, { cwd: "authored-directory", re
   AgentTurnResultSchema.parse({ text: "The source was observed.", success: true, events });
   const session = f.environment.session!("session-one");
   const result = await session.prompt!(f.turn("session-one-turn"));
-  expect(result.success).toBe(true);
+  expect(result.success, JSON.stringify(result)).toBe(true);
   AgentTurnResultSchema.parse(result);
   expect(f.count()).toBe(3);
   expect(f.creates()).toBe(1);
