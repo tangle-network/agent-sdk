@@ -152,7 +152,9 @@ async function fixture(fault?: "prepare-refused" | "invalid-receipt" | "active",
   if (!address || typeof address === "string") throw new Error("missing fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
   const client = new Sandbox({ apiKey: "fixture-api-key", baseUrl, directExec: false, trustLocalCliAuth: false });
-  const provider = createTangleProvider({ client });
+  const provider = createTangleProvider({ client,
+    modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" },
+  });
   const environment = await provider.create({ profile, idempotencyKey: "secret-fixture", workspace: {
     ...(cwd ? { cwd: { base: "repository", path: cwd } } : {}), ...(repoUrl ? { repoUrl } : {}),
   } });
