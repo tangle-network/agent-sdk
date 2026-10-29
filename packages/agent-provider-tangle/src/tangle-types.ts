@@ -7,6 +7,7 @@ import type {
   ExecResult as SandboxExecResult,
   PromptOptions,
   PromptResult,
+  SandboxInstance,
   SandboxEvent,
 } from "@tangle-network/sandbox";
 import type {
@@ -486,6 +487,8 @@ export interface SandboxInteractiveSessionLike {
 
 export interface SandboxInstanceLike {
   id: string;
+  createSession?: SandboxInstance["createSession"];
+  prepareSecretProfileRevision?: SandboxInstance["prepareSecretProfileRevision"];
   name?: string;
   status?: unknown;
   metadata?: Record<string, unknown>;

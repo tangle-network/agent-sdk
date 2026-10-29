@@ -206,7 +206,9 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle workspace providerOptions are not supported");
   }
   const workspaceCwd = workspaceCwdPathForBase(
-    workspace.cwd,
+    workspace.cwd ?? (workspace.checkpoint === undefined && workspace.repoUrl === undefined
+      ? { base: "repository", path: "workspace" }
+      : undefined),
     "repository",
     "Tangle",
   );
@@ -226,9 +228,7 @@ export function sandboxOptionsFromCreateInput(
   // record and dropping it would create an environment with no credentials and
   // no error, surfacing later as an unexplained tool failure.
   const environment = workspace.image ?? workspace.environment;
-  const base: CreateSandboxOptions = {};
   const mapped = {
-    ...base,
     ...(environment !== undefined ? { environment } : {}),
     ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(workspace.repoUrl
@@ -250,7 +250,6 @@ export function sandboxOptionsFromCreateInput(
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {
-      ...(base.backend ?? {}),
       type: backend,
       profile,
       ...(modelCredentials === undefined ? {} : {

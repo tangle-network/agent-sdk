@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { normalizeRuntimeBackendConfig } from "@tangle-network/sandbox";
 import { projectAgentTerminalRecord } from "@tangle-network/sandbox/runtime";
 import {
@@ -30,11 +31,14 @@ import { tokenUsageFromData } from "./tangle-result-values.js";
 import { TangleCredentialCapacityError } from "./model-credential-capacity.js";
 import {
   assertBoundedJson,
+  awaitWithSignal,
   boundedString,
   PROFILE_AT_PROFILE,
 } from "./tangle-contract-safety.js";
 import { profileCredentialSource } from "./model-credential-source.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
+import { sessionPromptSessionId } from "./tangle-session-control.js";
+import type { SandboxInstanceLike } from "./tangle-types.js";
 
 export function promptFromTurnInput(input: AgentTurnInput): string | InputPart[] {
   AgentTurnInputSchema.parse(input);
@@ -117,6 +121,42 @@ export function promptOptionsFromTurnInput(
   };
 }
 
+/** The SDK owns isolated session creation and the executor's private admission receipt. */
+export async function preparePromptOptions(
+  box: SandboxInstanceLike | undefined,
+  options: PromptOptions,
+  provider: string,
+): Promise<PromptOptions> {
+  if (options.lastEventId !== undefined ||
+      (options.backend?.runtimeSecrets === undefined &&
+       options.backend?.metadata?.profileSecretIsolation !== true)) return options;
+  if (!box?.createSession || !box.prepareSecretProfileRevision) {
+    throw new Error("Tangle secret turns require Sandbox isolated-session preparation support");
+  }
+  options.signal?.throwIfAborted();
+  const sessionId = options.sessionId ??
+    sessionPromptSessionId(provider, box.id, options.turnId ?? options.executionId) ??
+    randomUUID();
+  const backend = {
+    ...options.backend,
+    metadata: { ...options.backend?.metadata, profileSecretIsolation: true as const },
+  };
+  const { runtimeSecrets: _turnOnly, ...persisted } = backend;
+  const created = await awaitWithSignal(box.createSession({ sessionId, backend: persisted }), options.signal);
+  if (created.session.id !== sessionId || created.info.id !== sessionId) {
+    throw new Error("Tangle isolated session creation changed its exact identity");
+  }
+  options.signal?.throwIfAborted();
+  const { expectedPublicProfileRequestDigest, expectedSecretProfileReceipt } = await awaitWithSignal(
+    box.prepareSecretProfileRevision({
+      sessionId, backend,
+      ...(options.model === undefined ? {} : { model: options.model }),
+    }), options.signal,
+  );
+  options.signal?.throwIfAborted();
+  return { ...options, sessionId, backend, expectedPublicProfileRequestDigest, expectedSecretProfileReceipt };
+}
+
 /**
  * The `BackendConfig` fields this adapter forwards to Sandbox prompt options.
  *
@@ -187,50 +227,20 @@ type Exhaustive<T extends never> = T;
 
 type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
 
-type UncoveredBackendField = Exhaustive<
-  Exclude<keyof BackendConfig, (typeof SANDBOX_BACKEND_FIELD_LIST)[number]>
->;
-type StaleBackendField = Exhaustive<
-  Exclude<(typeof SANDBOX_BACKEND_FIELD_LIST)[number], keyof BackendConfig>
->;
-type UncoveredBackendModelField = Exhaustive<
-  Exclude<
-    keyof SandboxBackendModel,
-    (typeof SANDBOX_BACKEND_MODEL_FIELD_LIST)[number]
-  >
->;
-type StaleBackendModelField = Exhaustive<
-  Exclude<
-    (typeof SANDBOX_BACKEND_MODEL_FIELD_LIST)[number],
-    keyof SandboxBackendModel
-  >
->;
-
 const SANDBOX_AUTH_FILE_FIELD_LIST = ["path", "content", "mode"] as const;
 
 type SandboxAuthFile = NonNullable<SandboxBackendModel["authFiles"]>[number];
 
-type UncoveredAuthFileField = Exhaustive<
-  Exclude<keyof SandboxAuthFile, (typeof SANDBOX_AUTH_FILE_FIELD_LIST)[number]>
+type FieldDifference<T, Fields extends readonly PropertyKey[]> =
+  | Exclude<keyof T, Fields[number]>
+  | Exclude<Fields[number], keyof T>;
+
+// Each SDK field set must match its runtime allowlist in both directions.
+export type SandboxBackendFieldCoverage = Exhaustive<
+  | FieldDifference<BackendConfig, typeof SANDBOX_BACKEND_FIELD_LIST>
+  | FieldDifference<SandboxBackendModel, typeof SANDBOX_BACKEND_MODEL_FIELD_LIST>
+  | FieldDifference<SandboxAuthFile, typeof SANDBOX_AUTH_FILE_FIELD_LIST>
 >;
-type StaleAuthFileField = Exhaustive<
-  Exclude<(typeof SANDBOX_AUTH_FILE_FIELD_LIST)[number], keyof SandboxAuthFile>
->;
-
-type SandboxBackendFieldCoverage = [
-  UncoveredBackendField,
-  StaleBackendField,
-  UncoveredBackendModelField,
-  StaleBackendModelField,
-  UncoveredAuthFileField,
-  StaleAuthFileField,
-];
-
-
-// The tuple exists to be checked by the compiler, not to be read. Every member
-// resolves to `never` while the lists match the SDK, and to the offending field
-// name when they do not.
-export type { SandboxBackendFieldCoverage };
 
 type SandboxPromptBackend = NonNullable<PromptOptions["backend"]>;
 

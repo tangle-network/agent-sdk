@@ -42,6 +42,7 @@ import {
   executionIdFromTurnInput,
   promptFromTurnInput,
   promptOptionsFromTurnInput,
+  preparePromptOptions,
 } from "./tangle-prompt.js";
 import {
   creationFromSandboxCreateReceipt,
@@ -415,7 +416,9 @@ export async function sandboxInstanceAsEnvironment(
       input.signal?.throwIfAborted();
       input = await prepareTurn(input);
       const expectedExecutionId = executionIdFromTurnInput(input);
-      const expectedSessionId = input.sessionId ?? input.controlRef?.sessionId;
+      const promptOptions = await preparePromptOptions(box,
+        promptOptionsFromTurnInput(input, { provider: providerName, environmentId }), providerName);
+      const expectedSessionId = promptOptions.sessionId;
       if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
       // A turn resumed after a cursor starts past its first steps, so it cannot
       // report the execution's running total.
@@ -423,10 +426,7 @@ export async function sandboxInstanceAsEnvironment(
         input.lastEventId === undefined ? createStepUsageFold() : undefined;
       const iterator = box.streamPrompt(
         promptFromTurnInput(input),
-        promptOptionsFromTurnInput(input, {
-          provider: providerName,
-          environmentId,
-        }),
+        promptOptions,
       )[Symbol.asyncIterator]();
       let completed = false;
       try {
@@ -508,6 +508,7 @@ export async function sandboxInstanceAsEnvironment(
               capabilities.nativeContinuation !== undefined,
               prepareTurn,
               (executionId) => noteTangleSession(environment, id, executionId),
+              box,
             );
             // sessions.continue was granted from the probe session and the
             // deployment document together; this backstop holds every
