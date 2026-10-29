@@ -32,7 +32,7 @@ async function fixture() {
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     if (path === "/v1/backends") {
-      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode", description: "HTTP fixture", capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } }], timestamp: new Date(0).toISOString() }));
+      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode", description: "HTTP fixture", callerCredentialOnly: false, capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } }], timestamp: new Date(0).toISOString() }));
     } else if (path === "/v1/secrets" && request.method === "POST") {
       stored.set(body.name, body.value);
       response.end(JSON.stringify({ secret: { name: body.name, createdAt: new Date(0).toISOString() } }));
