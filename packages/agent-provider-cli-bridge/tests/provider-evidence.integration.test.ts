@@ -11,7 +11,7 @@ actualBridge("actual cli-bridge native response evidence", () => {
       const provider = createCliBridgeProvider(options);
       const environment = await provider.create({
         idempotencyKey: "sdk-provider-evidence-environment",
-        profile: { name: "evidence", harness: "claude" },
+        profile: { name: "evidence", harness: "claude-code" },
         workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
       const reference = await environment.dispatch!({
