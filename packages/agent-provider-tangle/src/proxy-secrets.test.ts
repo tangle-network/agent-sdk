@@ -21,6 +21,8 @@ async function fixture() {
   const requests: string[] = [], creates: Record<string, unknown>[] = [], stored = new Map<string, string>();
   const info = () => ({
     id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata,
+    filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
+    filesystemIncarnationProvenance: "fresh", filesystemIncarnationReadiness: "ready",
     connection: { runtimeUrl: `${baseUrl}/v1/sandboxes/sandbox-bindings/runtime`, authToken: "fixture-runtime-token", edgeStatus: "ready" },
   });
   const server = createServer(async (request, response) => {
@@ -59,7 +61,7 @@ async function fixture() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
-  return { client: new Sandbox({ baseUrl, apiKey: "fixture-api-key" }), creates, requests, stored };
+  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored };
 }
 
 it("forwards stored host bindings through the public provider without requesting custody receipts", async () => {
