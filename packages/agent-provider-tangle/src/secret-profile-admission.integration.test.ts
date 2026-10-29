@@ -70,7 +70,7 @@ async function fixture(fault?: "prepare-refused" | "invalid-receipt" | "active",
       if (url.pathname.endsWith("/backend")) return answer(200, { type: "codex" });
       if (url.pathname.endsWith("/agents/sessions") && request.method === "POST") {
         expect(body.backend.metadata.profileSecretIsolation).toBe(true);
-        expect(body.backend.runtimeSecrets).toBeUndefined();
+        expect(body.retention).toBe("workspace"); expect(body.backend.runtimeSecrets).toBeUndefined();
         expect(JSON.stringify(body)).not.toContain(firstBearer);
         expect(JSON.stringify(body)).not.toContain(nextBearer);
         expect(body.backend.profile).toEqual(profile);
