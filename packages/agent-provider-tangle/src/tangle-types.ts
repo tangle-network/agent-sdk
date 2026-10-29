@@ -858,7 +858,7 @@ export interface SandboxInteractionCommandResultLike {
 }
 
 export type TangleModelCredentials =
-  | { apiKeyEnv: string; baseUrl: string }
+  | { apiKeyEnv: string; baseUrl: string; proxySecrets?: ProxySecretBinding[] }
   | { cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[] };
 
 /** Select one public stored-secret reference for a stable create or fresh-turn identity. */

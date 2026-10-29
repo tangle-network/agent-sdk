@@ -198,3 +198,13 @@ it("forwards the host secret store with its receiver intact and deletes the stor
   expect(stored.has("COORDINATION_RUN_TOKEN")).toBe(false);
   expect(requests).toEqual(["POST /v1/secrets", "DELETE /v1/secrets/COORDINATION_RUN_TOKEN"]);
 });
+
+it("lowers selected plan-key bindings without passing them as backend model options", async () => {
+  const { client, creates } = await fixture();
+  await createTangleProvider({ client, modelCredentials: {
+    apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}`, proxySecrets: [binding()],
+  } }).create({ profile });
+  expect(creates[0]!.secrets).toEqual([selected()]);
+  expect(creates[0]!.backend).toMatchObject({ model: { apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}` } });
+  expect((creates[0]!.backend as { model: unknown }).model).not.toHaveProperty("proxySecrets");
+});

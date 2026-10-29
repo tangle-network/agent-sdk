@@ -52,8 +52,8 @@ export function captureModelCredentials(
     return deepFreeze({ cliAuth: parsed.data, ...(value.proxySecrets === undefined ? {} : { proxySecrets: captureProxySecrets(value.proxySecrets) }) });
   }
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-    Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl")) {
-    throw new Error("Tangle modelCredentials accepts only apiKeyEnv and baseUrl");
+    Object.keys(value).some((key) => key !== "apiKeyEnv" && key !== "baseUrl" && key !== "proxySecrets")) {
+    throw new Error("Tangle modelCredentials accepts only apiKeyEnv, baseUrl and proxySecrets");
   }
   const { apiKeyEnv, baseUrl } = value as { apiKeyEnv: string; baseUrl: string };
   if (typeof apiKeyEnv !== "string" || apiKeyEnv.length > 128 ||
@@ -71,7 +71,7 @@ export function captureModelCredentials(
     url.username || url.password || url.search || url.hash) {
     throw new Error("Tangle modelCredentials baseUrl must be an HTTP(S) endpoint without credentials, query, or fragment");
   }
-  return Object.freeze({ apiKeyEnv, baseUrl });
+  return deepFreeze({ apiKeyEnv, baseUrl, ...(value.proxySecrets === undefined ? {} : { proxySecrets: captureProxySecrets(value.proxySecrets) }) });
 }
 
 const ROUTING_FIELD_LIST = ["only", "allowFallbacks", "requireModel"] as const;
@@ -151,7 +151,7 @@ export function sandboxOptionsFromCreateInput(
   const selectedSecret = modelCredentials === undefined ? undefined
     : "cliAuth" in modelCredentials ? modelCredentials.cliAuth?.secretEnv : modelCredentials.apiKeyEnv;
   const nativeCredentials = modelCredentials !== undefined && "cliAuth" in modelCredentials;
-  const proxySecrets = mergeProxySecrets(proxySecretsFromInput(input), nativeCredentials ? modelCredentials.proxySecrets : undefined);
+  const proxySecrets = mergeProxySecrets(proxySecretsFromInput(input), modelCredentials?.proxySecrets);
   assertProxySecretAliases(proxySecrets, input.env, input.secrets);
   const proxySelected = proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret) === true ||
     (Array.isArray(input.secrets) && input.secrets.some((entry) => typeof entry !== "string" && entry.name === selectedSecret)) === true;
@@ -255,7 +255,7 @@ export function sandboxOptionsFromCreateInput(
       profile,
       ...(modelCredentials === undefined ? {} : {
         model: "cliAuth" in modelCredentials
-          ? { cliAuth: modelCredentials.cliAuth, authMode: "oauth" as const } : modelCredentials,
+          ? { cliAuth: modelCredentials.cliAuth, authMode: "oauth" as const } : { apiKeyEnv: modelCredentials.apiKeyEnv, baseUrl: modelCredentials.baseUrl },
       }),
       ...(input.runtimeAttachments === undefined ? {} : {
         runtimeAttachments: tangleRuntimeAttachments(input.runtimeAttachments, profile),

@@ -212,7 +212,7 @@ export function createTangleProvider(
         true,
       ) : defaultOptions!);
     const selectedProxySecrets = mergeProxySecrets(requestedProxySecrets,
-      selectedCredentials !== undefined && "cliAuth" in selectedCredentials ? selectedCredentials.proxySecrets : undefined);
+      selectedCredentials?.proxySecrets);
     if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
       throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     }
