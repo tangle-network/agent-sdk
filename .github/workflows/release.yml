@@ -28,6 +28,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@v6
+        env:
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/pnpm-bootstrap-store
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -76,6 +78,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        env:
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/pnpm-bootstrap-store
       - uses: actions/setup-node@v7
         with:
           node-version: 22
