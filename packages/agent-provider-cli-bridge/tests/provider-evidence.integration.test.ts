@@ -88,7 +88,8 @@ actualBridge("actual OpenCode incremental usage coverage", () => {
         idempotencyKey: `sdk-${scenario}-environment`, profile: { name: "incremental", harness: "opencode" },
         workspace: { cwd: { base: "host", path: bridge.projectDir } },
       });
-      const result = await environment.session!(`sdk-${scenario}-session`).prompt({
+      const session = environment.session!(`sdk-${scenario}-session`);
+      const result = await session.prompt({
         prompt: `evidence-case:${scenario}`, turnId: `sdk-${scenario}-turn`, executionId: `sdk-${scenario}-run`,
       });
       expect(result.success, bridge.logs()).toBe(true);
@@ -106,6 +107,22 @@ actualBridge("actual OpenCode incremental usage coverage", () => {
       } else {
         expect(usage.prompt_tokens).toBe(6);
         expect(result.usage).toMatchObject({ inputTokens: 6, outputTokens: 5 });
+      }
+      // The retained reader gets original deltas, without the prompt path's aggregate HTTP replacement.
+      const replay = await session.result();
+      const retainedUsage = replay.metadata?.provider_usage as Record<string, unknown>;
+      expect(replay.success).toBe(true);
+      expect(retainedUsage.completion_tokens).toBe(5);
+      expect(retainedUsage.estimated).toBeUndefined();
+      expect(replay.events).toHaveLength(1024);
+      expect(replay.events?.some(event => event.type === "usage")).toBe(false);
+      expect(replay.events?.at(-1)?.usageMode).toBeUndefined();
+      if (scenario === "partial-deltas") {
+        expect(retainedUsage.prompt_tokens).toBeUndefined();
+        expect(replay.usage).toBeUndefined();
+      } else {
+        expect(retainedUsage.prompt_tokens).toBe(6);
+        expect(replay.usage).toMatchObject({ inputTokens: 6, outputTokens: 5 });
       }
     } finally {
       await bridge.stop();
