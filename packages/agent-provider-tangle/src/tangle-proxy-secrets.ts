@@ -47,7 +47,7 @@ export function assertProxySecretAliases(
 
 /** Lower portable declarations to the single host binding actually served by Sandbox. */
 export function sandboxSecretBindings(
-  secrets: CreateAgentEnvironmentInput["secrets"],
+  secrets: CreateAgentEnvironmentInput["secrets"] | "all",
   bindings?: readonly ProxySecretBinding[],
   env?: Record<string, string>,
 ): Exclude<CreateSandboxOptions["secrets"], "all"> {
