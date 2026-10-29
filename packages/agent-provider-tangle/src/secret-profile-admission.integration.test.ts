@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
+import { AgentTurnResultSchema } from "@tangle-network/agent-interface";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
 
@@ -188,9 +189,11 @@ it.each([{ cwd: undefined, repoUrl: undefined }, { cwd: "authored-directory", re
   const events = [];
   for await (const event of f.environment.stream(f.turn("stream-one"))) events.push(event);
   expect(events.length).toBeGreaterThan(0);
+  AgentTurnResultSchema.parse({ text: "The source was observed.", success: true, events });
   const session = f.environment.session!("session-one");
   const result = await session.prompt!(f.turn("session-one-turn"));
   expect(result.success).toBe(true);
+  AgentTurnResultSchema.parse(result);
   expect(f.count()).toBe(3);
   expect(f.creates()).toBe(1);
   expect(new Set([...f.sessions.values()].map(session => session.root))).toEqual(new Set([f.root()]));

@@ -220,11 +220,12 @@ export function environmentEventFromSandboxEvent(
   const sourceData = record.data as Record<string, unknown>;
   const data = terminal ? projectAgentTerminalRecord(sourceData) : sourceData;
   const { id, ...envelope } = record;
-  assertBoundedRecord({
+  const providerEvent = {
     ...envelope,
     ...(id === undefined ? {} : { id }),
     ...(terminal ? { data } : {}),
-  });
+  };
+  assertBoundedRecord(providerEvent);
   if (Object.prototype.hasOwnProperty.call(data, "contextTransferReceipt")) {
     throw new Error(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
@@ -294,7 +295,7 @@ export function environmentEventFromSandboxEvent(
     ...(usageMode === undefined ? {} : { usageMode }),
     // A terminal projection is not the complete native event. The source is
     // available through exact session/execution evidence, including tool history.
-    ...(!terminal ? { providerEvent: event } : {}),
+    ...(!terminal ? { providerEvent } : {}),
   };
 }
 
