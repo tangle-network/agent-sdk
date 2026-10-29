@@ -114,7 +114,6 @@ export function createTangleProvider(
         : options.capabilities
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
     configured = ephemeralCapabilityCeiling(configured, options.ephemeral === true);
-    // Configured adapter ceilings never confer authority that the connected API did not prove.
     configured = { ...configured, profile: { ...configured.profile },
       ...(configured.create === undefined ? {} : { create: { ...configured.create } }),
     };
@@ -216,8 +215,9 @@ export function createTangleProvider(
     if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
       throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     }
-    const { proxySecrets: _legacy, ...mapped } = mappedInput;
-    const mappedOptions = { ...mapped, secrets: sandboxSecretBindings(mapped.secrets, selectedProxySecrets, mapped.env) };
+    const { proxySecrets: _legacy, secrets: selection, ...mapped } = mappedInput;
+    const secrets = sandboxSecretBindings(selection, selectedProxySecrets, mapped.env);
+    const mappedOptions = { ...mapped, ...(secrets === undefined ? {} : { secrets }) };
     for (const entry of sandboxSecretBindings(input.secrets, selectedProxySecrets, input.env) ?? []) {
       if (typeof entry === "string") continue;
       if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => canonicalCandidateDigest(selected) === canonicalCandidateDigest(entry))) {
