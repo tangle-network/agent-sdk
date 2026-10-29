@@ -1090,7 +1090,7 @@ export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
-  readonly secrets?: { create(name: string, value: string): Promise<unknown>; delete(name: string): Promise<unknown> };
+  readonly secrets?: { create(name: string, value: string): Promise<unknown>; update?(name: string, value: string): Promise<unknown>; delete(name: string): Promise<unknown> };
   /** Durable fresh-session portable context admission, when supported. */
   readonly contextTransfer?: AgentContextTransferProvider;
   /**
