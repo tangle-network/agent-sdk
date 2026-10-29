@@ -9,7 +9,9 @@ if "--version" in sys.argv:
     raise SystemExit(0)
 prompt = " ".join(sys.argv[1:]) + "\n" + sys.stdin.read()
 match = re.search(r"evidence-case:([a-z-]+)", prompt)
-scenario = match.group(1) if match else "unique"
+if match is None:
+    raise RuntimeError("actual Claude prompt did not bind an evidence case")
+scenario = match.group(1)
 
 def send(value):
     print(json.dumps(value), flush=True)

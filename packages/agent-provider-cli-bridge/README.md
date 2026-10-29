@@ -104,6 +104,21 @@ The provider uses the explicit SSE event field to select the format and rejects 
 The provider rejects a terminal response when its run id or request digest does not match the accepted stream.
 Usage events and terminal result metadata include `modelRequests` only when the bridge measured an exact non-negative integer count.
 Missing, malformed, partial, or estimated request counts remain unknown.
+
+`metadata.model` and event `data.model` retain Bridge's compatibility response value; they do not prove which model served a request.
+Explicit provider-response observations appear as `provider_models` in event data and result metadata.
+`provider_model` is present only for one distinct observation, and never on a failed result.
+The collector retains disagreements independently of its bounded result event history; overflow or malformed evidence refuses certification.
+Requested routes, init records, fingerprints, configured session models and application JSON never establish provider identity.
+Opaque native records remain in their existing envelope and cannot promote their own fields into host evidence.
+
+Raw Bridge usage is retained in `event.providerEvent.usage` even when a partial receipt cannot form `TokenUsage`.
+`metadata.provider_usage` folds those receipts outside the bounded event history: a missing count stays unknown across later deltas, and a cumulative receipt replaces counts and coverage.
+Events declare this distinction with the existing `usageMode` field.
+Measured usage requires explicit `estimated: false` and valid reported input and output totals; `estimated: true` is an estimate, and absent provenance remains unknown.
+Observed zero is retained. Missing cache classes and cost remain unknown; `cost_scope` applies only to cost.
+The numeric `result.usage` compatibility projection alone does not certify complete measured usage.
+Old peers remain readable with uncertified evidence.
 When `dispatch()` receives no `sessionId`, it creates one from that turn's stable run id and returns it.
 Replay and result reads fail loudly after cli-bridge's configured replay retention expires.
 Stopping a `session.events()` reader detaches only that replay observer.
