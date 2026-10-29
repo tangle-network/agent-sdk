@@ -112,13 +112,13 @@ The collector retains disagreements independently of its bounded result event hi
 Requested routes, init records, fingerprints, configured session models and application JSON never establish provider identity.
 Opaque native records remain in their existing envelope and cannot promote their own fields into host evidence.
 
-Raw Bridge usage is retained in `event.providerEvent.usage` even when a partial receipt cannot form `TokenUsage`.
+On the qualified OpenAI wire path, raw Bridge usage is retained in `event.providerEvent.usage` even when a partial receipt cannot form `TokenUsage`.
 `metadata.provider_usage` folds those receipts outside the bounded event history: a missing count stays unknown across later deltas, and a cumulative receipt replaces counts and coverage.
 Events declare this distinction with the existing `usageMode` field.
 Measured usage requires explicit `estimated: false` and valid reported input and output totals; `estimated: true` is an estimate, and absent provenance remains unknown.
 Observed zero is retained. Missing cache classes and cost remain unknown; `cost_scope` applies only to cost.
 The numeric `result.usage` compatibility projection alone does not certify complete measured usage.
-Old peers remain readable with uncertified evidence.
+Old peers and opaque canonical native envelopes remain readable with uncertified provenance; nested native or application records cannot assert host observation authority.
 When `dispatch()` receives no `sessionId`, it creates one from that turn's stable run id and returns it.
 Replay and result reads fail loudly after cli-bridge's configured replay retention expires.
 Stopping a `session.events()` reader detaches only that replay observer.

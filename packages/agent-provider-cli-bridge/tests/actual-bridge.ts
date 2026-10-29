@@ -121,7 +121,7 @@ interface RunningBridge {
   readonly stop: () => Promise<void>;
 }
 
-export async function startActualBridge(harness: "pi" | "claude" = "pi"): Promise<RunningBridge> {
+export async function startActualBridge(harness: "pi" | "claude" | "opencode" = "pi"): Promise<RunningBridge> {
   if (!BRIDGE_ROOT) {
     throw new Error("CLI_BRIDGE_INTEGRATION_ROOT must name an installed cli-bridge source checkout");
   }
@@ -136,6 +136,8 @@ export async function startActualBridge(harness: "pi" | "claude" = "pi"): Promis
   const fakePiPath = join(projectDir, "fake-pi");
   const fakeClaudePath = join(projectDir, "fake-claude");
   writeFileSync(fakeClaudePath, readFileSync(new URL("./fixtures/claude-evidence.py", import.meta.url)), { mode: 0o700 });
+  const fakeOpencodePath = join(projectDir, "fake-opencode");
+  writeFileSync(fakeOpencodePath, readFileSync(new URL("./fixtures/opencode-evidence.py", import.meta.url)), { mode: 0o700 });
   const fakePiTracePath = join(projectDir, "fake-pi.trace");
   writeFileSync(fakePiPath, fakePi, { encoding: "utf8", mode: 0o700 });
   chmodSync(fakePiPath, 0o700);
@@ -161,6 +163,7 @@ export async function startActualBridge(harness: "pi" | "claude" = "pi"): Promis
       BRIDGE_PORT: String(port),
       BRIDGE_BACKENDS: harness,
       CLAUDE_BIN: fakeClaudePath,
+      OPENCODE_BIN: fakeOpencodePath,
       BRIDGE_DATA_DIR: dataDir,
       BRIDGE_JAIL_MODE: "fs-jail",
       BRIDGE_TRACE: "off",
