@@ -5,6 +5,7 @@ import {
 import {
   parseBackendType,
   type BackendType,
+  type CreateSandboxOptions,
   type RouterRoutingOptions,
 } from "@tangle-network/sandbox";
 import {
@@ -249,7 +250,6 @@ export function sandboxOptionsFromCreateInput(
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {
-      ...(base.backend ?? {}),
       type: backend,
       profile,
       ...(modelCredentials === undefined ? {} : {
