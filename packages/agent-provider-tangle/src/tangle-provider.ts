@@ -29,7 +29,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
+import { captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -174,7 +174,7 @@ export function createTangleProvider(
       throw new Error("Tangle owns metadata.tangleProxySecrets");
     }
     const requestedProxySecrets = proxySecretsFromInput(input);
-    assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
+    const requestedSecrets = structuredClone(sandboxSecretBindings(input.secrets, requestedProxySecrets, input.env));
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -218,10 +218,10 @@ export function createTangleProvider(
     const { proxySecrets: _legacy, secrets: selection, ...mapped } = mappedInput;
     const secrets = sandboxSecretBindings(selection, selectedProxySecrets, mapped.env);
     const mappedOptions = { ...mapped, ...(secrets === undefined ? {} : { secrets }) };
-    for (const entry of sandboxSecretBindings(input.secrets, selectedProxySecrets, input.env) ?? []) {
+    for (const entry of requestedSecrets ?? []) {
       if (typeof entry === "string") continue;
-      if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => canonicalCandidateDigest(selected) === canonicalCandidateDigest(entry))) {
-        throw new Error("Tangle mapped secrets must preserve the requested host bindings");
+      if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => sandboxSecretBindingIdentity(selected) === sandboxSecretBindingIdentity(entry))) {
+        throw new Error("Tangle mapped secrets must preserve the requested delivery selection");
       }
     }
     assertMappedCreateOptions(mappedOptions);

@@ -879,7 +879,7 @@ export interface CreateAgentEnvironmentInput {
   workspace?: WorkspaceRequest;
   resources?: ResourceRequest;
   env?: Record<string, string>;
-  secrets?: (string | { name: string; host: string; header?: string })[] | Record<string, string>;
+  secrets?: (string | { name: string; host: string; header?: string } | { name: string; exposeInBox: true })[] | Record<string, string>;
   /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
    * Trusted issuer authorization is required before resolving any reference. */
   proxySecrets?: readonly ProxySecretBinding[];
