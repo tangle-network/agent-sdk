@@ -7,7 +7,7 @@ import sys
 if "--version" in sys.argv:
     print("claude evidence fixture")
     raise SystemExit(0)
-prompt = sys.stdin.read()
+prompt = " ".join(sys.argv[1:]) + "\n" + sys.stdin.read()
 match = re.search(r"evidence-case:([a-z-]+)", prompt)
 scenario = match.group(1) if match else "unique"
 
