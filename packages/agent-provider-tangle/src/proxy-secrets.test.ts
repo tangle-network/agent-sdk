@@ -49,7 +49,7 @@ async function fixture() {
     } else if (path === "/v1/sandboxes/sandbox-bindings") {
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
-      response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", image: `example/sidecar@sha256:${"a".repeat(64)}` }));
+      response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: {}, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
     } else {
       response.writeHead(404); response.end(JSON.stringify({ code: "NOT_FOUND", message: "No receipt protocol is served" }));
     }
