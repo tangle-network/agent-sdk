@@ -1,5 +1,6 @@
 import {
   AgentTurnResultSchema,
+  CONTRACT_MAX_ARRAY_LENGTH,
   type StreamEvent,
   type TokenUsage,
 } from "@tangle-network/agent-interface";
@@ -43,7 +44,7 @@ import {
   requestHeaders,
   trimSlash,
 } from "./transport.js";
-import { modelRequestCount } from "./wire.js";
+import { modelRequestCount, providerUsageFromOpenAi, responseIdentityFromOpenAi, usageFromOpenAi } from "./wire.js";
 import { lookupCliBridgeContext } from "./context-transfer.js";
 
 const MAX_CLI_BRIDGE_RESULT_EVENTS = 1_024;
@@ -416,6 +417,9 @@ export async function collectCliBridgeTurnResult(
   let eventCount = 0;
   let text = "";
   let usage: TokenUsage | undefined;
+  let providerUsage: Record<string, unknown> | undefined;
+  let providerTokensSeen = false;
+  const providerModels = new Set<string>();
   let observedModelRequests = 0;
   let modelRequestsKnown = false;
   let terminalModelRequests: number | undefined;
@@ -434,7 +438,19 @@ export async function collectCliBridgeTurnResult(
         const delta = visibleTextDelta(event);
         if (delta !== undefined) text += delta;
       }
-      usage = addTokenUsage(usage, event.usage);
+      const observedUsage = providerUsageFromOpenAi(providerUsageFromOpenAi(event.providerEvent)?.usage);
+      const rawUsage = observedUsage ??
+        (event.usage ? { prompt_tokens: event.usage.inputTokens, completion_tokens: event.usage.outputTokens } : undefined);
+      if (rawUsage) {
+        providerUsage = foldProviderUsage(providerUsage, rawUsage, event.usageMode, providerTokensSeen);
+        providerTokensSeen = event.usageMode === "cumulative"
+          ? hasTokenReceipt(rawUsage) : providerTokensSeen || hasTokenReceipt(rawUsage);
+      }
+      usage = observedUsage ? usageFromOpenAi(providerUsage) : addTokenUsage(usage, event.usage, event.usageMode);
+      for (const model of responseIdentityFromOpenAi(event.data)?.provider_models ?? []) {
+        providerModels.add(model);
+        if (providerModels.size > CONTRACT_MAX_ARRAY_LENGTH) throw new Error("cli-bridge provider model observations exceed contract bounds");
+      }
       const eventModel = event.data.model;
       const eventFingerprint = event.data.system_fingerprint;
       if (typeof eventModel === "string" && eventModel.length > 0) servedModel = eventModel;
@@ -497,6 +513,9 @@ export async function collectCliBridgeTurnResult(
           ? { modelRequests: observedModelRequests }
           : {}),
       ...(servedModel === undefined ? {} : { model: servedModel }),
+      ...(providerModels.size ? { provider_models: [...providerModels] } : {}),
+      ...(success && providerModels.size === 1 ? { provider_model: [...providerModels][0] } : {}),
+      ...(providerUsage === undefined ? {} : { provider_usage: providerUsage }),
       ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
     },
     events: resultEvents,
@@ -525,43 +544,55 @@ export function visibleTextDelta(event: AgentEnvironmentEvent): string | undefin
   return typeof event.data.delta === "string" ? event.data.delta : undefined;
 }
 
-/** Sum the usage a run reported across its events into one total. */
+/** Respect cumulative receipts and keep missing optional classes unknown. */
 export function addTokenUsage(
   current: TokenUsage | undefined,
   next: TokenUsage | undefined,
+  mode?: "delta" | "cumulative",
 ): TokenUsage | undefined {
+  if (mode === "cumulative") return next ? { ...next } : undefined;
   if (!next) return current;
   if (!current) return { ...next };
-  return {
-    inputTokens: current.inputTokens + next.inputTokens,
-    outputTokens: current.outputTokens + next.outputTokens,
-    ...(current.totalTokens !== undefined || next.totalTokens !== undefined
-      ? { totalTokens: (current.totalTokens ?? 0) + (next.totalTokens ?? 0) }
-      : {}),
-    ...(current.cacheReadInputTokens !== undefined ||
-        next.cacheReadInputTokens !== undefined
-      ? {
-          cacheReadInputTokens:
-            (current.cacheReadInputTokens ?? 0) +
-            (next.cacheReadInputTokens ?? 0),
-        }
-      : {}),
-    ...(current.cacheCreationInputTokens !== undefined ||
-        next.cacheCreationInputTokens !== undefined
-      ? {
-          cacheCreationInputTokens:
-            (current.cacheCreationInputTokens ?? 0) +
-            (next.cacheCreationInputTokens ?? 0),
-        }
-      : {}),
-    ...(current.reasoningTokens !== undefined || next.reasoningTokens !== undefined
-      ? {
-          reasoningTokens:
-            (current.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0),
-        }
-      : {}),
-    ...(current.cost !== undefined || next.cost !== undefined
-      ? { cost: (current.cost ?? 0) + (next.cost ?? 0) }
-      : {}),
-  };
+  return Object.fromEntries(Object.entries(next).flatMap(([key, count]) => {
+    const prior = current[key as keyof TokenUsage];
+    return prior === undefined ? [] : [[key, prior + count]];
+  })) as unknown as TokenUsage;
+}
+
+const TOKEN_FIELDS = ["prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
+  "fresh_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_creation_input_tokens", "reasoning_tokens"];
+const hasTokenReceipt = (usage: Record<string, unknown>): boolean =>
+  TOKEN_FIELDS.some(key => key in usage) || "estimated" in usage;
+
+/** Coverage lives outside the bounded event ring: a later delta cannot fill an earlier omission. */
+function foldProviderUsage(
+  current: Record<string, unknown> | undefined,
+  next: Record<string, unknown>,
+  mode: AgentEnvironmentEvent["usageMode"],
+  hasPriorTokens: boolean,
+): Record<string, unknown> {
+  if (!current || mode === "cumulative") return { ...next };
+  const folded = { ...current, ...next };
+  if (hasTokenReceipt(next)) {
+    for (const key of [...TOKEN_FIELDS, "model_requests"]) {
+      const value = next[key], prior = current[key];
+      if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 &&
+        (!hasPriorTokens || (typeof prior === "number" && Number.isSafeInteger(prior) && prior >= 0))) {
+        const count = value + (hasPriorTokens ? prior as number : 0);
+        if (Number.isSafeInteger(count)) { folded[key] = count; continue; }
+      }
+      delete folded[key];
+    }
+    const estimated = current.estimated === true || next.estimated === true ? true :
+      next.estimated === false && (!hasPriorTokens || current.estimated === false) ? false : undefined;
+    if (estimated === undefined) delete folded.estimated;
+    else folded.estimated = estimated;
+  }
+  if (next.cost_scope !== "total") {
+    const cost = current.cost, delta = next.cost;
+    if (current.cost_known === true && next.cost_known === true && typeof cost === "number" && typeof delta === "number") {
+      folded.cost = cost + delta;
+    } else { delete folded.cost; folded.cost_known = false; }
+  }
+  return folded;
 }

@@ -5,7 +5,7 @@ import {
   type TokenUsage,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
-import type { CliBridgeSseFrame } from "./wire.js";
+import { responseIdentityFromOpenAi, type CliBridgeSseFrame } from "./wire.js";
 
 interface CanonicalEventContext {
   readonly runId: string;
@@ -41,6 +41,9 @@ export function retainedCanonicalEvent(
 
   const event = envelope.event;
   const usage = usageFromCanonicalEvent(event);
+  const raw = event.type === "raw" ? recordValue(event.event) : undefined;
+  const providerUsage = recordValue(recordValue(raw?.providerEvent)?.usage);
+  const usageMode = raw?.usageMode === "delta" || raw?.usageMode === "cumulative" ? raw.usageMode : undefined;
   return {
     type: event.type,
     // AgentSession.events({ since }) accepts a previously emitted event id.
@@ -49,6 +52,7 @@ export function retainedCanonicalEvent(
     id: frame.id,
     data: {
       ...eventPayload(event),
+      ...responseIdentityFromOpenAi(recordValue(raw?.data)),
       eventId: envelope.eventId,
       sequence: envelope.sequence,
       cursor: frame.id,
@@ -64,7 +68,8 @@ export function retainedCanonicalEvent(
     },
     normalized: event,
     ...(usage === undefined ? {} : { usage }),
-    providerEvent: envelope,
+    ...(usageMode ? { usageMode } : {}),
+    providerEvent: { ...envelope, ...(providerUsage ? { usage: providerUsage } : {}) },
   };
 }
 
