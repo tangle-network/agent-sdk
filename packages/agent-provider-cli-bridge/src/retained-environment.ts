@@ -153,8 +153,7 @@ export function createCliBridgeEnvironment(
       useNativeInteractions,
       args.acceptedContextTransfer,
     );
-    // A streamed run reports usage across its events, so the totals are summed
-    // here and recorded as one execution's measurement.
+    // Delta receipts add; cumulative receipts replace this execution's measurement.
     let streamedUsage: TokenUsage | undefined;
     for await (const event of streamTrackedCliBridgeTurn(
       options,
@@ -168,7 +167,7 @@ export function createCliBridgeEnvironment(
       nativeSessions,
       useNativeInteractions,
     )) {
-      streamedUsage = addTokenUsage(streamedUsage, event.usage);
+      streamedUsage = addTokenUsage(streamedUsage, event.usage, event.usageMode);
       usageLog.record(prepared.run.executionId, streamedUsage);
       yield event;
     }

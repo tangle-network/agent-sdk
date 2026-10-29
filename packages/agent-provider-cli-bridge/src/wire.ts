@@ -7,6 +7,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import {
   AgentExactRunControlRefSchema,
+  CONTRACT_MAX_ARRAY_LENGTH,
   RequestedInteractionsSchema,
   WorkspaceRequestSchema,
   workspaceCwdPathForBase,
@@ -317,29 +318,28 @@ export function safeJson(value: string): Record<string, unknown> | null {
 }
 
 export function usageFromOpenAi(value: unknown): TokenUsage | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const inputTokens =
-    nonNegativeSafeInteger(record.prompt_tokens) ??
-    nonNegativeSafeInteger(record.input_tokens);
-  const outputTokens =
-    nonNegativeSafeInteger(record.completion_tokens) ??
-    nonNegativeSafeInteger(record.output_tokens);
+  const record = providerUsageFromOpenAi(value);
+  if (!record) return undefined;
+  const inputTokens = nonNegativeSafeInteger(record.prompt_tokens) ?? nonNegativeSafeInteger(record.input_tokens);
+  const outputTokens = nonNegativeSafeInteger(record.completion_tokens) ?? nonNegativeSafeInteger(record.output_tokens);
   if (inputTokens === undefined || outputTokens === undefined) return undefined;
-  const totalTokens = nonNegativeSafeInteger(record.total_tokens);
-  const cacheReadInputTokens = nonNegativeSafeInteger(record.cache_read_input_tokens);
-  const cacheCreationInputTokens = nonNegativeSafeInteger(record.cache_creation_input_tokens);
-  const reasoningTokens = nonNegativeSafeInteger(record.reasoning_tokens);
+  const usage: TokenUsage = { inputTokens, outputTokens };
+  for (const [key, wireKey] of [
+    ["totalTokens", "total_tokens"], ["cacheReadInputTokens", "cache_read_input_tokens"],
+    ["cacheCreationInputTokens", "cache_write_input_tokens"], ["reasoningTokens", "reasoning_tokens"],
+  ] as const) {
+    const count = nonNegativeSafeInteger(record[wireKey]) ??
+      (key === "cacheCreationInputTokens" ? nonNegativeSafeInteger(record.cache_creation_input_tokens) : undefined);
+    if (count !== undefined) usage[key] = count;
+  }
   const cost = finiteNonNegativeNumber(record.cost);
-  return {
-    inputTokens,
-    outputTokens,
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
-    ...(cost !== undefined ? { cost } : {}),
-  };
+  if (cost !== undefined) usage.cost = cost;
+  return usage;
+}
+
+export function providerUsageFromOpenAi(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
 }
 
 export function modelRequestsFromOpenAi(value: unknown): number | undefined {
@@ -347,19 +347,30 @@ export function modelRequestsFromOpenAi(value: unknown): number | undefined {
   return modelRequestCount((value as Record<string, unknown>).model_requests);
 }
 
-/** Preserve the provider identity that cli-bridge returns on each completion frame. */
+/** Compatibility model and explicit provider observations have different authority. */
 export function responseIdentityFromOpenAi(value: unknown): {
-  model?: string;
-  system_fingerprint?: string;
+  model?: string; system_fingerprint?: string; provider_models?: string[]; provider_model?: string;
 } | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const model = nonEmptyString(record.model);
-  const systemFingerprint = nonEmptyString(record.system_fingerprint);
-  if (model === undefined && systemFingerprint === undefined) return undefined;
+  const record = providerUsageFromOpenAi(value);
+  if (!record) return undefined;
+  if (record.provider_model !== undefined && nonEmptyString(record.provider_model) === undefined) {
+    throw new Error("cli-bridge returned an invalid provider model observation");
+  }
+  const models = record.provider_models;
+  if (models !== undefined && (!Array.isArray(models) || models.length > CONTRACT_MAX_ARRAY_LENGTH ||
+    models.some(model => nonEmptyString(model) === undefined))) {
+    throw new Error("cli-bridge returned invalid provider model observations");
+  }
+  const observations = [...new Set([
+    ...(models as string[] | undefined ?? []),
+    ...(nonEmptyString(record.provider_model) ? [record.provider_model as string] : []),
+  ])];
+  if (observations.length > CONTRACT_MAX_ARRAY_LENGTH) throw new Error("cli-bridge provider model observations exceed contract bounds");
   return {
-    ...(model === undefined ? {} : { model }),
-    ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
+    ...(nonEmptyString(record.model) ? { model: record.model as string } : {}),
+    ...(nonEmptyString(record.system_fingerprint) ? { system_fingerprint: record.system_fingerprint as string } : {}),
+    ...(observations.length ? { provider_models: observations } : {}),
+    ...(observations.length === 1 ? { provider_model: observations[0] } : {}),
   };
 }
 

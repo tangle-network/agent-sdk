@@ -25,3 +25,7 @@
 **Proxy secret parent selection.** `proxySecretParents` is a host-only total map from destination environment names to API-verified parent sandbox IDs, or explicit independent-root null. It pins host execution custody without becoming portable profile identity or grant authority; the API projects effective pins from validated private parent locators. _Avoid_: parent environment selectors, caller grant IDs, inferred root issuance, or a second persisted map.
 
 **Read-only discovery.** `get(id, { readOnly: true })` returns an existing environment custody snapshot without reconnect or execution side effects. Expired installed receipts remain metadata for trusted recovery decisions; they confer no execution authority. _Avoid_: ordinary reconnect as a discovery fallback.
+
+**Provider model observation.** An explicit model identity reported by the provider response and carried by its host adapter. Distinct observations remain a set; a configured or compatibility response model is not an observation. _Avoid_: treating `metadata.model`, init, argv, a fingerprint or session turn context as served identity.
+
+**Provider usage coverage.** The known token classes and measurement provenance across a retained turn's reported receipts. A missing class remains unknown across deltas; an authoritative cumulative receipt replaces prior coverage. _Avoid_: certifying measured completeness from a numeric token pair or from the last retained event.

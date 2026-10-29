@@ -30,6 +30,7 @@ import {
 import {
   modelRequestsFromOpenAi,
   parseSse,
+  providerUsageFromOpenAi,
   responseIdentityFromOpenAi,
   safeJson,
   toolCallsFromDelta,
@@ -62,54 +63,10 @@ export async function* streamCliBridgeTurn(
   readAuthoritativeRun?: () => Promise<CliBridgeRunSnapshot | null>,
   validateCanonicalEvent?: (event: AgentEnvironmentEvent) => void,
 ): AsyncIterable<AgentEnvironmentEvent> {
-  const reconnect = requestBody === undefined;
   const replay = retainedReplayRequest(lastEventId);
-  const response = await transport.fetch(
-    reconnect
-      ? `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(runId)}/events`
-      : `${trimSlash(options.baseUrl)}/v1/chat/completions`,
-    {
-      method: reconnect ? "GET" : "POST",
-      headers: {
-        ...requestHeaders(options),
-        accept: "text/event-stream",
-        ...(!reconnect && turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
-        ...(replay.serverCursor === undefined
-          ? {}
-          : { "last-event-id": replay.serverCursor }),
-      },
-      ...(requestBody === undefined ? {} : { body: requestBody }),
-      ...(signal ? { signal } : {}),
-    },
+  const response = await openCliBridgeStream(
+    [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse],
   );
-  if (!response.ok) {
-    let detail = "request rejected";
-    try {
-      detail = await readBoundedCliBridgeResponse(
-        response,
-        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
-        signal,
-      );
-    } catch {
-      // The HTTP status already proves this request was rejected.
-    }
-    throw new CliBridgeRequestRejectedError(response.status, detail);
-  }
-  try {
-    onResponse?.(response);
-  } catch (error) {
-    if (response.body) {
-      try {
-        await detachCliBridgeReader(response.body);
-      } catch (detachError) {
-        throw new AggregateError(
-          [error, detachError],
-          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
-        );
-      }
-    }
-    throw error;
-  }
   if (!response.body) throw new Error("cli-bridge response body is empty");
 
   let text = "";
@@ -117,7 +74,6 @@ export async function* streamCliBridgeTurn(
   const messageId = turn.turnId ?? `${sessionId}:assistant`;
   const emittedToolCalls = new Set<string>();
   let completed = false;
-  let sawUsage = false;
   let observedModelRequests = 0;
   let modelRequestsKnown = false;
   let servedModel: string | undefined;
@@ -206,6 +162,8 @@ export async function* streamCliBridgeTurn(
       systemFingerprint = responseIdentity.system_fingerprint;
     }
     const identityData = {
+      ...(responseIdentity?.provider_models ? { provider_models: responseIdentity.provider_models } : {}),
+      ...(responseIdentity?.provider_model ? { provider_model: responseIdentity.provider_model } : {}),
       ...(servedModel === undefined ? {} : { model: servedModel }),
       ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
     };
@@ -221,11 +179,11 @@ export async function* streamCliBridgeTurn(
         ? `\n\n${rawChunk}`
         : rawChunk;
     if (rawChunk && toolCallDeltas.length === 0) textBoundaryPending = false;
-    const nextUsage = usageFromOpenAi(parsed.usage);
+    const rawUsage = providerUsageFromOpenAi(parsed.usage);
+    const nextUsage = usageFromOpenAi(rawUsage);
     const nextModelRequests = modelRequestsFromOpenAi(parsed.usage);
     const frameEvents: AgentEnvironmentEvent[] = [];
-    if (nextUsage || nextModelRequests !== undefined) {
-      if (nextUsage) sawUsage = true;
+    if (rawUsage || nextModelRequests !== undefined) {
       if (nextModelRequests !== undefined) {
         observedModelRequests += nextModelRequests;
         modelRequestsKnown = true;
@@ -237,6 +195,8 @@ export async function* streamCliBridgeTurn(
           ...(nextModelRequests === undefined ? {} : { modelRequests: nextModelRequests }),
         },
         ...(nextUsage ? { usage: nextUsage } : {}),
+        usageMode: "delta",
+        providerEvent: { usage: rawUsage },
       });
     }
     if (chunk) {
@@ -283,6 +243,9 @@ export async function* streamCliBridgeTurn(
       });
     }
     if (toolCallDeltas.length > 0) textBoundaryPending = true;
+    if (responseIdentity?.provider_models && !frameEvents.some(event => event.data.provider_models !== undefined)) {
+      frameEvents.push({ type: "raw", data: identityData, providerEvent: parsed });
+    }
     if (choice?.finish_reason) {
       terminalFrameSeen = true;
       if (choice.finish_reason === "error") {
@@ -322,6 +285,86 @@ export async function* streamCliBridgeTurn(
       replay.anchor,
     );
   }
+  yield* finishCliBridgeStream(
+    [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse, readAuthoritativeRun],
+    { protocol, canonicalTerminalStatus, canonicalTerminalEvent, sawProtocolEnd, completed,
+      cancelledTerminalSeen, terminalFrame, text, modelRequestsKnown, observedModelRequests, servedModel, systemFingerprint },
+    replay.anchor,
+  );
+}
+
+/** Both dispatch and live readers use the same admission and bounded HTTP refusal. */
+export async function openCliBridgeStream(
+  [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse]: Parameters<typeof streamCliBridgeTurn>,
+): Promise<CliBridgeResponse> {
+  const reconnect = requestBody === undefined;
+  const replay = retainedReplayRequest(lastEventId);
+  const response = await transport.fetch(
+    reconnect
+      ? `${trimSlash(options.baseUrl)}/v1/runs/${encodeURIComponent(runId)}/events`
+      : `${trimSlash(options.baseUrl)}/v1/chat/completions`,
+    {
+      method: reconnect ? "GET" : "POST",
+      headers: {
+        ...requestHeaders(options),
+        accept: "text/event-stream",
+        ...(!reconnect && turn.sessionId ? { "x-session-id": turn.sessionId } : {}),
+        ...(replay.serverCursor === undefined
+          ? {}
+          : { "last-event-id": replay.serverCursor }),
+      },
+      ...(requestBody === undefined ? {} : { body: requestBody }),
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok) {
+    let detail = "request rejected";
+    try {
+      detail = await readBoundedCliBridgeResponse(
+        response,
+        MAX_CLI_BRIDGE_CONTROL_RESPONSE_BYTES,
+        signal,
+      );
+    } catch {
+      // The HTTP status already proves this request was rejected.
+    }
+    throw new CliBridgeRequestRejectedError(response.status, detail);
+  }
+  try {
+    onResponse?.(response);
+  } catch (error) {
+    if (response.body) {
+      try {
+        await detachCliBridgeReader(response.body);
+      } catch (detachError) {
+        throw new AggregateError(
+          [error, detachError],
+          `cli-bridge rejected response identity for run "${runId}" and could not detach its reader`,
+        );
+      }
+    }
+    throw error;
+  }
+  return response;
+}
+
+/** Confirm terminal authority before releasing the final frame and its cumulative receipt. */
+async function* finishCliBridgeStream(
+  [options, turn, requestBody, transport, runId, lastEventId, signal, onResponse, readAuthoritativeRun]: Parameters<typeof streamCliBridgeTurn>,
+  { protocol, canonicalTerminalStatus, canonicalTerminalEvent, sawProtocolEnd, completed,
+    cancelledTerminalSeen, terminalFrame, text, modelRequestsKnown, observedModelRequests, servedModel, systemFingerprint }: {
+    protocol: "unknown" | "openai" | "canonical";
+    canonicalTerminalStatus?: "completed" | "failed" | "cancelled";
+    canonicalTerminalEvent?: AgentEnvironmentEvent;
+    sawProtocolEnd: boolean; completed: boolean; cancelledTerminalSeen: boolean;
+    terminalFrame?: { readonly id?: string; readonly events: AgentEnvironmentEvent[]; readonly finishReason: string };
+    text: string; modelRequestsKnown: boolean; observedModelRequests: number;
+    servedModel?: string; systemFingerprint?: string;
+  },
+  anchor: ReturnType<typeof retainedReplayRequest>["anchor"],
+): AsyncIterable<AgentEnvironmentEvent> {
+  const sessionId = turn.sessionId ?? runId;
+  const reconnect = requestBody === undefined;
   if (protocol === "canonical") {
     if (canonicalTerminalStatus === undefined) {
       throw new Error("cli-bridge canonical stream ended without terminal status");
@@ -431,7 +474,7 @@ export async function* streamCliBridgeTurn(
           finishReason:
             lastEventId === undefined ? terminalFrame.finishReason : result.finishReason,
           status: "completed",
-          ...(result.model === undefined ? {} : { model: result.model }),
+          ...result.identity,
           ...(result.system_fingerprint === undefined
             ? {}
             : { system_fingerprint: result.system_fingerprint }),
@@ -439,7 +482,9 @@ export async function* streamCliBridgeTurn(
             ? {}
             : { modelRequests: finalModelRequests }),
         },
-        ...(result.usage && !sawUsage ? { usage: result.usage } : {}),
+        ...(result.usage ? { usage: result.usage } : {}),
+        ...(result.providerUsage ? { usageMode: "cumulative" as const } : {}),
+        ...(result.providerUsage ? { providerEvent: { usage: result.providerUsage } } : {}),
       };
     }
   } else {
@@ -476,7 +521,7 @@ export async function* streamCliBridgeTurn(
     runId,
     sessionId,
     turn.executionId,
-    replay.anchor,
+    anchor,
   );
   if (terminalFailure) throw terminalFailure;
 }
@@ -523,6 +568,8 @@ async function readFullCliBridgeResult(
   finishReason: string;
   usage?: TokenUsage;
   modelRequests?: number;
+  identity?: ReturnType<typeof responseIdentityFromOpenAi>;
+  providerUsage?: Record<string, unknown>;
   model?: string;
   system_fingerprint?: string;
 }> {
@@ -576,6 +623,8 @@ async function readFullCliBridgeResult(
     text: message.content,
     finishReason: choice.finish_reason,
     ...(usage ? { usage } : {}),
+    providerUsage: providerUsageFromOpenAi(parsed?.usage),
+    identity: responseIdentity,
     ...(modelRequests === undefined ? {} : { modelRequests }),
     ...(responseIdentity?.model === undefined ? {} : { model: responseIdentity.model }),
     ...(responseIdentity?.system_fingerprint === undefined

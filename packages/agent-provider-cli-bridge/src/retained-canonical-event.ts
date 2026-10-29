@@ -5,7 +5,7 @@ import {
   type TokenUsage,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
-import type { CliBridgeSseFrame } from "./wire.js";
+import { providerUsageFromOpenAi as recordValue, usageFromOpenAi, type CliBridgeSseFrame } from "./wire.js";
 
 interface CanonicalEventContext {
   readonly runId: string;
@@ -107,48 +107,12 @@ function usageFromCanonicalEvent(event: StreamEvent): TokenUsage | undefined {
   const data = recordValue(providerEvent.data);
   const usage = recordValue(providerEvent.usage) ?? recordValue(data?.usage);
   if (!usage) return undefined;
-  const inputTokens = nonNegativeInteger(usage.inputTokens);
-  const outputTokens = nonNegativeInteger(usage.outputTokens);
-  if (inputTokens === undefined || outputTokens === undefined) return undefined;
-  return {
-    inputTokens,
-    outputTokens,
-    ...optionalInteger(usage, "totalTokens"),
-    ...optionalInteger(usage, "cacheReadInputTokens"),
-    ...optionalInteger(usage, "cacheCreationInputTokens"),
-    ...optionalInteger(usage, "reasoningTokens"),
-    ...optionalNumber(usage, "cost"),
-  };
-}
-
-function optionalInteger(
-  source: Record<string, unknown>,
-  key: keyof TokenUsage,
-): Partial<TokenUsage> {
-  const value = nonNegativeInteger(source[key]);
-  return value === undefined ? {} : { [key]: value };
-}
-
-function optionalNumber(
-  source: Record<string, unknown>,
-  key: keyof TokenUsage,
-): Partial<TokenUsage> {
-  const value = source[key];
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? { [key]: value }
-    : {};
-}
-
-function nonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : undefined;
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  return usageFromOpenAi({
+    prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens, cache_read_input_tokens: usage.cacheReadInputTokens,
+    cache_write_input_tokens: usage.cacheCreationInputTokens, reasoning_tokens: usage.reasoningTokens,
+    cost: usage.cost,
+  });
 }
 
 function isBaseTenInteger(value: string): boolean {
