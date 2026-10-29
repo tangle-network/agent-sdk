@@ -330,7 +330,7 @@ export function assertNoInlineSecretValues(
 }
 
 /** Validate mapped stored names and bindings without resolving their values. */
-export function assertMappedSecretNames(options: CreateSandboxOptions): void {
+export function assertMappedSecretNames(options: TangleCreateSandboxOptions): void {
   if (options.secrets === "all") throw new Error("Tangle mapped secrets require explicit selection");
   sandboxSecretBindings(options.secrets, undefined, options.env);
 }

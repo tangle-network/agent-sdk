@@ -1,10 +1,8 @@
-import {
-  ProxySecretsSchema, mergeProxySecretBindings,
-  type CreateAgentEnvironmentInput, type ProxySecretBinding,
-} from "@tangle-network/agent-interface/environment-provider";
+import { ProxySecretsSchema, mergeProxySecretBindings,
+  type CreateAgentEnvironmentInput, type ProxySecretBinding } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { boundedIdentifier, MAX_ARRAY_LENGTH } from "./tangle-contract-safety.js";
-import type { CreateSandboxOptions, SecretBinding } from "@tangle-network/sandbox";
+import type { TangleCreateSandboxOptions } from "./tangle-types.js";
 
 /** Provider-owned public declarations bind recovery; they contain no authority or values. */
 export const PROXY_SECRETS_METADATA_KEY = "tangleProxySecrets";
@@ -33,12 +31,10 @@ export function assertProxySecretAliases(
   env: Record<string, string> | undefined,
   secrets: unknown,
 ): void {
-  if (bindings !== undefined && secrets !== undefined && !Array.isArray(secrets)) {
-    throw new Error("Tangle proxy-secret custody cannot use all or raw readable secret selection");
-  }
+  if (bindings !== undefined && secrets !== undefined && !Array.isArray(secrets)) throw new Error("Tangle proxy-secret custody cannot use all or raw readable secret selection");
   for (const binding of bindings ?? []) {
     for (const alias of [binding.envName, binding.secretRef.key]) {
-      if (Object.hasOwn(env ?? {}, alias) || (Array.isArray(secrets) && secrets.includes(alias))) {
+      if (Object.hasOwn(env ?? {}, alias) || (Array.isArray(secrets) && secrets.some((entry) => typeof entry === "string" ? entry === alias : entry?.name === alias && "exposeInBox" in entry))) {
         throw new Error("Tangle proxy-secret reference or alias cannot receive raw readable secret delivery");
       }
     }
@@ -50,9 +46,9 @@ export function sandboxSecretBindings(
   secrets: CreateAgentEnvironmentInput["secrets"] | "all",
   bindings?: readonly ProxySecretBinding[],
   env?: Record<string, string>,
-): Exclude<CreateSandboxOptions["secrets"], "all"> {
+): Exclude<TangleCreateSandboxOptions["secrets"], "all"> {
   assertProxySecretAliases(bindings === undefined ? undefined : [...bindings], env, secrets);
-  const lowered: SecretBinding[] = (bindings ?? []).map((binding) => {
+  const lowered = (bindings ?? []).map((binding) => {
     if (binding.hosts.length !== 1 || binding.methods !== undefined || binding.paths !== undefined ||
         binding.presentation.type === "query" || binding.placeholderFormat === "jwt" ||
         binding.ttlSeconds !== undefined || binding.envName !== binding.secretRef.key) {
@@ -63,23 +59,26 @@ export function sandboxSecretBindings(
   });
   if (secrets === undefined && bindings === undefined) return undefined;
   if (secrets !== undefined && !Array.isArray(secrets)) throw new Error("Tangle secrets must be stored names or host bindings");
-  const entries = new Map<string, string | SecretBinding>();
+  const entries = new Map<string, Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>[number]>();
   for (const entry of [...(secrets ?? []), ...lowered]) {
     const name = typeof entry === "string" ? entry : entry.name;
     boundedIdentifier(name, "Tangle stored-secret name");
     if (typeof entry !== "string") {
-      if (Object.keys(entry).some((key) => !["name", "host", "header"].includes(key)) ||
+      if (("host" in entry ? Object.keys(entry).some((key) => !["name", "host", "header"].includes(key)) ||
           typeof entry.host !== "string" || entry.host.length > 253 ||
           !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(entry.host) ||
-          (entry.header !== undefined && (typeof entry.header !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(entry.header))) ||
-          Object.hasOwn(env ?? {}, name)) throw new Error("Invalid or shadowed Tangle host binding");
+          (entry.header !== undefined && (typeof entry.header !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(entry.header))) :
+          Object.keys(entry).some((key) => !["name", "exposeInBox"].includes(key)) || entry.exposeInBox !== true) ||
+          Object.hasOwn(env ?? {}, name)) throw new Error("Invalid or shadowed Tangle secret selection");
     }
     const previous = entries.get(name);
-    const identity = (value: string | SecretBinding) => typeof value === "string" ? value :
-      { name: value.name, host: value.host, header: (value.header ?? "Authorization").toLowerCase() };
-    if (previous !== undefined && canonicalCandidateDigest(identity(previous)) !== canonicalCandidateDigest(identity(entry))) throw new Error("Conflicting Tangle secret delivery");
+    if (previous !== undefined && sandboxSecretBindingIdentity(previous) !== sandboxSecretBindingIdentity(entry)) throw new Error("Conflicting Tangle secret delivery");
     entries.set(name, entry);
   }
   if (entries.size > MAX_ARRAY_LENGTH) throw new Error("Tangle stored-secret selection exceeds its bound");
   return [...entries.values()];
 }
+
+export const sandboxSecretBindingIdentity = (entry: Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>[number]): string => canonicalCandidateDigest(
+  typeof entry !== "string" && "host" in entry ? { ...entry, header: (entry.header ?? "Authorization").toLowerCase() } : entry,
+);

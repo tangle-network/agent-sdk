@@ -29,8 +29,9 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
+import { captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
+import { normalizeTangleBackend } from "./tangle-prompt.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
   awaitSandboxRunning,
@@ -174,7 +175,7 @@ export function createTangleProvider(
       throw new Error("Tangle owns metadata.tangleProxySecrets");
     }
     const requestedProxySecrets = proxySecretsFromInput(input);
-    assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
+    const requestedSecrets = structuredClone(sandboxSecretBindings(input.secrets, requestedProxySecrets, input.env));
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -215,18 +216,17 @@ export function createTangleProvider(
     if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
       throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     }
-    const { proxySecrets: _legacy, secrets: selection, ...mapped } = mappedInput;
+    const { proxySecrets: _legacy, secrets: selection, ...mapped } = { ...mappedInput, backend: normalizeTangleBackend(mappedInput.backend, true) };
     const secrets = sandboxSecretBindings(selection, selectedProxySecrets, mapped.env);
     const mappedOptions = { ...mapped, ...(secrets === undefined ? {} : { secrets }) };
-    for (const entry of sandboxSecretBindings(input.secrets, selectedProxySecrets, input.env) ?? []) {
+    for (const entry of requestedSecrets ?? []) {
       if (typeof entry === "string") continue;
-      if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => canonicalCandidateDigest(selected) === canonicalCandidateDigest(entry))) {
-        throw new Error("Tangle mapped secrets must preserve the requested host bindings");
+      if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => sandboxSecretBindingIdentity(selected) === sandboxSecretBindingIdentity(entry))) {
+        throw new Error("Tangle mapped secrets must preserve the requested delivery selection");
       }
     }
     assertMappedCreateOptions(mappedOptions);
-    // A custom mapper builds its own backend; requested routing must survive it.
-    const mappedRouting = mappedOptions.backend?.routing ?? mappedOptions.backend?.model?.routing;
+    const mappedRouting = mappedOptions.backend?.model?.routing;
     if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
       throw new Error("Tangle mapped create options must carry exactly the requested providerOptions.routing");
     }
@@ -435,7 +435,7 @@ export function createTangleProvider(
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
-    ...(options.client.secrets === undefined ? {} : { secrets: options.client.secrets }),
+    ...(typeof options.client.secrets?.update !== "function" ? {} : { secrets: options.client.secrets }),
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
     validateProfile: tangleProfileValidator(options.validateProfile),

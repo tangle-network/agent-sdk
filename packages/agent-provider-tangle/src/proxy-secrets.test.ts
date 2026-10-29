@@ -4,21 +4,20 @@ import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
 import type { CreateAgentEnvironmentInput, ProxySecretBinding } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
-
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "host-binding", harness: "opencode" as const };
-const host = "reports.example.com";
+const host = "reports.example.com", runtimeAttachments = { mcp: { public: { transport: "http" as const, url: "https://mcp.example.com" } } };
 const binding = (name = "REPORTS_TOKEN"): ProxySecretBinding => ({
   envName: name, secretRef: { kind: "secret-ref", key: name }, hosts: [host],
   presentation: { type: "bearer" },
 });
 const selected = (name = "REPORTS_TOKEN") => ({ name, host, header: "Authorization" });
-
+const exposed = { name: "READABLE_NAME", exposeInBox: true as const };
 /** Actual Sandbox HTTP transport; this peer checks wire delivery, not proxy enforcement. */
 async function fixture() {
   let baseUrl = "", metadata: unknown;
-  const requests: string[] = [], creates: Record<string, unknown>[] = [], stored = new Map<string, string>();
+  const requests: string[] = [], creates: Record<string, unknown>[] = [], turns: Record<string, unknown>[] = [], stored = new Map<string, string>();
   const info = () => ({
     id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata,
     filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
@@ -29,27 +28,26 @@ async function fixture() {
     const path = new URL(request.url!, "http://fixture").pathname;
     requests.push(`${request.method} ${path}`);
     response.setHeader("content-type", "application/json");
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     if (path === "/v1/backends") {
-      response.end(JSON.stringify({ backends: [], timestamp: new Date(0).toISOString() }));
+      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode", description: "HTTP fixture", callerCredentialOnly: false, capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } }], timestamp: new Date(0).toISOString() }));
     } else if (path === "/v1/secrets" && request.method === "POST") {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const body = JSON.parse(Buffer.concat(chunks).toString());
       stored.set(body.name, body.value);
       response.end(JSON.stringify({ secret: { name: body.name, createdAt: new Date(0).toISOString() } }));
     } else if (path.startsWith("/v1/secrets/") && request.method === "DELETE") {
       stored.delete(decodeURIComponent(path.slice("/v1/secrets/".length)));
       response.end(JSON.stringify({ success: true }));
     } else if (path === "/v1/sandboxes" && request.method === "POST") {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const body = JSON.parse(Buffer.concat(chunks).toString());
       creates.push(body); metadata = body.metadata;
       response.end(JSON.stringify(info()));
     } else if (path === "/v1/sandboxes/sandbox-bindings") {
       response.end(JSON.stringify(info()));
+    } else if (path.endsWith("/agents/run/stream")) {
+      turns.push(body); response.setHeader("content-type", "text/event-stream"); response.end(`event: result\ndata: ${JSON.stringify({ executionId: body.executionId ?? request.headers["x-execution-id"], success: true, status: "success", response: "fixture", durationMs: 1 })}\n\nevent: done\ndata: {"outcome":{"type":"completed"}}\n\n`);
     } else if (path.endsWith("/capabilities")) {
-      response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: {}, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
+      response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false }, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
     } else {
       response.writeHead(404); response.end(JSON.stringify({ code: "NOT_FOUND", message: "No receipt protocol is served" }));
     }
@@ -61,22 +59,20 @@ async function fixture() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
-  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored };
+  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored, turns };
 }
-
-it.each([{ secrets: undefined }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("forwards ordinary and host-bound creates without custody receipts (%j)", async ({ secrets }) => {
+it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("forwards explicit selection modes without inventing consent (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
   const provider = createTangleProvider({ client });
-  const environment = await provider.create({ profile, secrets });
+  const environment = await provider.create({ profile, secrets, egress: { mode: "open" }, billingOwner: "fixture-owner", runtimeAttachments });
   expect(environment.id).toBe("sandbox-bindings");
   expect(creates).toHaveLength(1);
-  expect(creates[0]!.secrets).toEqual(secrets);
+  expect(creates[0]).toMatchObject({ egressPolicy: { mode: "open" }, billingOwnerId: "fixture-owner", backend: { profile, runtimeAttachments } }); expect(creates[0]!.secrets).toEqual(secrets);
   if (secrets === undefined) expect(creates[0]).not.toHaveProperty("secrets");
   expect(creates[0]).not.toHaveProperty("proxySecrets");
   expect(requests.some((request) => request.endsWith("/egress"))).toBe(false);
   expect(requests).not.toContain("GET /v1/capabilities");
 });
-
 it("lowers authored and runtime declarations onto the same stored host entries", async () => {
   const { client, creates } = await fixture();
   const basic = { ...binding("GIT_TOKEN"), presentation: { type: "basic" as const, username: "git" } };
@@ -91,13 +87,11 @@ it("lowers authored and runtime declarations onto the same stored host entries",
   ]);
   expect(creates[0]).not.toHaveProperty("proxySecrets");
 });
-
 it("deduplicates identical declarations across profile and runtime input", async () => {
   const { client, creates } = await fixture();
   await createTangleProvider({ client }).create({ profile: { ...profile, proxySecrets: [binding()] }, proxySecrets: [binding()] });
   expect(creates[0]!.secrets).toEqual([selected()]);
 });
-
 it.each([
   { ...binding(), methods: ["POST"] },
   { ...binding(), paths: ["/v1/events"] },
@@ -111,32 +105,32 @@ it.each([
   await expect(createTangleProvider({ client }).create({ profile, proxySecrets: [declaration] })).rejects.toThrow(/cannot enforce/);
   expect(creates).toHaveLength(0);
 });
-
 it.each([
   { secrets: [selected()], env: { REPORTS_TOKEN: "inline-readable" } },
   { secrets: ["REPORTS_TOKEN"], proxySecrets: [binding()] },
   { secrets: [selected(), { ...selected(), host: "other.example.com" }] },
   { secrets: [selected()], proxySecrets: [{ ...binding(), hosts: ["other.example.com"] }] },
+  { secrets: [selected(exposed.name), exposed] }, { secrets: [exposed.name, exposed] },
+  { secrets: [{ name: "REPORTS_TOKEN", exposeInBox: true as const }], proxySecrets: [binding()] },
 ])("refuses conflicting or readable delivery before allocation (%j)", async (input) => {
   const { client, creates } = await fixture();
   await expect(createTangleProvider({ client }).create({ profile, ...input })).rejects.toThrow();
   expect(creates).toHaveLength(0);
 });
-
 it.each([
-  { secrets: undefined },
-  { secrets: ["REPORTS_TOKEN"] },
-  { secrets: [{ ...selected(), host: "other.example.com" }] },
-  { secrets: [{ ...selected(), header: "X-Other" }] },
-])("refuses a custom mapper that changes a direct host selection (%j)", async ({ secrets }) => {
+  { requested: selected(), secrets: undefined }, { requested: selected(), secrets: ["REPORTS_TOKEN"] },
+  { requested: selected(), secrets: [{ ...selected(), host: "other.example.com" }] },
+  { requested: selected(), secrets: [{ ...selected(), header: "X-Other" }] },
+  { requested: selected(), secrets: [{ name: "REPORTS_TOKEN", exposeInBox: true as const }] },
+  { requested: exposed, secrets: undefined }, { requested: exposed, secrets: [exposed.name] },
+])("refuses a custom mapper that changes an explicit delivery selection (%j)", async ({ requested, secrets }) => {
   const { client, creates } = await fixture();
   const provider = createTangleProvider({ client, mapCreateInput: () => ({
     backend: { type: "opencode", profile }, ...(secrets === undefined ? {} : { secrets }),
   }) });
-  await expect(provider.create({ profile, secrets: [selected()] })).rejects.toThrow();
+  await expect(provider.create({ profile, secrets: [requested] })).rejects.toThrow();
   expect(creates).toHaveLength(0);
 });
-
 it.each([{ secrets: ["REPORTS_TOKEN"] }, { secrets: [{ ...selected(), host: "other.example.com" }] }])(
   "refuses a custom mapper that loses a portable declaration (%j)", async ({ secrets }) => {
     const { client, creates } = await fixture();
@@ -148,15 +142,16 @@ it.each([{ secrets: ["REPORTS_TOKEN"] }, { secrets: [{ ...selected(), host: "oth
   },
 );
 
-it("accepts a custom mapper that preserves the selected host binding", async () => {
+it("detaches mapper selectors and preserves consent plus equivalent headers", async () => {
   const { client, creates } = await fixture();
-  const provider = createTangleProvider({ client, mapCreateInput: () => ({
-    backend: { type: "opencode", profile }, secrets: [selected()],
-  }) });
-  await provider.create({ profile, secrets: [selected()], proxySecrets: [binding()] });
-  expect(creates[0]!.secrets).toEqual([selected()]);
+  const secrets = [selected(), exposed];
+  const provider = createTangleProvider({ client, mapCreateInput: () => {
+    queueMicrotask(() => { secrets[0]!.name = "CHANGED_NAME"; });
+    return { backend: { type: "opencode", profile }, secrets };
+  } });
+  await provider.create({ profile, secrets: [{ name: "REPORTS_TOKEN", host, header: "authorization" }, exposed] });
+  expect(creates[0]!.secrets).toEqual([selected(), exposed]);
 });
-
 it("refuses value-bearing maps and undeclared host binding fields before allocation", async () => {
   const { client, creates } = await fixture();
   const provider = createTangleProvider({ client });
@@ -165,20 +160,25 @@ it("refuses value-bearing maps and undeclared host binding fields before allocat
     [{ ...selected(), value: "inline-readable" }],
     [{ ...selected(), host: "https://reports.example.com" }],
     [{ ...selected(), header: "X-Key\r\nInjected: yes" }],
+    [{ ...exposed, host }], [{ ...exposed, exposeInBox: false }], [{ ...exposed, header: "Authorization" }],
   ]) {
     await expect(provider.create({ profile, secrets } as CreateAgentEnvironmentInput)).rejects.toThrow();
   }
   expect(creates).toHaveLength(0);
 });
-
-
-it("normalizes equivalent direct and portable bindings regardless of property order or default header", async () => {
-  const { client, creates } = await fixture();
-  await createTangleProvider({ client }).create({ profile,
-    secrets: [{ host, name: "REPORTS_TOKEN" }], proxySecrets: [binding()],
-  });
-  expect(creates[0]!.secrets).toHaveLength(1);
+it("keeps semantic host identity and legacy model intent canonical across SDK versions", async () => {
+  const { client, creates, turns } = await fixture();
+  const routing = { only: ["fixture-router"], allowFallbacks: false }, model = { provider: "openai", model: "fixture-model", apiKeyEnv: "MODEL_TOKEN", baseUrl: "https://model.example.com" };
+  const environment = await createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "opencode", profile, modelId: model.model, provider: model.provider, apiKeyEnv: model.apiKeyEnv, baseUrl: model.baseUrl, routing }, secrets: [{ name: "REPORTS_TOKEN", host }] }) })
+    .create({ profile, secrets: [{ host, name: "REPORTS_TOKEN" }], proxySecrets: [binding()], providerOptions: { routing } });
   expect(creates[0]!.secrets).toEqual([expect.objectContaining({ name: "REPORTS_TOKEN", host })]);
+  expect(creates[0]!.backend).toMatchObject({ model: { ...model, routing } });
+  for await (const _ of environment.stream({ prompt: "Transport intent only", providerOptions: { backend: { type: "opencode", modelId: model.model, provider: model.provider, apiKeyEnv: model.apiKeyEnv, baseUrl: model.baseUrl } } })) {}
+  expect(turns[0]!.backend).toMatchObject({ model });
+  for (const backend of [{ modelId: "first", model: { model: "other" } }, { routing }, { unsupported: true }]) {
+    await expect((async () => { for await (const _ of environment.stream({ prompt: "Refuse before HTTP", providerOptions: { backend } })) {} })()).rejects.toThrow();
+  }
+  expect(turns).toHaveLength(1);
 });
 
 it("injects lowered portable bindings into a custom mapper's SDK request", async () => {
@@ -188,15 +188,15 @@ it("injects lowered portable bindings into a custom mapper's SDK request", async
   expect(creates[0]!.secrets).toEqual([selected()]);
 });
 
-it("forwards the host secret store with its receiver intact and deletes the stored value", async () => {
+it("exposes only a fenced provider store while the SDK basic store stays usable", async () => {
   const { client, stored, requests } = await fixture();
   const provider = createTangleProvider({ client });
   const value = randomBytes(32).toString("hex");
-  expect(provider.secrets).toBeDefined();
-  const receipt = await provider.secrets!.create("COORDINATION_RUN_TOKEN", value);
+  expect(provider.secrets !== undefined).toBe("update" in client.secrets);
+  const receipt = await (provider.secrets ?? client.secrets).create("COORDINATION_RUN_TOKEN", value);
   expect(receipt).toMatchObject({ name: "COORDINATION_RUN_TOKEN" });
   expect(stored.get("COORDINATION_RUN_TOKEN") === value).toBe(true);
-  await provider.secrets!.delete("COORDINATION_RUN_TOKEN");
+  await (provider.secrets ?? client.secrets).delete("COORDINATION_RUN_TOKEN");
   expect(stored.has("COORDINATION_RUN_TOKEN")).toBe(false);
   expect(requests).toEqual(["POST /v1/secrets", "DELETE /v1/secrets/COORDINATION_RUN_TOKEN"]);
 });
