@@ -1,7 +1,3 @@
-import {
-  AgentExactRunControlRefSchema,
-  AgentTurnInputSchema,
-} from "@tangle-network/agent-interface";
 import type {
   AgentSessionRef,
   AgentTurnInput,
@@ -10,6 +6,7 @@ import type { SandboxInstanceLike } from "./tangle-types.js";
 import {
   promptFromTurnInput,
   promptOptionsFromTurnInput,
+  preparePromptOptions,
 } from "./tangle-prompt.js";
 import {
   retainedSessionControlRef,
@@ -29,28 +26,11 @@ export function dispatchEnvironmentRun(
   environmentId: string,
 ): (input: AgentTurnInput) => Promise<AgentSessionRef> {
   return async (input) => {
-    AgentTurnInputSchema.parse(input);
     input.signal?.throwIfAborted();
-    const callerControlRef =
-      input.controlRef === undefined
-        ? undefined
-        : AgentExactRunControlRefSchema.parse(input.controlRef);
-    if (callerControlRef !== undefined) {
-      if (
-        callerControlRef.provider !== provider ||
-        callerControlRef.environmentId !== environmentId
-      ) {
-        throw new Error("Tangle control reference does not match this environment");
-      }
-      for (const field of ["sessionId", "executionId"] as const) {
-        if (input[field] !== undefined && input[field] !== callerControlRef[field]) {
-          throw new Error(`Tangle ${field} conflicts with the control reference`);
-        }
-      }
-    }
+    const options = promptOptionsFromTurnInput(input, { provider, environmentId });
+    const callerControlRef = options.runControlRef;
     const expectedSessionId =
-      input.sessionId ??
-      callerControlRef?.sessionId ??
+      options.sessionId ??
       sessionPromptSessionId(provider, environmentId, input.turnId);
     if (expectedSessionId === undefined) {
       throw new Error(
@@ -58,8 +38,7 @@ export function dispatchEnvironmentRun(
       );
     }
     const exactInput = { ...input, sessionId: expectedSessionId };
-    const requestedExecutionId =
-      input.executionId ?? callerControlRef?.executionId;
+    const requestedExecutionId = options.executionId;
     const baseRequestDigest = sessionPromptRequestDigest(
       exactInput,
       provider,
@@ -90,14 +69,14 @@ export function dispatchEnvironmentRun(
       requestDigest,
       callerControlRef?.runId,
     );
-    const dispatchInput = {
-      ...exactInput,
-      executionId: expectedExecutionId,
-      controlRef: runControlRef,
-    };
     const promise = box.dispatchPrompt?.(
-      promptFromTurnInput(dispatchInput),
-      promptOptionsFromTurnInput(dispatchInput, { provider, environmentId }),
+      promptFromTurnInput(input),
+      await preparePromptOptions(box, {
+        ...options,
+        sessionId: expectedSessionId,
+        executionId: expectedExecutionId,
+        runControlRef,
+      }, provider),
     );
     let dispatched: unknown;
     try {

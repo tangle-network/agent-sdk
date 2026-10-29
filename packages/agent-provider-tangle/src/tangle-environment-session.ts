@@ -30,7 +30,7 @@ import type {
   NativeContextContinuationRequest,
 } from "@tangle-network/agent-interface";
 import type { SandboxEvent } from "@tangle-network/sandbox";
-import type { SandboxSessionLike } from "./tangle-types.js";
+import type { SandboxInstanceLike, SandboxSessionLike } from "./tangle-types.js";
 import type { ExecutionUsageLog } from "./tangle-usage-log.js";
 import { createStepUsageFold } from "./tangle-step-usage.js";
 import {
@@ -43,6 +43,7 @@ import {
   agentTurnResultFromPromptRecord,
   promptFromTurnInput,
   promptOptionsFromTurnInput,
+  preparePromptOptions,
   validatedSandboxPromptResult,
 } from "./tangle-prompt.js";
 import {
@@ -101,6 +102,7 @@ export function sandboxSessionAsAgentSession(
   nativeContinuation = false,
   beforePrompt?: (input: AgentTurnInput) => AgentTurnInput | void | Promise<AgentTurnInput | void>,
   onExecution?: (executionId: string) => void,
+  box?: SandboxInstanceLike,
 ): AgentSession {
   const measured = (
     executionId: string | undefined,
@@ -623,11 +625,11 @@ export function sandboxSessionAsAgentSession(
               controlRef: targetControlRef,
             };
         const prompt = promptFromTurnInput(input);
-        const promptOptions = promptOptionsFromTurnInput(promptInput, {
+        const promptOptions = await preparePromptOptions(box, promptOptionsFromTurnInput(promptInput, {
           provider,
           environmentId,
           sessionId: session.id,
-        });
+        }), provider);
         onExecution?.(executionId);
         try {
           const result = await awaitWithSignal(
@@ -642,13 +644,12 @@ export function sandboxSessionAsAgentSession(
               "Tangle session prompt did not confirm its exact executionId",
             );
           }
-          const nextControlRef = targetControlRef;
-          activeControlRef = nextControlRef;
+          activeControlRef = targetControlRef;
           return measured(
             executionId,
             agentTurnResultFromPromptRecord(resultRecord, {
               sessionId: session.id,
-              controlRef: nextControlRef,
+              controlRef: targetControlRef,
               ...(input.contextTransfer
                 ? { contextTransferRequest: input.contextTransfer }
                 : {}),

@@ -7,6 +7,8 @@ Terminal `result` and `done` events use the Sandbox SDK's `projectAgentTerminalR
 
 Per-turn backend options use the SDK's `normalizeRuntimeBackendConfig` for current model/auth fields and turn-scoped `runtimeSecrets`. Unknown options remain rejected, and native credentials still require the exact profile's subscription intent. Retained request identity excludes credential values, matching Sandbox message admission; Sandbox separately keys the executing backend by secret values so rotation cannot reuse stale authority.
 
+Fresh environments without an authored `workspace.cwd` or Git checkout start in the SDK's relative `workspace` child before profile files or repository setup. Explicit working directories, SDK Git checkout roots and checkpoint restores retain their requested placement. Secret-bearing turns create an isolated session without persisting `runtimeSecrets`, then use the SDK's native preparation receipt before execution; cursor replay reads its existing execution without preparing another profile.
+
 Runtime MCP bindings travel through `CreateAgentEnvironmentInput.runtimeAttachments` to Sandbox's `backend.runtimeAttachments`.
 They remain separate from the authored profile and its digest.
 The adapter checks the selected backend catalog before provisioning and refuses missing attachment support.
