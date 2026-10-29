@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.5.6
+
+### Patch Changes
+
+- 0c74920: Accept stored-secret host bindings through environment creation and lower supported proxySecrets onto Sandbox SecretBinding entries without requiring an unserved receipt protocol. Expose the host secret manager for per-run creation, acknowledged updates when supported, and settlement deletion.
+- Updated dependencies [0c74920]
+  - @tangle-network/agent-interface@5.10.5
+
 ## 4.5.5
 
 ### Patch Changes
