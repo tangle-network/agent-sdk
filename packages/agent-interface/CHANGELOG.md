@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.6
+
+### Patch Changes
+
+- 2270bff: Expose existing host-secret metadata and conditional update/delete options so runtimes can renew and retire a grant without mutating a newer owner's stored revision. Stored values remain outside profiles and guest input.
+
 ## 5.10.5
 
 ### Patch Changes
