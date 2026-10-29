@@ -1090,16 +1090,16 @@ export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
-  readonly secrets?: { create(name: string, value: string): Promise<unknown>; update?(name: string, value: string): Promise<unknown>; delete(name: string): Promise<unknown> };
+  /** Host-only store; expectedUpdatedAt rejects stale writes and removal without mutation. */
+  readonly secrets?: {
+    create(name: string, value: string): Promise<unknown>;
+    list?(): Promise<readonly { name: string; updatedAt: Date }[]>;
+    update?(name: string, value: string, options?: { expectedUpdatedAt?: string }): Promise<unknown>;
+    delete(name: string, options?: { expectedUpdatedAt?: string }): Promise<unknown>;
+  };
   /** Durable fresh-session portable context admission, when supported. */
   readonly contextTransfer?: AgentContextTransferProvider;
-  /**
-   * Reconstruct a source-scoped branching handle after a coordinator restart.
-   * This surface is intentionally separate from an environment-owned handle:
-   * lookup and cleanup requests identify operations, not their source. The
-   * provider owns source resolution and the underlying platform calls. A
-   * returned handle is bound to that source and must reject other scopes.
-   */
+  /** Source-scoped branch recovery; operation IDs identify lookup and cleanup, never source authority. */
   readonly workspaceBranching?: AgentWorkspaceBranchingProvider;
   capabilities():
     | AgentEnvironmentCapabilities
