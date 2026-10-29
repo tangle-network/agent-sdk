@@ -142,7 +142,7 @@ export async function preparePromptOptions(
     metadata: { ...options.backend?.metadata, profileSecretIsolation: true as const },
   };
   const { runtimeSecrets: _turnOnly, ...persisted } = backend;
-  const created = await awaitWithSignal(box.createSession({ sessionId, backend: persisted }), options.signal);
+  const created = await awaitWithSignal(box.createSession({ sessionId, retention: "workspace", backend: persisted }), options.signal);
   if (created.session.id !== sessionId || created.info.id !== sessionId) {
     throw new Error("Tangle isolated session creation changed its exact identity");
   }
