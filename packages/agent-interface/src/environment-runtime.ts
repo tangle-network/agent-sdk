@@ -879,7 +879,7 @@ export interface CreateAgentEnvironmentInput {
   workspace?: WorkspaceRequest;
   resources?: ResourceRequest;
   env?: Record<string, string>;
-  secrets?: string[] | Record<string, string>;
+  secrets?: (string | { name: string; host: string; header?: string })[] | Record<string, string>;
   /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
    * Trusted issuer authorization is required before resolving any reference. */
   proxySecrets?: readonly ProxySecretBinding[];
@@ -1090,11 +1090,11 @@ export const AgentEnvironmentReadOnlyGetOptionsSchema = z.strictObject({
 export interface AgentEnvironmentProvider {
   readonly name: string;
   readonly exactProcess?: AgentExactProcessProvider;
+  readonly secrets?: { create(name: string, value: string): Promise<unknown>; delete(name: string): Promise<unknown> };
   /** Durable fresh-session portable context admission, when supported. */
   readonly contextTransfer?: AgentContextTransferProvider;
   /**
    * Reconstruct a source-scoped branching handle after a coordinator restart.
-   *
    * This surface is intentionally separate from an environment-owned handle:
    * lookup and cleanup requests identify operations, not their source. The
    * provider owns source resolution and the underlying platform calls. A

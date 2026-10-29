@@ -32,7 +32,7 @@ import { profileCredentialSource } from "./model-credential-source.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 import { deepFreeze } from "@tangle-network/agent-interface";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput } from "./tangle-proxy-secrets.js";
+import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindings } from "./tangle-proxy-secrets.js";
 import type { TangleCreateSandboxOptions, TangleModelCredentials } from "./tangle-types.js";
 
 /** Immutable create evidence used to bind a later native resume to its restored snapshot. */
@@ -153,7 +153,8 @@ export function sandboxOptionsFromCreateInput(
   const nativeCredentials = modelCredentials !== undefined && "cliAuth" in modelCredentials;
   const proxySecrets = mergeProxySecrets(proxySecretsFromInput(input), nativeCredentials ? modelCredentials.proxySecrets : undefined);
   assertProxySecretAliases(proxySecrets, input.env, input.secrets);
-  const proxySelected = proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret) === true;
+  const proxySelected = proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret) === true ||
+    (Array.isArray(input.secrets) && input.secrets.some((entry) => typeof entry !== "string" && entry.name === selectedSecret)) === true;
   if (modelCredentials !== undefined && selectedSecret === undefined) {
     throw new Error("Tangle modelCredentials must select a stored secret");
   }
@@ -171,9 +172,10 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
   const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
-  const secrets = selectedSecret !== undefined && !proxySelected
+  const requestedSelection = selectedSecret !== undefined && !proxySelected
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
     : requestedSecrets ?? (proxySecrets === undefined ? undefined : []);
+  const secrets = sandboxSecretBindings(requestedSelection, proxySecrets, input.env);
   if (secrets !== undefined && secrets.length > MAX_ARRAY_LENGTH) {
     throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
   }
@@ -242,7 +244,6 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
-    ...(proxySecrets === undefined ? {} : { proxySecrets }),
     ...(Array.isArray(secrets) ? { secrets } : {}),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
@@ -325,31 +326,15 @@ export function assertNoInlineSecretValues(
       throw new Error("Tangle resource providerOptions are not supported");
     }
   }
-  if (input.secrets !== undefined && !Array.isArray(input.secrets)) {
-    throw new Error(
-      "Tangle secrets must be an array of names created with client.secrets.create(); inline secret values are not accepted",
-    );
-  }
-  if (input.secrets !== undefined) {
-    if (input.secrets.length > MAX_ARRAY_LENGTH) {
-      throw new Error("Tangle secret names exceed their bound");
-    }
-    for (const secret of input.secrets) boundedIdentifier(secret, "Tangle secret name");
-  }
+  sandboxSecretBindings(input.secrets, undefined, input.env);
 }
 
-/** A custom mapper must not smuggle a value map into the Sandbox request. */
+/** Validate mapped stored names and bindings without resolving their values. */
 export function assertMappedSecretNames(options: CreateSandboxOptions): void {
-  if (options.secrets !== undefined && !Array.isArray(options.secrets)) {
-    throw new Error("Tangle mapped secrets must be an array of stored secret names");
-  }
-  if (options.secrets !== undefined) {
-    if (options.secrets.length > MAX_ARRAY_LENGTH) {
-      throw new Error("Tangle mapped secrets exceed their bound");
-    }
-    for (const secret of options.secrets) boundedIdentifier(secret, "Tangle mapped secret name");
-  }
+  if (options.secrets === "all") throw new Error("Tangle mapped secrets require explicit selection");
+  sandboxSecretBindings(options.secrets, undefined, options.env);
 }
+
 
 export function assertCreateInputShape(
   input: CreateAgentEnvironmentInput,
@@ -407,11 +392,6 @@ export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): 
     throw new Error("Tangle mapped create options must be an object");
   }
   assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
-  const proxySecrets = options.proxySecrets === undefined ? undefined : captureProxySecrets(options.proxySecrets);
-  assertProxySecretAliases(proxySecrets, options.env, options.secrets);
-  if (proxySecrets !== undefined && !Array.isArray(options.secrets)) {
-    throw new Error("Tangle proxy-secret create requires explicit readable secret selection");
-  }
   if (options.backend?.model?.cliAuth !== undefined) {
     if (options.backend.type === undefined) {
       throw new Error("Tangle mapped native credentials require the selected backend type");
@@ -424,7 +404,7 @@ export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): 
       throw new Error("Tangle mapped native credentials must use the exact profile harness");
     }
     const selectedSecret = options.backend.model.cliAuth.secretEnv;
-    if (!Array.isArray(options.secrets) || !options.secrets.includes(selectedSecret)) {
+    if (!Array.isArray(options.secrets) || !options.secrets.some((entry) => (typeof entry === "string" ? entry : entry.name) === selectedSecret)) {
       throw new Error("Tangle mapped native credential must be explicitly listed in create secrets");
     }
     if (Object.hasOwn(options.env ?? {}, selectedSecret)) {

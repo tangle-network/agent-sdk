@@ -29,7 +29,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, proxySecretCapabilityFromDocument, PROXY_SECRETS_METADATA_KEY, rebindProxySecrets, requireProxySecretCapability } from "./tangle-proxy-secrets.js";
+import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import {
@@ -114,17 +114,12 @@ export function createTangleProvider(
         : options.capabilities
       : defaultTangleSandboxCapabilities(harness.success ? harness.data : undefined);
     configured = ephemeralCapabilityCeiling(configured, options.ephemeral === true);
-    const proxyCapability = proxySecretCapabilityFromDocument(await options.client.capabilities?.());
     // Configured adapter ceilings never confer authority that the connected API did not prove.
     configured = { ...configured, profile: { ...configured.profile },
-      ...(configured.create === undefined && proxyCapability === undefined ? {} : { create: { ...configured.create } }),
+      ...(configured.create === undefined ? {} : { create: { ...configured.create } }),
     };
     delete configured.profile.proxySecrets;
     if (configured.create !== undefined) delete configured.create.proxySecrets;
-    if (proxyCapability !== undefined) {
-      configured.profile.proxySecrets = proxyCapability;
-      configured.create = { ...configured.create, proxySecrets: proxyCapability };
-    }
     if (configured.create?.workspaceSnapshot === true) {
       throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
     }
@@ -181,12 +176,6 @@ export function createTangleProvider(
     }
     const requestedProxySecrets = proxySecretsFromInput(input);
     assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
-    // Discovery precedes every reference-only resolver. A resolver can introduce secure
-    // intent only in its result; legacy resolvers remain usable on peers without this protocol.
-    const peerCapabilities = await awaitWithSignal(options.client.capabilities?.(), input.signal);
-    if (requestedProxySecrets !== undefined) {
-      requireProxySecretCapability(peerCapabilities, requestedProxySecrets);
-    }
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -214,7 +203,7 @@ export function createTangleProvider(
       selectedCredentials = captureModelCredentials(selected);
     }
     input.signal?.throwIfAborted();
-    const mappedOptions = mapCreateInput?.(input) ??
+    const mappedInput = mapCreateInput?.(input) ??
       (subscription && resolveModelCredentials !== undefined ? sandboxOptionsFromCreateInput(
         input,
         options.defaultBackend,
@@ -224,11 +213,16 @@ export function createTangleProvider(
       ) : defaultOptions!);
     const selectedProxySecrets = mergeProxySecrets(requestedProxySecrets,
       selectedCredentials !== undefined && "cliAuth" in selectedCredentials ? selectedCredentials.proxySecrets : undefined);
-    if (canonicalCandidateDigest(mappedOptions.proxySecrets ?? null) !== canonicalCandidateDigest(selectedProxySecrets ?? null)) {
+    if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
       throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     }
-    if (selectedProxySecrets !== undefined) {
-      requireProxySecretCapability(peerCapabilities, selectedProxySecrets);
+    const { proxySecrets: _legacy, ...mapped } = mappedInput;
+    const mappedOptions = { ...mapped, secrets: sandboxSecretBindings(mapped.secrets, selectedProxySecrets, mapped.env) };
+    for (const entry of sandboxSecretBindings(input.secrets, selectedProxySecrets, input.env) ?? []) {
+      if (typeof entry === "string") continue;
+      if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => canonicalCandidateDigest(selected) === canonicalCandidateDigest(entry))) {
+        throw new Error("Tangle mapped secrets must preserve the requested host bindings");
+      }
     }
     assertMappedCreateOptions(mappedOptions);
     // A custom mapper builds its own backend; requested routing must survive it.
@@ -441,6 +435,7 @@ export function createTangleProvider(
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
+    ...(options.client.secrets === undefined ? {} : { secrets: options.client.secrets }),
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
     validateProfile: tangleProfileValidator(options.validateProfile),
@@ -476,10 +471,7 @@ export function createTangleProvider(
             if (reconnectBindings === undefined && (operation?.expectedProxySecretGeneration !== undefined || operation?.requireInPlace !== undefined)) {
               throw new Error("Tangle proxy-secret reconnect controls require an explicit declaration");
             }
-            if (reconnectBindings !== undefined) {
-              if (operation?.requireInPlace === false) throw new Error("Tangle proxy-secret reconnect requires in-place custody");
-              requireProxySecretCapability(await awaitWithSignal(options.client.capabilities?.(), operation?.signal), reconnectBindings);
-            }
+            if (reconnectBindings !== undefined) throw new Error("Tangle host bindings are selected at create; reconnect cannot replace them");
             boundedIdentifier(id, "Tangle environment id");
             await resolveCapabilities();
             operation?.signal?.throwIfAborted();
@@ -517,7 +509,6 @@ export function createTangleProvider(
               }
               captureCapabilities = await awaitWithSignal(requireNativeCaptureCapability(box, backendType), operation?.signal);
             }
-            if (reconnectBindings !== undefined) await rebindProxySecrets(box, reconnectBindings, operation!);
             const declaredCapabilities = await resolveDeclaredCapabilities(backendType);
             return await sandboxInstanceAsEnvironment(
               box,
@@ -528,7 +519,7 @@ export function createTangleProvider(
               {
                 ...confidentialVerifierOption(options.confidentialAttestationVerifier),
                 ...(options.ephemeral ? { ephemeral: true } : {}),
-                ...(reconnectBindings === undefined ? {} : { proxySecrets: reconnectBindings, rebindProxySecrets: true }),
+                ...(reconnectBindings === undefined ? {} : { proxySecrets: reconnectBindings }),
                 ...(resolveModelCredentials === undefined ? {} : { resolveModelCredentials }),
                 ...(options.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
                 ...(captureCapabilities === undefined ? {} : { captureCapabilities }),

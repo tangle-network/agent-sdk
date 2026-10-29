@@ -68,7 +68,7 @@ export interface TangleExactProcessOptions {
 export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[] };
 
 export interface SandboxClientLike {
-  /** Authenticated control-plane capability discovery before resolution or allocation. */
+  readonly secrets?: AgentEnvironmentProvider["secrets"];
   capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities } | null>;
   create(
     options?: TangleCreateSandboxOptions,
