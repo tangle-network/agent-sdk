@@ -64,14 +64,14 @@ async function fixture() {
   return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored };
 }
 
-it("forwards stored host bindings through the public provider without requesting custody receipts", async () => {
+it.each([{ secrets: undefined }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("forwards ordinary and host-bound creates without custody receipts (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
   const provider = createTangleProvider({ client });
-  const secrets = [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }];
   const environment = await provider.create({ profile, secrets });
   expect(environment.id).toBe("sandbox-bindings");
   expect(creates).toHaveLength(1);
   expect(creates[0]!.secrets).toEqual(secrets);
+  if (secrets === undefined) expect(creates[0]).not.toHaveProperty("secrets");
   expect(creates[0]).not.toHaveProperty("proxySecrets");
   expect(requests.some((request) => request.endsWith("/egress"))).toBe(false);
   expect(requests).not.toContain("GET /v1/capabilities");
