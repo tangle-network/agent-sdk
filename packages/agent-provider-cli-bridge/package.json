@@ -77,7 +77,7 @@
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
     "test": "vitest run src",
-    "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; pnpm run build && vitest run tests/cli-bridge.integration.test.ts"
+    "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; pnpm run build && vitest run tests"
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^5.10.2",
