@@ -435,7 +435,7 @@ export function createTangleProvider(
   return {
     name: providerName,
     ...(exactProcess ? { exactProcess } : {}),
-    ...(options.client.secrets === undefined ? {} : { secrets: options.client.secrets }),
+    ...(typeof options.client.secrets?.update !== "function" ? {} : { secrets: options.client.secrets }),
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
     validateProfile: tangleProfileValidator(options.validateProfile),

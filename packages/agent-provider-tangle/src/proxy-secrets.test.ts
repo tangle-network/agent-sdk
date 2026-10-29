@@ -187,15 +187,15 @@ it("injects lowered portable bindings into a custom mapper's SDK request", async
   expect(creates[0]!.secrets).toEqual([selected()]);
 });
 
-it("forwards the host secret store with its receiver intact and deletes the stored value", async () => {
+it("exposes only a fenced provider store while the SDK basic store stays usable", async () => {
   const { client, stored, requests } = await fixture();
   const provider = createTangleProvider({ client });
   const value = randomBytes(32).toString("hex");
-  expect(provider.secrets).toBeDefined();
-  const receipt = await provider.secrets!.create("COORDINATION_RUN_TOKEN", value);
+  expect(provider.secrets !== undefined).toBe("update" in client.secrets);
+  const receipt = await (provider.secrets ?? client.secrets).create("COORDINATION_RUN_TOKEN", value);
   expect(receipt).toMatchObject({ name: "COORDINATION_RUN_TOKEN" });
   expect(stored.get("COORDINATION_RUN_TOKEN") === value).toBe(true);
-  await provider.secrets!.delete("COORDINATION_RUN_TOKEN");
+  await (provider.secrets ?? client.secrets).delete("COORDINATION_RUN_TOKEN");
   expect(stored.has("COORDINATION_RUN_TOKEN")).toBe(false);
   expect(requests).toEqual(["POST /v1/secrets", "DELETE /v1/secrets/COORDINATION_RUN_TOKEN"]);
 });
