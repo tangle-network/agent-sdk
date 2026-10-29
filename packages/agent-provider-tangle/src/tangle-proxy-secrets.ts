@@ -2,7 +2,7 @@ import { ProxySecretsSchema, mergeProxySecretBindings,
   type CreateAgentEnvironmentInput, type ProxySecretBinding } from "@tangle-network/agent-interface/environment-provider";
 import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { boundedIdentifier, MAX_ARRAY_LENGTH } from "./tangle-contract-safety.js";
-import type { CreateSandboxOptions, SecretBinding } from "@tangle-network/sandbox";
+import type { TangleCreateSandboxOptions } from "./tangle-types.js";
 
 /** Provider-owned public declarations bind recovery; they contain no authority or values. */
 export const PROXY_SECRETS_METADATA_KEY = "tangleProxySecrets";
@@ -46,7 +46,7 @@ export function sandboxSecretBindings(
   secrets: CreateAgentEnvironmentInput["secrets"] | "all",
   bindings?: readonly ProxySecretBinding[],
   env?: Record<string, string>,
-): Exclude<CreateSandboxOptions["secrets"], "all"> {
+): Exclude<TangleCreateSandboxOptions["secrets"], "all"> {
   assertProxySecretAliases(bindings === undefined ? undefined : [...bindings], env, secrets);
   const lowered = (bindings ?? []).map((binding) => {
     if (binding.hosts.length !== 1 || binding.methods !== undefined || binding.paths !== undefined ||
@@ -59,7 +59,7 @@ export function sandboxSecretBindings(
   });
   if (secrets === undefined && bindings === undefined) return undefined;
   if (secrets !== undefined && !Array.isArray(secrets)) throw new Error("Tangle secrets must be stored names or host bindings");
-  const entries = new Map<string, string | SecretBinding>();
+  const entries = new Map<string, Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>[number]>();
   for (const entry of [...(secrets ?? []), ...lowered]) {
     const name = typeof entry === "string" ? entry : entry.name;
     boundedIdentifier(name, "Tangle stored-secret name");
@@ -79,6 +79,6 @@ export function sandboxSecretBindings(
   return [...entries.values()];
 }
 
-export const sandboxSecretBindingIdentity = (entry: string | SecretBinding): string => canonicalCandidateDigest(
+export const sandboxSecretBindingIdentity = (entry: Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>[number]): string => canonicalCandidateDigest(
   typeof entry !== "string" && "host" in entry ? { ...entry, header: (entry.header ?? "Authorization").toLowerCase() } : entry,
 );

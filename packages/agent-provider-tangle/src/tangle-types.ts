@@ -65,7 +65,7 @@ export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
-export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[] };
+export type TangleCreateSandboxOptions = Omit<CreateSandboxOptions, "secrets"> & { secrets?: "all" | Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>; proxySecrets?: ProxySecretBinding[] };
 
 export interface SandboxClientLike {
   readonly secrets?: AgentEnvironmentProvider["secrets"];
