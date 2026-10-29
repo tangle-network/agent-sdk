@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.5.5
+
+### Patch Changes
+
+- cd08cff: Create isolated secret-profile sessions with workspace retention so native process evidence is captured under the normal Sidecar policy.
+
 ## 4.5.4
 
 ### Patch Changes
