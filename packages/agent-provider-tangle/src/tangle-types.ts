@@ -68,7 +68,7 @@ export interface TangleExactProcessOptions {
 export type TangleCreateSandboxOptions = CreateSandboxOptions & { proxySecrets?: ProxySecretBinding[] };
 
 export interface SandboxClientLike {
-  /** Authenticated control-plane capability discovery before resolution or allocation. */
+  readonly secrets?: AgentEnvironmentProvider["secrets"];
   capabilities?(): Promise<{ proxySecrets?: ProxySecretCapabilities } | null>;
   create(
     options?: TangleCreateSandboxOptions,
@@ -858,7 +858,7 @@ export interface SandboxInteractionCommandResultLike {
 }
 
 export type TangleModelCredentials =
-  | { apiKeyEnv: string; baseUrl: string }
+  | { apiKeyEnv: string; baseUrl: string; proxySecrets?: ProxySecretBinding[] }
   | { cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[] };
 
 /** Select one public stored-secret reference for a stable create or fresh-turn identity. */
