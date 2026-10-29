@@ -13,7 +13,7 @@ actualBridge("actual cli-bridge native response evidence", () => {
     "retains %s evidence through the actual child, HTTP and replay", async (scenario) => {
     const bridge = await startActualBridge("claude");
     try {
-      const options = { baseUrl: bridge.baseUrl, defaultModel: "claude/requested-model" };
+      const options = { baseUrl: bridge.baseUrl, defaultModel: "claude-code/requested-model" };
       const provider = createCliBridgeProvider(options);
       const environment = await provider.create({
         idempotencyKey: "sdk-provider-evidence-environment",
