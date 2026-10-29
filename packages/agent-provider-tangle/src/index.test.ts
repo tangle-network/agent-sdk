@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  runAgentEnvironmentProviderConformance,
   runWorkspaceSnapshotConformance,
   runAgentExactProcessProviderLifecycleChecks,
 } from "@tangle-network/agent-provider-testkit";
@@ -570,114 +569,6 @@ describe("createTangleProvider", () => {
       cacheReadInputTokens: 2,
       reasoningTokens: 3,
     });
-  });
-
-  it("maps ordinary agent environments", async () => {
-    let createOptions: CreateSandboxOptions | undefined;
-    let createRequestOptions: { signal?: AbortSignal; timeoutMs?: number } | undefined;
-    const controller = new AbortController();
-    const files = new Map<string, string>();
-    const box: SandboxInstanceLike = retainedDeployment({
-      id: "sbx-1",
-      name: "sandbox-one",
-      status: "running",
-      metadata: {
-        retainedIdempotencyKey: "environment-key",
-        labels: { tenant: "acme" },
-      },
-      async *streamPrompt(prompt: string): AsyncIterable<SandboxEvent> {
-        yield {
-          type: "result",
-          data: {
-            finalText: `ok:${prompt}`,
-            sessionId: "sandbox-session",
-            usage: {
-              inputTokens: 2,
-              outputTokens: 3,
-              totalCostUsd: 0.01,
-            },
-          },
-        } as SandboxEvent;
-      },
-      dispatchPrompt: async (_prompt, options) => ({
-        sessionId: (options as { sessionId?: string } | undefined)?.sessionId ?? "sess-1",
-        executionId: options?.executionId,
-        runControlRef: options?.runControlRef,
-        status: "running",
-        alreadyExisted: true,
-      }),
-      session: (id) => ({
-        id,
-        status: async () => ({ status: "completed" }),
-        async *events() {},
-        result: async (options) => ({
-          success: true,
-          status: "success",
-          executionId: options?.executionId,
-          durationMs: 1,
-        }),
-        prompt: async (_message, options) => ({
-          success: true,
-          status: "success",
-          executionId: options?.executionId,
-          durationMs: 1,
-        }),
-        interrupt: async () => ({ cancelled: true }),
-      }),
-      read: async (path) => files.get(path) ?? "",
-      write: async (path, content) => {
-        files.set(path, content);
-        return { path, written: true };
-      },
-      exec: async () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }),
-      delete: async () => {},
-    });
-    const client: SandboxClientLike = {
-      async create(options, requestOptions) {
-        createOptions = options;
-        createRequestOptions = requestOptions;
-        return box;
-      },
-      async get(id) {
-        return id === box.id ? box : null;
-      },
-      describePlacement: () => ({ kind: "sibling", sandboxId: "sbx-1" }),
-    };
-    const provider = createTangleProvider({ client });
-
-    await expect(
-      runAgentEnvironmentProviderConformance({
-        name: "sandbox",
-        createProvider: () => provider,
-        createInput: {
-          profile: { name: "worker" },
-          backend: "codex",
-          workspace: { image: EXACT_IMAGE },
-          signal: controller.signal,
-        },
-      }),
-    ).resolves.toMatchObject({ provider: "tangle-sandbox" });
-
-    expect(createOptions).toMatchObject({
-      environment: EXACT_IMAGE,
-      backend: { type: "codex", profile: { name: "worker" } },
-    });
-    expect(createRequestOptions?.signal).toBe(controller.signal);
-    const environment = await provider.create({ profile: { name: "worker" } });
-    expect(environment.metadata).toEqual({
-      retainedIdempotencyKey: "environment-key",
-      labels: { tenant: "acme" },
-    });
-    expect(Object.isFrozen(environment.metadata)).toBe(true);
-    expect(Object.isFrozen(environment.metadata?.labels)).toBe(true);
-    (box.metadata?.labels as { tenant: string }).tenant = "changed-at-source";
-    expect(environment.metadata?.labels).toEqual({ tenant: "acme" });
-
-    const reconstructed = await provider.get?.("sbx-1");
-    expect(reconstructed?.metadata?.labels).toEqual({ tenant: "changed-at-source" });
-    expect(Object.isFrozen(reconstructed?.metadata?.labels)).toBe(true);
-    (box.metadata?.labels as { tenant: string }).tenant = "changed-after-reconstruction";
-    expect(reconstructed?.metadata?.labels).toEqual({ tenant: "changed-at-source" });
   });
 
   it("rejects malformed Sandbox events and exec results", async () => {

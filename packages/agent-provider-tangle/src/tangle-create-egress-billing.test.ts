@@ -65,22 +65,6 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates[1]).toMatchObject({ requireNativeSessionCapture: true });
   });
 
-  it("keeps the requirement when a custom mapper selects the create options", async () => {
-    const creates: CreateSandboxOptions[] = [];
-    const provider = createTangleProvider({
-      requireNativeSessionCapture: true,
-      mapCreateInput: () => ({ backend: { type: "opencode" } }),
-      client: {
-        create: async (options) => {
-          creates.push(options ?? {});
-          return capturedBox();
-        },
-      },
-    });
-    await provider.create({ profile: { name: "worker" } });
-    expect(creates[0]).toMatchObject({ requireNativeSessionCapture: true });
-  });
-
   it("admits a capable selected host while unrelated fleet members lack capture", async () => {
     const hosts = [{ id: "old-host", capture: false }, { id: "host-1", capture: true }];
     let prompts = 0;

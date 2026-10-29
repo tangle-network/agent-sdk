@@ -7,7 +7,7 @@ import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "host-binding", harness: "opencode" as const };
-const host = "reports.example.com";
+const host = "reports.example.com", runtimeAttachments = { mcp: { public: { transport: "http" as const, url: "https://mcp.example.com" } } };
 const binding = (name = "REPORTS_TOKEN"): ProxySecretBinding => ({
   envName: name, secretRef: { kind: "secret-ref", key: name }, hosts: [host],
   presentation: { type: "bearer" },
@@ -32,7 +32,7 @@ async function fixture() {
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     if (path === "/v1/backends") {
-      response.end(JSON.stringify({ backends: [], timestamp: new Date(0).toISOString() }));
+      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode", description: "HTTP fixture", capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } }], timestamp: new Date(0).toISOString() }));
     } else if (path === "/v1/secrets" && request.method === "POST") {
       stored.set(body.name, body.value);
       response.end(JSON.stringify({ secret: { name: body.name, createdAt: new Date(0).toISOString() } }));
@@ -63,10 +63,10 @@ async function fixture() {
 it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("forwards explicit selection modes without inventing consent (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
   const provider = createTangleProvider({ client });
-  const environment = await provider.create({ profile, secrets });
+  const environment = await provider.create({ profile, secrets, egress: { mode: "open" }, billingOwner: "fixture-owner", runtimeAttachments });
   expect(environment.id).toBe("sandbox-bindings");
   expect(creates).toHaveLength(1);
-  expect(creates[0]!.secrets).toEqual(secrets);
+  expect(creates[0]).toMatchObject({ egressPolicy: { mode: "open" }, billingOwnerId: "fixture-owner", backend: { profile, runtimeAttachments } }); expect(creates[0]!.secrets).toEqual(secrets);
   if (secrets === undefined) expect(creates[0]).not.toHaveProperty("secrets");
   expect(creates[0]).not.toHaveProperty("proxySecrets");
   expect(requests.some((request) => request.endsWith("/egress"))).toBe(false);
