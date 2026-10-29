@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 4.5.7
+
+### Patch Changes
+
+- 55d78ef: Accept explicit stored-secret raw-delivery consent alongside host-bound selections. Preserve consent and host custody through custom mapping, reject conflicting delivery modes, keep bare names subject to stored platform policy, and expose the optional provider store only when its SDK supports fenced updates. Fold legacy model routing and credential aliases into canonical model fields before SDK normalization, refusing conflicting or unsupported controls.
+- Updated dependencies [55d78ef]
+  - @tangle-network/agent-interface@5.10.7
+
 ## 4.5.6
 
 ### Patch Changes
