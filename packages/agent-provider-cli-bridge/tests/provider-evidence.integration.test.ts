@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface";
 const { createCliBridgeProvider } = await import(
   process.env.CLI_BRIDGE_PROVIDER_MODULE ?? "@tangle-network/agent-provider-cli-bridge"
 ) as typeof import("@tangle-network/agent-provider-cli-bridge");
@@ -71,7 +72,9 @@ actualBridge("actual cli-bridge native response evidence", () => {
         const preserved = await retained.result();
         expect(preserved.metadata).toEqual(result.metadata);
         expect(preserved.usage).toEqual(result.usage);
-        expect(preserved.events).toEqual(result.events);
+        expect(preserved.text).toEqual(result.text);
+        expect(preserved.success).toBe(result.success);
+        expect(evidenceEvents(preserved.events)).toEqual(evidenceEvents(result.events));
       }
     } finally {
       await bridge.stop();
@@ -129,3 +132,16 @@ actualBridge("actual OpenCode incremental usage coverage", () => {
     }
   }, 45_000);
 });
+
+/** Replays regenerate presentation IDs/timestamps; evidence and its exact execution binding persist. */
+function evidenceEvents(events: AgentEnvironmentEvent[] | undefined) {
+  return events?.flatMap(event => {
+    const rawUsage = (event.providerEvent as { usage?: unknown } | undefined)?.usage;
+    if (!event.usage && !rawUsage && !event.data.provider_models) return [];
+    return [{
+      id: event.id, runId: event.data.runId, executionId: event.data.executionId, sessionId: event.data.sessionId,
+      provider_models: event.data.provider_models, provider_model: event.data.provider_model,
+      usage: event.usage, usageMode: event.usageMode, provider_usage: rawUsage,
+    }];
+  });
+}
