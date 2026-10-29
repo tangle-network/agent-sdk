@@ -219,7 +219,12 @@ export function environmentEventFromSandboxEvent(
   const terminal = record.type === "result" || record.type === "done";
   const sourceData = record.data as Record<string, unknown>;
   const data = terminal ? projectAgentTerminalRecord(sourceData) : sourceData;
-  assertBoundedRecord(terminal ? { ...record, data } : record);
+  const { id, ...envelope } = record;
+  assertBoundedRecord({
+    ...envelope,
+    ...(id === undefined ? {} : { id }),
+    ...(terminal ? { data } : {}),
+  });
   if (Object.prototype.hasOwnProperty.call(data, "contextTransferReceipt")) {
     throw new Error(
       "Tangle Sandbox emitted an unsolicited context transfer receipt",
