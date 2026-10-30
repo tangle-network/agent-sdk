@@ -18,11 +18,11 @@ const hostSchema = z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z
 const methodSchema = z.string().max(32).regex(/^[A-Z]+$/);
 /** Paths are exact or terminal slash-star subtrees. /v1/* includes /v1/ and /v1/a, never /v1
  * or /v10. V1 rejects all percent encoding, dot segments, repeated slashes, query, fragments,
- * backslashes, non-ASCII and controls, rather than normalizing ambiguous spellings.
+ * semicolons, backslashes, non-ASCII and controls, rather than normalizing ambiguous spellings.
  */
 const pathSchema = z.string().max(2048).refine((path) => {
   const exact = path.endsWith("/*") ? path.slice(0, -1) : path;
-  return /^\/[A-Za-z0-9._~!$&'()+,;=:@/-]*$/.test(exact) && !exact.includes("//") &&
+  return /^\/[A-Za-z0-9._~!$&'()+,=:@/-]*$/.test(exact) && !exact.includes("//") &&
     !exact.split("/").some((part) => part === "." || part === "..");
 }, "path must be canonical ASCII, exact or a terminal /* subtree");
 const list = <T extends z.ZodType<string>>(schema: T) =>
