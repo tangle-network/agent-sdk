@@ -37,7 +37,6 @@ import type {
   CreateAgentEnvironmentInput,
   ProxySecretBinding,
   ProxySecretCapabilities,
-  ProxySecretReceipt,
 } from "@tangle-network/agent-interface/environment-provider";
 
 /**
@@ -58,7 +57,6 @@ export interface SandboxCreateReceiptLike {
   outcome: "created" | "idempotent_replay" | "unknown";
   idempotencyKeyApplied: boolean;
   captureProof?: NativeCaptureProofLike;
-  proxySecretReceipt?: ProxySecretReceipt;
 }
 
 export interface TangleExactProcessOptions {
@@ -124,14 +122,7 @@ export interface SandboxAccountUsageLike {
   periodEnd: Date | string;
 }
 
-/**
- * The subscription fields the observation reads.
- *
- * `creditsAvailableUsd` can be negative on an overage plan, and
- * `maxConcurrentSandboxes` is 0 when the account has no ceiling. Neither value
- * fits the contract's non-negative credit and quota shapes, so the observation
- * reports those two cases as unavailable instead of clamping them.
- */
+/** Observation omits negative credit and unlimited concurrency instead of clamping them. */
 export interface SandboxSubscriptionLike {
   plan: string;
   creditsAvailableUsd: number;
@@ -488,6 +479,8 @@ export interface SandboxInteractiveSessionLike {
 export interface SandboxInstanceLike {
   id: string;
   createSession?: SandboxInstance["createSession"];
+  readonly proxySecretReceipt?: SandboxInstance["proxySecretReceipt"];
+  preparePublicProfileRevision?: SandboxInstance["preparePublicProfileRevision"];
   prepareSecretProfileRevision?: SandboxInstance["prepareSecretProfileRevision"];
   name?: string;
   status?: unknown;

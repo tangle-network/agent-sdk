@@ -2,8 +2,9 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
-import type { CreateAgentEnvironmentInput, ProxySecretBinding } from "@tangle-network/agent-interface/environment-provider";
+import type { CreateAgentEnvironmentInput, ProxySecretBinding, ProxySecretReceipt } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
+import { installedProxyReceipt } from "./fixtures/proxy-secret-receipt.js";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "host-binding", harness: "opencode" as const };
@@ -14,12 +15,11 @@ const binding = (name = "REPORTS_TOKEN"): ProxySecretBinding => ({
 });
 const selected = (name = "REPORTS_TOKEN") => ({ name, host, header: "Authorization" });
 const exposed = { name: "READABLE_NAME", exposeInBox: true as const };
-/** Actual Sandbox HTTP transport; this peer checks wire delivery, not proxy enforcement. */
-async function fixture() {
+async function fixture(proxySecretReceipt?: ProxySecretReceipt) {
   let baseUrl = "", metadata: unknown;
   const requests: string[] = [], creates: Record<string, unknown>[] = [], turns: Record<string, unknown>[] = [], stored = new Map<string, string>(), policies = new Map<string, Record<string, unknown>>();
   const info = () => ({
-    id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata,
+    id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata, proxySecretReceipt,
     filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
     filesystemIncarnationProvenance: "fresh", filesystemIncarnationReadiness: "ready",
     connection: { runtimeUrl: `${baseUrl}/v1/sandboxes/sandbox-bindings/runtime`, authToken: "fixture-runtime-token", edgeStatus: "ready" },
@@ -159,7 +159,7 @@ it("refuses value-bearing maps and undeclared host binding fields before allocat
   expect(creates).toHaveLength(0);
 });
 it("keeps semantic host identity and legacy model intent canonical across SDK versions", async () => {
-  const { client, creates, turns } = await fixture();
+  const { client, creates, turns } = await fixture(installedProxyReceipt);
   const routing = { only: ["fixture-router"], allowFallbacks: false }, model = { provider: "openai", model: "fixture-model", apiKeyEnv: "MODEL_TOKEN", baseUrl: "https://model.example.com" };
   const environment = await createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "opencode", profile, modelId: model.model, provider: model.provider, apiKeyEnv: model.apiKeyEnv, baseUrl: model.baseUrl, routing }, secrets: [{ name: "REPORTS_TOKEN", host }] }) })
     .create({ profile, secrets: [{ host, name: "REPORTS_TOKEN" }], proxySecrets: [binding()], providerOptions: { routing } });

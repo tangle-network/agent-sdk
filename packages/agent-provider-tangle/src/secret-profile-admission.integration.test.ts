@@ -66,7 +66,7 @@ async function fixture(fault?: "prepare-refused" | "invalid-receipt" | "active",
         return answer(200, info());
       }
       if (url.pathname === "/v1/sandboxes/sandbox-secret") return answer(200, info());
-      if (url.pathname.endsWith("/capabilities")) return answer(200, { ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: {}, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["codex"] });
+      if (url.pathname.endsWith("/capabilities")) return answer(200, { ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: { responseDedupe: false }, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["codex"] });
       if (url.pathname.endsWith("/backend")) return answer(200, { type: "codex" });
       if (url.pathname.endsWith("/agents/sessions") && request.method === "POST") {
         expect(body.backend.metadata.profileSecretIsolation).toBe(true);
