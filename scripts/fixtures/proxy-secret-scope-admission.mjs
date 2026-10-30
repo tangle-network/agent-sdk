@@ -4,14 +4,11 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
 // Consume installed archives only. The HTTP peer admits public metadata, never issues credentials.
 const require = createRequire(join(resolve(process.argv[2] ?? process.cwd()), "package.json"));
-const load = (name) => import(pathToFileURL(require.resolve(name)).href);
-const root = await load("@tangle-network/agent-interface");
+const load = (name) => import(pathToFileURL(require.resolve(name)).href);const root = await load("@tangle-network/agent-interface");
 const environment = await load("@tangle-network/agent-interface/environment-provider");
-const schemas = await load("@tangle-network/agent-interface/profile-schema");
-const { z } = await load("zod");
+const schemas = await load("@tangle-network/agent-interface/profile-schema"), { z } = await load("zod");
 for (const name of ["ProxySecretBindingSchema", "ProxySecretsSchema", "ProxySecretReceiptSchema", "ProxySecretCapabilitiesSchema"]) {
   assert.equal(root[name], environment[name], name);
   assert.equal(root[name], schemas[name], name);
