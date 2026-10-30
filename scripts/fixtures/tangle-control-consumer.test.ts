@@ -66,7 +66,7 @@ it("adapts the actual public Sandbox instance without inventing branching", asyn
     const environment = await provider.create({ profile: { name: "packed", harness: "opencode" } });
     expect(created).toMatchObject({ ephemeral: true });
     for (const document of [await provider.capabilities(), environment.capabilities]) {
-      expect(document.branching).toMatchObject({ checkpoint: false, fork: false, confidential: false });
+      expect(document?.branching).toMatchObject({ checkpoint: false, fork: false, confidential: false });
     }
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
