@@ -166,16 +166,111 @@ export class SSEStreamSilentError extends Error {
   }
 }
 
+export type SSEFragment =
+  | {
+      type: "field";
+      field: string | undefined;
+      prefix: string;
+    }
+  | { type: "value"; value: string }
+  | { type: "line-end" | "frame-end"; ending: string };
+
 /**
- * Incremental SSE frame parser. Feed decoded text via `push()`; call
- * `flush()` when the stream ends.
+ * Incremental SSE frame parser. Feed decoded text via push(); call flush()
+ * when the stream ends. Complete frames and bounded fragments share one
+ * scanner and one parser lifetime.
  */
 export class SSEFrameParser {
-  private buffer = "";
+  private prefix = "";
+  private started = false;
+  private cr = false;
+  private bomChecked = false;
+
+  /**
+   * Yield raw field prefixes, values and line/frame endings without retaining
+   * a complete line or frame. Comments and unknown fields survive; one initial
+   * BOM is consumed and CRLF remains intact. Pass final=true once at EOF.
+   * Drain each generator before supplying the next chunk. An instance owns
+   * either fragments or push/flush; mixing those modes loses collected state.
+   */
+  *fragments(chunk: string, final = false): Generator<SSEFragment> {
+    let text = chunk;
+    if (!this.bomChecked && text.length) {
+      this.bomChecked = true;
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    }
+    if (this.cr) {
+      text = `\r${text}`;
+      this.cr = false;
+    }
+    let cursor = 0;
+    for (;;) {
+      const newline = text.indexOf("\n", cursor);
+      const end = newline < 0 ? text.length : newline;
+      const trailingCr = text[end - 1] === "\r" && end > cursor;
+      const value = text.slice(cursor, trailingCr ? end - 1 : end);
+      yield* this.value(value);
+      if (newline < 0) {
+        this.cr = trailingCr;
+        break;
+      }
+      yield* this.end(trailingCr ? "\r\n" : "\n");
+      cursor = newline + 1;
+    }
+    if (final) {
+      if (this.started || this.prefix || this.cr)
+        yield* this.end(this.cr ? "\r" : "");
+      yield { type: "frame-end", ending: "" };
+      this.cr = false;
+    }
+  }
+
+  private *value(value: string): Generator<SSEFragment> {
+    let cursor = 0;
+    while (!this.started && cursor < value.length) {
+      const next = value[cursor++]!;
+      if (this.prefix.endsWith(":")) {
+        // The spec removes one optional leading space from the field value.
+        const prefix = this.prefix + (next === " " ? next : "");
+        yield { type: "field", field: this.prefix.slice(0, -1), prefix };
+        this.started = true;
+        if (next !== " ") cursor--;
+      } else {
+        this.prefix += next;
+        if (
+          !["data:", "event:", "id:", "retry:"].some((name) =>
+            name.startsWith(this.prefix),
+          )
+        ) {
+          yield { type: "field", field: undefined, prefix: this.prefix };
+          this.started = true;
+        }
+      }
+    }
+    if (cursor < value.length)
+      yield { type: "value", value: value.slice(cursor) };
+  }
+
+  private *end(ending: string): Generator<SSEFragment> {
+    if (!this.started && this.prefix)
+      yield {
+        type: "field",
+        field: this.prefix.endsWith(":") ? this.prefix.slice(0, -1) : undefined,
+        prefix: this.prefix,
+      };
+    yield {
+      type: this.started || this.prefix ? "line-end" : "frame-end",
+      ending,
+    };
+    this.prefix = "";
+    this.started = false;
+  }
+
+  private field: string | undefined;
+  private line = "";
   private frameEvent = "";
   private frameId: string | undefined;
   private frameDataLines: string[] | null = null;
-  private bomChecked = false;
 
   /**
    * Append a decoded text chunk and return every frame the chunk
@@ -183,62 +278,34 @@ export class SSEFrameParser {
    * straddle any number of chunks.
    */
   push(chunk: string): SSEFrame[] {
-    let text = chunk;
-    if (!this.bomChecked && text.length > 0) {
-      this.bomChecked = true;
-      // The spec's decode step strips one leading BOM. Without this the
-      // first field line of a BOM'd stream is never recognized.
-      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    }
-    this.buffer += text;
-    const lines = this.buffer.split("\n");
-    // The last element holds a line whose terminator has not arrived
-    // yet; keep it for the next push.
-    this.buffer = lines.pop() ?? "";
-    return this.processLines(lines);
+    return this.collect(this.fragments(chunk));
   }
-
   /**
    * End-of-stream: process the unterminated trailing line, then
    * dispatch a dangling frame that never got its blank line.
    * Well-behaved servers end frames with "\n\n", but some close early.
    */
   flush(): SSEFrame[] {
-    const rest = this.buffer;
-    this.buffer = "";
-    const frames = rest.length > 0 ? this.processLines([rest]) : [];
-    const dangling = this.dispatch();
-    if (dangling) frames.push(dangling);
-    return frames;
+    return this.collect(this.fragments("", true));
   }
 
-  private processLines(lines: string[]): SSEFrame[] {
+  private collect(fragments: Iterable<SSEFragment>): SSEFrame[] {
     const frames: SSEFrame[] = [];
-    for (const rawLine of lines) {
-      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-      if (line === "") {
+    for (const fragment of fragments) {
+      // Comment and unknown-field fragments survive raw mode, but carry no frame payload.
+      if (fragment.type === "field") this.field = fragment.field;
+      else if (fragment.type === "value" && this.field !== undefined)
+        this.line += fragment.value;
+      else if (fragment.type === "line-end") {
+        if (this.field === "data") (this.frameDataLines ??= []).push(this.line);
+        if (this.field === "event") this.frameEvent = this.line.trim();
+        if (this.field === "id") this.frameId = this.line.trim();
+        this.field = undefined;
+        this.line = "";
+      } else if (fragment.type === "frame-end") {
         const frame = this.dispatch();
         if (frame) frames.push(frame);
-        continue;
       }
-      // Comment lines (heartbeats) carry no fields.
-      if (line.startsWith(":")) continue;
-      if (line.startsWith("data:")) {
-        // The spec removes one optional leading space from the value.
-        let value = line.slice(5);
-        if (value.startsWith(" ")) value = value.slice(1);
-        if (this.frameDataLines === null) this.frameDataLines = [];
-        this.frameDataLines.push(value);
-        continue;
-      }
-      if (line.startsWith("event:")) {
-        this.frameEvent = line.slice(6).trim();
-        continue;
-      }
-      if (line.startsWith("id:")) {
-        this.frameId = line.slice(3).trim();
-      }
-      // `retry:` and unrecognized fields carry no event payload.
     }
     return frames;
   }
@@ -249,11 +316,10 @@ export class SSEFrameParser {
    * its field state is consumed and reset either way.
    */
   private dispatch(): SSEFrame | null {
-    const dataLines = this.frameDataLines;
-    const frame: SSEFrame | null = dataLines
+    const frame = this.frameDataLines
       ? {
           event: detached(this.frameEvent),
-          data: dataLines.join("\n"),
+          data: this.frameDataLines.join("\n"),
           id: this.frameId ? detached(this.frameId) : undefined,
         }
       : null;
@@ -373,11 +439,7 @@ export interface ParsedSSEEvent<T = unknown> {
  */
 export class SSEChunkParser<T = unknown> {
   private readonly frames = new SSEFrameParser();
-  private readonly options: SSEParserOptions<T>;
-
-  constructor(options: SSEParserOptions<T> = {}) {
-    this.options = options;
-  }
+  constructor(private readonly options: SSEParserOptions<T> = {}) {}
 
   push(chunk: string): ParsedSSEEvent<T>[] {
     return this.toEvents(this.frames.push(chunk));
@@ -388,48 +450,43 @@ export class SSEChunkParser<T = unknown> {
   }
 
   private toEvents(frames: SSEFrame[]): ParsedSSEEvent<T>[] {
-    const events: ParsedSSEEvent<T>[] = [];
-    for (const frame of frames) {
-      const event = this.toEvent(frame);
-      if (event) events.push(event);
-    }
-    return events;
+    return frames.flatMap((frame) => toSSEEvents(frame, this.options));
+  }
+}
+
+function toSSEEvents<T>(
+  frame: SSEFrame,
+  options: SSEParserOptions<T>,
+): ParsedSSEEvent<T>[] {
+  const rawData = frame.data.trim();
+  if (!rawData) {
+    return [];
   }
 
-  private toEvent(frame: SSEFrame): ParsedSSEEvent<T> | null {
-    const rawData = frame.data.trim();
-    if (!rawData) {
-      return null;
-    }
-
-    let data: T;
-    if (this.options.transform) {
-      const transformed = this.options.transform(rawData);
-      if (transformed === null) {
-        if (this.options.logMalformed) {
-          console.warn("SSE transform returned null:", rawData.slice(0, 100));
-        }
-        return null;
+  let data: T;
+  if (options.transform) {
+    const transformed = options.transform(rawData);
+    if (transformed === null) {
+      if (options.logMalformed) {
+        console.warn("SSE transform returned null:", rawData.slice(0, 100));
       }
-      data = transformed;
-    } else {
-      try {
-        data = JSON.parse(rawData) as T;
-      } catch {
-        if (this.options.logMalformed) {
-          console.warn("SSE parse failed:", rawData.slice(0, 100));
-        }
-        data = rawData as unknown as T;
-      }
+      return [];
     }
-
-    return {
-      data,
-      rawData,
-      eventId: frame.id,
-      eventType: frame.event || undefined,
-    };
+    data = transformed;
+  } else {
+    try {
+      data = JSON.parse(rawData) as T;
+    } catch {
+      if (options.logMalformed) {
+        console.warn("SSE parse failed:", rawData.slice(0, 100));
+      }
+      data = rawData as unknown as T;
+    }
   }
+
+  return [
+    { data, rawData, eventId: frame.id, eventType: frame.event || undefined },
+  ];
 }
 
 /**
@@ -439,43 +496,8 @@ export async function* parseSSEStream<T = unknown>(
   stream: ReadableStream<Uint8Array>,
   options: SSEParserOptions<T> = {},
 ): AsyncGenerator<ParsedSSEEvent<T>> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  const parser = new SSEChunkParser<T>(options);
-  let chunkCount = 0;
-  let totalBytes = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        console.log(
-          `[agent-core:sse] Stream reader done after ${chunkCount} chunks, ${totalBytes} bytes`,
-        );
-        break;
-      }
-
-      chunkCount++;
-      totalBytes += value?.length ?? 0;
-      const chunk = decoder.decode(value, { stream: true });
-
-      // Log every chunk for debugging
-      if (chunkCount <= 3 || chunkCount % 10 === 0) {
-        console.log(
-          `[agent-core:sse] Chunk ${chunkCount}: ${value?.length ?? 0} bytes, preview: ${chunk.slice(0, 100).replace(/\n/g, "\\n")}`,
-        );
-      }
-
-      for (const event of parser.push(chunk)) {
-        yield event;
-      }
-    }
-
-    for (const event of parser.flush()) {
-      yield event;
-    }
-  } finally {
-    reader.releaseLock();
+  for await (const frame of streamSSEFrames(stream)) {
+    yield* toSSEEvents(frame, options);
   }
 }
 
@@ -488,36 +510,11 @@ export async function consumeSSEStream<T = unknown>(
   onError: (error: Error) => void,
   options: SSEParserOptions<T> = {},
 ): Promise<void> {
-  let eventCount = 0;
   try {
-    for await (const event of parseSSEStream<T>(stream, options)) {
-      eventCount++;
+    for await (const event of parseSSEStream<T>(stream, options))
       onEvent(event);
-    }
-    // Stream finished normally
-    console.log(
-      `[agent-core:sse] Stream ended normally, total events: ${eventCount}`,
-    );
   } catch (error) {
-    const normalizedError =
-      error instanceof Error ? error : new Error(String(error));
-    const isAbortError =
-      normalizedError.name === "AbortError" ||
-      normalizedError.message.toLowerCase().includes("abort");
-
-    if (isAbortError) {
-      console.log(
-        `[agent-core:sse] Stream aborted normally after ${eventCount} events`,
-      );
-      onError(normalizedError);
-      return;
-    }
-
-    console.error(
-      `[agent-core:sse] Stream error after ${eventCount} events:`,
-      normalizedError,
-    );
-    onError(normalizedError);
+    onError(error instanceof Error ? error : new Error(String(error)));
   }
 }
 
@@ -551,9 +548,6 @@ export interface StreamUsageAccumulator {
 
 /** Event types that contain token information (Anthropic SDK format) */
 const TOKEN_EVENTS = new Set(["message.stop", "content_block_stop"]);
-
-/** Event types for tool calls - now handled via message.part.updated */
-const _TOOL_CALL_EVENTS = new Set<string>();
 
 /**
  * StreamUsageExtractor - Accumulates token usage from SSE events.
