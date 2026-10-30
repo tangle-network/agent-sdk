@@ -66,6 +66,12 @@ Aggregate limits, credential exclusions, and exact native-session proof remain e
 Capture lists no directory below a credential directory such as `.opencode` or `.config`: it records the directory as excluded and accounts for its subtree with one complete usage scan, so the workspace totals still reconcile.
 An unsupported downloader or incomplete transfer fails capture and preserves the source environment.
 
+## Profile credentials
+
+Declare proxy-held credentials in `profile.proxySecrets` or create input `proxySecrets` using the same `ProxySecretsSchema`. The Provider forwards the full declaration unchanged, including aliases, destinations, methods, paths, presentation and expiry. Trusted Sandbox resolution owns tenant authorization, stored identity and proxy installation. The SDK transport must support the top-level canonical field.
+
+Legacy stored names, `"all"` and host objects retain their delivery selection. The API binds known hosts or preserves prior delivery for unbound names; explicit canonical scope governs protected names. Explicit readable requests use the existing `{name, exposeInBox:true}` consent and `metadata.reason` or a retained store reason. A mapper cannot replace authored custody or erase its reason. Source and local HTTP proof do not establish deployed proxy enforcement.
+
 ## Named model credentials at creation
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.

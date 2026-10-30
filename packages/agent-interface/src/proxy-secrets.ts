@@ -38,7 +38,7 @@ const headerSchema = z.string().max(256).regex(/^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$
  * Never scan other query fields. Basic is one strict base64 value decoding to exactly public
  * username:placeholder; the username is printable ASCII without colon. Bearer is exactly
  * "Bearer SP placeholder". Embedded placeholders never match. Authority, TLS SNI and validated
- * destination must agree on the declared FQDN over HTTPS/443; explicit :443 is equivalent.
+ * destination must agree on the declared FQDN and effective port over HTTPS.
  */
 export const ProxySecretPresentationSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bearer") }),

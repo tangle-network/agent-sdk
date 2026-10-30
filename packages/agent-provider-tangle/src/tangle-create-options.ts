@@ -32,7 +32,7 @@ import { profileCredentialSource } from "./model-credential-source.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
 import { deepFreeze } from "@tangle-network/agent-interface";
-import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindings } from "./tangle-proxy-secrets.js";
+import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity } from "./tangle-proxy-secrets.js";
 import type { TangleCreateSandboxOptions, TangleModelCredentials } from "./tangle-types.js";
 
 /** Immutable create evidence used to bind a later native resume to its restored snapshot. */
@@ -175,10 +175,8 @@ export function sandboxOptionsFromCreateInput(
   const requestedSelection = selectedSecret !== undefined && !proxySelected
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
     : requestedSecrets ?? (proxySecrets === undefined ? undefined : []);
-  const secrets = sandboxSecretBindings(requestedSelection, proxySecrets, input.env);
-  if (secrets !== undefined && secrets.length > MAX_ARRAY_LENGTH) {
-    throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
-  }
+  const secrets = input.secrets === "all" ? "all" : requestedSelection;
+  if (Array.isArray(secrets) && secrets.length > MAX_ARRAY_LENGTH) throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
   const recordsCredential = nativeCredentials || subscriptionSelection;
   if (recordsCredential && Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
     throw new Error("Tangle credential selection owns metadata.modelCredentials");
@@ -244,7 +242,8 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
-    ...(Array.isArray(secrets) ? { secrets } : {}),
+    ...(secrets === undefined ? {} : { secrets }),
+    ...(proxySecrets === undefined ? {} : { proxySecrets }),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
     ...(input.billingOwner === undefined ? {} : { billingOwnerId: input.billingOwner }),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
@@ -282,18 +281,7 @@ export function sandboxRestoreFromCheckpoint(
   };
 }
 
-/**
- * Project the portable egress policy onto the Sandbox policy.
- *
- * The schema is a strict discriminated union, so a domain list outside `strict` is refused rather
- * than sent: Sandbox IGNORES `allowDomains` in `open` and `blocked` mode, and a silently ignored
- * allowlist is a policy the caller believes is in force and is not.
- *
- * `includeImplicitDomains` stays unset, which is the Sandbox default of false. A strict policy
- * therefore reaches the named domains plus the model endpoints the platform provisioned, matching
- * what {@link AgentEnvironmentEgressPolicy} states; opting in would silently add ~40 hosts,
- * including public source hosts.
- */
+/** Strict allowlists remain exact; implicit domains stay disabled. */
 function sandboxEgressPolicy(
   policy: AgentEnvironmentEgressPolicy,
 ): NonNullable<CreateSandboxOptions["egressPolicy"]> {
@@ -306,10 +294,7 @@ function sandboxEgressPolicy(
 }
 
 /** Reject value-bearing secret maps before any custom mapper can drop them. */
-export function assertNoInlineSecretValues(
-  input: CreateAgentEnvironmentInput,
-  parsedWorkspace?: WorkspaceRequest,
-): void {
+export function assertNoInlineSecretValues(input: CreateAgentEnvironmentInput, parsedWorkspace?: WorkspaceRequest): void {
   createRoutingFromProviderOptions(input.providerOptions);
   if (input.workspace?.providerOptions !== undefined) {
     const workspace = parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
@@ -326,15 +311,30 @@ export function assertNoInlineSecretValues(
       throw new Error("Tangle resource providerOptions are not supported");
     }
   }
-  sandboxSecretBindings(input.secrets, undefined, input.env);
+  assertMappedSecretNames(input);
 }
 
-/** Validate mapped stored names and bindings without resolving their values. */
-export function assertMappedSecretNames(options: TangleCreateSandboxOptions): void {
-  if (options.secrets === "all") throw new Error("Tangle mapped secrets require explicit selection");
-  sandboxSecretBindings(options.secrets, undefined, options.env);
+/** Preserve legacy stored selections while canonical declarations travel separately. */
+export function assertMappedSecretNames(options: { secrets?: unknown; env?: Record<string, string> }): void {
+  const { secrets, env } = options;
+  if (secrets === undefined || secrets === "all") return;
+  if (!Array.isArray(secrets) || secrets.length > MAX_ARRAY_LENGTH) throw new Error("Tangle secrets require bounded explicit stored selection");
+  const selected = new Map<string, string>();
+  for (const entry of secrets) {
+    const name = typeof entry === "string" ? entry : entry?.name;
+    boundedIdentifier(name, "Tangle stored-secret name");
+    if (typeof entry !== "string" && (!entry || Object.hasOwn(env ?? {}, name) || ("host" in entry
+      ? Object.keys(entry).some((key) => !["name", "host", "header"].includes(key)) ||
+        typeof entry.host !== "string" || entry.host.length > 253 ||
+        !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(entry.host) ||
+        (entry.header !== undefined && (typeof entry.header !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(entry.header)))
+      : Object.keys(entry).some((key) => !["name", "exposeInBox"].includes(key)) || entry.exposeInBox !== true)))
+      throw new Error("Invalid or shadowed Tangle secret selection");
+    const identity = sandboxSecretBindingIdentity(entry);
+    if (selected.has(name) && selected.get(name) !== identity) throw new Error("Conflicting Tangle stored-secret selection");
+    selected.set(name, identity);
+  }
 }
-
 
 export function assertCreateInputShape(
   input: CreateAgentEnvironmentInput,
