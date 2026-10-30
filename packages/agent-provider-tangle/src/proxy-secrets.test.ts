@@ -192,13 +192,13 @@ it("exposes only a fenced provider store while the SDK basic store stays usable"
   expect(stored.has("COORDINATION_RUN_TOKEN")).toBe(false);
   expect(requests).toEqual(["POST /v1/secrets", "DELETE /v1/secrets/COORDINATION_RUN_TOKEN"]);
 });
-it("forwards selected plan-key declarations without passing them as backend model options", async () => {
+it("preserves HTTPS8443 plan-key declarations without a second port selector", async () => {
   const { client, creates } = await fixture();
   await createTangleProvider({ client, modelCredentials: {
-    apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}`, proxySecrets: [binding()],
+    apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}:8443`, proxySecrets: [binding()],
   } }).create({ profile });
   expect(creates[0]!.proxySecrets).toEqual([binding()]);
-  expect(creates[0]!.backend).toMatchObject({ model: { apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}` } });
+  expect(creates[0]!.backend).toMatchObject({ model: { apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}:8443` } });
   expect((creates[0]!.backend as { model: unknown }).model).not.toHaveProperty("proxySecrets");
 });
 it.each(["claude-code", "codex"] as const)("preserves native %s references without implicit readable selection", async (harness) => {
