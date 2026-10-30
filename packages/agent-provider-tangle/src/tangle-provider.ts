@@ -14,9 +14,7 @@ import type {
   AgentEnvironmentSummary,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
-import {
-  createTangleExactProcessProvider,
-} from "./exact-process.js";
+import { createTangleExactProcessProvider } from "./exact-process.js";
 import {
   capabilitiesForClient,
   defaultTangleSandboxCapabilities,
@@ -29,7 +27,7 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import { assertCreateInputShape, assertMappedCreateOptions, assertMappedSecretNames, assertNoInlineSecretValues, captureModelCredentials, createRoutingFromProviderOptions, NATIVE_RESUME_CHECKPOINT_METADATA_KEY, sandboxOptionsFromCreateInput, sandboxRestoreFromCheckpoint } from "./tangle-create-options.js";
-import { captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity, sandboxSecretBindings, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
+import { captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, assertProxySecretAliases, sandboxSecretBindingIdentity, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
 import { statusFromUnknown } from "./tangle-environment-values.js";
 import { normalizeTangleBackend } from "./tangle-prompt.js";
 import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
@@ -118,8 +116,6 @@ export function createTangleProvider(
     configured = { ...configured, profile: { ...configured.profile },
       ...(configured.create === undefined ? {} : { create: { ...configured.create } }),
     };
-    delete configured.profile.proxySecrets;
-    if (configured.create !== undefined) delete configured.create.proxySecrets;
     if (configured.create?.workspaceSnapshot === true) {
       throw new Error("Tangle provider does not support portable workspace snapshots in this receiver deployment");
     }
@@ -175,7 +171,9 @@ export function createTangleProvider(
       throw new Error("Tangle owns metadata.tangleProxySecrets");
     }
     const requestedProxySecrets = proxySecretsFromInput(input);
-    const requestedSecrets = structuredClone(sandboxSecretBindings(input.secrets, requestedProxySecrets, input.env));
+    assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
+    const requestedSecrets = structuredClone(Array.isArray(input.secrets) ? input.secrets : undefined);
+    const requestedReason = requestedSecrets?.some((entry) => typeof entry !== "string" && "exposeInBox" in entry) ? input.metadata?.reason : undefined;
     const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -213,18 +211,18 @@ export function createTangleProvider(
       ) : defaultOptions!);
     const selectedProxySecrets = mergeProxySecrets(requestedProxySecrets,
       selectedCredentials?.proxySecrets);
-    if (mappedInput.proxySecrets !== undefined && canonicalCandidateDigest(mappedInput.proxySecrets) !== canonicalCandidateDigest(selectedProxySecrets)) {
-      throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
-    }
-    const { proxySecrets: _legacy, secrets: selection, ...mapped } = { ...mappedInput, backend: normalizeTangleBackend(mappedInput.backend, true) };
-    const secrets = sandboxSecretBindings(selection, selectedProxySecrets, mapped.env);
-    const mappedOptions = { ...mapped, ...(secrets === undefined ? {} : { secrets }) };
+    const mappedProxySecrets = mergeProxySecrets(selectedProxySecrets, proxySecretsFromInput({ profile: mappedInput.backend?.profile ?? {}, proxySecrets: mappedInput.proxySecrets }));
+    if (canonicalCandidateDigest(mappedProxySecrets ?? []) !== canonicalCandidateDigest(selectedProxySecrets ?? [])) throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
+    const mappedOptions = { ...mappedInput, backend: normalizeTangleBackend(mappedInput.backend, true), ...(selectedProxySecrets === undefined ? {} : { proxySecrets: selectedProxySecrets }) };
+    assertProxySecretAliases(selectedProxySecrets, mappedOptions.env, mappedOptions.secrets);
+    if (input.secrets === "all" && mappedOptions.secrets !== "all") throw new Error("Tangle mapped secrets must preserve all selection");
     for (const entry of requestedSecrets ?? []) {
       if (typeof entry === "string") continue;
       if (!Array.isArray(mappedOptions.secrets) || !mappedOptions.secrets.some((selected) => sandboxSecretBindingIdentity(selected) === sandboxSecretBindingIdentity(entry))) {
         throw new Error("Tangle mapped secrets must preserve the requested delivery selection");
       }
     }
+    if (requestedReason !== undefined && canonicalCandidateDigest(mappedOptions.metadata?.reason ?? null) !== canonicalCandidateDigest(requestedReason)) throw new Error("Tangle mapped raw consent must preserve its named reason");
     assertMappedCreateOptions(mappedOptions);
     const mappedRouting = mappedOptions.backend?.model?.routing;
     if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {

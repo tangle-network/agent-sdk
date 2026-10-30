@@ -66,12 +66,17 @@ Aggregate limits, credential exclusions, and exact native-session proof remain e
 Capture lists no directory below a credential directory such as `.opencode` or `.config`: it records the directory as excluded and accounts for its subtree with one complete usage scan, so the workspace totals still reconcile.
 An unsupported downloader or incomplete transfer fails capture and preserves the source environment.
 
+## Profile credentials
+
+Declare proxy-held credentials in `profile.proxySecrets` or create input `proxySecrets` using the same `ProxySecretsSchema`. The Provider forwards the full declaration unchanged, including aliases, destinations, methods, paths, presentation and expiry. Trusted Sandbox resolution owns tenant authorization, stored identity and proxy installation. The SDK transport must support the top-level canonical field.
+
+Legacy stored names, `"all"` and host objects retain their delivery selection. The API binds known hosts or preserves prior delivery for unbound names; explicit canonical scope governs protected names. Explicit readable requests use the existing `{name, exposeInBox:true}` consent and `metadata.reason` or a retained store reason. A mapper cannot replace authored custody or erase its reason. Source and local HTTP proof do not establish deployed proxy enforcement.
+
 ## Named model credentials at creation
 
 `modelCredentials` sends a stored credential reference and explicit endpoint before Sandbox provisions the backend.
 This uses Sandbox's existing caller-owned model credential path instead of requesting a managed Router credential.
-The provider does not create, copy, or renew stored secrets.
-The Provider grants the selected reference at create, alongside unrelated caller-requested secrets. Qualified native selectors also grant their selected reference before each fresh turn.
+The provider does not create, copy, or renew stored secrets. The Provider forwards the selected reference at create, alongside unrelated caller-requested secrets. Qualified native selectors also grant their selected reference before each fresh turn.
 
 ```ts
 const provider = createTangleProvider({
@@ -86,8 +91,7 @@ const environment = await provider.create({
 });
 ```
 
-The configuration accepts only the reference and endpoint, not credential values or model selection.
-The authored profile, selected backend, runtime attachments, and create identity remain unchanged.
+The configuration accepts only the reference and endpoint, not credential values or model selection. The authored profile, selected backend, runtime attachments, and create identity remain unchanged.
 The provider snapshots this configuration when constructed and refuses combining it with `mapCreateInput`.
 Omitting it preserves managed creation.
 The endpoint must use HTTP or HTTPS without credentials, query parameters, or fragments.
@@ -147,20 +151,16 @@ The Provider validates native channels with the maintained CLI Registry before p
 Each selector must use the exact profile harness.
 Native execution also requires the selected container to report `cliAuthReferences: true`.
 A missing or unreadable capability refuses creation or dispatch before inference.
-A selector grants its one selected stored secret automatically, alongside unrelated secrets requested by the caller.
+Native selectors retain their existing selected stored name beside unrelated requests; the native owner controls resolution and bundle delivery.
 Keep pool-wide account credentials out of the create input's `secrets` list.
-Static native references grant their selected secret only for subscription profiles.
-Static API references grant their selected secret for unmarked legacy profiles and subscription profiles.
-Inline environment values cannot shadow the selected stored secret.
-Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
+Static native references select their credential only for subscription profiles. Static API references grant their selected secret for unmarked legacy profiles and subscription profiles.
+Inline environment values cannot shadow the selected stored secret. Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
 Subscription failures never fall back to managed Router access.
 
-Sandbox metadata records the public selection under `modelCredentials`.
-This metadata key is reserved for the Provider selection.
+Sandbox metadata records the public selection under `modelCredentials`. This metadata key is reserved for the Provider selection.
 Account labels are supplied bindings, not verified native principals.
 Token values and native credential files never enter that selection or receipt.
-A static native reference stays bound to its creation account and harness on every turn.
-Reconstructed environments recover that reference from persisted metadata and the observed backend.
+A static native reference stays bound to its creation account and harness on every turn. Reconstructed environments recover that reference from persisted metadata and the observed backend.
 
 A resolver selects a bootstrap credential at creation and a durable binding for each fresh turn.
 Fresh turns require the exact inline subscription profile and a stable `turnId`.
