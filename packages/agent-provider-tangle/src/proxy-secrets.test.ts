@@ -201,11 +201,11 @@ it("preserves HTTPS8443 plan-key declarations without a second port selector", a
   expect(creates[0]!.backend).toMatchObject({ model: { apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}:8443` } });
   expect((creates[0]!.backend as { model: unknown }).model).not.toHaveProperty("proxySecrets");
 });
-it.each(["claude-code", "codex"] as const)("preserves native %s references without implicit readable selection", async (harness) => {
+it.each(["claude-code", "codex"] as const)("preserves native %s existing stored selection and descriptor", async (harness) => {
   const { client, creates } = await fixture();
   const cliAuth = { account: "fixture-native", secretEnv: "NATIVE_BUNDLE", format: harness === "codex" ? "bundle" as const : "token" as const };
   await createTangleProvider({ client, modelCredentials: { cliAuth } }).create({ profile: { harness, model: { metadata: { credentialSource: "subscription" } } }, secrets: ["UNRELATED"] });
-  expect(creates[0]!.secrets).toEqual(["UNRELATED"]); expect(creates[0]!.backend).toMatchObject({ model: { cliAuth, authMode: "oauth" } });
+  expect(creates[0]!.secrets).toEqual(["UNRELATED", "NATIVE_BUNDLE"]); expect(creates[0]!.backend).toMatchObject({ model: { cliAuth, authMode: "oauth" } });
 });
 it.each(["/v1/..;/admin", "/v1/events;format=json", "/v1/%2e%2e/admin"])("rejects ambiguous canonical path %s before allocation", async (path) => { const { client, creates } = await fixture();
   await expect(createTangleProvider({ client }).create({ profile, proxySecrets: [{ ...binding(), paths: [path] }] })).rejects.toThrow(/canonical ASCII/); expect(creates).toHaveLength(0);

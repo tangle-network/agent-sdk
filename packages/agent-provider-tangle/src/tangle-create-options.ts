@@ -148,9 +148,8 @@ export function sandboxOptionsFromCreateInput(
       ? parseBackendType(defaultBackend ?? profile.harness ?? "opencode")
       : (input.backend as BackendType);
   assertNoInlineSecretValues(input, workspace);
-  const selectedSecret = modelCredentials === undefined ? undefined
-    : "cliAuth" in modelCredentials ? modelCredentials.cliAuth?.secretEnv : modelCredentials.apiKeyEnv;
   const nativeCredentials = modelCredentials !== undefined && "cliAuth" in modelCredentials;
+  const selectedSecret = nativeCredentials ? modelCredentials.cliAuth?.secretEnv : modelCredentials?.apiKeyEnv;
   const proxySecrets = mergeProxySecrets(proxySecretsFromInput(input), modelCredentials?.proxySecrets);
   assertProxySecretAliases(proxySecrets, input.env, input.secrets);
   const proxySelected = proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret) === true ||
@@ -172,10 +171,9 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
   const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
-  const requestedSelection = selectedSecret !== undefined && !nativeCredentials && !proxySelected
+  const secrets = input.secrets === "all" ? "all" : selectedSecret !== undefined && !proxySelected
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
     : requestedSecrets ?? (proxySecrets === undefined ? undefined : []);
-  const secrets = input.secrets === "all" ? "all" : requestedSelection;
   if (Array.isArray(secrets) && secrets.length > MAX_ARRAY_LENGTH) throw new Error("Tangle selected credential exceeds the stored-secret grant bound");
   const recordsCredential = nativeCredentials || subscriptionSelection;
   if (recordsCredential && Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
@@ -404,6 +402,8 @@ export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): 
       throw new Error("Tangle mapped native credentials must use the exact profile harness");
     }
     const selectedSecret = options.backend.model.cliAuth.secretEnv;
+    if (options.secrets !== "all" && !(Array.isArray(options.secrets) && options.secrets.some((entry) => (typeof entry === "string" ? entry : entry.name) === selectedSecret)) &&
+        !options.proxySecrets?.some((binding) => binding.envName === selectedSecret || binding.secretRef.key === selectedSecret)) throw new Error("Tangle mapped native credential must retain its stored selection");
     if (Object.hasOwn(options.env ?? {}, selectedSecret)) {
       throw new Error("Tangle mapped native credential cannot shadow a stored secret with inline environment data");
     }

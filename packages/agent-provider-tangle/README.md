@@ -151,7 +151,7 @@ The Provider validates native channels with the maintained CLI Registry before p
 Each selector must use the exact profile harness.
 Native execution also requires the selected container to report `cliAuthReferences: true`.
 A missing or unreadable capability refuses creation or dispatch before inference.
-Native selectors forward cliAuth.secretEnv for trusted resolution without adding its bundle to create.secrets; unrelated selections retain their delivery.
+Native selectors retain their existing selected stored name beside unrelated requests; the native owner controls resolution and bundle delivery.
 Keep pool-wide account credentials out of the create input's `secrets` list.
 Static native references select their credential only for subscription profiles. Static API references grant their selected secret for unmarked legacy profiles and subscription profiles.
 Inline environment values cannot shadow the selected stored secret. Undefined, malformed, unsupported, or failed subscription selections stop before Sandbox creation.
