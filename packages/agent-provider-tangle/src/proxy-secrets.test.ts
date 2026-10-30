@@ -17,7 +17,7 @@ const exposed = { name: "READABLE_NAME", exposeInBox: true as const };
 /** Actual Sandbox HTTP transport; this peer checks wire delivery, not proxy enforcement. */
 async function fixture() {
   let baseUrl = "", metadata: unknown;
-  const requests: string[] = [], creates: Record<string, unknown>[] = [], turns: Record<string, unknown>[] = [], stored = new Map<string, string>();
+  const requests: string[] = [], creates: Record<string, unknown>[] = [], turns: Record<string, unknown>[] = [], stored = new Map<string, string>(), policies = new Map<string, Record<string, unknown>>();
   const info = () => ({
     id: "sandbox-bindings", status: "running", createdAt: new Date(0).toISOString(), metadata,
     filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
@@ -34,8 +34,8 @@ async function fixture() {
     if (path === "/v1/backends") {
       response.end(JSON.stringify({ backends: ["opencode", "claude-code", "codex"].map((type) => ({ type, name: type, description: "HTTP fixture", callerCredentialOnly: false, capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } })), timestamp: new Date(0).toISOString() }));
     } else if (path === "/v1/secrets" && request.method === "POST") {
-      stored.set(body.name, body.value);
-      response.end(JSON.stringify({ secret: { name: body.name, createdAt: new Date(0).toISOString() } }));
+      stored.set(body.name, body.value); const { value: _value, ...policy } = body; policies.set(body.name, policy);
+      response.end(JSON.stringify({ secret: { ...policy, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } }));
     } else if (path.startsWith("/v1/secrets/") && request.method === "DELETE") {
       stored.delete(decodeURIComponent(path.slice("/v1/secrets/".length)));
       response.end(JSON.stringify({ success: true }));
@@ -59,7 +59,7 @@ async function fixture() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
-  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored, turns };
+  return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored, turns, policies };
 }
 it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets: "all" as const }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("preserves legacy delivery without inventing consent (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
@@ -179,11 +179,13 @@ it.each([{ secrets: undefined }, { secrets: ["REPORTS_TOKEN"] }, { secrets: "all
   expect(creates[0]!.proxySecrets).toEqual([binding()]); expect(creates[0]!.secrets).toEqual(secrets);
 });
 it("exposes only a fenced provider store while the SDK basic store stays usable", async () => {
-  const { client, stored, requests } = await fixture();
+  const { client, stored, requests, policies } = await fixture();
   const provider = createTangleProvider({ client });
   const value = randomBytes(32).toString("hex");
   expect(provider.secrets !== undefined).toBe("update" in client.secrets);
-  const receipt = await (provider.secrets ?? client.secrets).create("COORDINATION_RUN_TOKEN", value);
+  const policy = { proxySecrets: [binding()], reason: "fixture-retained reason" };
+  const receipt = provider.secrets ? await provider.secrets.create("COORDINATION_RUN_TOKEN", value, policy) : await client.secrets.create("COORDINATION_RUN_TOKEN", value);
+  if (provider.secrets) { expect(policies.get("COORDINATION_RUN_TOKEN")).toMatchObject(policy); expect(receipt).toMatchObject(policy); }
   expect(receipt).toMatchObject({ name: "COORDINATION_RUN_TOKEN" });
   expect(stored.get("COORDINATION_RUN_TOKEN") === value).toBe(true);
   await (provider.secrets ?? client.secrets).delete("COORDINATION_RUN_TOKEN");
