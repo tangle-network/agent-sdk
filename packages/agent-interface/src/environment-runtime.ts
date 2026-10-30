@@ -879,7 +879,7 @@ export interface CreateAgentEnvironmentInput {
   workspace?: WorkspaceRequest;
   resources?: ResourceRequest;
   env?: Record<string, string>;
-  secrets?: (string | { name: string; host: string; header?: string } | { name: string; exposeInBox: true })[] | Record<string, string>;
+  secrets?: (string | { name: string; host: string; header?: string } | { name: string; exposeInBox: true })[] | "all" | Record<string, string>;
   /** Same declaration as AgentProfile. Empty selections remain explicit wire values.
    * Trusted issuer authorization is required before resolving any reference. */
   proxySecrets?: readonly ProxySecretBinding[];
@@ -1092,9 +1092,9 @@ export interface AgentEnvironmentProvider {
   readonly exactProcess?: AgentExactProcessProvider;
   /** Host-only store; expectedUpdatedAt rejects stale writes and removal without mutation. */
   readonly secrets?: {
-    create(name: string, value: string): Promise<unknown>;
-    list?(): Promise<readonly { name: string; updatedAt: Date }[]>;
-    update?(name: string, value: string, options?: { expectedUpdatedAt?: string }): Promise<unknown>;
+    create(name: string, value: string, options?: { proxySecrets?: readonly ProxySecretBinding[]; exposeInBox?: true; reason?: string }): Promise<unknown>;
+    list?(): Promise<readonly { name: string; updatedAt: Date; proxySecrets?: readonly ProxySecretBinding[]; exposeInBox?: true; reason?: string }[]>;
+    update?(name: string, value: string, options?: { expectedUpdatedAt?: string; proxySecrets?: readonly ProxySecretBinding[]; exposeInBox?: true; reason?: string }): Promise<unknown>;
     delete(name: string, options?: { expectedUpdatedAt?: string }): Promise<unknown>;
   };
   /** Durable fresh-session portable context admission, when supported. */
