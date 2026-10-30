@@ -61,7 +61,7 @@ async function fixture() {
   baseUrl = `http://127.0.0.1:${address.port}`;
   return { client: new Sandbox({ baseUrl, platformUrl: baseUrl, apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false }), creates, requests, stored, turns, policies };
 }
-it.each([{ secrets: undefined }, { secrets: ["BARE_NAME", exposed] }, { secrets: "all" as const }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("preserves legacy delivery without inventing consent (%j)", async ({ secrets }) => {
+it.each([{ secrets: undefined }, { secrets: [] }, { secrets: ["BARE_NAME", exposed] }, { secrets: "all" as const }, { secrets: [selected(), { name: "CUSTOM_HEADER", host, header: "X-Api-Key" }, { name: "DEFAULT_HEADER", host }] }])("preserves legacy delivery without inventing consent (%j)", async ({ secrets }) => {
   const { client, creates, requests } = await fixture();
   const provider = createTangleProvider({ client });
   const environment = await provider.create({ profile, secrets, egress: { mode: "open" }, billingOwner: "fixture-owner", runtimeAttachments, metadata: { reason: "fixture-customer Git auth" } });
