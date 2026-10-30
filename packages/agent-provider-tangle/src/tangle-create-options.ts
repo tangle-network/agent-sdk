@@ -228,7 +228,7 @@ export function sandboxOptionsFromCreateInput(
   // record and dropping it would create an environment with no credentials and
   // no error, surfacing later as an unexplained tool failure.
   const environment = workspace.image ?? workspace.environment;
-  const mapped = {
+  const mapped: TangleCreateSandboxOptions = {
     ...(environment !== undefined ? { environment } : {}),
     ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(workspace.repoUrl
