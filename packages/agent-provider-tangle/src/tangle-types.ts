@@ -65,7 +65,7 @@ export interface TangleExactProcessOptions {
   teamId?: string;
 }
 
-export type TangleCreateSandboxOptions = Omit<CreateSandboxOptions, "secrets" | "backend"> & { backend?: BackendConfig & Omit<NonNullable<BackendConfig["model"]>, "model"> & { modelId?: string }; secrets?: "all" | Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>; proxySecrets?: CreateAgentEnvironmentInput["proxySecrets"] };
+export type TangleCreateSandboxOptions = Omit<CreateSandboxOptions, "secrets" | "backend" | "proxySecrets"> & { backend?: BackendConfig & Omit<NonNullable<BackendConfig["model"]>, "model"> & { modelId?: string }; secrets?: "all" | Extract<CreateAgentEnvironmentInput["secrets"], unknown[]>; proxySecrets?: CreateAgentEnvironmentInput["proxySecrets"] };
 
 export interface SandboxClientLike {
   readonly secrets?: AgentEnvironmentProvider["secrets"];
