@@ -135,7 +135,7 @@ export const ProxySecretCapabilitiesSchema = z.strictObject({
   protocolVersion: z.literal(1), supportedDrivers: list(boundedIdentifierSchema),
   presentations: list(z.enum(["bearer", "basic", "header", "query"])),
   placeholderFormats: list(z.enum(["opaque", "jwt"])),
-  enforcement: z.literal("exact"), transports: z.tuple([z.literal("https:443")]),
+  enforcement: z.literal("exact"), transports: z.tuple([z.enum(["https:443", "https"])]),
   lifecycle: z.literal(true), placementReceiptRequired: z.literal(true),
 });
 export type ProxySecretCapabilities = z.infer<typeof ProxySecretCapabilitiesSchema>;
