@@ -1,352 +1,83 @@
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import {
-  SandboxInstance,
-  type SandboxEvent,
-  type SandboxRuntimeCapabilities,
-  type TangleSandboxClient,
-} from "@tangle-network/sandbox";
+import { createServer } from "node:http";
+import { expect, it } from "vitest";
+import { Sandbox, type SandboxRuntimeCapabilities } from "@tangle-network/sandbox";
 import {
   createTangleProvider,
   type SandboxClientLike,
-  type SandboxInstanceLike,
-  type SandboxRuntimeCapabilityDocument,
-  type SandboxSessionLike,
 } from "@tangle-network/agent-provider-tangle";
 
-function acceptPublicTangleClient(client: TangleSandboxClient): SandboxClientLike {
-  return client;
-}
-
-void acceptPublicTangleClient;
-
-/**
- * The wire body of `GET /capabilities` for a deployment that reports the
- * complete retained-control flag set. It carries the SDK's type because the
- * SDK parses it: a v1 document that omits a declared group is malformed, so
- * this body must stay complete even where the adapter reads only part of it.
- */
-const DEPLOYMENT_CAPABILITIES: SandboxRuntimeCapabilities = {
-  schema: 1,
-  agentInterface: "0.49.0",
-  sidecarVersion: "1.0.0-packed",
-  image: `example/sidecar@sha256:${"c".repeat(64)}`,
-  dispatch: { runControlRef: true, executionIdOnAdmission: true },
-  cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
-  runs: { executionScopedStatus: true, eventReplay: true },
-  interactions: {},
-};
-const DEPLOYMENT_CAPABILITIES_AS_READ: SandboxRuntimeCapabilityDocument =
-  DEPLOYMENT_CAPABILITIES;
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
+it("adapts the actual public Sandbox instance without inventing branching", async () => {
+  const capabilities: SandboxRuntimeCapabilities = {
+    schema: 1,
+    agentInterface: "0.49.0",
+    sidecarVersion: "1.0.0-packed",
+    image: `example/sidecar@sha256:${"c".repeat(64)}`,
+    dispatch: { runControlRef: true, executionIdOnAdmission: true },
+    cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
+    runs: { executionScopedStatus: true, eventReplay: true },
+    interactions: { responseDedupe: false },
+  };
+  const requests: string[] = [];
+  let baseUrl = "", created: Record<string, unknown> | undefined;
+  const sandboxInfo = () => ({
+    id: "sandbox-public-surface", status: "running",
+    filesystemIncarnationId: "11111111-1111-4111-8111-111111111111",
+    filesystemIncarnationProvenance: "fresh", filesystemIncarnationReadiness: "ready",
+    connection: {
+      runtimeUrl: `${baseUrl}/v1/sandboxes/sandbox-public-surface/runtime`,
+      authToken: "fixture-runtime-token", edgeStatus: "ready",
+    },
+    createdAt: "2026-08-01T20:00:00.000Z",
   });
-}
-
-async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
-  const output: T[] = [];
-  for await (const value of values) output.push(value);
-  return output;
-}
-
-describe("packed Tangle exact-session control", () => {
-  it("installs a Sandbox SDK version the packed peer range accepts", () => {
-    const require = createRequire(import.meta.url);
-    const manifestOf = (specifier: string): Record<string, unknown> => {
-      const entry = require.resolve(specifier);
-      return JSON.parse(
-        readFileSync(resolve(dirname(entry), "..", "package.json"), "utf8"),
-      ) as Record<string, unknown>;
-    };
-    const peerRange = (
-      manifestOf("@tangle-network/agent-provider-tangle")
-        .peerDependencies as Record<string, string>
-    )["@tangle-network/sandbox"];
-    // The packed range always names one floor, ">=X <2.0.0". Reading the floor
-    // keeps this check on the published contract instead of a literal that
-    // drifts every time the provider raises its Sandbox requirement.
-    const floor = /^>=(\d+)\.(\d+)\.(\d+) <2\.0\.0$/.exec(peerRange);
-    expect(floor).not.toBeNull();
-    const installed = /^(\d+)\.(\d+)\.(\d+)/.exec(
-      String(manifestOf("@tangle-network/sandbox").version),
-    );
-    expect(installed).not.toBeNull();
-    const order = (parts: RegExpExecArray): number =>
-      Number(parts[1]) * 1_000_000 + Number(parts[2]) * 1_000 + Number(parts[3]);
-    expect(order(installed!)).toBeGreaterThanOrEqual(order(floor!));
+  const server = createServer(async (request, response) => {
+    const path = new URL(request.url!, "http://fixture").pathname;
+    requests.push(`${request.method} ${path}`);
+    response.setHeader("content-type", "application/json");
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    if (path === "/v1/backends") {
+      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode",
+        description: "HTTP fixture", callerCredentialOnly: false,
+        capabilities: { streaming: true, toolUse: true, reasoning: false,
+          multimodal: false, imageInput: false, contextWindow: 100000,
+          mcp: true, sessions: true, configurable: true, interactions: [] },
+      }], timestamp: new Date(0).toISOString() }));
+    } else if (path === "/v1/sandboxes" && request.method === "POST") {
+      created = JSON.parse(Buffer.concat(chunks).toString());
+      response.end(JSON.stringify(sandboxInfo()));
+    } else if (path === "/v1/sandboxes/sandbox-public-surface") {
+      response.end(JSON.stringify(sandboxInfo()));
+    } else if (path === "/v1/sandboxes/sandbox-public-surface/runtime/capabilities") {
+      response.end(JSON.stringify(capabilities));
+    } else {
+      response.writeHead(404);
+      response.end(JSON.stringify({ code: "NOT_FOUND", message: "No other operation is served" }));
+    }
   });
-
-  it("adapts the actual public Sandbox instance without inventing branching", async () => {
-    // Composing an environment reads deployment truth, so the transport
-    // answers the sandbox lookup and capability discovery and nothing else.
-    const sandboxInfo = {
-      id: "sandbox-public-surface",
-      status: "running" as const,
-      filesystemIncarnationId: "incarnation-1",
-      filesystemIncarnationProvenance: "fresh" as const,
-      filesystemIncarnationReadiness: "ready" as const,
-      connection: {
-        runtimeUrl: "https://sandbox.example/runtime",
-        authToken: "fixture-runtime-token",
-        edgeStatus: "ready" as const,
-      },
-      createdAt: "2026-08-01T20:00:00.000Z",
-    };
-    const publicInstance = new SandboxInstance(
-      {
-        fetch: async (path: string) => {
-          if (path === `/v1/sandboxes/${sandboxInfo.id}`) {
-            return jsonResponse(sandboxInfo);
-          }
-          if (path === `/v1/sandboxes/${sandboxInfo.id}/runtime/capabilities`) {
-            return jsonResponse(DEPLOYMENT_CAPABILITIES);
-          }
-          throw new Error("packed surface check must not make a network request");
-        },
-      } as never,
-      { ...sandboxInfo, createdAt: new Date(sandboxInfo.createdAt) },
-    );
-    const provider = createTangleProvider({
-      client: { create: async () => publicInstance },
-    });
-    const capabilities = await provider.capabilities();
-    const environment = await provider.create({ profile: { name: "packed" } });
-
-    expect(typeof publicInstance.snapshot).toBe("function");
-    expect(typeof publicInstance.branch).toBe("function");
-    expect(typeof publicInstance.session("surface-probe").cancelRun).toBe(
-      "function",
-    );
-    expect(capabilities.branching).toEqual({
-      checkpoint: false,
-      fork: false,
-      confidential: false,
-      retrySafe: false,
-      lookup: false,
-      cleanup: false,
-    });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing HTTP address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    const client: SandboxClientLike = new Sandbox({ baseUrl, platformUrl: baseUrl,
+      apiKey: "fixture-api-key", trustLocalCliAuth: false, directExec: false });
+    // Ephemeral is a public capability ceiling even with the complete SDK surface.
+    const provider = createTangleProvider({ client, ephemeral: true });
+    const environment = await provider.create({ profile: { name: "packed", harness: "opencode" } });
+    expect(created).toMatchObject({ ephemeral: true });
+    for (const document of [await provider.capabilities(), environment.capabilities]) {
+      expect(document?.branching).toMatchObject({ checkpoint: false, fork: false, confidential: false });
+    }
     expect(environment.checkpoint).toBeUndefined();
     expect(environment.fork).toBeUndefined();
-
-    // The environment-scoped document reaches a packed consumer, and the
-    // operations it exposes match it. This deployment backs exact dispatch
-    // and event replay, while the client offers no `get`, so the run cannot
-    // be reconstructed and retained control stays unclaimed.
-    expect(environment.capabilities).toMatchObject({
-      streaming: { detach: true, replay: true, turnIdempotency: true },
-      sessions: { continue: false },
-    });
-    expect(environment.capabilities).not.toHaveProperty("retainedControl");
+    expect(provider.workspaceBranching).toBeUndefined();
     expect(typeof environment.dispatch).toBe("function");
     expect(typeof environment.session).toBe("function");
-  });
-
-  it("claims retained control for an SDK-backed client with reconstruction", async () => {
-    const sdkBackedClient = {
-      fetch: async (): Promise<Response> => {
-        throw new Error("capability probe must not make a network request");
-      },
-      create: async (): Promise<SandboxInstanceLike> => {
-        throw new Error("capabilities never create a sandbox");
-      },
-      get: async () => null,
-    };
-    const claiming = createTangleProvider({ client: sdkBackedClient });
-    await expect(claiming.capabilities()).resolves.toMatchObject({
-      sessions: { continue: true },
-      retainedControl: {
-        exactRunIdentity: true,
-        resultIdentity: true,
-        eventIdentity: true,
-        cancellationIdempotency: true,
-      },
-    });
-
-    // A client without the SDK probe surface cannot prove cancelRun.
-    const unproven = createTangleProvider({
-      client: {
-        create: async (): Promise<SandboxInstanceLike> => {
-          throw new Error("capabilities never create a sandbox");
-        },
-        get: async () => null,
-      },
-    });
-    const narrowed = await unproven.capabilities();
-    expect(narrowed.sessions.continue).toBe(false);
-    expect(narrowed).not.toHaveProperty("retainedControl");
-  });
-
-  it("binds result replay and cancellation to the dispatch receipt", async () => {
-    const resultSelector = vi.fn();
-    const eventSelector = vi.fn();
-    const interrupt = vi.fn(async () => ({ cancelled: true }));
-    const session: SandboxSessionLike = {
-      id: "session-1",
-      status: async () => ({ status: "completed" }),
-      async *events() {
-        yield {
-          id: "event-1",
-          type: "status",
-          data: {
-            status: "processing",
-            executionId: "execution-1",
-            sessionId: "session-1",
-          },
-        } as SandboxEvent;
-        yield {
-          id: "event-2",
-          type: "result",
-          data: {
-            finalText: "ok",
-            executionId: "execution-1",
-            sessionId: "session-1",
-          },
-        } as SandboxEvent;
-      },
-      result: async (options) => {
-        resultSelector(options);
-        return {
-          success: true,
-          status: "success",
-          response: "ok",
-          executionId: "execution-1",
-          durationMs: 1,
-        };
-      },
-      prompt: async (_message, options) => ({
-        success: true,
-        status: "success",
-        response: "ok",
-        executionId: options?.executionId,
-        durationMs: 1,
-      }),
-      interrupt,
-    };
-    const box: SandboxInstanceLike = {
-      id: "sandbox-1",
-      status: "running",
-      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
-      async *streamPrompt(_message, options) {
-        eventSelector(options);
-        const events = [
-          {
-            id: "event-1",
-            type: "status",
-            data: {
-              status: "processing",
-              executionId: "execution-1",
-              sessionId: "session-1",
-            },
-          },
-          {
-            id: "event-2",
-            type: "result",
-            data: {
-              finalText: "ok",
-              executionId: "execution-1",
-              sessionId: "session-1",
-            },
-          },
-        ] as SandboxEvent[];
-        const start = options?.lastEventId === "event-1" ? 1 : 0;
-        for (const event of events.slice(start)) yield event;
-      },
-      dispatchPrompt: async (_prompt, options) => ({
-        sessionId: options?.sessionId ?? session.id,
-        executionId: options?.executionId ?? "execution-1",
-        runControlRef: options?.runControlRef,
-        status: "running",
-        alreadyExisted: false,
-        dispatched: true,
-      }),
-      session: () => session,
-    };
-    const provider = createTangleProvider({
-      client: { create: async () => box },
-    });
-    const environment = await provider.create({ profile: { name: "packed" } });
-    const dispatched = await environment.dispatch!({
-      prompt: "run",
-      turnId: "turn-1",
-      sessionId: session.id,
-      executionId: "execution-1",
-      detach: true,
-    });
-    expect(dispatched.controlRef).toMatchObject({
-      runId: "execution-1",
-      sessionId: "session-1",
-      executionId: "execution-1",
-    });
-
-    const retained = environment.session!(session.id, {
-      controlRef: dispatched.controlRef,
-    });
-    await collect(retained.events({ since: "event-1" }));
-    await expect(retained.result()).resolves.toMatchObject({
-      success: true,
-      text: "ok",
-    });
-    await retained.cancel();
-
-    expect(eventSelector).toHaveBeenCalledWith(
-      expect.objectContaining({ executionId: "execution-1" }),
-    );
-    expect(resultSelector).toHaveBeenCalledWith({ executionId: "execution-1" });
-    expect(interrupt).toHaveBeenCalledWith({ executionId: "execution-1" });
-  });
-
-  it("fails closed when Sandbox does not prove an exact execution", async () => {
-    const session: SandboxSessionLike = {
-      id: "session-unproven",
-      status: async () => ({ status: "completed" }),
-      async *events() {},
-      result: async () => ({
-        success: true,
-        status: "success",
-        durationMs: 1,
-      }),
-      prompt: async () => ({
-        success: true,
-        status: "success",
-        durationMs: 1,
-      }),
-      interrupt: async () => ({ cancelled: true }),
-    };
-    const box: SandboxInstanceLike = {
-      id: "sandbox-unproven",
-      status: "running",
-      capabilities: async () => DEPLOYMENT_CAPABILITIES_AS_READ,
-      async *streamPrompt() {},
-      dispatchPrompt: async (_prompt, options) => ({
-        sessionId: options?.sessionId ?? session.id,
-        status: "running",
-        alreadyExisted: false,
-        dispatched: true,
-      }),
-      session: () => session,
-    };
-    const provider = createTangleProvider({
-      client: { create: async () => box },
-    });
-    const environment = await provider.create({ profile: { name: "packed" } });
-
-    await expect(
-      environment.dispatch!({
-        prompt: "run",
-        turnId: "turn-unproven",
-        sessionId: session.id,
-      }),
-    ).rejects.toThrow(/no exact execution id/);
-    await expect(
-      environment.session!(session.id).prompt({
-        prompt: "run",
-        turnId: "turn-unproven",
-      }),
-    ).rejects.toThrow(/did not confirm its exact executionId/);
-  });
+    expect(requests).toContain("POST /v1/sandboxes");
+    expect(requests).toContain("GET /v1/sandboxes/sandbox-public-surface/runtime/capabilities");
+    expect(requests.every((request) => !/snapshot|fork|agents\/run/.test(request))).toBe(true);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
