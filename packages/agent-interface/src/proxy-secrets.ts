@@ -175,7 +175,7 @@ export function intersectProxySecretScopes(left: ProxySecretScope, right: ProxyS
   const paths = from.paths === undefined ? to.paths : to.paths === undefined ? from.paths : [...new Set(
     from.paths.flatMap((a) => to.paths!.flatMap((b) => pathContains(a, b) ? [b] : pathContains(b, a) ? [a] : [])),
   )];
-  const parsed = ProxySecretScopeSchema.safeParse({ hosts: common(from.hosts, to.hosts), methods: common(from.methods, to.methods), paths });
+  const parsed = ProxySecretScopeSchema.safeParse({ hosts: common(from.hosts, to.hosts), methods: common(from.methods, to.methods), paths: paths?.filter((path) => !paths.some((other) => other !== path && pathContains(other, path))) });
   return parsed.success ? parsed.data : undefined;
 }
 const pathContains = (parent: string, child: string) => parent === child || (parent.endsWith("/*") && child.startsWith(parent.slice(0, -1)));
