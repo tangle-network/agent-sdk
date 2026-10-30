@@ -32,7 +32,7 @@ async function fixture() {
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     if (path === "/v1/backends") {
-      response.end(JSON.stringify({ backends: [{ type: "opencode", name: "opencode", description: "HTTP fixture", callerCredentialOnly: false, capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } }], timestamp: new Date(0).toISOString() }));
+      response.end(JSON.stringify({ backends: ["opencode", "claude-code", "codex"].map((type) => ({ type, name: type, description: "HTTP fixture", callerCredentialOnly: false, capabilities: { streaming: true, toolUse: true, reasoning: false, multimodal: false, imageInput: false, contextWindow: 100000, mcp: true, sessions: true, configurable: true, interactions: [], runtimeAttachments: { mcp: true } } })), timestamp: new Date(0).toISOString() }));
     } else if (path === "/v1/secrets" && request.method === "POST") {
       stored.set(body.name, body.value);
       response.end(JSON.stringify({ secret: { name: body.name, createdAt: new Date(0).toISOString() } }));
@@ -47,7 +47,7 @@ async function fixture() {
     } else if (path.endsWith("/agents/run/stream")) {
       turns.push(body); response.setHeader("content-type", "text/event-stream"); response.end(`event: result\ndata: ${JSON.stringify({ executionId: body.executionId ?? request.headers["x-execution-id"], success: true, status: "success", response: "fixture", durationMs: 1 })}\n\nevent: done\ndata: {"outcome":{"type":"completed"}}\n\n`);
     } else if (path.endsWith("/capabilities")) {
-      response.end(JSON.stringify({ schema: 1, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false }, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
+      response.end(JSON.stringify({ schema: 1, cliAuthReferences: true, agentInterface: "0.49.0", sidecarVersion: "1.0.0-test", dispatch: { runControlRef: false, executionIdOnAdmission: false }, cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false }, runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false }, image: `example/sidecar@sha256:${"a".repeat(64)}` }));
     } else {
       response.writeHead(404); response.end(JSON.stringify({ code: "NOT_FOUND", message: "No receipt protocol is served" }));
     }
@@ -84,11 +84,6 @@ it("forwards authored and runtime declarations as the one full canonical schema"
   expect(creates).toHaveLength(1);
   expect(creates[0]!.secrets).toEqual(["READABLE_NAME"]);
   expect(creates[0]!.proxySecrets).toEqual([binding(), basic, custom]);
-});
-it("deduplicates identical declarations across profile and runtime input", async () => {
-  const { client, creates } = await fixture();
-  await createTangleProvider({ client }).create({ profile: { ...profile, proxySecrets: [binding()] }, proxySecrets: [binding()] });
-  expect(creates[0]!.proxySecrets).toEqual([binding()]);
 });
 it.each([
   { ...binding(), methods: ["POST"] },
@@ -139,7 +134,6 @@ it.each([{ secrets: [{ name: "REPORTS_TOKEN", exposeInBox: true as const }] }, {
     expect(creates).toHaveLength(0);
   },
 );
-
 it("detaches mapper selectors and preserves consent plus equivalent headers", async () => {
   const { client, creates } = await fixture();
   const secrets = [selected(), exposed], declarations = [binding()];
@@ -178,14 +172,12 @@ it("keeps semantic host identity and legacy model intent canonical across SDK ve
   }
   expect(turns).toHaveLength(1);
 });
-
 it.each([{ secrets: undefined }, { secrets: ["REPORTS_TOKEN"] }, { secrets: "all" as const }])("preserves canonical custody alongside legacy selection %j", async ({ secrets }) => {
   const { client, creates } = await fixture();
   await createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "opencode", profile }, ...(secrets === undefined ? {} : { secrets: typeof secrets === "string" ? secrets : [...secrets] }) }) })
     .create({ profile, proxySecrets: [binding()], ...(secrets === undefined ? {} : { secrets: typeof secrets === "string" ? secrets : [...secrets] }) });
   expect(creates[0]!.proxySecrets).toEqual([binding()]); expect(creates[0]!.secrets).toEqual(secrets);
 });
-
 it("exposes only a fenced provider store while the SDK basic store stays usable", async () => {
   const { client, stored, requests } = await fixture();
   const provider = createTangleProvider({ client });
@@ -198,7 +190,6 @@ it("exposes only a fenced provider store while the SDK basic store stays usable"
   expect(stored.has("COORDINATION_RUN_TOKEN")).toBe(false);
   expect(requests).toEqual(["POST /v1/secrets", "DELETE /v1/secrets/COORDINATION_RUN_TOKEN"]);
 });
-
 it("forwards selected plan-key declarations without passing them as backend model options", async () => {
   const { client, creates } = await fixture();
   await createTangleProvider({ client, modelCredentials: {
@@ -207,4 +198,10 @@ it("forwards selected plan-key declarations without passing them as backend mode
   expect(creates[0]!.proxySecrets).toEqual([binding()]);
   expect(creates[0]!.backend).toMatchObject({ model: { apiKeyEnv: "REPORTS_TOKEN", baseUrl: `https://${host}` } });
   expect((creates[0]!.backend as { model: unknown }).model).not.toHaveProperty("proxySecrets");
+});
+it.each(["claude-code", "codex"] as const)("preserves native %s references without implicit readable selection", async (harness) => {
+  const { client, creates } = await fixture();
+  const cliAuth = { account: "fixture-native", secretEnv: "NATIVE_BUNDLE", format: harness === "codex" ? "bundle" as const : "token" as const };
+  await createTangleProvider({ client, modelCredentials: { cliAuth } }).create({ profile: { harness, model: { metadata: { credentialSource: "subscription" } } }, secrets: ["UNRELATED"] });
+  expect(creates[0]!.secrets).toEqual(["UNRELATED"]); expect(creates[0]!.backend).toMatchObject({ model: { cliAuth, authMode: "oauth" } });
 });

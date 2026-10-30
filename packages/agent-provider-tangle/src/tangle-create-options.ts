@@ -172,7 +172,7 @@ export function sandboxOptionsFromCreateInput(
     throw new Error("Tangle modelCredentials cannot shadow a stored secret with inline environment data");
   }
   const requestedSecrets = Array.isArray(input.secrets) ? input.secrets : undefined;
-  const requestedSelection = selectedSecret !== undefined && !proxySelected
+  const requestedSelection = selectedSecret !== undefined && !nativeCredentials && !proxySelected
     ? [...new Set([...(requestedSecrets ?? []), selectedSecret])]
     : requestedSecrets ?? (proxySecrets === undefined ? undefined : []);
   const secrets = input.secrets === "all" ? "all" : requestedSelection;
@@ -404,9 +404,6 @@ export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): 
       throw new Error("Tangle mapped native credentials must use the exact profile harness");
     }
     const selectedSecret = options.backend.model.cliAuth.secretEnv;
-    if (!Array.isArray(options.secrets) || !options.secrets.some((entry) => (typeof entry === "string" ? entry : entry.name) === selectedSecret)) {
-      throw new Error("Tangle mapped native credential must be explicitly listed in create secrets");
-    }
     if (Object.hasOwn(options.env ?? {}, selectedSecret)) {
       throw new Error("Tangle mapped native credential cannot shadow a stored secret with inline environment data");
     }
