@@ -42,7 +42,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
     } else if (path === "/v1/sandboxes/sandbox-predispatch") {
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
-      response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: {}, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
+      response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: { responseDedupe: false }, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
     } else if (path.endsWith("/messages/turns")) {
       if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: true, status: "success", executionId: run.executionId, durationMs: 1 } }));
       else { response.writeHead(204); response.end(); }

@@ -25,6 +25,8 @@ import {
   AgentExactRunControlRefSchema,
   AgentTurnInputSchema,
   ContextTransferReceiptSchema,
+  ProxySecretReceiptSchema, deepFreeze, isProxySecretScopeAttenuation,
+  proxySecretPresentationsEqual, type ProxySecretReceipt, type ProxySecretBinding,
   contextTransferResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
@@ -121,67 +123,102 @@ export function promptOptionsFromTurnInput(
   };
 }
 
-/** The SDK owns isolated session creation and the executor's private admission receipt. */
-export async function preparePromptOptions(
-  box: SandboxInstanceLike | undefined,
-  options: PromptOptions,
-  provider: string,
-): Promise<PromptOptions> {
-  if (options.lastEventId !== undefined ||
-      (options.backend?.runtimeSecrets === undefined &&
-       options.backend?.metadata?.profileSecretIsolation !== true)) return options;
-  if (!box?.createSession || !box.prepareSecretProfileRevision) {
-    throw new Error("Tangle secret turns require Sandbox isolated-session preparation support");
-  }
-  options.signal?.throwIfAborted();
-  const sessionId = options.sessionId ??
-    sessionPromptSessionId(provider, box.id, options.turnId ?? options.executionId) ??
-    randomUUID();
-  const backend = {
-    ...options.backend,
-    metadata: { ...options.backend?.metadata, profileSecretIsolation: true as const },
-  };
-  const { runtimeSecrets: _turnOnly, ...persisted } = backend;
-  const created = await awaitWithSignal(box.createSession({ sessionId, retention: "workspace", backend: persisted }), options.signal);
-  if (created.session.id !== sessionId || created.info.id !== sessionId) {
-    throw new Error("Tangle isolated session creation changed its exact identity");
-  }
-  options.signal?.throwIfAborted();
-  const { expectedPublicProfileRequestDigest, expectedSecretProfileReceipt } = await awaitWithSignal(
-    box.prepareSecretProfileRevision({
-      sessionId, backend,
-      ...(options.model === undefined ? {} : { model: options.model }),
-    }), options.signal,
-  );
-  options.signal?.throwIfAborted();
-  return { ...options, sessionId, backend, expectedPublicProfileRequestDigest, expectedSecretProfileReceipt };
+export function proxySecretReceiptFromSandbox(box: SandboxInstanceLike): ProxySecretReceipt | undefined {
+  if (box.proxySecretReceipt === undefined) return undefined;
+  const receipt = ProxySecretReceiptSchema.parse(box.proxySecretReceipt);
+  if (receipt.sandboxId !== box.id) throw new Error("Tangle proxy receipt names another sandbox");
+  return deepFreeze(receipt);
 }
 
-/** Canonical backend controls plus the legacy model aliases folded below. */
+function requireProxyReceipt(receipt: ProxySecretReceipt | undefined, bindings: readonly ProxySecretBinding[], installed: boolean): ProxySecretReceipt {
+  if (!receipt || receipt.status === "revoked" || (installed && receipt.status !== "installed") ||
+      receipt.bindings.some(({ grant }) => Date.parse(grant.expiresAt) <= Date.now()) ||
+      bindings.some((binding) => !receipt.bindings.some(({ envName, secretRef, grant }) =>
+        envName === binding.envName && canonicalCandidateDigest(secretRef) === canonicalCandidateDigest(binding.secretRef) &&
+        isProxySecretScopeAttenuation(binding, grant.scope) && proxySecretPresentationsEqual(binding.presentation, grant.presentation) &&
+        grant.placeholderFormat === (binding.placeholderFormat ?? "opaque") &&
+        (binding.ttlSeconds === undefined || Date.parse(grant.expiresAt) - Date.parse(grant.issuedAt) <= binding.ttlSeconds * 1000)))) {
+    throw new Error("Tangle canonical launch requires a current matching installed proxy receipt");
+  }
+  return receipt;
+}
+
+function containsProxyReceipt(full: ProxySecretReceipt, subset: ProxySecretReceipt): boolean {
+  return full.sandboxId === subset.sandboxId && full.generation === subset.generation &&
+    subset.bindings.every((binding) => full.bindings.some((member) => canonicalCandidateDigest(member) === canonicalCandidateDigest(binding)));
+}
+
+/** Prepare one exact launch; legacy and cursor replay retain their existing path. */
+export async function preparePromptOptions(
+  box: SandboxInstanceLike,
+  options: PromptOptions,
+  provider: string,
+  bindings?: readonly ProxySecretBinding[],
+): Promise<PromptOptions> {
+  if (options.lastEventId !== undefined) return options;
+  const selected = bindings ?? [];
+  const canonical = selected.length > 0;
+  const isolated = options.backend?.runtimeSecrets !== undefined || options.backend?.metadata?.profileSecretIsolation === true;
+  const native = canonical ? options.backend?.model?.cliAuth : undefined;
+  if (!canonical && !isolated) return options;
+  if (canonical && !box.refresh) throw new Error("Tangle canonical launch requires current sandbox information");
+  if (canonical) await awaitWithSignal(box.refresh?.(options.signal), options.signal);
+  const before = canonical ? requireProxyReceipt(proxySecretReceiptFromSandbox(box), selected, false) : undefined;
+  if (isolated || native !== undefined) {
+    if (!box.createSession || (isolated ? !box.prepareSecretProfileRevision : !box.preparePublicProfileRevision))
+      throw new Error("Tangle profile preparation is unsupported by this Sandbox client");
+    options.signal?.throwIfAborted();
+    const sessionId = options.sessionId ?? sessionPromptSessionId(provider, box.id, options.turnId ?? options.executionId) ?? randomUUID();
+    const backend = isolated ? { ...options.backend, metadata: { ...options.backend?.metadata, profileSecretIsolation: true as const } } : options.backend ?? {};
+    const { runtimeSecrets: _turnOnly, ...persisted } = backend;
+    const created = await awaitWithSignal(box.createSession({ sessionId, retention: "workspace", backend: persisted }), options.signal);
+    if (created.session.id !== sessionId || created.info.id !== sessionId) throw new Error("Tangle profile preparation changed its exact session identity");
+    const args = { sessionId, backend, ...(options.model === undefined ? {} : { model: options.model }) };
+    if (isolated) {
+      const prepared = await awaitWithSignal(box.prepareSecretProfileRevision!(args), options.signal);
+      options = { ...options, sessionId, backend, expectedPublicProfileRequestDigest: prepared.expectedPublicProfileRequestDigest, expectedSecretProfileReceipt: prepared.expectedSecretProfileReceipt };
+      if (canonical) validatePrepared(prepared.proxySecretReceipt);
+    } else {
+      const prepared = await awaitWithSignal(box.preparePublicProfileRevision!(args), options.signal);
+      options = { ...options, sessionId, backend, expectedPublicProfileRequestDigest: prepared.expectedPublicProfileRequestDigest, expectedPublicProfileRevision: prepared.expectedPublicProfileRevision };
+      validatePrepared(prepared.proxySecretReceipt);
+    }
+  }
+  if (before !== undefined) {
+    // First join any pre-ACK read; the second refresh necessarily begins after that ACK.
+    await awaitWithSignal(box.refresh?.(options.signal), options.signal);
+    await awaitWithSignal(box.refresh?.(options.signal), options.signal);
+    const current = requireProxyReceipt(proxySecretReceiptFromSandbox(box), selected, true);
+    if (!containsProxyReceipt(current, before) || current.bindings.length !== before.bindings.length)
+      throw new Error("Tangle proxy custody changed during profile preparation");
+  }
+  options.signal?.throwIfAborted();
+  return options;
+
+  function validatePrepared(raw: ProxySecretReceipt | undefined): void {
+    if (raw === undefined && native === undefined) return;
+    const subset = ProxySecretReceiptSchema.parse(raw);
+    const expectedGroup = before?.bindings.filter(({ secretRef }) => secretRef.key === native?.secretEnv);
+    if (!before || subset.status !== "installed" || !subset.bindings.length || !containsProxyReceipt(before, subset) ||
+        (native !== undefined && (subset.bindings.length !== expectedGroup?.length ||
+          subset.bindings.some(({ secretRef }) => secretRef.key !== native.secretEnv))))
+      throw new Error("Tangle native HOME acknowledgement does not match current custody");
+  }
+}
+
 const SANDBOX_BACKEND_FIELD_LIST = [
   "runtimeAttachments", "runtimeSecrets", "type", "profile", "model", "server", "interactions", "metadata",
 ] as const;
 
 const SANDBOX_BACKEND_MODEL_FIELD_LIST = [
-  "provider",
-  "model",
-  "apiKey",
-  "baseUrl",
-  "maxThinkingTokens",
-  "mode",
-  "apiKeyEnv",
-  "cliAuth",
-  "authMode",
-  "authFiles",
-  // Creation-only: the SDK normalizer refuses it on a turn.
-  "routing",
+  "provider", "model", "apiKey", "baseUrl", "maxThinkingTokens", "mode",
+  "apiKeyEnv", "cliAuth", "authMode", "authFiles", "routing",
 ] as const;
 
 const SANDBOX_BACKEND_MODEL_FIELDS = new Set<string>(SANDBOX_BACKEND_MODEL_FIELD_LIST);
 const SANDBOX_BACKEND_FIELDS = new Set<string>([...SANDBOX_BACKEND_FIELD_LIST,
   ...SANDBOX_BACKEND_MODEL_FIELD_LIST.map((field) => field === "model" ? "modelId" : field)]);
 
-/** SDK canonical fields stay exhaustive; legacy aliases are explicitly projected into model. */
 type Exhaustive<T extends never> = T;
 
 type SandboxBackendModel = NonNullable<BackendConfig["model"]>;
@@ -203,15 +240,7 @@ export type SandboxBackendFieldCoverage = Exhaustive<
 
 type SandboxPromptBackend = NonNullable<PromptOptions["backend"]>;
 
-/**
- * Read the per-turn backend options a caller sent through `providerOptions`.
- *
- * `AgentTurnInput.providerOptions.backend` is the exact shape agent-runtime
- * emits for a per-turn backend or model override, so refusing it dropped the
- * caller's model, profile, and session credential bundle at the adapter
- * boundary. Every field is checked against what the Sandbox prompt options
- * declare, and the result is bounded JSON the SDK reads once.
- */
+/** Validate the exact per-turn backend projection. */
 export function backendFromTurnProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
 ): SandboxPromptBackend | undefined {
@@ -250,9 +279,7 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
     ...(present.type === undefined
       ? {}
       : { type: boundedString(present.type, "Tangle prompt backend type") }),
-    // The profile decides tools, permissions, mounts, and the security policy
-    // of the turn, so it is read by the schema that owns those rules rather
-    // than passed through as bounded JSON.
+    // The profile schema owns payload and security policy.
     ...(present.profile === undefined
       ? {}
       : { profile: agentProfileSchema.parse(present.profile) }),
@@ -394,7 +421,6 @@ function sandboxPromptInteractions(value: unknown): Record<string, boolean> {
   return interactions;
 }
 
-/** Sandbox caps trace attributes, and its own documentation forbids secrets there. */
 const MAX_TRACE_ATTRIBUTES = 32;
 const MAX_TRACE_ATTRIBUTE_KEY_LENGTH = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_LENGTH = 1_024;
@@ -497,23 +523,13 @@ function plainRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/**
- * The part of the backend options that decides which work a turn is.
- *
- * Bearer material is deliberately absent. A rotated seat token is the same
- * seat running the same work, so digesting the token bytes would make an
- * ordinary refresh conflict with the run it is continuing. The auth files are
- * reduced to the paths and modes they install, which states that the turn
- * carries a credential bundle and which slots it fills, without binding the
- * identity to the secret inside.
- */
+/** Request identity excludes bearer bytes; auth files contribute only paths and modes. */
 export function backendRequestIdentity(
   backend: SandboxPromptBackend | undefined,
 ): Record<string, unknown> | undefined {
   if (backend === undefined) return undefined;
   const normalized = (normalizeRuntimeBackendConfig(backend, { allowRuntimeSecrets: true }) ?? {}) as SandboxPromptBackend;
-  // Sandbox message admission omits turn-only credentials from request identity;
-  // the SDK/sidecar independently keys the executing backend by their values.
+  // Admission omits turn credentials; the executor independently binds their values.
   const { runtimeSecrets: _runtimeSecrets, ...identity } = normalized;
   const model = normalized.model;
   if (model === undefined) return identity;
@@ -534,7 +550,6 @@ export function backendRequestIdentity(
   };
 }
 
-/** Project the exact turn profile once for both dispatch and retained identity. */
 export function backendFromTurnInput(
   input: AgentTurnInput,
 ): SandboxPromptBackend | undefined {
@@ -548,22 +563,13 @@ export function backendFromTurnInput(
     if (declared?.type !== undefined && input.profile.harness !== undefined && declared.type !== input.profile.harness) {
       throw new Error("Tangle turn profile conflicts with its backend harness");
     }
-    // Validate the complete projected backend, including the existing file/inline
-    // payload bounds. The typed profile never becomes provider metadata.
+    // Validate payload bounds without turning the typed profile into metadata.
     backend = sandboxPromptBackend({ ...declared, profile: input.profile });
   }
   return backend;
 }
 
-/**
- * Combine the turn's requested interaction posture with its backend options.
- *
- * agent-runtime emits both: it maps `backend.interactions` onto the canonical
- * `AgentTurnInput.interactions` and carries the whole backend block through
- * `providerOptions`. The two must agree, and a disagreement is refused rather
- * than resolved by preference, because either answer would run the turn on a
- * posture the caller did not ask for.
- */
+/** Canonical interaction controls and backend controls must agree. */
 function turnBackendOptions(
   input: AgentTurnInput,
 ): SandboxPromptBackend | undefined {
@@ -643,9 +649,7 @@ export function validatedSandboxPromptResult(
       "Tangle prompt result returned a context receipt for a turn that requested no transfer",
     );
   }
-  // The Sandbox SDK materializes absent optional response fields as
-  // `undefined`. They were absent on the JSON wire and must stay absent in the
-  // provider-neutral result before the strict JSON check runs.
+  // Keep absent SDK fields absent through the strict JSON check.
   const record = projectAgentTerminalRecord(Object.fromEntries(
     Object.entries(source).filter(
       ([field, value]) =>
@@ -656,8 +660,7 @@ export function validatedSandboxPromptResult(
   if (!content.success) {
     throw new Error("Tangle prompt result exceeded its JSON bound", { cause: content.error });
   }
-  // Text is content. Identity, accounting and interaction state retain their
-  // stricter metadata bounds. The projection does not mutate the native source.
+  // Content and metadata have separate bounds; source remains untouched.
   assertBoundedJson(Object.fromEntries(
     Object.entries(record).filter(([field]) =>
       field !== "response" &&
@@ -713,7 +716,6 @@ export function validatedSandboxPromptResult(
   return record as ValidatedSandboxPromptResult;
 }
 
-/** Statuses that mean the run is waiting for a human, not that it failed. */
 const AWAITING_STATUSES = new Set<SandboxRunStatus>([
   "blocked_on_approval",
   "awaiting_question",
@@ -754,8 +756,7 @@ export function agentTurnResultFromPromptRecord(
         : typeof record.finalText === "string"
           ? record.finalText
           : "";
-  // A receipt with no transfer behind it would let the caller record a handoff
-  // that never happened, so it is refused rather than passed through.
+  // An unsolicited transfer receipt cannot establish a handoff.
   const hasContextTransferReceipt = Object.hasOwn(
     record,
     "contextTransferReceipt",
@@ -784,8 +785,7 @@ export function agentTurnResultFromPromptRecord(
   ) {
     throw new Error("Tangle prompt result context receipt does not match its request");
   }
-  // The harness's own subscription quota is spent: the same typed refusal the
-  // credential owner gives before dispatch, with when it resets.
+  // Preserve the credential owner's typed quota refusal and reset time.
   if (!record.success && record.errorCode === "provider_quota_exhausted") {
     const resetAt = record.resetAt;
     throw new TangleCredentialCapacityError(
@@ -803,9 +803,7 @@ export function agentTurnResultFromPromptRecord(
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
     ...(usage ? { usage } : {}),
-    // A waiting run is not a terminal failure. Dropping the status here made
-    // "the agent is asking you something" indistinguishable from "the turn
-    // failed", while the sandbox stayed alive waiting for an answer.
+    // Waiting for a human retains its live status.
     metadata: {
       ...(controlRef
         ? {

@@ -2,11 +2,11 @@ import type {
   AgentSessionRef,
   AgentTurnInput,
 } from "@tangle-network/agent-interface/environment-provider";
+import type { PromptOptions } from "@tangle-network/sandbox";
 import type { SandboxInstanceLike } from "./tangle-types.js";
 import {
   promptFromTurnInput,
   promptOptionsFromTurnInput,
-  preparePromptOptions,
 } from "./tangle-prompt.js";
 import {
   retainedSessionControlRef,
@@ -19,11 +19,11 @@ import {
   interruptAfterAbort,
   sessionPromptRequestDigest,
 } from "./tangle-environment-control.js";
-
 export function dispatchEnvironmentRun(
   box: SandboxInstanceLike,
   provider: string,
   environmentId: string,
+  prepare: (options: PromptOptions) => Promise<PromptOptions>,
 ): (input: AgentTurnInput) => Promise<AgentSessionRef> {
   return async (input) => {
     input.signal?.throwIfAborted();
@@ -71,12 +71,12 @@ export function dispatchEnvironmentRun(
     );
     const promise = box.dispatchPrompt?.(
       promptFromTurnInput(input),
-      await preparePromptOptions(box, {
+      await prepare({
         ...options,
         sessionId: expectedSessionId,
         executionId: expectedExecutionId,
         runControlRef,
-      }, provider),
+      }),
     );
     let dispatched: unknown;
     try {

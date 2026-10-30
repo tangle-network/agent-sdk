@@ -1,3 +1,4 @@
+import type { PromptOptions } from "@tangle-network/sandbox";
 import { assertCliAuthReferenceSupported, type CliAuthReference } from "@tangle-network/sandbox/auth";
 import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
 import { captureProxySecrets, mergeProxySecrets, PROXY_SECRETS_METADATA_KEY } from "./tangle-proxy-secrets.js";
@@ -13,12 +14,10 @@ import type {
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
-  AgentEnvironmentEvent,
   AgentEnvironmentObservation,
   AgentEnvironmentStatus,
   AgentInteractiveSession,
   AgentInteractiveSessionRef,
-  AgentInteractiveSessionStart,
   AgentSession,
   AgentTerminalSession,
   AgentTurnInput,
@@ -27,8 +26,6 @@ import type {
   PlacementInfo,
   ResourceProfile,
   ProxySecretBinding,
-  TerminalAttachRequest,
-  TerminalAttachResult,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
   SandboxClientLike,
@@ -41,7 +38,7 @@ import {
   executionIdFromTurnInput,
   promptFromTurnInput,
   promptOptionsFromTurnInput,
-  preparePromptOptions,
+  preparePromptOptions, proxySecretReceiptFromSandbox,
 } from "./tangle-prompt.js";
 import {
   creationFromSandboxCreateReceipt,
@@ -55,7 +52,7 @@ import {
   sandboxCapabilitySupport,
 } from "./tangle-capabilities.js";
 import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
-import { deploymentCapabilitySupport, readDeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
+import { deploymentCapabilitySupport, readDeploymentCapabilitySupport, type DeploymentCapabilitySupport } from "./tangle-deployment-capabilities.js";
 import {
   awaitWithSignal,
   assertBoundedJson,
@@ -87,29 +84,7 @@ import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
 import { bindTangleEvidenceEnvironment, noteTangleSession } from "./tangle-evidence.js";
 import { assertNativeCaptureHarness } from "./tangle-native-capture-proof.js";
 
-/**
- * Compose one concrete sandbox into an environment.
- *
- * This is the only stage that can read deployment truth, so it does: one
- * `GET /capabilities` against the sandbox decides retained control, and the
- * environment then exposes exactly the operations both the adapter surface
- * and the deployment back. A deployment that cannot disclose a readable
- * document yields no retained-control surface at all. The environment
- * publishes the resulting document on `capabilities`, so a caller reads the
- * answer for this sandbox rather than the provider's pre-sandbox claim.
- *
- * The document is measured once, here. A sandbox that is not yet running
- * cannot answer, so an environment composed during provisioning claims
- * nothing and keeps claiming nothing: the exposed operations and the document
- * are composed together and a caller may already hold either one. This is why
- * `provider.create()` holds until the sandbox is running before it composes
- * (see `tangle-readiness.ts`). `provider.get(id)` composes whatever the
- * sandbox is at that moment, so compose again once a starting sandbox runs.
- *
- * @param request What the create call asked for. An environment rebuilt by id
- * carries none of it, so its observation reports the requested compute shape
- * as absent instead of restating a request it never saw.
- */
+/** Compose measured sandbox operations; metadata records intent, never grant authority. */
 export async function sandboxInstanceAsEnvironment(
   box: SandboxInstanceLike,
   providerName: string,
@@ -193,13 +168,184 @@ export async function sandboxInstanceAsEnvironment(
           ...(request?.requireNativeSessionCapture ? { requireNativeSessionCapture: true } : {}),
         })
       : undefined;
-  // The published document is the single source for what this environment
-  // offers, so the session surface reads its grant from there.
+  // Session operations follow the measured environment document.
   const retainedControl = capabilities.retainedControl !== undefined;
   const interactionResponses = capabilities.interactions !== undefined;
-  // Usage is measured per execution, so the log collects what runs through
-  // this handle and the observation reports the newest record it holds.
+  // Observations report the newest usage measured through this handle.
   const usageLog = createExecutionUsageLog();
+  const prepareTurn = environmentTurnPreparation(box, providerName, environmentId, request,
+    deployment, nativeReference, credentialHarness, boundCredentialSource, proxySecrets);
+  const prepareOptions = (options: PromptOptions) => preparePromptOptions(box, options, providerName,
+    request?.proxySecrets ?? options.backend?.profile?.proxySecrets);
+  const dispatchRun =
+    capabilities.streaming.detach && box.dispatchPrompt
+      ? dispatchEnvironmentRun(box, providerName, environmentId, prepareOptions)
+      : undefined;
+  const dispatch = dispatchRun === undefined ? undefined : async (input: AgentTurnInput) => {
+    return dispatchRun(await prepareTurn(input));
+  };
+  const exactExecutionEvents = (options: {
+    sessionId: string;
+    executionId: string;
+    since?: string;
+    signal?: AbortSignal;
+    controlRef?: AgentExactRunControlRef;
+  }) =>
+    box.streamPrompt("", {
+      sessionId: options.sessionId,
+      executionId: options.executionId,
+      // Exact replay starts at the first event when no cursor was supplied.
+      lastEventId: options.since ?? "0",
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
+    });
+  const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
+  const environment: AgentEnvironment = {
+    id: environmentId,
+    provider: providerName,
+    get proxySecretReceipt() { return proxySecretReceiptFromSandbox(box); },
+    ...(creation === undefined ? {} : { creation }),
+    ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
+    ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
+    capabilities,
+    ...(workspaceBranching === undefined
+      ? {}
+      : { workspaceBranching }),
+    async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
+      assertOptionKeys(options, ["signal"], "Tangle environment status");
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
+      return statusFromUnknown(box.status);
+    },
+    stream: environmentTurnStream(box, providerName, environmentId, prepareTurn, prepareOptions,
+      (sessionId, executionId) => noteTangleSession(environment, sessionId, executionId), usageLog),
+    ...(dispatch ? { async dispatch(input: AgentTurnInput) {
+      const ref = await dispatch(input);
+      noteTangleSession(environment, ref.id, input.executionId ?? input.controlRef?.executionId ?? ref.controlRef?.executionId);
+      return ref;
+    } } : {}),
+    ...((capabilities.sessions.continue || capabilities.streaming.replay || capabilities.streaming.detach) &&
+    box.session
+      ? {
+          session(id: string, options?: { controlRef?: AgentRunControlRef; signal?: AbortSignal }): AgentSession {
+            boundedIdentifier(id, "Tangle session id");
+            assertOptionKeys(options, ["controlRef", "signal"], "Tangle session");
+            options?.signal?.throwIfAborted();
+            const session = box.session?.(
+              id,
+              options?.signal ? { signal: options.signal } : undefined,
+            );
+            if (!session) throw new Error("sandbox session(id) returned undefined");
+            options?.signal?.throwIfAborted();
+            boundedIdentifier(session.id, "Tangle session id");
+            if (session.id !== id) {
+              throw new Error("sandbox session(id) returned an unrelated session");
+            }
+            const agentSession = sandboxSessionAsAgentSession(
+              session,
+              options?.controlRef,
+              providerName,
+              environmentId,
+              dispatchRun,
+              exactExecutionEvents,
+              retainedControl,
+              interactionResponses,
+              usageLog,
+              capabilities.nativeContinuation !== undefined,
+              prepareTurn,
+              (executionId) => noteTangleSession(environment, id, executionId),
+              prepareOptions,
+            );
+            // Every concrete retained session must honor the advertised cancellation.
+            if (
+              capabilities.sessions.continue &&
+              typeof agentSession.cancelRun !== "function"
+            ) {
+              throw new Error(
+                "Tangle retained session support requires SandboxSession.cancelRun",
+              );
+            }
+            return agentSession;
+          },
+        }
+      : {}),
+    ...(interactionResponses && box.session
+      ? {
+          respondToInteraction(
+            command: InteractionResponseCommand,
+            options?: { signal?: AbortSignal },
+          ): Promise<InteractionAcknowledgement> {
+            assertOptionKeys(options, ["signal"], "Tangle interaction response");
+            options?.signal?.throwIfAborted();
+            // Bind the command to an actual session of this environment.
+            const sessionId = boundedIdentifier(
+              command?.binding?.sessionId,
+              "Tangle interaction session id",
+            );
+            const session = box.session?.(
+              sessionId,
+              options?.signal ? { signal: options.signal } : undefined,
+            );
+            if (!session) throw new Error("sandbox session(id) returned undefined");
+            if (session.id !== sessionId) {
+              throw new Error("sandbox session(id) returned an unrelated session");
+            }
+            return tangleInteractionResponder({
+              session,
+              sessionId,
+              environmentId,
+            })(command, options);
+          },
+        }
+      : {}),
+    ...environmentWorkspaceOperations(box, client, capabilities),
+    ...(capabilities.observation
+      ? {
+          async observe(options?: {
+            signal?: AbortSignal;
+          }): Promise<AgentEnvironmentObservation> {
+            assertOptionKeys(options, ["signal"], "Tangle observe");
+            return await observeTangleEnvironment(
+              {
+                box,
+                client,
+                provider: providerName,
+                environmentId,
+                ...(request?.resources === undefined
+                  ? {}
+                  : { requestedResources: request.resources }),
+                usageLog,
+              },
+              options,
+            );
+          },
+        }
+      : {}),
+    ...environmentInteractiveOperations(box, capabilities, providerName, environmentId),
+    async refresh(options?: { signal?: AbortSignal }): Promise<void> {
+      assertOptionKeys(options, ["signal"], "Tangle refresh");
+      options?.signal?.throwIfAborted();
+      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
+      options?.signal?.throwIfAborted();
+    },
+    ...(support.destroy ? { destroy: environmentDestruction(box, request?.ephemeral === true) } : {}),
+  };
+  bindTangleEvidenceEnvironment(environment, box);
+  return environment;
+}
+
+function snapshotMetadata(
+  metadata: Record<string, unknown>,
+): Readonly<Record<string, unknown>> {
+  return deepFreeze(structuredClone(metadata));
+}
+
+type EnvironmentRequest = NonNullable<Parameters<typeof sandboxInstanceAsEnvironment>[5]>;
+function environmentTurnPreparation(
+  box: SandboxInstanceLike, providerName: string, environmentId: string,
+  request: EnvironmentRequest | undefined, deployment: DeploymentCapabilitySupport,
+  nativeReference: CliAuthReference | undefined, credentialHarness: string | undefined,
+  boundCredentialSource: ProfileCredentialSource, proxySecrets: ProxySecretBinding[] | undefined,
+): (input: AgentTurnInput) => Promise<AgentTurnInput> {
   const assertCaptureInput = (input: AgentTurnInput): void => {
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
     if (input.nativeResume !== undefined) {
@@ -242,7 +388,7 @@ export async function sandboxInstanceAsEnvironment(
     const replay = input.lastEventId !== undefined || input.controlRef !== undefined;
     if (nativeReference === undefined) return input;
     const backend = promptOptionsFromTurnInput(input, { provider: providerName, environmentId }).backend;
-    // A plain exact read supplies no backend override and keeps its admitted request unchanged.
+
     if (replay && backend === undefined) return input;
     const harness = backend?.type ?? backend?.profile?.harness ?? credentialHarness;
     if (credentialHarness === undefined || harness !== credentialHarness ||
@@ -256,10 +402,7 @@ export async function sandboxInstanceAsEnvironment(
     }
     assertCliAuthReferenceSupported(harness, { ...model, cliAuth: nativeReference });
     let selectedReference = nativeReference;
-    // Exact reads retain the admitted execution. A new operation obtains a new durable
-    // account-owner binding; retries of that operation present the same key after restart.
-    // Native subscription turns can change accounts only when the serving image proves
-    // a named grant that preserves this harness's private session HOME.
+    // Fresh subscription turns need an owner-bound grant and proven HOME continuity.
     if (!replay && request?.resolveModelCredentials !== undefined &&
         (harness === "claude-code" || harness === "codex")) {
       const supported = harness === "claude-code"
@@ -318,216 +461,25 @@ export async function sandboxInstanceAsEnvironment(
     }
     const selectedModel = { ...model, cliAuth: selectedReference };
     assertCliAuthReferenceSupported(harness, selectedModel);
-    // Validate explicit substitutions even on replay, without rewriting its admitted digest.
+    // Replay checks substitutions without rewriting admitted identity.
     if (replay) return input;
     const { profile: _profile, ...backendOptions } = backend ?? {};
     return {
       ...input,
       providerOptions: {
         ...input.providerOptions,
-        // The next validation still sees bounded options, while projection reads
-        // the exact typed profile again for the actual SDK dispatch.
+        // Projection retains the exact typed profile for dispatch.
         backend: { ...(input.profile === undefined ? backend : backendOptions), type: harness, model: { ...selectedModel, authMode: "oauth" } },
       },
     };
   };
-  // The single destroy this handle performs, once it has been asked for.
-  const terminals =
-    capabilities.interactiveTerminal?.attach === true
-      ? createTangleTerminalRegistry(box)
-      : undefined;
-  const interactiveAgents =
-    capabilities.interactiveAgent?.start === true &&
-    capabilities.interactiveAgent.control === true
-      ? createTangleInteractiveAgentRegistry(box, providerName, environmentId)
-      : undefined;
-  const dispatchRun =
-    capabilities.streaming.detach && box.dispatchPrompt
-      ? dispatchEnvironmentRun(box, providerName, environmentId)
-      : undefined;
-  const dispatch = dispatchRun === undefined ? undefined : async (input: AgentTurnInput) => {
-    return dispatchRun(await prepareTurn(input));
-  };
-  const exactExecutionEvents = (options: {
-    sessionId: string;
-    executionId: string;
-    since?: string;
-    signal?: AbortSignal;
-    controlRef?: AgentExactRunControlRef;
-  }) =>
-    box.streamPrompt("", {
-      sessionId: options.sessionId,
-      executionId: options.executionId,
-      // The execution replay endpoint owns stable event IDs. A missing cursor
-      // starts at the beginning so the caller can journal a complete run.
-      lastEventId: options.since ?? "0",
-      ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
-    });
-  const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
-  const environment: AgentEnvironment = {
-    id: environmentId,
-    provider: providerName,
-    ...(creation === undefined ? {} : { creation }),
-    ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
-    ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
-    capabilities,
-    ...(workspaceBranching === undefined
-      ? {}
-      : { workspaceBranching }),
-    async status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus> {
-      assertOptionKeys(options, ["signal"], "Tangle environment status");
-      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
-      return statusFromUnknown(box.status);
-    },
-    async *stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
-      AgentTurnInputSchema.parse(input);
-      input.signal?.throwIfAborted();
-      input = await prepareTurn(input);
-      const expectedExecutionId = executionIdFromTurnInput(input);
-      const promptOptions = await preparePromptOptions(box,
-        promptOptionsFromTurnInput(input, { provider: providerName, environmentId }), providerName);
-      const expectedSessionId = promptOptions.sessionId;
-      if (expectedSessionId) noteTangleSession(environment, expectedSessionId, expectedExecutionId);
-      // A turn resumed after a cursor starts past its first steps, so it cannot
-      // report the execution's running total.
-      const stepUsage =
-        input.lastEventId === undefined ? createStepUsageFold() : undefined;
-      const iterator = box.streamPrompt(
-        promptFromTurnInput(input),
-        promptOptions,
-      )[Symbol.asyncIterator]();
-      let completed = false;
-      try {
-        while (true) {
-          const next = await awaitWithSignal(iterator.next(), input.signal);
-          if (next.done) {
-            completed = true;
-            break;
-          }
-          input.signal?.throwIfAborted();
-          if (typeof next.value.data?.runtimeSessionId === "string") {
-            noteTangleSession(environment, next.value.data.runtimeSessionId, expectedExecutionId);
-          }
-          const converted = environmentEventFromSandboxEvent(next.value, {
-            executionId: expectedExecutionId,
-            sessionId: expectedSessionId,
-            ...(expectedExecutionId !== undefined || expectedSessionId !== undefined
-              ? { streamBound: true }
-              : {}),
-          });
-          // The log holds execution receipts, so it records before step usage is attached.
-          usageLog.record(expectedExecutionId, converted.usage);
-          input.signal?.throwIfAborted();
-          yield stepUsage?.observe(converted) ?? converted;
-        }
-      } catch (error) {
-        if (
-          input.signal?.aborted &&
-          input.detach !== true &&
-          expectedSessionId !== undefined &&
-          expectedExecutionId !== undefined
-        ) {
-          void interruptExecutionAfterAbort(
-            box,
-            expectedSessionId,
-            expectedExecutionId,
-          );
-        }
-        throw error;
-      } finally {
-        if (!completed) {
-          void Promise.resolve(iterator.return?.()).catch(() => undefined);
-        }
-      }
-      input.signal?.throwIfAborted();
-    },
-    ...(dispatch ? { async dispatch(input: AgentTurnInput) {
-      const ref = await dispatch(input);
-      noteTangleSession(environment, ref.id, input.executionId ?? input.controlRef?.executionId ?? ref.controlRef?.executionId);
-      return ref;
-    } } : {}),
-    ...((capabilities.sessions.continue || capabilities.streaming.replay || capabilities.streaming.detach) &&
-    box.session
-      ? {
-          session(id: string, options?: { controlRef?: AgentRunControlRef; signal?: AbortSignal }): AgentSession {
-            boundedIdentifier(id, "Tangle session id");
-            assertOptionKeys(options, ["controlRef", "signal"], "Tangle session");
-            options?.signal?.throwIfAborted();
-            const session = box.session?.(
-              id,
-              options?.signal ? { signal: options.signal } : undefined,
-            );
-            if (!session) throw new Error("sandbox session(id) returned undefined");
-            options?.signal?.throwIfAborted();
-            boundedIdentifier(session.id, "Tangle session id");
-            if (session.id !== id) {
-              throw new Error("sandbox session(id) returned an unrelated session");
-            }
-            const agentSession = sandboxSessionAsAgentSession(
-              session,
-              options?.controlRef,
-              providerName,
-              environmentId,
-              dispatchRun,
-              exactExecutionEvents,
-              retainedControl,
-              interactionResponses,
-              usageLog,
-              capabilities.nativeContinuation !== undefined,
-              prepareTurn,
-              (executionId) => noteTangleSession(environment, id, executionId),
-              box,
-            );
-            // sessions.continue was granted from the probe session and the
-            // deployment document together; this backstop holds every
-            // concrete session to that grant, so a client whose sessions
-            // diverge from its probe surface fails loud here instead of
-            // failing at the first cancellation.
-            if (
-              capabilities.sessions.continue &&
-              typeof agentSession.cancelRun !== "function"
-            ) {
-              throw new Error(
-                "Tangle retained session support requires SandboxSession.cancelRun",
-              );
-            }
-            return agentSession;
-          },
-        }
-      : {}),
-    ...(interactionResponses && box.session
-      ? {
-          respondToInteraction(
-            command: InteractionResponseCommand,
-            options?: { signal?: AbortSignal },
-          ): Promise<InteractionAcknowledgement> {
-            assertOptionKeys(options, ["signal"], "Tangle interaction response");
-            options?.signal?.throwIfAborted();
-            // The command names its own session, so the environment answers an
-            // ask on any session of this sandbox without the caller holding a
-            // session object. The binding is checked against this handle, so a
-            // command for another session is refused rather than delivered.
-            const sessionId = boundedIdentifier(
-              command?.binding?.sessionId,
-              "Tangle interaction session id",
-            );
-            const session = box.session?.(
-              sessionId,
-              options?.signal ? { signal: options.signal } : undefined,
-            );
-            if (!session) throw new Error("sandbox session(id) returned undefined");
-            if (session.id !== sessionId) {
-              throw new Error("sandbox session(id) returned an unrelated session");
-            }
-            return tangleInteractionResponder({
-              session,
-              sessionId,
-              environmentId,
-            })(command, options);
-          },
-        }
-      : {}),
+  return prepareTurn;
+}
+
+function environmentWorkspaceOperations(
+  box: SandboxInstanceLike, client: SandboxClientLike, capabilities: AgentEnvironmentCapabilities,
+): Pick<AgentEnvironment, "read" | "write" | "exec" | "placement"> {
+  return {
     ...(capabilities.workspace.read && box.read
       ? {
           async read(path: string, options?: { sessionId?: string; signal?: AbortSignal }): Promise<string> {
@@ -586,36 +538,97 @@ export async function sandboxInstanceAsEnvironment(
           },
         }
       : {}),
-    ...(capabilities.observation
-      ? {
-          async observe(options?: {
-            signal?: AbortSignal;
-          }): Promise<AgentEnvironmentObservation> {
-            assertOptionKeys(options, ["signal"], "Tangle observe");
-            return await observeTangleEnvironment(
-              {
-                box,
-                client,
-                provider: providerName,
-                environmentId,
-                ...(request?.resources === undefined
-                  ? {}
-                  : { requestedResources: request.resources }),
-                usageLog,
-              },
-              options,
-            );
-          },
+  };
+}
+
+function environmentTurnStream(
+  box: SandboxInstanceLike, providerName: string, environmentId: string,
+  prepareTurn: (input: AgentTurnInput) => Promise<AgentTurnInput>,
+  prepareOptions: (options: PromptOptions) => Promise<PromptOptions>,
+  onSession: (sessionId: string, executionId?: string) => void,
+  usageLog: ReturnType<typeof createExecutionUsageLog>,
+): AgentEnvironment["stream"] {
+  return async function* (input) {
+    AgentTurnInputSchema.parse(input);
+    input.signal?.throwIfAborted();
+    input = await prepareTurn(input);
+    const expectedExecutionId = executionIdFromTurnInput(input);
+    const promptOptions = await prepareOptions(
+      promptOptionsFromTurnInput(input, { provider: providerName, environmentId }));
+    const expectedSessionId = promptOptions.sessionId;
+    if (expectedSessionId) onSession(expectedSessionId, expectedExecutionId);
+    // A turn resumed after a cursor starts past its first steps, so it cannot
+    // report the execution's running total.
+    const stepUsage =
+      input.lastEventId === undefined ? createStepUsageFold() : undefined;
+    const iterator = box.streamPrompt(
+      promptFromTurnInput(input),
+      promptOptions,
+    )[Symbol.asyncIterator]();
+    let completed = false;
+    try {
+      while (true) {
+        const next = await awaitWithSignal(iterator.next(), input.signal);
+        if (next.done) {
+          completed = true;
+          break;
         }
-      : {}),
+        input.signal?.throwIfAborted();
+        if (typeof next.value.data?.runtimeSessionId === "string") {
+          onSession(next.value.data.runtimeSessionId, expectedExecutionId);
+        }
+        const converted = environmentEventFromSandboxEvent(next.value, {
+          executionId: expectedExecutionId,
+          sessionId: expectedSessionId,
+          ...(expectedExecutionId !== undefined || expectedSessionId !== undefined
+            ? { streamBound: true }
+            : {}),
+        });
+        // The log holds execution receipts, so it records before step usage is attached.
+        usageLog.record(expectedExecutionId, converted.usage);
+        input.signal?.throwIfAborted();
+        yield stepUsage?.observe(converted) ?? converted;
+      }
+    } catch (error) {
+      if (
+        input.signal?.aborted &&
+        input.detach !== true &&
+        expectedSessionId !== undefined &&
+        expectedExecutionId !== undefined
+      ) {
+        void interruptExecutionAfterAbort(
+          box,
+          expectedSessionId,
+          expectedExecutionId,
+        );
+      }
+      throw error;
+    } finally {
+      if (!completed) {
+        void Promise.resolve(iterator.return?.()).catch(() => undefined);
+      }
+    }
+    input.signal?.throwIfAborted();
+  };
+}
+
+function environmentInteractiveOperations(
+  box: SandboxInstanceLike, capabilities: AgentEnvironmentCapabilities,
+  providerName: string, environmentId: string,
+): Pick<AgentEnvironment, "attachTerminal" | "terminal" | "startInteractive" | "interactive"> {
+  const terminals =
+    capabilities.interactiveTerminal?.attach === true
+      ? createTangleTerminalRegistry(box)
+      : undefined;
+  const interactiveAgents =
+    capabilities.interactiveAgent?.start === true &&
+    capabilities.interactiveAgent.control === true
+      ? createTangleInteractiveAgentRegistry(box, providerName, environmentId)
+      : undefined;
+  return {
     ...(terminals
       ? {
-          async attachTerminal(
-            terminalRequest: TerminalAttachRequest,
-            options?: { signal?: AbortSignal },
-          ): Promise<TerminalAttachResult> {
-            return await terminals.attach(terminalRequest, options);
-          },
+          attachTerminal: terminals.attach.bind(terminals),
           terminal(
             terminalSessionId: string,
             options?: { signal?: AbortSignal },
@@ -629,12 +642,7 @@ export async function sandboxInstanceAsEnvironment(
       : {}),
     ...(interactiveAgents
       ? {
-          async startInteractive(
-            interactiveRequest: AgentInteractiveSessionStart,
-            options?: { signal?: AbortSignal },
-          ): Promise<AgentInteractiveSessionRef> {
-            return await interactiveAgents.start(interactiveRequest, options);
-          },
+          startInteractive: interactiveAgents.start.bind(interactiveAgents),
           interactive(
             ref: AgentInteractiveSessionRef,
           ): AgentInteractiveSession {
@@ -642,20 +650,5 @@ export async function sandboxInstanceAsEnvironment(
           },
         }
       : {}),
-    async refresh(options?: { signal?: AbortSignal }): Promise<void> {
-      assertOptionKeys(options, ["signal"], "Tangle refresh");
-      options?.signal?.throwIfAborted();
-      await awaitWithSignal(box.refresh?.(options?.signal), options?.signal);
-      options?.signal?.throwIfAborted();
-    },
-    ...(support.destroy ? { destroy: environmentDestruction(box, request?.ephemeral === true) } : {}),
   };
-  bindTangleEvidenceEnvironment(environment, box);
-  return environment;
-}
-
-function snapshotMetadata(
-  metadata: Record<string, unknown>,
-): Readonly<Record<string, unknown>> {
-  return deepFreeze(structuredClone(metadata));
 }
