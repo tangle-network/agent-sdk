@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 1.0.2
+
+### Patch Changes
+
+- b14d4d3: Expose bounded raw field fragments through the existing SSE parser, share its scanner with complete-frame APIs, and cancel the HTTP reader when a decoded-event consumer returns early.
+
 ## 1.0.1
 
 ### Patch Changes
