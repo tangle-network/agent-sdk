@@ -165,7 +165,7 @@ export function isProxySecretBindingAttenuation(parent: ProxySecretBinding, chil
     isProxySecretScopeAttenuation(from, to);
 }
 
-/** Intersect valid scopes; invalid/disjoint returns undefined. Omitted methods/paths are universal. */
+/** Invalid, disjoint or unrepresentable scopes yield undefined; omitted methods/paths are universal. */
 export function intersectProxySecretScopes(left: ProxySecretScope, right: ProxySecretScope): ProxySecretScope | undefined {
   const p = comparableScopeSchema.safeParse(left), c = comparableScopeSchema.safeParse(right);
   if (!p.success || !c.success) return undefined;
