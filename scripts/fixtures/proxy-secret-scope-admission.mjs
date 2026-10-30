@@ -4,14 +4,11 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
 // Consume installed archives only. The HTTP peer admits public metadata, never issues credentials.
 const require = createRequire(join(resolve(process.argv[2] ?? process.cwd()), "package.json"));
-const load = (name) => import(pathToFileURL(require.resolve(name)).href);
-const root = await load("@tangle-network/agent-interface");
+const load = (name) => import(pathToFileURL(require.resolve(name)).href);const root = await load("@tangle-network/agent-interface");
 const environment = await load("@tangle-network/agent-interface/environment-provider");
-const schemas = await load("@tangle-network/agent-interface/profile-schema");
-const { z } = await load("zod");
+const schemas = await load("@tangle-network/agent-interface/profile-schema"), { z } = await load("zod");
 for (const name of ["ProxySecretBindingSchema", "ProxySecretsSchema", "ProxySecretReceiptSchema", "ProxySecretCapabilitiesSchema"]) {
   assert.equal(root[name], environment[name], name);
   assert.equal(root[name], schemas[name], name);
@@ -26,6 +23,8 @@ const changed = { proxySecrets: [{ ...binding, secretRef: { kind: "secret-ref", 
 assert.notEqual(root.canonicalAgentProfileDigest(profile), root.canonicalAgentProfileDigest(changed));
 assert.deepEqual(root.mergeProxySecretBindings([binding], [binding]), [binding]);
 assert.throws(() => root.mergeProxySecretBindings([binding], changed.proxySecrets));
+const maximum = root.CONTRACT_MAX_ARRAY_LENGTH;
+const scopeIntersections = [...fixture.scopeIntersections, { name: "bounded-redundant-subtrees", left: { hosts: binding.hosts, paths: ["/v1/*", "/v2/*", ...Array.from({ length: maximum - 2 }, (_, i) => `/v1/a${i}`)] }, right: { hosts: binding.hosts, paths: ["/v1/*", "/v2/*", ...Array.from({ length: maximum - 2 }, (_, i) => `/v2/b${i}`)] }, result: { hosts: binding.hosts, paths: ["/v1/*", "/v2/*"] } }];
 const envSchema = root.ownPropertyRecordSchema(z.string(), { maxEntries: Number.MAX_SAFE_INTEGER });
 const server = createServer(async (request, response) => {
   try {
@@ -46,7 +45,7 @@ const server = createServer(async (request, response) => {
 try {
   await new Promise(done => server.listen(0, "127.0.0.1", done));
   const submit = input => fetch(`http://127.0.0.1:${server.address().port}`, { method: "POST", body: JSON.stringify(input) });
-  for (const entry of fixture.scopeIntersections) {
+  for (const entry of scopeIntersections) {
     const response = await submit(entry);
     assert.equal(response.status, entry.result === null ? 403 : 200, entry.name);
     const output = await response.json();
@@ -65,5 +64,5 @@ try {
   assert.equal(Object.getPrototypeOf(restored), Object.prototype);
   const invalid = await submit({ left: scope, right: scope, env: JSON.parse('{"__proto__":17}') });
   assert.equal(invalid.status, 400);
-  console.log(JSON.stringify({ packedPublicScopeAdmission: true, httpCases: fixture.scopeIntersections.length + 2, scopeIntersections: fixture.scopeIntersections.length, legacyRecordEntries: Object.keys(env).length, prototypeKeysRetained: true, metadataOnly: true }));
+  console.log(JSON.stringify({ packedPublicScopeAdmission: true, httpCases: scopeIntersections.length + 2, scopeIntersections: scopeIntersections.length, legacyRecordEntries: Object.keys(env).length, prototypeKeysRetained: true, metadataOnly: true }));
 } finally { server.closeAllConnections(); await new Promise(done => server.close(done)); }
