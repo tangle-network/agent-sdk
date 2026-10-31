@@ -1,14 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Factory Droid: `~/.factory/sessions/<encoded cwd>/<session id>.jsonl` plus a
- * `<session id>.settings.json` beside it.
- *
- * The JSONL holds a `session_start` line (id, cwd) and `message` lines whose `message.content[]`
- * carries Anthropic-style blocks (`text`, `thinking`, `tool_use`, `tool_result`). Each assistant
- * line is one model response. The transcript records no model and no per-response usage: the
- * settings file holds the configured model and the session's token totals, so the model here has
- * source `turn-context` (configured, not served) and usage is the session total.
- */
+/** Factory Droid sessions: jsonl transcript plus a sibling settings file (model and token totals). */
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
@@ -100,17 +91,23 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
   return { builder, observe, finish }
 }
 
-async function readSettings(path: string): Promise<FactorySettings> {
-  try {
-    return settingsOf(JSON.parse(await readFile(path.replace(/\.jsonl$/u, '.settings.json'), 'utf8')))
-  } catch (error) {
-    if (isMissing(error) || error instanceof SyntaxError) return { model: null, usage: null }
-    throw error
+async function readSettings(ref: SessionRef): Promise<FactorySettings> {
+  const seen = new Set<string>()
+  for (const file of [ref.path.replace(/\.jsonl$/u, '.settings.json'), ...ref.files]) {
+    if (!seen.has(file)) seen.add(file)
+    else continue
+    try {
+      const settings = settingsOf(JSON.parse(await readFile(file, 'utf8')))
+      if (settings.model !== null || settings.usage !== null) return settings
+    } catch (error) {
+      if (!(isMissing(error) || error instanceof SyntaxError)) throw error
+    }
   }
+  return { model: null, usage: null }
 }
 
 export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
-  return runFold(createFold(ref, mode, source.stats, await readSettings(ref.path)), source)
+  return runFold(createFold(ref, mode, source.stats, await readSettings(ref)), source)
 }
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {

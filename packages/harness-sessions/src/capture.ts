@@ -114,7 +114,9 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
     }
     const mainPath = join(archiveDir, mainFile.path)
     const nestedFiles = copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && nested.some((n) => n.test(rel)) }).map((f) => join(archiveDir, f.path))
-    listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files: [mainPath, ...nestedFiles], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }, copy, true, archiveDir, mainPath))
+    const declared = store.files.map((pattern) => storeGlob(pattern, copy.nativeSessionId))
+    const files = [...new Set([mainPath, ...nestedFiles, ...copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && declared.some((pattern) => pattern.test(rel)) }).map((f) => join(archiveDir, f.path))])]
+    listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files, home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }, copy, true, archiveDir, mainPath))
     for (const file of nestedFiles) {
       const child = file.split('/').pop()!.replace(/\.jsonl$/u, '').replace(/^agent-/u, '')
       listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: child, path: file, files: [file], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: copy.nativeSessionId, truncated }, copy, false, archiveDir, file))
