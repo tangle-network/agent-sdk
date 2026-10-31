@@ -47,17 +47,27 @@ export type AgentEnvironmentEgressMode = "open" | "strict" | "blocked";
 export type AgentEnvironmentEgressPolicy =
   | { mode: "open" }
   | { mode: "blocked" }
-  | { mode: "strict"; allowDomains?: readonly string[] };
+  | { mode: "strict"; allowDomains?: readonly AgentEnvironmentEgressAllowDomain[] };
 
 /**
- * One allowed destination host.
- *
- * A whitespace-only or outer-padded entry matches no host, so a policy carrying one is an
+ * One allowed destination: a host, or a host whose resolved private addresses are also reachable
+ * within the named CIDR ranges. This is the Sandbox platform's entry shape, carried verbatim.
+ */
+export type AgentEnvironmentEgressAllowDomain = string | { domain: string; allowPrivateIps: readonly string[] };
+
+/**
+ * A whitespace-only or outer-padded host matches nothing, so a policy carrying one is an
  * allowlist the caller believes is in force and is not. That is the same silent-weakening this
  * contract refuses everywhere else, so the entry is rejected rather than trimmed: trimming would
  * accept a typo and change what the caller asked for.
  */
-const egressAllowDomainSchema = boundedIdentifierSchema;
+export const AgentEnvironmentEgressAllowDomainSchema = z.union([
+  boundedIdentifierSchema,
+  z.strictObject({
+    domain: boundedIdentifierSchema,
+    allowPrivateIps: z.array(z.union([z.cidrv4(), z.cidrv6()])).min(1).max(100),
+  }),
+]) satisfies z.ZodType<AgentEnvironmentEgressAllowDomain>;
 
 /** Runtime contract for the portable egress policy carried by providers. */
 export const AgentEnvironmentEgressPolicySchema = z.discriminatedUnion("mode", [
@@ -71,10 +81,7 @@ export const AgentEnvironmentEgressPolicySchema = z.discriminatedUnion("mode", [
      * domains differ only in order are read as different creates and the second is refused. Build
      * the list in a stable order.
      */
-    allowDomains: z
-      .array(egressAllowDomainSchema)
-      .max(CONTRACT_MAX_ARRAY_LENGTH)
-      .optional(),
+    allowDomains: z.array(AgentEnvironmentEgressAllowDomainSchema).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
   }),
 ]) satisfies z.ZodType<AgentEnvironmentEgressPolicy>;
 
@@ -128,34 +135,16 @@ export const WorkspaceRequestSchema = z
     providerOptions: boundedJsonRecordSchema.optional(),
   })
   .superRefine((workspace, refinement) => {
-    if (workspace.snapshot !== undefined && (
-      workspace.repoUrl !== undefined || workspace.gitRef !== undefined || workspace.checkpoint !== undefined
-    )) {
-      refinement.addIssue({ code: "custom", path: ["snapshot"], message: "workspace snapshot cannot be combined with another workspace source" });
-    }
-    if (workspace.snapshot !== undefined && workspace.cwd?.base === "host") {
-      refinement.addIssue({ code: "custom", path: ["cwd"], message: "workspace snapshot cwd must be relative to its restored repository" });
-    }
-    if (workspace.checkpoint !== undefined && workspace.repoUrl !== undefined) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["checkpoint"],
-        message: "workspace cannot start from both a checkpoint and a repository",
-      });
-    }
-    if (workspace.environment !== undefined && workspace.image !== undefined) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["image"],
-        message: "workspace cannot specify both environment and image",
-      });
-    }
-    if (workspace.gitRef !== undefined && workspace.repoUrl === undefined) {
-      refinement.addIssue({
-        code: "custom",
-        path: ["gitRef"],
-        message: "workspace gitRef requires repoUrl",
-      });
+    const { snapshot, repoUrl, gitRef, checkpoint, cwd, environment, image } = workspace;
+    const conflicts: [boolean, string, string][] = [
+      [snapshot !== undefined && (repoUrl ?? gitRef ?? checkpoint) !== undefined, "snapshot", "workspace snapshot cannot be combined with another workspace source"],
+      [snapshot !== undefined && cwd?.base === "host", "cwd", "workspace snapshot cwd must be relative to its restored repository"],
+      [checkpoint !== undefined && repoUrl !== undefined, "checkpoint", "workspace cannot start from both a checkpoint and a repository"],
+      [environment !== undefined && image !== undefined, "image", "workspace cannot specify both environment and image"],
+      [gitRef !== undefined && repoUrl === undefined, "gitRef", "workspace gitRef requires repoUrl"],
+    ];
+    for (const [conflict, path, message] of conflicts) {
+      if (conflict) refinement.addIssue({ code: "custom", path: [path], message });
     }
   }) satisfies z.ZodType<WorkspaceRequest>;
 

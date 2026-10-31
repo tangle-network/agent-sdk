@@ -1,4 +1,5 @@
 import type { AgentCandidateTermination } from "./agent-candidate.js";
+import type { AgentEnvironmentEgressAllowDomain } from "./environment-requests.js";
 
 export type AgentExactProcessEgressMode = "blocked" | "strict";
 
@@ -9,7 +10,7 @@ export type AgentExactProcessEgressMode = "blocked" | "strict";
  */
 export type AgentExactProcessEgressPolicy =
   | { mode: "blocked" }
-  | { mode: "strict"; allowDomains: readonly string[] };
+  | { mode: "strict"; allowDomains: readonly AgentEnvironmentEgressAllowDomain[] };
 
 /** Explicit portable limits for an exact process environment. */
 export interface AgentExactProcessResources {

@@ -9,6 +9,7 @@ import {
   type RouterRoutingOptions,
 } from "@tangle-network/sandbox";
 import {
+  AgentEnvironmentEgressAllowDomainSchema,
   AgentEnvironmentEgressPolicySchema,
   WorkspaceRequestSchema,
   workspaceCwdPathForBase,
@@ -431,18 +432,13 @@ export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): 
       throw new Error("Tangle mapped egress policy allows domains only in strict mode");
     }
     // The default path is schema-checked, so this gate holds a custom mapper to the same shape.
-    // A non-string or padded host reaches the platform, matches nothing, and leaves the caller
+    // A malformed or padded host reaches the platform, matches nothing, and leaves the caller
     // believing an allowlist is in force that is not.
-    if (options.egressPolicy.allowDomains !== undefined) {
-      if (!Array.isArray(options.egressPolicy.allowDomains)) {
-        throw new Error("Tangle mapped egress allowed domains must be an array");
-      }
-      if (options.egressPolicy.allowDomains.length > MAX_ARRAY_LENGTH) {
-        throw new Error("Tangle mapped egress allowed domains exceed their bound");
-      }
-      for (const domain of options.egressPolicy.allowDomains) {
-        boundedIdentifier(domain, "Tangle mapped egress allowed domain");
-      }
+    if (
+      options.egressPolicy.allowDomains !== undefined &&
+      !AgentEnvironmentEgressAllowDomainSchema.array().max(MAX_ARRAY_LENGTH).safeParse(options.egressPolicy.allowDomains).success
+    ) {
+      throw new Error("Tangle mapped egress allowed domain is invalid");
     }
   }
   if (options.env !== undefined) assertStringRecord(options.env, "Tangle mapped");

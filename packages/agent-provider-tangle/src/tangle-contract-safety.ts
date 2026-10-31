@@ -1,4 +1,4 @@
-import { canonicalCandidateDigest } from "@tangle-network/agent-interface";
+import { AgentEnvironmentEgressAllowDomainSchema, canonicalCandidateDigest } from "@tangle-network/agent-interface";
 import type { CreateAgentExactProcessEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import type { TangleExactProcessOptions } from "./tangle-types.js";
 
@@ -57,6 +57,8 @@ export const MAX_INLINE_PAYLOAD_BYTES = 1024 * 1024 - 8 * 1024;
 export const MAX_TOTAL_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
 export const MAX_ARRAY_LENGTH = 1_024;
+/** Strict exact-process egress: the interface entry shape, one to {@link MAX_ARRAY_LENGTH} entries. */
+const EXACT_PROCESS_ALLOW_DOMAINS = AgentEnvironmentEgressAllowDomainSchema.array().min(1).max(MAX_ARRAY_LENGTH);
 export const MAX_MAP_ENTRIES = 256;
 export const MAX_JSON_DEPTH = 16;
 export const MAX_JSON_NODES = 8_192;
@@ -537,17 +539,9 @@ export function validateExactProcessCreateInput(
     if (egressKeys.size > 0) throw new Error("strict exact process egress has unsupported fields");
   }
   if (input.egress.mode === "strict") {
-    if (!Array.isArray(input.egress.allowDomains)) {
-      throw new Error("exact process egress allowDomains must be an array");
-    }
-    if (input.egress.allowDomains.length > MAX_ARRAY_LENGTH) {
-      throw new Error("exact process egress allowDomains has too many entries");
-    }
-    if (input.egress.allowDomains.length === 0) {
-      throw new Error("strict exact process egress requires at least one domain");
-    }
-    for (const domain of input.egress.allowDomains) {
-      boundedIdentifier(domain, "exact process egress domain");
+    // The interface schema owns the entry shape; strict exact egress also needs one entry.
+    if (!EXACT_PROCESS_ALLOW_DOMAINS.safeParse(input.egress.allowDomains).success) {
+      throw new Error("strict exact process egress requires one to 1024 valid allowDomains entries");
     }
   }
   if (

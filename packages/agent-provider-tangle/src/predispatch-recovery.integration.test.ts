@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
 import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import type { AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
 
@@ -12,7 +13,7 @@ const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `s
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
 type RefFault = "missing" | "environment" | "digest" | "execution-race" | "read-failure";
-async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false) {
+async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false, egress?: AgentEnvironmentEgressPolicy) {
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
   let admit = false, selected = false;
@@ -86,9 +87,16 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   baseUrl = `http://127.0.0.1:${address.port}`;
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
-  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture" });
+  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture", ...(egress ? { egress } : {}) });
   return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
+
+it("forwards a strict allowlist with a private-range entry verbatim in the Sandbox create body", async () => {
+  const allowDomains = ["api.github.com", { domain: "build.internal", allowPrivateIps: ["10.0.0.0/24", "fd00::/8"] }];
+  const { creates } = await fixture("SERVER_ERROR", 503, false, undefined, false, { mode: "strict", allowDomains });
+  expect(creates).toHaveLength(1);
+  expect(creates[0]!.egressPolicy).toEqual({ mode: "strict", allowDomains });
+});
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
   const { provider, environment, requests, creates, dispatches, reconnect, allowDispatch } = await fixture("HUB_CREDENTIAL_REFRESH_FAILED");
