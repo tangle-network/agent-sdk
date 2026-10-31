@@ -67,7 +67,7 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
       if (url.pathname === "/v1/sandboxes" && request.method === "POST") return answer(200, info());
       if (url.pathname === "/v1/sandboxes/sandbox-phase") {
         const snapshot = info();
-        if (prepared || !native) currentReads++;
+        if (prepared || !native || refusePrepare) currentReads++;
         else staleReads++;
         if (holdInfo && !prepared) { startedHeldRead(); await new Promise<void>(resolve => { releaseInfo = resolve; }); }
         return answer(200, snapshot);
