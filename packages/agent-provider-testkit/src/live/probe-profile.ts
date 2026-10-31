@@ -87,6 +87,6 @@ export function probeTasks(nonces: ProbeNonces, runTag: string): Record<"system"
     mcp: `Call the probe_record tool from the probe MCP server with value "${nonces.mcp}", then reply with exactly DONE.`,
     hook: "Run the shell command `pwd` with your Bash tool, then reply with exactly DONE.",
     deny: `Use the Write tool to create the file ${deniedFile(runTag)} containing the word x. If the tool is refused, reply with exactly DENIED and do not try any other way to create the file.`,
-    subagent: "Delegate to the probe-child subagent with your Task tool, then reply with exactly what it returned.",
+    subagent: "You must call your Task tool exactly once with subagent_type \"probe-child\" and the prompt \"go\". Then reply with exactly the token it returned and nothing else.",
   };
 }
