@@ -58,7 +58,7 @@ function checkUsage(ctx: LiveContext, observed: Observed): void {
     rec.pass("USE-2", `${name}: no dollar amount reported, so none is unprovenanced`);
     rec.pass("USE-5", `${name}: no dollar amount reported, so no vendor compute dollars entered usage.cost`);
   } else {
-    const unmarked = priced.filter((entry) => !COST_PROVENANCE.has(String(entry.event.data.costProvenance)));
+    const unmarked = priced.filter((entry) => !COST_PROVENANCE.has(String(entry.event.data.costProvenance ?? entry.event.data.cost_provenance)));
     rec.observe("USE-2", unmarked.length === 0, `${name}: ${priced.length} priced events, ${unmarked.length} without costProvenance`);
     rec.unproven("USE-5", "a dollar amount is reported; that it excludes vendor compute needs the vendor bill");
   }

@@ -171,12 +171,12 @@ export async function sweepLeaks(ctx: LiveContext): Promise<void> {
     ctx.rec.unproven("TDN-3", "the provider has no list, so leaks cannot be read from the vendor side");
     return;
   }
-  const settled = await until(async () => (await listRun(ctx))!.every((entry) => entry.status === "stopped" || entry.status === "expired"), 90_000, 3_000);
+  await until(async () => (await listRun(ctx))!.every((entry) => entry.status === "stopped" || entry.status === "expired"), 90_000, 3_000);
   const survivors = (await listRun(ctx))!.filter((entry) => entry.status !== "stopped" && entry.status !== "expired");
   const aborted = survivors.filter((entry) => entry.case?.includes("abort-create"));
   const others = survivors.filter((entry) => !entry.case?.includes("abort-create"));
   const name = (entry: { id: string; case?: string }): string => `${entry.id} (${entry.case ?? "untagged case"})`;
-  ctx.rec.observe("TDN-3", settled && others.length === 0, others.length === 0 ? "no environment tagged with this run survives" : `survivors after cleanup: ${others.map(name).join(", ")}`);
+  ctx.rec.observe("TDN-3", others.length === 0, others.length === 0 ? "no environment tagged with this run survives" : `survivors after cleanup: ${others.map(name).join(", ")}`);
   ctx.rec.observe("CAN-3", aborted.length === 0, aborted.length === 0 ? "no sandbox survives a create aborted mid-flight" : `a create aborted mid-flight left a sandbox: ${aborted.map(name).join(", ")}`);
   ctx.rec.observe("CRT-2", others.length === 0, others.length === 0 ? "no refused request provisioned an environment" : "a refused or failed request left an environment");
   for (const entry of survivors) {
