@@ -1,4 +1,4 @@
-import type { CreateSandboxOptions } from "@tangle-network/sandbox";
+import type { CreateSandboxOptions, EgressPolicy } from "@tangle-network/sandbox";
 import type {
   AgentExactProcessEnvironment,
   AgentExactProcessProvider,
@@ -47,7 +47,7 @@ type TangleExactSandboxOptions = Omit<
     | { mode: "blocked" }
     | {
         mode: "strict";
-        allowDomains: string[];
+        allowDomains: NonNullable<EgressPolicy["allowDomains"]>;
         includeImplicitDomains: false;
       };
 };
@@ -265,12 +265,6 @@ function exactSandboxOptions(
     throw new Error(
       "exact process provisionTimeoutMs must be a positive integer",
     );
-  }
-  if (
-    input.egress.mode === "strict" &&
-    input.egress.allowDomains.length === 0
-  ) {
-    throw new Error("strict exact process egress requires at least one domain");
   }
   const resources = sandboxResourcesFromRequest(input.resources);
   return {

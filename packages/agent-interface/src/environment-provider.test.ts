@@ -815,6 +815,22 @@ describe("AgentEnvironmentEgressPolicySchema", () => {
     });
   });
 
+  it("carries the platform's private-range entry and refuses a malformed one", () => {
+    const entry = { domain: "build.internal", allowPrivateIps: ["10.0.0.0/24", "fd00::/8"] };
+    expect(
+      AgentEnvironmentEgressPolicySchema.parse({ mode: "strict", allowDomains: ["api.example.com", entry] }),
+    ).toEqual({ mode: "strict", allowDomains: ["api.example.com", entry] });
+    for (const bad of [
+      { domain: "build.internal", allowPrivateIps: [] },
+      { domain: "build.internal", allowPrivateIps: ["10.0.0.1"] },
+      { domain: " build.internal", allowPrivateIps: ["10.0.0.0/24"] },
+      { domain: "build.internal" },
+      { domain: "build.internal", allowPrivateIps: ["10.0.0.0/24"], extra: true },
+    ]) {
+      expect(() => AgentEnvironmentEgressPolicySchema.parse({ mode: "strict", allowDomains: [bad] })).toThrow();
+    }
+  });
+
   it("refuses a domain list outside strict mode rather than carrying an ignored one", () => {
     for (const mode of ["open", "blocked"]) {
       expect(() =>
