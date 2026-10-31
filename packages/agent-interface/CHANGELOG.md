@@ -1,8 +1,8 @@
 # @tangle-network/agent-interface
 
-## 5.11.0
+## 5.10.12
 
-### Minor Changes
+### Patch Changes
 
 - 92c7514: Add `EnvironmentProviderError` and the closed `EnvironmentProviderErrorCode` set so every environment provider reports refusal, capacity, authentication, transport, timeout and abort failures with a stable code, a scrubbed bounded message and the vendor error as `cause`.
 
