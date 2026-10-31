@@ -249,6 +249,12 @@ importers:
       '@tangle-network/agent-interface':
         specifier: workspace:*
         version: link:../agent-interface
+      '@tangle-network/agent-profile-materialize':
+        specifier: 1.1.4
+        version: 1.1.4(@tangle-network/agent-interface@packages+agent-interface)
+      '@tangle-network/cli-agent-registry':
+        specifier: ^0.14.0
+        version: 0.14.0
       undici:
         specifier: 'catalog:'
         version: 8.12.3
@@ -362,6 +368,12 @@ importers:
       '@tangle-network/agent-interface':
         specifier: workspace:*
         version: link:../agent-interface
+      '@tangle-network/agent-profile-materialize':
+        specifier: 1.1.4
+        version: 1.1.4(@tangle-network/agent-interface@packages+agent-interface)
+      '@tangle-network/cli-agent-registry':
+        specifier: ^0.14.0
+        version: 0.14.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1036,6 +1048,11 @@ packages:
     peerDependencies:
       '@tangle-network/agent-interface': workspace:*
 
+  '@tangle-network/agent-profile-materialize@1.1.4':
+    resolution: {integrity: sha512-9AqQILuNnb8+Bb4JByJNNRtYnCNsRYxES2oNndW2jeHG21hn2Gwg6vMHQST0z7wHxYnjyTETIyVTc0ATPNjF/g==}
+    peerDependencies:
+      '@tangle-network/agent-interface': workspace:*
+
   '@tangle-network/agent-runtime@0.349.0':
     resolution: {integrity: sha512-8lZzN6ULvQbrv5EaB/LW8P96oZnEVK01Xre1OJWWEr6v2nSll+740qeUFMCzqkF7vVo081pWtieOT2o0LuiPgQ==}
     engines: {node: '>=22.19.0'}
@@ -1050,6 +1067,9 @@ packages:
 
   '@tangle-network/agent-trace-contract@2.2.0':
     resolution: {integrity: sha512-M7UrrKmaQIvrW2S1PCIsTOHBqP/hKiSjIAbV/Shso78zTYet0bzhJ/vfwfCEs0bfAl1oDsh/tQlZZp66o+YgPg==}
+
+  '@tangle-network/cli-agent-registry@0.14.0':
+    resolution: {integrity: sha512-+j0rBeZGXxJCa5tGY+65LXXI52+vgO30jTt7zOak2bn6kPqrH6bv3Z48yexn0+UQz9UeljtIR1BOTNu+Jy7Ekw==}
 
   '@tangle-network/harness-sessions@0.1.7':
     resolution: {integrity: sha512-EiNt+lmCnYX+HxLBRXKg2DrYeQQ0o334qlxNmp9L301s3EfcGNE7VIl7BH5hQJojGpb9dxHHi7rzh4PqodvAjw==}
@@ -3243,6 +3263,10 @@ snapshots:
     dependencies:
       '@tangle-network/agent-interface': link:packages/agent-interface
 
+  '@tangle-network/agent-profile-materialize@1.1.4(@tangle-network/agent-interface@packages+agent-interface)':
+    dependencies:
+      '@tangle-network/agent-interface': link:packages/agent-interface
+
   '@tangle-network/agent-runtime@0.349.0(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@tangle-network/agent-eval@0.221.7(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7)))(@tangle-network/agent-interface@packages+agent-interface)(@tangle-network/sandbox@1.0.141(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7)))':
     dependencies:
       '@earendil-works/pi-codemode': 1.0.4
@@ -3264,6 +3288,11 @@ snapshots:
   '@tangle-network/agent-trace-contract@2.1.0': {}
 
   '@tangle-network/agent-trace-contract@2.2.0': {}
+
+  '@tangle-network/cli-agent-registry@0.14.0':
+    dependencies:
+      '@tangle-network/agent-interface': link:packages/agent-interface
+      zod: 4.6.7
 
   '@tangle-network/harness-sessions@0.1.7':
     dependencies:

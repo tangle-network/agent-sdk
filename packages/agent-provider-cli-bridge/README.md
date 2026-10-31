@@ -195,3 +195,21 @@ Those five surfaces are never claimed in the capability document and always carr
 The usage of one run is summed across its events and attributed to that run's execution id, which the observation carries as the provenance source.
 An environment rebuilt with `provider.get(id)` has measured nothing yet, so it reports the usage surface as unavailable until a turn completes through it.
 The endpoint holds only a scheme, a host, and an explicit port; userinfo, path, and query are dropped, and the bearer beside the base URL is never read.
+
+## Cloud sandboxes (`./sandbox`)
+
+`@tangle-network/agent-provider-cli-bridge/sandbox` turns a vendor sandbox that runs CLI Bridge into an `AgentEnvironmentProvider`.
+The vendor adapter implements `BridgeSandboxVendor`: `create`, `connect`, `list`, and per sandbox `exec`, `spawn`, `read`, `write`, `endpoint`, `status` and `destroy`.
+`createBridgeSandboxProvider({ vendor, router: { key } })` does the rest:
+
+- It refuses every create field the vendor cannot honor with an `EnvironmentProviderError` that names the field, before any vendor call, and validates the profile with the materializer the Bridge in the box uses.
+- It creates the sandbox from the box image with a finite lifetime and a run tag, starts the Bridge with a random bearer and the per-run Router key on that process only, waits for the selected backend to report ready, checks the harness CLI against the registry's pin, clones `workspace.repoUrl`, and creates the environment through `createCliBridgeProvider` at the exposed URL.
+- Any failure after the vendor create destroys the sandbox before the error surfaces; a destroy that fails carries the sandbox id as `cleanupHandle`.
+- Turns run through the Bridge. `turn.timeoutMs` cancels the run and ends the stream with a failed `result` that names the timeout, an abort rejects with `AbortError`, and a second turn on a busy environment is refused with `conflict`.
+- Events carry `execution.started` with the declared model and a terminal `result` with the model the harness reported serving. The Bridge's dollar figure is the harness's catalog estimate, so events omit `usage.cost`.
+
+The box image is `renderBoxDockerfile()`: Node, CLI Bridge at the commit in `BOX_PINS`, and each harness CLI at the version `@tangle-network/cli-agent-registry` pins.
+A harness joins `BOX_HARNESSES` only after a live turn through the Router completed in a box; `claude-code` is the proven row.
+Build the image for a cloud with `pnpm build:sandbox-image --target e2b|daytona|docker` from the repository root.
+`@tangle-network/agent-provider-testkit` runs the live profile conformance suite against the result.
+

@@ -13,6 +13,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./src/index.ts"
+    },
+    "./sandbox": {
+      "import": "./dist/sandbox/index.js",
+      "types": "./src/sandbox/index.ts"
     }
   },
   "repository": {
@@ -30,6 +34,11 @@
         "import": "./dist/index.js",
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./sandbox": {
+        "import": "./dist/sandbox/index.js",
+        "types": "./dist/sandbox/index.d.ts",
+        "default": "./dist/sandbox/index.js"
       }
     }
   },
@@ -68,6 +77,18 @@
     "dist/transport.js",
     "dist/wire.d.ts",
     "dist/wire.js",
+    "dist/sandbox/index.d.ts",
+    "dist/sandbox/index.js",
+    "dist/sandbox/box.d.ts",
+    "dist/sandbox/box.js",
+    "dist/sandbox/image.d.ts",
+    "dist/sandbox/image.js",
+    "dist/sandbox/provider.d.ts",
+    "dist/sandbox/provider.js",
+    "dist/sandbox/refusal.d.ts",
+    "dist/sandbox/refusal.js",
+    "dist/sandbox/vendor.d.ts",
+    "dist/sandbox/vendor.js",
     "README.md",
     "LICENSE"
   ],
@@ -81,7 +102,9 @@
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^5.10.2",
-    "undici": "catalog:"
+    "undici": "catalog:",
+    "@tangle-network/agent-profile-materialize": "1.1.4",
+    "@tangle-network/cli-agent-registry": "^0.14.0"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
