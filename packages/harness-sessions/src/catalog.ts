@@ -15,13 +15,15 @@ export const SESSION_FORMAT_IDS = [
   'prime.session-jsonl',
   'openclaw.session-jsonl',
   'grok.acp-session-dir',
+  'nanoclaw.session-sqlite',
 ] as const
 
 /** One catalog declaration owns append-only defaults and shared SQLite copy semantics. */
 function store<const F extends SessionFormatId, const Files extends readonly string[]>(
   format: F, root: string, files: Files, write: NativeSessionStore['write'] = 'jsonl-append',
+  shared = write === 'sqlite-wal',
 ) {
-  return { format, root, files, write, shared: write === 'sqlite-wal' }
+  return { format, root, files, write, shared }
 }
 
 /** Store layouts, relative to the HOME a harness ran with. */
@@ -47,6 +49,7 @@ export const STORES = {
   'prime.session-jsonl': store('prime.session-jsonl', '.prime-provider/prime-agent-dirs', ['**/*_{id}.jsonl']),
   'openclaw.session-jsonl': store('openclaw.session-jsonl', '.openclaw/agents', ['**/{id}.jsonl']),
   'grok.acp-session-dir': store('grok.acp-session-dir', '.grok/sessions', ['*/{id}/updates.jsonl']),
+  'nanoclaw.session-sqlite': store('nanoclaw.session-sqlite', '.nanoclaw/data/v2-sessions', ['*/{id}/outbound.db', '*/{id}/inbound.db'], 'sqlite-wal', false),
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
 
 /** Kimi Code's current and retained legacy layouts; the legacy catalog entry stays stable. */
@@ -69,6 +72,7 @@ export const EVIDENCE = {
   'prime.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'session-record' },
   'openclaw.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
   'grok.acp-session-dir': { servedModel: 'session-record', usage: 'session-total', endingError: 'none' },
+  'nanoclaw.session-sqlite': { servedModel: 'none', usage: 'per-response', endingError: 'none' },
 } as const satisfies Record<SessionFormatId, SessionEvidenceSources>
 
 /** Codex homes: `.codex`, `.codex-*`, acct homes, and a fleet seat's `codex` directory. */
@@ -105,11 +109,7 @@ export function withinPath(path: string, root: string): boolean {
 
 const REGEX_SPECIALS = /[.+^$()|[\]\\]/gu
 
-/**
- * Compile one store glob. `*` matches within a path segment, `**` matches any number of
- * segments, and `{id}` matches the native session id: the literal id when one is given, any
- * segment text otherwise (the reader then takes the id from the session's own header).
- */
+/** Compile one store glob. `*` matches within a path segment, `**` matches any number of segments, and `{id}` matches the native session id: the literal id when one is given, any segment text otherwise (the reader then takes the id from the session's own header). */
 export function storeGlob(glob: string, nativeSessionId?: string): RegExp {
   let pattern = ''
   for (let i = 0; i < glob.length; i += 1) {
