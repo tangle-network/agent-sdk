@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, isMissing, type RecordSource } from '../source.js'
+import { fileRecords, isMissing, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
 import { runFold, type SessionFold } from './fold.js'
 
@@ -35,7 +35,7 @@ async function readJson(path: string): Promise<unknown> {
   catch (error) { if (isMissing(error) || error instanceof SyntaxError) return null; throw error }
 }
 
-function createFold(ref: SessionRef, mode: BuildMode, stats: { line: number }, model: string | null, usage: TokenUsage | null): SessionFold {
+function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, model: string | null, usage: TokenUsage | null): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
   let opened = false
   const observe = (record: Record<string, unknown>): void => {
