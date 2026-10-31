@@ -16,14 +16,12 @@ import type { SourceStats } from './source.js'
 
 export type BuildMode = 'full' | 'summary'
 
-/** An ISO-8601 instant from an ISO string, epoch milliseconds or epoch seconds; null otherwise. */
 export function isoTime(value: unknown): string | null {
   if (typeof value === 'string' && value.length > 0) {
     const ms = Date.parse(value)
     return Number.isNaN(ms) ? null : new Date(ms).toISOString()
   }
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    // Seconds before 2001-09-09 in milliseconds are below 1e12; nothing here predates that.
     return new Date(value < 1e12 ? value * 1000 : value).toISOString()
   }
   return null
@@ -35,7 +33,6 @@ export function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** Parse tool arguments recorded as text; keep the text when it is not JSON. */
 export function argumentsOf(raw: unknown): { input: unknown; inputText: string | null } {
   if (typeof raw !== 'string') return { input: raw ?? null, inputText: null }
   try {
@@ -45,7 +42,6 @@ export function argumentsOf(raw: unknown): { input: unknown; inputText: string |
   }
 }
 
-/** The text of an output that is text, or of the text blocks in a content-block array. */
 export function textOf(value: unknown): string | null {
   if (typeof value === 'string') return value
   if (!Array.isArray(value)) return null
@@ -56,7 +52,6 @@ export function textOf(value: unknown): string | null {
   return texts.length > 0 ? texts.join('\n') : null
 }
 
-/** The HTTP status in a provider error message such as `unexpected status 500 Internal Server Error`. */
 export function httpStatusIn(text: string | null | undefined): number | null {
   if (!text) return null
   const match = /\b(?:status(?: code)?|HTTP)[^\d]{0,4}([1-5]\d\d)\b/iu.exec(text) ?? /^([45]\d\d)\b/u.exec(text.trim())
@@ -77,13 +72,11 @@ export function usageOrNull(usage: TokenUsage): TokenUsage | null {
     : usage
 }
 
-/** The key a served model is counted under: `provider/model`, or the bare model with no provider. */
 export function servedModelKey(call: Pick<ModelCall, 'provider' | 'servedModel'>): string | null {
   if (call.servedModel === null) return null
   return call.provider === null ? call.servedModel : `${call.provider}/${call.servedModel}`
 }
 
-/** Folds one session's records into a {@link HarnessSession}. Every format reader drives this builder, and `read` and `summarize` share the same fold: in summary mode the builder keeps the counts, the model calls and the ending, and drops message and tool-call content, so a 700 MB rollout is summarized without holding its outputs. */
 export class SessionBuilder {
   readonly full: boolean
   nativeSessionId: string
@@ -123,7 +116,6 @@ export class SessionBuilder {
     this.parentNativeSessionId = parentNativeSessionId
   }
 
-  /** Record an instant the session was active. Returns the normalized instant. */
   seen(value: unknown): string | null {
     const at = isoTime(value)
     if (at === null) return null
@@ -134,8 +126,6 @@ export class SessionBuilder {
 
   message(message: SessionMessage): SessionMessage {
     if (message.role === 'assistant' && message.actor === 'agent') this.replies += 1
-    // Only new input re-opens a turn: harness bookkeeping (a compaction summary, environment
-    // context) after a failed call does not.
     if (message.role === 'user' && (message.actor === 'human' || message.actor === 'subagent-spawn')) this.inputsSinceLastCall += 1
     this.lastRole = message.role
     if (this.full) {
@@ -145,14 +135,12 @@ export class SessionBuilder {
     return message
   }
 
-  /** Add parts to a message already recorded (one API response written over several records). */
   appendParts(messageId: string, parts: Part[]): void {
     if (!this.full) return
     const message = this.messageById.get(messageId)
     if (message) message.parts.push(...parts)
   }
 
-  /** Replace a tool call's arguments (a harness that streams them in parts). */
   setToolInput(id: string, inputText: string): void {
     const call = this.toolCalls.get(id)
     if (!call) return
@@ -164,7 +152,6 @@ export class SessionBuilder {
     return this.messageById.has(messageId)
   }
 
-  /** A tool call the agent made. Its part is added to `messageId` when the message is held. */
   toolCall(call: { id: string; name: string; input: unknown; inputText: string | null; at: string | null; messageId: string }): void {
     if (this.toolCallIds.has(call.id)) return
     this.toolCallIds.add(call.id)
@@ -184,7 +171,6 @@ export class SessionBuilder {
     })
   }
 
-  /** The result of a tool call. A result whose call was not recorded becomes a call of its own. */
   toolResult(id: string, result: { output: unknown; text: string | null; isError: boolean; at: string | null; name?: string; messageId: string; details?: unknown }): void {
     if (!this.toolCallIds.has(id)) {
       this.toolCall({ id, name: result.name ?? 'unknown', input: null, inputText: null, at: result.at, messageId: result.messageId })
@@ -216,7 +202,6 @@ export class SessionBuilder {
   }
 
   gap(text: string): void {
-    // Keep the first occurrences; a damaged file can produce one gap per record.
     if (this.gaps.length < 200) this.gaps.push(text)
   }
 
@@ -235,7 +220,6 @@ export class SessionBuilder {
     this.gap(reason)
   }
 
-  /** The harness's own session total, when it records one; it wins over the per-call sum. */
   setSessionUsage(usage: TokenUsage | null): void {
     this.sessionUsage = usage
   }
@@ -244,7 +228,6 @@ export class SessionBuilder {
     this.ending = ending
   }
 
-  /** The ending every format shares, from what the session holds when the records run out: `aborted` when the harness recorded an abort last; `error` when the last model call failed and no new input followed it; `completed` when the last model call succeeded, every tool call has its result and the agent spoke last; `open` otherwise (the turn was still running, or the process died mid-turn). */
   inferEnding(aborted?: { at: string | null; error: SessionError | null }): void {
     if (aborted) {
       const error = aborted.error ?? this.modelCalls.at(-1)?.error ?? null

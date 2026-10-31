@@ -1,4 +1,3 @@
-/** One normalized reader for each coding-agent harness session store. */
 export type {
   HarnessSession,
   HarnessSessionReader,
@@ -33,6 +32,9 @@ export { kimiReader, kimiRefForFile } from './formats/kimi.js'
 export { factoryReader, factoryRefForFile } from './formats/factory.js'
 export { grokReader, grokRefForFile } from './formats/grok.js'
 export { nanoclawReader, nanoclawRefForFile } from './formats/nanoclaw.js'
+export { hermesReader, hermesSessionsInStore } from './formats/hermes.js'
+export { primeReader } from './formats/prime.js'
+export { openclawReader } from './formats/openclaw.js'
 export {
   listCapture,
   readCapture,

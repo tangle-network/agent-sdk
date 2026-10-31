@@ -14,7 +14,6 @@ function textOf(content: string): string {
     const value = JSON.parse(content) as { text?: unknown }
     if (typeof value.text === 'string') return value.text
   } catch {
-    // A non-JSON body is already the message text.
   }
   return content
 }

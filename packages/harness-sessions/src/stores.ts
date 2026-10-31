@@ -7,7 +7,6 @@ import { isMissing } from './source.js'
 
 export { assertStoreRoot, CODEX_HOME_RULE, EVIDENCE, isCodexHome, SESSION_FORMAT_IDS, STORES, storeGlob, withinPath } from './catalog.js'
 
-/** Regular files under `dir`; an optional matcher refuses selected unsafe entries before descent. */
 export async function walkFiles(dir: string, signal?: AbortSignal, matches?: (path: string) => boolean): Promise<string[]> {
   const out: string[] = []
   const visit = async (current: string): Promise<void> => {
@@ -32,10 +31,8 @@ export async function walkFiles(dir: string, signal?: AbortSignal, matches?: (pa
   return out.sort()
 }
 
-/** Session files a locate reads at once: a store holds thousands, and each read waits on the disk. */
 export const LOCATE_READS = 32
 
-/** `fn` over `items`, at most `limit` at a time, with the results in the order of `items`. */
 export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length)
   let next = 0
@@ -59,7 +56,6 @@ export async function mtimeMs(path: string): Promise<number> {
   }
 }
 
-/** Names of the directories (or links to them) directly in `dir`. A missing dir has none. */
 async function childDirs(dir: string): Promise<string[]> {
   try {
     return (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name).sort()
@@ -69,7 +65,6 @@ async function childDirs(dir: string): Promise<string[]> {
   }
 }
 
-/** Every Codex home under `home`, by `CODEX_HOME_RULE`: `home` itself when it is one (a fleet seat's `codex` passed as a store root), `.codex` and each `.codex-<name>` in it, and each acct account home. `$CODEX_HOME` and `$ACCT_CONFIG` describe this process's own HOME, so they apply only when `home` is that HOME; another HOME (a store root, a capture) is read by its layout alone. Homes that resolve to one directory, such as an account home linked to `~/.codex`, count once. */
 export async function codexHomes(home: string): Promise<string[]> {
   const own = resolve(home) === resolve(process.env.HOME || homedir())
   const candidates = isCodexHome(home) ? [home] : []

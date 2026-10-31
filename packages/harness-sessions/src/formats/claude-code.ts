@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Claude Code jsonl under ~/.claude/projects. One assistant record per content block; message.model is served. */
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
@@ -39,7 +38,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
-  // A resumed agent's file writes its earlier records again, each with the uuid it had.
   const seenUuids = new Set<string>()
 
   const observe = (record: Record<string, unknown>): void => {
@@ -56,7 +54,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     const at = builder.seen(record.timestamp)
     if (builder.cwd === null && typeof record.cwd === 'string') builder.cwd = record.cwd
     if (!identified && typeof record.sessionId === 'string') {
-      // The records name the session; a subagent's records name its parent and its agent id.
       identified = true
       if (subagent && typeof record.agentId === 'string') {
         builder.nativeSessionId = record.agentId
@@ -71,8 +68,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
 
     if (type === 'system') {
       if (record.subtype !== 'api_error') return
-      // A failed API request that Claude Code retried (or gave up on). It is a model call that
-      // returned no answer; a later success supersedes it in the ending.
       const error = isRecord(record.error) ? record.error : {}
       const message = str(error.formatted) ?? str(error.message) ?? str(record.content) ?? 'API error'
       builder.modelCall({
@@ -125,7 +120,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
             isError: block.is_error === true,
             at,
             messageId: `${uuid}:tool`,
-            // The record's structured result belongs to its tool result when it carries one.
             details: results === 1 ? (record.toolUseResult ?? null) : null,
           })
           const result = isRecord(record.toolUseResult) ? record.toolUseResult : null
@@ -153,7 +147,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       return
     }
 
-    // assistant
     aborted = null
     const model = str(message.model)
     const content = Array.isArray(message.content) ? message.content : []
@@ -190,7 +183,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     }
     const existing = builder.getModelCall(apiId)
     if (existing) {
-      // A later block of the same response: its usage is the response's final usage so far.
       existing.usage = usageOf(message.usage) ?? existing.usage
       existing.stopReason = str(message.stop_reason) ?? existing.stopReason
       if (builder.hasMessage(apiId)) builder.appendParts(apiId, parts)
@@ -272,7 +264,6 @@ export const claudeCodeReader: HarnessSessionReader = {
   },
 }
 
-/** A reader for one transcript file outside a HOME layout (the CLI, a retained copy). */
 export function claudeCodeRefForFile(path: string, parentNativeSessionId: string | null = null): SessionRef {
   const name = basename(path, '.jsonl')
   return {

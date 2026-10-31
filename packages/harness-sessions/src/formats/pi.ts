@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Pi jsonl under ~/.pi/agent/sessions. Session header, then message entries. Usage fields are disjoint. */
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
@@ -40,13 +39,12 @@ function contentParts(content: unknown, ref: string): Part[] {
   return parts
 }
 
-/** Session ids are the part of the file name after the timestamp: `<timestamp>_<id>.jsonl`. */
 function idFromName(path: string): string {
   return basename(path, '.jsonl').replace(/^[\dTZ.:-]+_/u, '')
 }
 
-export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
-  const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
+export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, harness = HARNESS, format: 'pi.session-jsonl' | 'prime.session-jsonl' = FORMAT): SessionFold {
+  const builder = new SessionBuilder(harness, format, EVIDENCE[format].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
   let previousId: string | null = null
   let branches = 0
   let compactions = 0
@@ -57,7 +55,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
     if (entry.type === 'session') {
-      if (typeof entry.id === 'string') builder.nativeSessionId = entry.id
+      if (typeof entry.id === 'string' && harness !== 'prime') builder.nativeSessionId = entry.id
       builder.cwd = str(entry.cwd)
       previousId = null
       return
@@ -102,13 +100,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       const errorText = str(message.errorMessage)
       const failed = stopReason === 'error'
       const { usage, cost } = usageOf(message.usage)
-      // A failed request returned no response, so no model served it; the model it was sent to
-      // stays in the profile and the request, not here.
       builder.modelCall({
         id,
         at,
         provider: failed ? null : str(message.provider),
-        // Pi 0.85 records the provider's own answer as responseModel; model is what it asked for.
         servedModel: failed ? null : (str(message.responseModel) ?? str(message.model)),
         requestedModel: str(message.model),
         usage,
@@ -129,7 +124,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       aborted = stopReason === 'aborted' ? { at, message: errorText } : null
       return
     }
-    // Harness-injected messages (system prompts, extension messages, shell executions).
     if (role === 'system' || role === 'custom' || role === 'bashExecution') {
       builder.message({ id, role: role === 'system' ? 'system' : 'user', actor: 'injected', at, modelCallId: null, parts: contentParts(message.content ?? message.output, id) })
     }
