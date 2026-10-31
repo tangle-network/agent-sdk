@@ -1,4 +1,3 @@
-/** Which Claude Code `user` records a person typed and which the harness wrote. Claude Code stores both as `type: "user"`; the markers below are the only difference. This is the one owner of the rule, so every reader of a Claude Code transcript (traces, agent-eval) classifies turns alike. */
 
 const MACHINE_TEXT_PREFIXES = [
   '<local-command-caveat>',
@@ -13,15 +12,12 @@ const MACHINE_TEXT_PREFIXES = [
 ] as const
 
 export interface ClaudeRecordFacts {
-  /** The record's text (the first text part for block content). */
   text: string
   isMeta?: boolean | undefined
   isCompactSummary?: boolean | undefined
-  /** The record's `entrypoint`; `sdk-cli` is a programmatic caller, not a person. */
   entrypoint?: string | undefined
 }
 
-/** True when the harness, not a person, wrote this user record. */
 export function claudeRecordIsMachine(facts: ClaudeRecordFacts): boolean {
   if (facts.isMeta === true || facts.isCompactSummary === true || facts.entrypoint === 'sdk-cli') return true
   const head = facts.text.trimStart()

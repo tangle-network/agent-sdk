@@ -89,7 +89,6 @@ function text(message: SessionMessage, type: 'text' | 'reasoning'): string {
   return message.parts.filter((p) => p.type === type).map((p) => (p as { text: string }).text).join('\n')
 }
 
-/** The session as the blog's turns: one turn per human message and per assistant message, with the tool calls an assistant message made, the files they touched, the model that answered, its usage and the error it ended with. */
 export function toTurns(session: HarnessSession, options: TurnOptions = {}): Turn[] {
   const textChars = options.textChars ?? 8000
   const summaryChars = options.summaryChars ?? 280
@@ -144,7 +143,6 @@ export function toTurns(session: HarnessSession, options: TurnOptions = {}): Tur
   return turns
 }
 
-/** The model a session was answered by most often, or null when it recorded none. */
 export function primaryModel(session: Pick<HarnessSession, 'modelCalls'>): string | null {
   const counts = new Map<string, number>()
   for (const call of session.modelCalls) if (call.servedModel) counts.set(call.servedModel, (counts.get(call.servedModel) ?? 0) + 1)

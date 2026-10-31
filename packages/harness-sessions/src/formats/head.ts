@@ -2,10 +2,8 @@ import { open } from 'node:fs/promises'
 import { StringDecoder } from 'node:string_decoder'
 import { isMissing } from '../source.js'
 
-/** Bytes a head read takes at a time. A session's identifying record is almost always in the first. */
 const HEAD_CHUNK = 64 * 1024
 
-/** The first record among a session file's first `limit` records that satisfies `match`. Locate reads one for every session in a store, so it reads the file a small step at a time and stops at the answer: never the rest of the file, and no digest of it. Lines parse as the session reader parses them: a blank, malformed or non-object line is skipped, and a last line with no newline counts when it is a whole record. */
 export async function headRecord(
   path: string,
   match: (record: Record<string, unknown>) => boolean,
