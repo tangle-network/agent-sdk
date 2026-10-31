@@ -1,20 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Kimi Code: one directory per session, `~/.kimi/sessions/<workdir hash>/<session id>/`, holding
- * `wire.jsonl` (the event stream this reader folds) and `context.jsonl` (the model context).
- *
- * Wire records are `{timestamp, message: {type, payload}}` with epoch-second timestamps.
- * `TurnBegin` carries the user's input; each `StepBegin` is one model call, whose `ContentPart`s
- * (`think`, `text`), `ToolCall`s (arguments streamed on in `ToolCallPart`s) and `StatusUpdate`
- * (`token_usage`: `input_other`, `output`, `input_cache_read`, `input_cache_creation`, disjoint,
- * and the provider's `message_id`) follow. `ToolResult` answers a call. `StepRetry` is a failed
- * attempt with the provider's status code; `StepInterrupted` ends a step without an answer. A
- * subagent's events arrive wrapped in `SubagentEvent`. The legacy wire records no model.
- * Current `.kimi-code/sessions/wd_<hash>/session_<uuid>/agents/main/wire.jsonl` records are flat:
- * turn prompts and loop events own messages, tools and step usage. Appended message snapshots,
- * usage records and token-counting totals mirror that work, so are not counted again. Request
- * metadata names the requested model; a completed native turn is required to prove completion.
- */
+/** Kimi wire.jsonl: TurnBegin, StepBegin, ToolCall, StatusUpdate, ToolResult, StepRetry. Legacy wire has no model. */
 import { basename, dirname, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionEnding, SessionRef, TokenUsage } from '../schema.js'

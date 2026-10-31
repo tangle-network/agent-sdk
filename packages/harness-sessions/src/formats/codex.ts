@@ -1,15 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread id>.jsonl`, one
- * `{timestamp, type, payload}` record per line.
- *
- * `response_item` records are the conversation (messages, reasoning, tool calls and their
- * outputs); `event_msg` records are the harness's events (`token_count` after each model response,
- * `error`, `stream_error`, `turn_aborted`, `task_complete`). Codex records the model it was
- * configured with in `turn_context`, not the model the provider answered with, so the served
- * model here has source `turn-context`. Usage is per response (`last_token_usage`) and cumulative
- * (`total_token_usage`); the cumulative counter is the session total.
- */
+/** Codex rollout jsonl. turn_context is the configured model. total_token_usage is the session total. */
 import { basename } from 'node:path'
 import {
   SessionBuilder,

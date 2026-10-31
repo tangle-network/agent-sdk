@@ -1,14 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Pi: `~/.pi/agent/sessions/<encoded cwd>/<timestamp>_<session id>.jsonl`, one entry per line.
- *
- * The first entry is the `session` header (id, cwd). Conversation entries are `message` entries
- * whose `message.role` is `user`, `assistant` or `toolResult`. Each assistant message records the
- * provider and model it was sent to, its usage (input, output and cache counts are disjoint, with a
- * cost breakdown), its stop reason and, on a failure, the provider's error message. Tool calls are
- * `toolCall` blocks inside assistant content, answered by `toolResult` messages keyed by
- * `toolCallId`. Entries form a tree through `parentId`; branches share one file.
- */
+/** Pi jsonl under ~/.pi/agent/sessions. Session header, then message entries. Usage fields are disjoint. */
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'

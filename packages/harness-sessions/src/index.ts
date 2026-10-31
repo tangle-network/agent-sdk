@@ -1,13 +1,4 @@
-/**
- * `@tangle-network/harness-sessions` — one reader for every coding-agent harness's native session.
- *
- * Every harness persists its session in its own store (Claude Code and Pi append JSONL, Codex
- * appends a rollout, OpenCode writes SQLite). This package declares each store's layout once and
- * parses each format into one normalized {@link HarnessSession}: messages, tool calls with their
- * inputs and results, the model calls with the model that served them, usage and the error a
- * session ended with. The sidecar's capture contract, the Discovery gate, agent-eval,
- * agent-record and the blog read sessions only through it.
- */
+/** One normalized reader for each coding-agent harness session store. */
 export type {
   HarnessSession,
   HarnessSessionReader,
@@ -40,6 +31,7 @@ export { opencodeReader, opencodeSessionsInStore } from './formats/opencode.js'
 export { piReader, piRefForFile } from './formats/pi.js'
 export { kimiReader, kimiRefForFile } from './formats/kimi.js'
 export { factoryReader, factoryRefForFile } from './formats/factory.js'
+export { grokReader, grokRefForFile } from './formats/grok.js'
 export {
   listCapture,
   readCapture,

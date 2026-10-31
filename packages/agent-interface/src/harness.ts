@@ -8,9 +8,7 @@ import { z } from "zod";
  * sessions or receipts. Availability is admitted against the selected deployment.
  *
  * `cli-base` names router-backed execution without a full coding-agent harness.
- * `prime` is a distinct Pi-line fork with a different native wire protocol; its
- * sessions are not interchangeable with Pi sessions. A shared identity does not
- * assert protocol, model, profile-control or native-resume compatibility.
+ * `prime` is a distinct Pi-line fork. A shared identity does not assert protocol compatibility.
  */
 export const harnessTypeSchema = z.enum([
   "claude-code",
@@ -27,6 +25,7 @@ export const harnessTypeSchema = z.enum([
   "factory-droids",
   "forge",
   "cursor",
+  "grok",
   "acp",
   "cli-base",
 ]);
