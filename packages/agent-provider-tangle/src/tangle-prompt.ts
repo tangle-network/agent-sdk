@@ -35,6 +35,7 @@ import {
   assertBoundedJson,
   awaitWithSignal,
   boundedString,
+  MAX_INLINE_PAYLOAD_BYTES,
   PROFILE_AT_PROFILE,
 } from "./tangle-contract-safety.js";
 import { profileCredentialSource } from "./model-credential-source.js";
@@ -178,6 +179,8 @@ export async function preparePromptOptions(
     const sessionId = options.sessionId ?? sessionPromptSessionId(provider, box.id, options.turnId ?? options.executionId) ?? randomUUID();
     const backend = isolated ? { ...options.backend, metadata: { ...options.backend?.metadata, profileSecretIsolation: true as const } } : options.backend ?? {};
     const { runtimeSecrets: _turnOnly, ...persisted } = backend;
+    // createSession posts the whole backend unprimed, so a native turn whose profile exceeds the gateway bound cannot be prepared: it launches unprepared, and the SDK stages the profile's files like create-time mounts.
+    if (!isolated && new TextEncoder().encode(JSON.stringify(persisted)).length > MAX_INLINE_PAYLOAD_BYTES) return options;
     const created = await awaitWithSignal(box.createSession({ sessionId, retention: "workspace", backend: persisted }), options.signal);
     if (created.session.id !== sessionId || created.info.id !== sessionId) throw new Error("Tangle profile preparation changed its exact session identity");
     const args = { sessionId, backend, ...(options.model === undefined ? {} : { model: options.model }) };
@@ -336,11 +339,7 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
 
 function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
   const present = plainRecord(value, "Tangle prompt backend model options");
-  assertDeclaredFields(
-    present,
-    SANDBOX_BACKEND_MODEL_FIELDS,
-    "Tangle prompt backend model options",
-  );
+  assertDeclaredFields(present, SANDBOX_BACKEND_MODEL_FIELDS, "Tangle prompt backend model options");
   const model: Record<string, unknown> = {};
   for (const field of ["provider", "model", "apiKey", "baseUrl", "apiKeyEnv"] as const) {
     if (present[field] === undefined) continue;
@@ -354,9 +353,7 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
     model.maxThinkingTokens = present.maxThinkingTokens;
   }
   if (present.mode !== undefined) {
-    if (present.mode !== "api" && present.mode !== "cli") {
-      throw new Error('Tangle prompt backend model mode must be "api" or "cli"');
-    }
+    if (present.mode !== "api" && present.mode !== "cli") throw new Error('Tangle prompt backend model mode must be "api" or "cli"');
     model.mode = present.mode;
   }
   if (present.authMode !== undefined) {
@@ -376,20 +373,14 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
 
 function sandboxPromptBackendServer(value: unknown): Record<string, unknown> {
   const present = plainRecord(value, "Tangle prompt backend server options");
-  assertDeclaredFields(
-    present,
-    new Set(["port", "hostname"]),
-    "Tangle prompt backend server options",
-  );
+  assertDeclaredFields(present, new Set(["port", "hostname"]), "Tangle prompt backend server options");
   const server: Record<string, unknown> = {};
   if (present.port !== undefined) {
     if (!Number.isSafeInteger(present.port) || (present.port as number) < 1 || (present.port as number) > 65_535) throw new Error("Tangle prompt backend server port must be a TCP port number");
     server.port = present.port;
   }
   if (present.hostname !== undefined) {
-    if (typeof present.hostname !== "string" || present.hostname === "") {
-      throw new Error("Tangle prompt backend server hostname must be a non-empty string");
-    }
+    if (typeof present.hostname !== "string" || present.hostname === "") throw new Error("Tangle prompt backend server hostname must be a non-empty string");
     server.hostname = boundedString(present.hostname, "Tangle prompt backend server hostname");
   }
   return server;
