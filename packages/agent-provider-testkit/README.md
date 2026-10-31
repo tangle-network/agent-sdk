@@ -74,6 +74,9 @@ The probes spend real model tokens and create real sandboxes, so they run only w
 Each environment carries a run tag in its metadata. The suite lists the vendor side with that tag after teardown and fails on any survivor, then destroys it.
 Pass `secretValues` (for example the Router key the adapter was given) so SEC-3 scans events, errors, metadata, workspace files and process command lines for them.
 Keyed create is refused by the probes unless the provider claims `create.durableIdempotency`.
+Pass `nativeAuth` to probe a turn that carries native CLI auth, the shape a Discovery root runs: `{ credentials, createProvider?, createInput?, turn? }` describes the exact create input and turn, and `credentials` names what the fixture needs.
+The probe fails MOD-4 if that turn dies on a sidecar's refusal to prepare its profile (`Concurrent public profile materialization is disabled`), which a provider must treat as "launch without preparation".
+Without the fixture, MOD-4 reports `unproven`, and a missing credential reports `no credential: <NAME>`.
 
 The suite does not cover the optional tiers (OPT-1), the consumer path through `providerAsExecutor` (P11), a vendor-side lifetime read (TDN-4), or capacity propagation from an over-cap key (MOD-5); the report lists them as `unproven`.
 The kit's own fake-backed tests were removed: a suite that agrees with a fake written beside it proves nothing about a provider.

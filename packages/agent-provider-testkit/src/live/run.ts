@@ -6,7 +6,7 @@ import type {
 import { checkCreateRefusals, checkProviderDocument, isTyped } from "./checks-capability.js";
 import { checkAbort, checkBusyEnvironment, checkConcurrency, checkCreateFailures, checkDestroyMidTurn, checkExecCancel, checkTimeout } from "./checks-control.js";
 import { checkBoot, checkPlanBytes, checkRepository, checkTeardown, checkWorkspaceIo, sweepLeaks } from "./checks-environment.js";
-import { checkAxes, checkContinuation, checkSecrets, checkTranscriptStore, checkTurnRefusals } from "./checks-turns.js";
+import { checkAxes, checkContinuation, checkNativeAuthLaunch, checkSecrets, checkTranscriptStore, checkTurnRefusals } from "./checks-turns.js";
 import { DEFAULT_REPOSITORY, newRunTag, RUN_TAG_KEY, type LiveContext, type LiveProfileConformanceOptions } from "./context.js";
 import { freshNonces, probeProfile } from "./probe-profile.js";
 import { Recorder, summarize, type LiveConformanceReport, type RequirementId } from "./report.js";
@@ -50,7 +50,7 @@ export async function runLiveProfileConformance(options: LiveProfileConformanceO
   const ctx: LiveContext = {
     options, rec, provider, nonces, profile, runTag, refusals, environments, log, axes: {},
     capabilities: await provider.capabilities(),
-    async create(overrides = {}, caseName = "main") {
+    async create(overrides = {}, caseName = "main", target = provider) {
       const input: CreateAgentEnvironmentInput = {
         profile,
         env: { CONFORMANCE_PLAIN: "plain-value", CONFORMANCE_CANARY: nonces.canary },
@@ -59,7 +59,7 @@ export async function runLiveProfileConformance(options: LiveProfileConformanceO
         ...overrides,
         metadata: { [RUN_TAG_KEY]: runTag, "conformance-case": caseName, ...((overrides.metadata as Record<string, unknown> | undefined) ?? {}) },
       };
-      const environment = await provider.create(input);
+      const environment = await target.create(input);
       environments.push(environment);
       return environment;
     },
@@ -113,6 +113,7 @@ export async function runLiveProfileConformance(options: LiveProfileConformanceO
     }
     await stage("refusals", () => checkCreateRefusals(ctx));
     await stage("repository", () => checkRepository(ctx, options.repository ?? DEFAULT_REPOSITORY));
+    await stage("native auth", () => checkNativeAuthLaunch(ctx, missingCredential({ credentials: options.nativeAuth?.credentials ?? [], env: options.env })));
     await stage("create failures", () => checkCreateFailures(ctx));
     await stage("destroy mid-turn", () => checkDestroyMidTurn(ctx));
     await stage("concurrency", () => checkConcurrency(ctx));
