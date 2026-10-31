@@ -16,8 +16,9 @@ const privateReceipt = `hmac-sha256:${"d".repeat(64)}`;
 type Fault = "missing" | "malformed" | "wrong-box" | "pending" | "generation" | "grant" | "expiry" | "scope" | "subset" | "subset-generation" | "metadata" | "partial-group";
 
 /** Real public provider and SDK against an authenticated HTTP peer; no proxy/HOME enforcement claim. */
-async function fixture(options: { fault?: Fault; canonical?: boolean; native?: boolean; secret?: boolean; empty?: boolean; twoNativeAliases?: boolean; refusePrepare?: "disabled" | "failed" } = {}) {
-  const { fault, canonical = true, native = true, secret = false, empty = false, twoNativeAliases = false, refusePrepare } = options;
+async function fixture(options: { fault?: Fault; canonical?: boolean; native?: boolean; secret?: boolean; empty?: boolean; twoNativeAliases?: boolean; refusePrepare?: "disabled" | "failed"; oversize?: boolean } = {}) {
+  const { fault, canonical = true, native = true, secret = false, empty = false, twoNativeAliases = false, refusePrepare, oversize = false } = options;
+  const unprepared = refusePrepare !== undefined || oversize;
   const declared = twoNativeAliases
     ? [declarations[0]!, { ...declarations[0]!, envName: "NATIVE_ID_ALIAS" }, declarations[1]!]
     : declarations;
@@ -61,13 +62,15 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
       expect(request.headers.authorization).toBeTruthy();
       const url = new URL(request.url!, "http://fixture"), chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      // The gateway refuses a request body over 1 MiB before it reaches the sidecar.
+      if (Buffer.concat(chunks).length > 1_048_576) { errors.push(new Error(`gateway bound exceeded: ${url.pathname}`)); return answer(413, { error: { message: "Request body exceeds the 1048576 byte limit for gateway.proxy" } }); }
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
       paths.push(url.pathname);
       if (url.pathname === "/v1/backends") return answer(200, { backends: [], timestamp: new Date(0).toISOString() });
       if (url.pathname === "/v1/sandboxes" && request.method === "POST") return answer(200, info());
       if (url.pathname === "/v1/sandboxes/sandbox-phase") {
         const snapshot = info();
-        if (prepared || !native || refusePrepare) currentReads++;
+        if (prepared || !native || unprepared) currentReads++;
         else staleReads++;
         if (holdInfo && !prepared) { startedHeldRead(); await new Promise<void>(resolve => { releaseInfo = resolve; }); }
         return answer(200, snapshot);
@@ -110,10 +113,10 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
         return;
       }
       if (url.pathname.endsWith("/agents/run/stream")) {
-        if (canonical && !empty) { if (secret || (native && !refusePrepare)) expect(prepared).toBe(true); expect(currentReads).toBeGreaterThan(0); }
+        if (canonical && !empty) { if (secret || (native && !unprepared)) expect(prepared).toBe(true); expect(currentReads).toBeGreaterThan(0); }
         if (secret) expect(body.expectedSecretProfileReceipt).toBe(privateReceipt);
-        else if (canonical && !empty && native && !refusePrepare) expect(body.expectedPublicProfileRevision).toEqual(publicRevision);
-        if (refusePrepare) { expect(body.expectedPublicProfileRevision).toBeUndefined(); expect(body.expectedPublicProfileRequestDigest).toBeUndefined(); }
+        else if (canonical && !empty && native && !unprepared) expect(body.expectedPublicProfileRevision).toEqual(publicRevision);
+        if (unprepared) { expect(body.expectedPublicProfileRevision).toBeUndefined(); expect(body.expectedPublicProfileRequestDigest).toBeUndefined(); }
         if (preparedBodies.length) expect(body.expectedPublicProfileRequestDigest).toBe(preparedBodies.at(-1)!.expectedPublicProfileRequestDigest);
         runs++;
         const executionId = String(request.headers["x-execution-id"]);
@@ -148,7 +151,9 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
   const provider = createTangleProvider({ client, modelCredentials: native ? { cliAuth: { account: "fixture-account", secretEnv: "NATIVE_BUNDLE", format: "bundle" as const } } : { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" } });
   const environment = await provider.create({ profile });
   faultsArmed = true;
-  const turn = (id: string) => ({ profile, prompt: "Return prepared", executionId: id, turnId: id,
+  // A worker's profile arrives with its turn: bulk mounted inputs the create-time profile never carried.
+  const bulky = { ...profile, resources: { failOnError: false, files: Array.from({ length: 5 }, (_, i) => ({ path: `inputs/part-${i}.txt`, resource: { kind: "inline" as const, name: `part-${i}.txt`, content: `${i}`.repeat(600_000) } })) } };
+  const turn = (id: string) => ({ profile: oversize ? bulky : profile, prompt: "Return prepared", executionId: id, turnId: id,
     ...(secret ? { providerOptions: { backend: { type: "codex", runtimeSecrets: { TURN_TOKEN: "fixture-turn-only" } } } } : {}) });
   return { environment, turn, paths, errors, preparedBodies, refusals: () => refusals, count: () => runs, reads: () => ({ currentReads, staleReads }),
     pause: () => { pausePreparation = true; }, preparationStarted, heldReadStarted, postAckRefresh, hold: () => { holdInfo = true; },
@@ -248,4 +253,11 @@ it("still fails a native canonical turn when preparation fails for another reaso
   const f = await fixture({ refusePrepare: "failed" });
   await expect(f.environment.dispatch!(f.turn("refused"))).rejects.toThrow(/produced no native plan/);
   expect(f.count()).toBe(0); expect(f.paths.some(path => path.endsWith("/agents/run/stream"))).toBe(false); expect(f.errors).toEqual([]);
+});
+
+it("launches an oversized native canonical profile unprepared, sending the gateway no request it would refuse", async () => {
+  const f = await fixture({ oversize: true });
+  await f.environment.dispatch!(f.turn("oversize"));
+  expect(f.count()).toBe(1); expect(f.refusals()).toBe(0); expect(f.preparedBodies).toEqual([]);
+  expect(f.paths.some(path => path.endsWith("/agents/sessions"))).toBe(false); expect(f.errors).toEqual([]);
 });
