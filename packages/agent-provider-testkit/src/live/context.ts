@@ -4,6 +4,7 @@ import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
   AgentEnvironmentProvider,
+  AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import { isEnvironmentProviderError } from "@tangle-network/agent-interface/environment-provider";
@@ -25,6 +26,19 @@ export interface LiveProfileConformanceOptions {
   model: string;
   /** Fields every probe create carries, for example `egress` or `resources`. */
   createInput?: Partial<CreateAgentEnvironmentInput>;
+  /**
+   * A turn that carries native CLI auth (a subscription credential the operator holds), for MOD-4.
+   * The probe creates an environment with `createInput` and streams one turn with `turn`, then fails the
+   * requirement if the turn dies on a sidecar's refusal to prepare its profile. `credentials` names what the
+   * fixture needs; one missing reports `no credential: <NAME>`. `createProvider` builds a provider configured
+   * for this shape when the main one is not.
+   */
+  nativeAuth?: {
+    credentials: readonly string[];
+    createProvider?(): AgentEnvironmentProvider | Promise<AgentEnvironmentProvider>;
+    createInput?: Partial<CreateAgentEnvironmentInput>;
+    turn?: Partial<AgentTurnInput>;
+  };
   /** The harness binary whose `--version` the pin must equal. Defaults by harness. */
   versionBinary?: string;
   /** `pgrep` arguments that match the harness process. Defaults by harness. */
@@ -51,7 +65,7 @@ export interface LiveContext {
   /** Which profile axes the behavioral probes proved, for checks that depend on them. */
   axes: Partial<Record<"system" | "mcp" | "hook" | "deny" | "subagent", boolean>>;
   /** Create an environment tagged with this run, tracked for cleanup. */
-  create(overrides?: Partial<CreateAgentEnvironmentInput>, caseName?: string): Promise<AgentEnvironment>;
+  create(overrides?: Partial<CreateAgentEnvironmentInput>, caseName?: string, target?: AgentEnvironmentProvider): Promise<AgentEnvironment>;
   /** Run a create that is expected to be refused; records the error and returns it, or undefined if it succeeded. */
   expectRefusal(overrides: Partial<CreateAgentEnvironmentInput>, caseName: string): Promise<{ refused: boolean; error?: unknown; environment?: AgentEnvironment }>;
   environments: AgentEnvironment[];

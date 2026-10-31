@@ -1,4 +1,4 @@
-import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
+import { isEnvironmentProviderError, type AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { deniedFile, hookLog, mcpLog, mcpServerPath, mcpServerSource, probeTasks } from "./probe-profile.js";
 import { errorSummary, namesField, type LiveContext } from "./context.js";
 import { eventSchemaIssues, finalText, observeTurn, servedModel, turnOutcome, type TurnObservation } from "./turns.js";
@@ -203,4 +203,30 @@ export async function checkSecrets(ctx: LiveContext, environment: AgentEnvironme
   rec.observe("SEC-1", Number(harnessSees.stdout.trim()) === nonces.canary.length + 1, "input.env canary reaches the default exec environment exactly");
   if (options.secretValues === undefined || options.secretValues.length === 0) rec.unproven("MOD-3", "no Router key value was supplied, so its absence from argv and files is not probed");
   else rec.observe("MOD-3", leaked.length === 0, "the Router key is absent from events, errors, metadata, files and command lines");
+}
+
+/** A sidecar that serves no public revision root refuses profile preparation with this text (Discovery's first-turn 409, 2026-10-31). */
+const PREPARATION_REFUSAL = /public profile (?:materialization|preparation) (?:is disabled|failed)/i;
+
+/**
+ * MOD-4: a native-credential turn launches, or is refused with a typed error. It never dies on the sidecar's
+ * refusal to prepare its profile, which the provider must treat as "launch without preparation".
+ */
+export async function checkNativeAuthLaunch(ctx: LiveContext, absent: string | undefined): Promise<void> {
+  const fixture = ctx.options.nativeAuth;
+  if (fixture === undefined) return ctx.rec.unproven("MOD-4", "no nativeAuth fixture supplied, so a native-credential launch is not probed");
+  if (absent !== undefined) return ctx.rec.unproven("MOD-4", `no credential: ${absent}`);
+  const target = await (fixture.createProvider ?? ctx.options.createProvider)();
+  let environment: AgentEnvironment;
+  try {
+    environment = await ctx.create(fixture.createInput, "native-auth", target);
+  } catch (error) {
+    const refused = PREPARATION_REFUSAL.test(errorSummary(error));
+    ctx.rec.observe("MOD-4", !refused && isEnvironmentProviderError(error), `native-auth create: ${errorSummary(error)}`);
+    return;
+  }
+  const turn = await observeTurn(environment, { prompt: "Reply with exactly OK.", sessionId: `${ctx.runTag}-native-auth`, timeoutMs: TURN_TIMEOUT_MS, ...fixture.turn });
+  const text = [turn.error === undefined ? "" : errorSummary(turn.error), ...turn.terminals.map((event) => JSON.stringify(event.data))].join(" ");
+  const refused = PREPARATION_REFUSAL.test(text);
+  ctx.rec.observe("MOD-4", !refused && turn.events.length > 0, refused ? "the native-credential turn died on the sidecar's refusal to prepare its profile" : turn.events.length > 0 ? `the native-credential turn launched (${turnOutcome(turn)})` : `the native-credential turn produced no event: ${errorSummary(turn.error)}`);
 }
