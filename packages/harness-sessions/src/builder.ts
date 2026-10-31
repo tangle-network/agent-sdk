@@ -83,12 +83,7 @@ export function servedModelKey(call: Pick<ModelCall, 'provider' | 'servedModel'>
   return call.provider === null ? call.servedModel : `${call.provider}/${call.servedModel}`
 }
 
-/**
- * Folds one session's records into a {@link HarnessSession}. Every format reader drives this
- * builder, and `read` and `summarize` share the same fold: in summary mode the builder keeps the
- * counts, the model calls and the ending, and drops message and tool-call content, so a 700 MB
- * rollout is summarized without holding its outputs.
- */
+/** Folds one session's records into a {@link HarnessSession}. Every format reader drives this builder, and `read` and `summarize` share the same fold: in summary mode the builder keeps the counts, the model calls and the ending, and drops message and tool-call content, so a 700 MB rollout is summarized without holding its outputs. */
 export class SessionBuilder {
   readonly full: boolean
   nativeSessionId: string
@@ -249,13 +244,7 @@ export class SessionBuilder {
     this.ending = ending
   }
 
-  /**
-   * The ending every format shares, from what the session holds when the records run out:
-   * `aborted` when the harness recorded an abort last; `error` when the last model call failed
-   * and no new input followed it; `completed` when the last model call succeeded, every tool call
-   * has its result and the agent spoke last; `open` otherwise (the turn was still running, or the
-   * process died mid-turn).
-   */
+  /** The ending every format shares, from what the session holds when the records run out: `aborted` when the harness recorded an abort last; `error` when the last model call failed and no new input followed it; `completed` when the last model call succeeded, every tool call has its result and the agent spoke last; `open` otherwise (the turn was still running, or the process died mid-turn). */
   inferEnding(aborted?: { at: string | null; error: SessionError | null }): void {
     if (aborted) {
       const error = aborted.error ?? this.modelCalls.at(-1)?.error ?? null

@@ -1,8 +1,4 @@
-/**
- * Which Claude Code `user` records a person typed and which the harness wrote. Claude Code stores
- * both as `type: "user"`; the markers below are the only difference. This is the one owner of the
- * rule, so every reader of a Claude Code transcript (traces, agent-eval) classifies turns alike.
- */
+/** Which Claude Code `user` records a person typed and which the harness wrote. Claude Code stores both as `type: "user"`; the markers below are the only difference. This is the one owner of the rule, so every reader of a Claude Code transcript (traces, agent-eval) classifies turns alike. */
 
 const MACHINE_TEXT_PREFIXES = [
   '<local-command-caveat>',

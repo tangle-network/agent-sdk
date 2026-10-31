@@ -124,11 +124,7 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
   }
 }
 
-/**
- * The file's path relative to the runtime HOME, which the store globs match. The sidecar's archive
- * stores payloads under flat member names (`path`) and names the HOME path in `storePath`; a
- * capture laid out like the HOME carries it in `path` itself.
- */
+/** The file's path relative to the runtime HOME, which the store globs match. The sidecar's archive stores payloads under flat member names (`path`) and names the HOME path in `storePath`; a capture laid out like the HOME carries it in `path` itself. */
 function storePathOf(file: NativeSessionCopy['files'][number]): string {
   return file.storePath ?? file.path
 }
@@ -224,10 +220,7 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
   }
 }
 
-/**
- * Every native session in a capture: from `manifest.nativeSessions` when a v2 manifest is given
- * (files relative to `dir`), otherwise from the retention layout under `dir`.
- */
+/** Every native session in a capture: from `manifest.nativeSessions` when a v2 manifest is given (files relative to `dir`), otherwise from the retention layout under `dir`. */
 export async function listCapture(
   dir: string,
   manifest?: RawEvidenceArchiveManifestV2 | null,
