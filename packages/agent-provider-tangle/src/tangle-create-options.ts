@@ -250,7 +250,7 @@ export function sandboxOptionsFromCreateInput(
     ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
     backend: {
       type: backend,
-      profile,
+      profile: profile as NonNullable<CreateSandboxOptions["backend"]>["profile"],
       ...(modelCredentials === undefined ? {} : {
         model: "cliAuth" in modelCredentials
           ? { cliAuth: modelCredentials.cliAuth, authMode: "oauth" as const } : { apiKeyEnv: modelCredentials.apiKeyEnv, baseUrl: modelCredentials.baseUrl },
