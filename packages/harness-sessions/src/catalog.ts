@@ -43,7 +43,7 @@ export const STORES = {
   'hermes.state-sqlite': store('hermes.state-sqlite', '.hermes', ['state.db', 'state.db-wal', 'state.db-shm'], 'sqlite-wal'),
   'prime.session-jsonl': store('prime.session-jsonl', '.prime-provider/prime-agent-dirs', ['**/sessions/*.jsonl']),
   'openclaw.session-jsonl': store('openclaw.session-jsonl', '.openclaw', ['agents/main/agent/openclaw-agent.sqlite', 'agents/main/agent/openclaw-agent.sqlite-wal', 'agents/main/agent/openclaw-agent.sqlite-shm'], 'sqlite-wal'),
-  'grok.acp-session-dir': store('grok.acp-session-dir', '.grok/sessions', ['*/{id}/updates.jsonl', '*/{id}/summary.json', '*/{id}/signals.json']),
+  'grok.acp-session-dir': store('grok.acp-session-dir', '.grok/sessions', ['*/{id}/updates.jsonl', '*/{id}/chat_history.jsonl', '*/{id}/summary.json', '*/{id}/signals.json']),
   'nanoclaw.session-sqlite': store('nanoclaw.session-sqlite', '.nanoclaw/data/v2-sessions', ['*/{id}/outbound.db', '*/{id}/inbound.db'], 'sqlite-wal', false),
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
 
