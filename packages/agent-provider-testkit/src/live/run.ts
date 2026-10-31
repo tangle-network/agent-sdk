@@ -5,7 +5,7 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import { checkCreateRefusals, checkProviderDocument, isTyped } from "./checks-capability.js";
 import { checkAbort, checkBusyEnvironment, checkConcurrency, checkCreateFailures, checkDestroyMidTurn, checkExecCancel, checkTimeout } from "./checks-control.js";
-import { checkBoot, checkPlanBytes, checkRepository, checkTeardown, checkWorkspaceIo, sweepLeaks } from "./checks-environment.js";
+import { checkBoot, checkLargeProfile, checkPlanBytes, checkRepository, checkTeardown, checkWorkspaceIo, sweepLeaks } from "./checks-environment.js";
 import { checkAxes, checkContinuation, checkNativeAuthLaunch, checkSecrets, checkTranscriptStore, checkTurnRefusals } from "./checks-turns.js";
 import { DEFAULT_REPOSITORY, newRunTag, RUN_TAG_KEY, type LiveContext, type LiveProfileConformanceOptions } from "./context.js";
 import { freshNonces, probeProfile } from "./probe-profile.js";
@@ -113,6 +113,7 @@ export async function runLiveProfileConformance(options: LiveProfileConformanceO
     }
     await stage("refusals", () => checkCreateRefusals(ctx));
     await stage("repository", () => checkRepository(ctx, options.repository ?? DEFAULT_REPOSITORY));
+    await stage("large profile", () => checkLargeProfile(ctx));
     await stage("native auth", () => checkNativeAuthLaunch(ctx, missingCredential({ credentials: options.nativeAuth?.credentials ?? [], env: options.env })));
     await stage("create failures", () => checkCreateFailures(ctx));
     await stage("destroy mid-turn", () => checkDestroyMidTurn(ctx));

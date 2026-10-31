@@ -1,9 +1,11 @@
+import { createHash, randomBytes } from "node:crypto";
 import { NATIVE_SESSION_CONTRACTS } from "@tangle-network/cli-agent-registry/native-session-contracts";
 import { materializeProfile } from "@tangle-network/agent-profile-materialize";
+import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { errorSummary, listRun, until, versionBinary, type LiveContext } from "./context.js";
 import { checkExposure } from "./checks-capability.js";
-import { describeError } from "./turns.js";
+import { describeError, observeTurn, turnOutcome } from "./turns.js";
 
 /** P1: CRT-1, CRT-3, CRT-7, CRT-8, MAT-2, SEC-1. */
 export async function checkBoot(ctx: LiveContext, environment: AgentEnvironment): Promise<void> {
@@ -182,5 +184,44 @@ export async function sweepLeaks(ctx: LiveContext): Promise<void> {
   for (const entry of survivors) {
     const environment = await ctx.provider.get?.(entry.id).catch(() => null);
     await environment?.destroy?.().catch(() => undefined);
+  }
+}
+
+/**
+ * MAT-5: a profile carrying over 2 MiB of files, past any single-request bound a gateway sets, reaches the
+ * sandbox byte-exact and runs a turn, both when the environment is created with it and when a later turn
+ * carries it (a worker's profile arrives with its first turn). A provider that refuses a turn profile
+ * differing from the create profile (MAT-8) is not asked for the second half.
+ */
+export async function checkLargeProfile(ctx: LiveContext): Promise<void> {
+  const { rec, runTag, options } = ctx;
+  const files = Array.from({ length: 3 }, (_, i) => ({ name: `big-${runTag}-${i}.txt`, content: randomBytes(400_000).toString("hex") }));
+  const profile: AgentProfile = { name: `${runTag}-large`, harness: options.harness, model: { default: options.model },
+    resources: { files: files.map((file) => ({ path: `inputs/${file.name}`, resource: { kind: "inline" as const, name: file.name, content: file.content } })) } };
+  const total = files.reduce((sum, file) => sum + file.content.length, 0);
+  const verify = async (environment: AgentEnvironment, where: string): Promise<void> => {
+    for (const file of files) {
+      const found = await environment.exec?.(`sha256sum "$(find "$HOME" -maxdepth 4 -name '${file.name}' | head -1)" 2>&1`);
+      const exact = found?.stdout.trim().split(/\s+/)[0] === createHash("sha256").update(file.content).digest("hex");
+      rec.observe("MAT-5", exact, exact ? `${where}: ${file.name} is byte-exact` : `${where}: ${file.name} is absent or differs: ${found?.stdout.trim().slice(0, 100)}`);
+    }
+  };
+  const turnInput = (id: string) => ({ prompt: "Reply with exactly OK.", sessionId: `${runTag}-${id}`, timeoutMs: 240_000 });
+  try {
+    const environment = await ctx.create({ profile }, "large-create");
+    const turn = await observeTurn(environment, turnInput("large-create"));
+    rec.observe("MAT-5", turnOutcome(turn) === "completed", `${total} bytes of files at create: turn ${turn.error === undefined ? turnOutcome(turn) : errorSummary(turn.error)}`);
+    await verify(environment, "at create");
+  } catch (error) {
+    rec.fail("MAT-5", `${total} bytes of files at create: ${errorSummary(error)}`);
+  }
+  try {
+    const environment = await ctx.create({}, "large-turn");
+    const turn = await observeTurn(environment, { ...turnInput("large-turn"), profile });
+    if (turn.error !== undefined && turn.events.length === 0) return rec.pass("MAT-5", `a turn carrying ${total} bytes of files is refused before any event, as MAT-8 requires: ${errorSummary(turn.error)}`);
+    rec.observe("MAT-5", turnOutcome(turn) === "completed", `${total} bytes of files carried by a turn: ${turn.error === undefined ? turnOutcome(turn) : errorSummary(turn.error)}`);
+    await verify(environment, "carried by a turn");
+  } catch (error) {
+    rec.fail("MAT-5", `${total} bytes of files carried by a turn: ${errorSummary(error)}`);
   }
 }
