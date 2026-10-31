@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.11.0
+
+### Minor Changes
+
+- c353fbe: Recognize grok as a harness and read its session directory.
+
 ## 5.10.10
 
 ### Patch Changes
