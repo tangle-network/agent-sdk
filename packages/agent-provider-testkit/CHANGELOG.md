@@ -1,15 +1,12 @@
 # @tangle-network/agent-provider-testkit
 
-## 0.13.0
-
-### Minor Changes
-
-- 92c7514: Add `runLiveProfileConformance`, which runs the requirements of SPEC.md against a real provider with a real profile (harness, model, system prompt, MCP server, hook, denied tool, subagent, mounted files) and reports every requirement id as pass, fail, skip or unproven. A missing credential skips the run with `no credential: <NAME>`; it never reports a pass. Remove the kit's own fake-backed tests.
+## 0.12.2
 
 ### Patch Changes
 
+- 92c7514: Add `runLiveProfileConformance`, which runs the requirements of SPEC.md against a real provider with a real profile (harness, model, system prompt, MCP server, hook, denied tool, subagent, mounted files) and reports every requirement id as pass, fail, skip or unproven. A missing credential skips the run with `no credential: <NAME>`; it never reports a pass. Remove the kit's own fake-backed tests.
 - Updated dependencies [92c7514]
-  - @tangle-network/agent-interface@5.11.0
+  - @tangle-network/agent-interface@5.10.12
 
 ## 0.12.1
 
