@@ -55,13 +55,12 @@ export function formatSeatSpec(seat: Pick<SeatSpec, "harness" | "model" | "reaso
  * Vendor locks, before the measured {@link harnessModelExclusions}. Absent means router-backed.
  * Claude Code and Codex run any Router model: their native vendor wire passes through for vendor
  * models and translates others to chat completions (including images/tools; hosted tools drop).
- * A caller's vendor key/login remains vendor-limited; this table does not know credentials.
- * NanoClaw also routes every provider through the Router, so it has no Anthropic lock.
- * {@link vendorHarness} chooses a default harness; it is not a provider restriction.
+ * Kimi Code on a managed box writes an `openai_legacy` provider that sends chat completions to the
+ * Router, so it runs any Router model too. A caller's vendor key/login remains vendor-limited;
+ * this table does not know credentials. {@link vendorHarness} chooses a default harness; it is not
+ * a provider restriction.
  */
-const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {
-  "kimi-code": ["moonshot"],
-};
+const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {};
 
 /**
  * The harness that natively speaks a vendor's models. A model of that vendor adopts it when the
@@ -292,27 +291,11 @@ export function preferredHarnessForModel(modelId: string): HarnessType | null {
 // ── Harness ↔ model snapping (catalog-aware) ─────────────────────────────────
 
 /**
- * Per-harness ranking patterns for {@link snapModelToHarness}, best first; within one pattern the
- * highest version wins (numeric-aware). Only vendor-locked harnesses need an entry — a router-backed
- * harness never snaps (it runs the model as-is).
- */
-const harnessPreferredModelPatterns: Partial<
-  Record<HarnessType, readonly RegExp[]>
-> = {
-  "kimi-code": [/^moonshot\//],
-};
-
-const numericDesc = new Intl.Collator(undefined, {
-  numeric: true,
-  sensitivity: "base",
-});
-
-/**
- * Keep `modelId` when the harness can run it; otherwise return the harness's best compatible id from
- * `candidateIds` (preferred patterns in order, highest version within a pattern). When nothing in the
- * candidate list fits, the original id is returned unchanged so the caller sees the incompatibility
- * instead of a silent wrong substitution. `candidateIds` are canonical ("provider/model") ids — the
- * caller maps its own catalog shape down to ids, keeping this layer catalog-agnostic.
+ * Keep `modelId` when the harness can run it; otherwise return the first compatible id in
+ * `candidateIds`. When nothing in the candidate list fits, the original id is returned unchanged
+ * so the caller sees the incompatibility instead of a silent wrong substitution. `candidateIds` are
+ * canonical ("provider/model") ids — the caller maps its own catalog shape down to ids, keeping
+ * this layer catalog-agnostic.
  */
 export function snapModelToHarness(
   harness: HarnessType,
@@ -320,13 +303,6 @@ export function snapModelToHarness(
   candidateIds: readonly string[],
 ): string {
   if (harnessSupportsModel(harness, modelId)) return modelId;
-  const patterns = harnessPreferredModelPatterns[harness] ?? [];
-  for (const pattern of patterns) {
-    const matches = candidateIds
-      .filter((id) => pattern.test(id))
-      .sort((a, b) => numericDesc.compare(b, a));
-    if (matches.length > 0) return matches[0]!;
-  }
   return candidateIds.find((id) => harnessSupportsModel(harness, id)) ?? modelId;
 }
 

@@ -39,15 +39,10 @@ describe("modelProvider", () => {
 });
 
 describe("harness ↔ model compatibility", () => {
-  it("kimi-code accepts only its provider; every other harness accepts any", () => {
-    expect(harnessSupportsModel("kimi-code", "moonshot/kimi-k2")).toBe(true);
-    expect(harnessSupportsModel("kimi-code", "openai/gpt-5")).toBe(false);
-    expect(harnessSupportsModel("opencode", "openai/gpt-5")).toBe(true);
-  });
-
-  it("claude-code and codex run any router-served model, not only their vendor's", () => {
-    // The Router translates every non-vendor model on the Messages and Responses wires to chat completions.
-    for (const harness of ["claude-code", "codex"] as const) {
+  it("claude-code, codex and kimi-code run any router-served model, not only their vendor's", () => {
+    // The Router translates every non-vendor model on the Messages and Responses wires to chat
+    // completions; managed Kimi Code speaks chat completions to it.
+    for (const harness of ["claude-code", "codex", "kimi-code"] as const) {
       expect(harnessProviders(harness)).toBeNull();
       for (const model of [
         "anthropic/claude-sonnet-4-6",
@@ -105,24 +100,7 @@ describe("harness ↔ model compatibility", () => {
     expect(resolveModelProvider("glm-5.3")).toBe("zai");
     expect(resolveModelProvider("gemini-2.5-flash-lite")).toBe("google");
     expect(resolveModelProvider("default")).toBeNull();
-    expect(harnessSupportsModel("kimi-code", "kimi-k3")).toBe(true);
-    expect(harnessSupportsModel("kimi-code", "glm-5.3")).toBe(false);
-    expect(harnessSupportsModel("kimi-code", "gemini-2.5-flash-lite")).toBe(false);
     expect(preferredHarnessForModel("claude-sonnet-5-5")).toBe("claude-code");
-  });
-
-  it("a provider-lock refusal names the harness, the model and the providers it accepts", () => {
-    const support = harnessModelSupport("kimi-code", "glm-5.3");
-    expect(support).toMatchObject({
-      supported: false,
-      model: "zai/glm-5.3",
-      provider: "zai",
-      allowedProviders: ["moonshot"],
-    });
-    expect(support.supported === false && support.message).toBe(
-      "Harness kimi-code runs only moonshot models, not zai/glm-5.3 (provider zai). " +
-        "Choose a model whose id starts with moonshot/, or a harness that runs zai models, such as opencode.",
-    );
   });
 });
 
@@ -194,10 +172,6 @@ describe("measured harness × model exclusions", () => {
 });
 
 describe("snapModelToHarness", () => {
-  it("snaps an incompatible model to the harness's best catalog id", () => {
-    expect(snapModelToHarness("kimi-code", "openai/gpt-5", CATALOG)).toBe("moonshot/kimi-k2");
-  });
-
   it("leaves an already-compatible model unchanged, so a caller's model is never replaced", () => {
     // claude-code and codex run every router-served model; neither snaps to its own vendor.
     expect(snapModelToHarness("claude-code", "openai/gpt-5", CATALOG)).toBe("openai/gpt-5");
@@ -207,31 +181,22 @@ describe("snapModelToHarness", () => {
     expect(snapModelToHarness("claude-code", "zai/glm-4.7", CATALOG)).toBe("zai/glm-4.7");
     expect(snapModelToHarness("opencode", "openai/gpt-5", CATALOG)).toBe("openai/gpt-5");
     expect(snapModelToHarness("nanoclaw", "openai/gpt-5", CATALOG)).toBe("openai/gpt-5");
-  });
-
-  it("returns the original id when the catalog holds nothing compatible", () => {
-    expect(snapModelToHarness("kimi-code", "openai/gpt-5", ["openai/gpt-5", "zai/glm-4.7"])).toBe(
-      "openai/gpt-5",
-    );
+    expect(snapModelToHarness("kimi-code", "zai/glm-5.3", CATALOG)).toBe("zai/glm-5.3");
   });
 });
 
 describe("snapHarnessToModel", () => {
-  it("adopts the model's native harness when the current one can't run it", () => {
-    expect(snapHarnessToModel("kimi-code", "openai/gpt-5")).toBe("codex");
-    expect(snapHarnessToModel("kimi-code", "anthropic/claude-opus-4-6")).toBe("claude-code");
-  });
-
   it("keeps the harness when it already runs the model", () => {
     expect(snapHarnessToModel("claude-code", "anthropic/claude-opus-4-6")).toBe("claude-code");
     expect(snapHarnessToModel("claude-code", "openai/gpt-5")).toBe("claude-code");
     expect(snapHarnessToModel("codex", "zai/glm-4.7")).toBe("codex");
     expect(snapHarnessToModel("claude-code", "moonshot/kimi-k2")).toBe("claude-code");
     expect(snapHarnessToModel("nanoclaw", "openai/gpt-5")).toBe("nanoclaw");
+    expect(snapHarnessToModel("kimi-code", "zai/glm-4.7")).toBe("kimi-code");
   });
 
-  it("falls back to opencode for a provider with no native harness", () => {
-    expect(snapHarnessToModel("kimi-code", "zai/glm-4.7")).toBe("opencode");
+  it("falls back to opencode for a measured exclusion whose provider has no native harness", () => {
+    expect(snapHarnessToModel("pi", "google/gemini-3.8-flash")).toBe("opencode");
   });
 });
 
