@@ -39,7 +39,7 @@ function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, model:
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
   let opened = false
   const observe = (record: Record<string, unknown>): void => {
-    const update = isRecord(record.update) ? record.update : record
+    const update = isRecord(record.params) && isRecord(record.params.update) ? record.params.update : isRecord(record.update) ? record.update : record
     const kind = str(update.sessionUpdate)
     if (!kind) return
     const at = builder.seen(update.timestamp ?? record.timestamp)
