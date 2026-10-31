@@ -281,7 +281,7 @@ function exactSandboxOptions(
         ? { mode: "blocked" }
         : {
             mode: "strict",
-            allowDomains: [...input.egress.allowDomains],
+            allowDomains: input.egress.allowDomains.map((e) => typeof e === "string" ? e : { ...e, allowPrivateIps: [...e.allowPrivateIps] }),
             includeImplicitDomains: false,
           },
     maxLifetimeSeconds: input.maxLifetimeMs / 1_000,
