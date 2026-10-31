@@ -55,7 +55,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
     const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
     if (entry.type === 'session') {
-      if (typeof entry.id === 'string') builder.nativeSessionId = entry.id
+      if (typeof entry.id === 'string' && harness !== 'prime') builder.nativeSessionId = entry.id
       builder.cwd = str(entry.cwd)
       previousId = null
       return
