@@ -18,6 +18,17 @@ function textBlocks(value: unknown): string {
   return isRecord(value) ? str(value.text) ?? textBlocks(value.content) : ''
 }
 
+function toolText(update: Record<string, unknown>): string | null {
+  const fromContent = textBlocks(update.content)
+  if (fromContent) return fromContent
+  const raw = update.rawOutput
+  if (typeof raw === 'string') return raw
+  if (isRecord(raw) && typeof raw.output_for_prompt === 'string' && raw.output_for_prompt) return raw.output_for_prompt
+  if (isRecord(raw) && Array.isArray(raw.output) && raw.output.every((byte) => typeof byte === 'number' && byte >= 0 && byte <= 255))
+    return Buffer.from(raw.output).toString('utf8')
+  return textOf(raw)
+}
+
 function usageOf(value: unknown): TokenUsage | null {
   if (!isRecord(value)) return null
   const bag = isRecord(value.usage) ? value.usage : isRecord(value.session) ? value.session : value
@@ -37,7 +48,8 @@ async function readJson(path: string): Promise<unknown> {
 
 function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, model: string | null, usage: TokenUsage | null): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
-  let opened = false
+  let modelCalls = 0
+  let modelCallId = callId(ref.nativeSessionId)
   const observe = (record: Record<string, unknown>): void => {
     const update = isRecord(record.params) && isRecord(record.params.update) ? record.params.update : isRecord(record.update) ? record.update : record
     const kind = str(update.sessionUpdate)
@@ -50,20 +62,24 @@ function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, model:
       return
     }
     if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
-      if (!opened) builder.modelCall({ id: callId(builder.nativeSessionId), at, provider: null, servedModel: model, requestedModel: model, usage, costUsd: null, stopReason: null, error: null })
-      opened = true
+      if (kind === 'agent_message_chunk' || modelCalls === 0) {
+        modelCallId = `${callId(ref.nativeSessionId)}:${modelCalls}`
+        builder.modelCall({ id: modelCallId, at, provider: null, servedModel: model, requestedModel: model, usage: modelCalls === 0 ? usage : null, costUsd: null, stopReason: null, error: null })
+        modelCalls += 1
+      }
       const text = textBlocks(update.content)
       const parts: Part[] = kind === 'agent_thought_chunk' ? [{ type: 'reasoning', text, redacted: text.length === 0 }] : [{ type: 'text', text }]
-      if (text || kind === 'agent_thought_chunk') builder.message({ id, role: 'assistant', actor: 'agent', at, modelCallId: callId(builder.nativeSessionId), parts })
+      if (text || kind === 'agent_thought_chunk') builder.message({ id, role: 'assistant', actor: 'agent', at, modelCallId, parts })
       return
     }
     if (kind === 'tool_call' && typeof update.toolCallId === 'string') {
       builder.toolCall({ id: update.toolCallId, name: str(update.title) ?? str(update.kind) ?? 'unknown', input: update.rawInput ?? null, inputText: null, at, messageId: id })
-      builder.message({ id, role: 'assistant', actor: 'agent', at, modelCallId: callId(builder.nativeSessionId), parts: [{ type: 'tool-call', toolCallId: update.toolCallId }] })
+      builder.message({ id, role: 'assistant', actor: 'agent', at, modelCallId, parts: [{ type: 'tool-call', toolCallId: update.toolCallId }] })
       return
     }
     if (kind === 'tool_call_update' && typeof update.toolCallId === 'string') {
-      builder.toolResult(update.toolCallId, { output: update.rawOutput ?? update.content ?? null, text: textOf(update.rawOutput ?? update.content), isError: update.status === 'failed', at, messageId: `${id}:tool` })
+      const text = toolText(update)
+      builder.toolResult(update.toolCallId, { output: update.rawOutput ?? update.content ?? null, text, isError: update.status === 'failed', at, messageId: `${id}:tool` })
       builder.message({ id: `${id}:tool`, role: 'tool', actor: 'tool-result', at, modelCallId: null, parts: [{ type: 'tool-result', toolCallId: update.toolCallId }] })
     }
   }

@@ -47,12 +47,7 @@ export class SessionParseError extends Error {
 
 const NEWLINE = 0x0a
 
-/**
- * Streams the JSON records of one append-only JSONL file. Each record is parsed and yielded in
- * order; the whole file is hashed as it is read. An unparsable line is counted (or thrown in
- * strict mode). A final line without a newline that does not parse is a record the harness was
- * still writing when the copy was taken, so it is reported as a torn tail rather than corruption.
- */
+/** Stream one JSONL file in order and hash it. Unparsable lines count, or throw in strict mode. A torn tail is an unfinished last line, not corruption. */
 export async function* readJsonlRecords(
   path: string,
   stats: SourceStats,
@@ -150,10 +145,7 @@ export function memoryStats(label: string, text?: string): SourceStats {
   return { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
 }
 
-/**
- * The records of JSONL text already in memory (a retained copy, a blob), read synchronously.
- * `firstLine` numbers the text's first line, for text that continues a longer file.
- */
+/** JSONL text already in memory. `firstLine` numbers its first line when the text continues a longer file. */
 export function* textRecordsSync(text: string, stats: SourceStats, options: { strict?: boolean; firstLine?: number } = {}): Generator<Record<string, unknown>> {
   const lines = text.split('\n')
   const first = options.firstLine ?? 1
@@ -213,14 +205,7 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Open a SQLite store read-only where it lies. A store with a write-ahead log beside it is opened
- * `mode=ro`: SQLite reads the log's committed tail and coordinates with a live writer through the
- * store's shared-memory index (`-shm`), and never writes the store or its log or checkpoints it. A
- * store without a log is opened `immutable=1`: no connection holds it open, the file holds every
- * committed row, and SQLite creates no `-wal` or `-shm` beside it. Throws when SQLite cannot read
- * the store in place.
- */
+/** Open a SQLite store read-only in place. A WAL uses `mode=ro` (committed tail, coordinates through `-shm`, never writes or checkpoints). No log uses `immutable=1` (no live connection, no new `-wal`/`-shm`). Throws when SQLite cannot read it there. */
 async function openSqlite(path: string): Promise<DatabaseSync> {
   const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
   const { DatabaseSync } = loadSqlite()
@@ -243,12 +228,7 @@ function cannotOpen(error: unknown): boolean {
   return typeof code === 'number' && (code & 0xff) === 14
 }
 
-/**
- * Run `use` against a SQLite store opened read-only in place ({@link openSqlite}). A store SQLite
- * cannot open in place is read from a private copy instead: a write-ahead log with no `-shm` in a
- * directory SQLite cannot write (a capture on read-only storage), or a Node whose `node:sqlite`
- * does not accept URI file names (before 22.15).
- */
+/** Run `use` on a store opened read-only in place. If SQLite cannot, read a private copy: a WAL with no `-shm` on read-only storage, or Node before 22.15 without URI file names. */
 export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
   // SQLite follows a symlinked store to its target and keeps the log there, so the log is looked
   // for there too. A missing store throws ENOENT here, which callers read as "no sessions".
@@ -302,11 +282,7 @@ async function storeKey(path: string): Promise<string> {
   return `${path}|${parts.join('|')}`
 }
 
-/**
- * Run `use` against a private copy of a SQLite store: the store and its `-wal` and `-shm` siblings
- * are copied and only the copy is opened, writable, so SQLite replays the copied log into it. `use`
- * is synchronous so no other read can replace the copy while it runs.
- */
+/** Run `use` on a private copy of the store and its `-wal`/`-shm`, opened writable so SQLite replays the log. `use` is synchronous. */
 async function withSqliteCopy<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
   const key = await storeKey(path)
   if (current?.key !== key) {
