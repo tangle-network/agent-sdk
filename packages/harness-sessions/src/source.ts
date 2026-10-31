@@ -7,17 +7,13 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 
-/** What one source file contributed to a read: its identity and what could not be parsed. */
 export interface SourceStats {
   path: string
   sha256: string
   bytes: number
   unparsed: number
-  /** The file ended without a newline and its last bytes were not a complete record. */
   tornTail: boolean
-  /** The line number (1-based) of the record most recently yielded. */
   line: number
-  /** Line numbers of the first unparsable lines (at most 50), for the gaps a reader reports. */
   unparsedLines?: number[]
 }
 
@@ -28,7 +24,6 @@ function noteUnparsed(stats: SourceStats, line: number): void {
   if (stats.unparsedLines.length < MAX_UNPARSED_LINES) stats.unparsedLines.push(line)
 }
 
-/** Records to fold, with the stats of the bytes they came from. */
 export interface RecordSource {
   stats: SourceStats
   records: AsyncIterable<Record<string, unknown>>
@@ -47,7 +42,6 @@ export class SessionParseError extends Error {
 
 const NEWLINE = 0x0a
 
-/** Stream one JSONL file in order and hash it. Unparsable lines count, or throw in strict mode. A torn tail is an unfinished last line, not corruption. */
 export async function* readJsonlRecords(
   path: string,
   stats: SourceStats,
@@ -132,20 +126,17 @@ export function newSourceStats(path: string): SourceStats {
   return { path, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
 }
 
-/** The records of a JSONL file, streamed. */
 export function fileRecords(path: string, options: { strict?: boolean; signal?: AbortSignal } = {}): RecordSource {
   const stats = newSourceStats(path)
   return { stats, records: readJsonlRecords(path, stats, options) }
 }
 
-/** Stats for bytes already in memory. */
 export function memoryStats(label: string, text?: string): SourceStats {
   if (text === undefined) return { path: label, sha256: '', bytes: 0, unparsed: 0, tornTail: false, line: 0 }
   const bytes = Buffer.from(text, 'utf8')
   return { path: label, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes: bytes.length, unparsed: 0, tornTail: false, line: 0 }
 }
 
-/** JSONL text already in memory. `firstLine` numbers its first line when the text continues a longer file. */
 export function* textRecordsSync(text: string, stats: SourceStats, options: { strict?: boolean; firstLine?: number } = {}): Generator<Record<string, unknown>> {
   const lines = text.split('\n')
   const first = options.firstLine ?? 1
@@ -175,7 +166,6 @@ export function* textRecordsSync(text: string, stats: SourceStats, options: { st
   }
 }
 
-/** Records a caller already parsed (one per line, in order, the first on line `firstLine`). Non-objects count as unparsed. */
 export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats, firstLine = 1): Generator<Record<string, unknown>> {
   for (const [position, value] of values.entries()) {
     const index = firstLine - 1 + position
@@ -188,8 +178,6 @@ export function* arrayRecordsSync(values: readonly unknown[], stats: SourceStats
   }
 }
 
-// `node:sqlite` is loaded through `createRequire`: bundlers rewrite a dynamic `import()` of a
-// `node:` builtin under some targets, and a require obtained this way is not analyzable by them.
 function loadSqlite(): typeof import('node:sqlite') {
   const nodeRequire = createRequire(import.meta.url)
   return nodeRequire('node:sqlite') as typeof import('node:sqlite')
@@ -205,15 +193,12 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** Open a SQLite store read-only in place. A WAL uses `mode=ro` (committed tail, coordinates through `-shm`, never writes or checkpoints). No log uses `immutable=1` (no live connection, no new `-wal`/`-shm`). Throws when SQLite cannot read it there. */
 async function openSqlite(path: string): Promise<DatabaseSync> {
   const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
   const { DatabaseSync } = loadSqlite()
-  // `readOnly` as well: a Node that treated the URI as a file name would fail to open, not create it.
   const db = new DatabaseSync(`${pathToFileURL(path).href}?${mode}`, { readOnly: true })
   try {
     db.exec('PRAGMA busy_timeout = 5000')
-    // The first read opens the log and its index, so a store SQLite cannot read in place fails here.
     db.prepare('PRAGMA schema_version').get()
     return db
   } catch (error) {
@@ -222,16 +207,12 @@ async function openSqlite(path: string): Promise<DatabaseSync> {
   }
 }
 
-/** SQLite's primary result code `SQLITE_CANTOPEN`, which `node:sqlite` errors carry in `errcode`. */
 function cannotOpen(error: unknown): boolean {
   const code = (error as { errcode?: unknown } | undefined)?.errcode
   return typeof code === 'number' && (code & 0xff) === 14
 }
 
-/** Run `use` on a store opened read-only in place. If SQLite cannot, read a private copy: a WAL with no `-shm` on read-only storage, or Node before 22.15 without URI file names. */
 export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
-  // SQLite follows a symlinked store to its target and keeps the log there, so the log is looked
-  // for there too. A missing store throws ENOENT here, which callers read as "no sessions".
   const store = await realpath(path)
   const db = await openSqlite(store).catch((error: unknown) => {
     if (cannotOpen(error)) return null
@@ -251,9 +232,6 @@ interface StoreCopy {
   db: DatabaseSync
 }
 
-// One private copy is kept per process: reading every session of a store SQLite cannot open in
-// place copies it once, not once per session. It is replaced when a different store, or a store
-// that changed, is read, and removed when the process exits.
 let current: StoreCopy | null = null
 
 function dropCopy(): void {
@@ -261,7 +239,6 @@ function dropCopy(): void {
   try {
     current.db.close()
   } catch {
-    // already closed
   }
   rmSync(current.dir, { recursive: true, force: true })
   current = null
@@ -282,7 +259,6 @@ async function storeKey(path: string): Promise<string> {
   return `${path}|${parts.join('|')}`
 }
 
-/** Run `use` on a private copy of the store and its `-wal`/`-shm`, opened writable so SQLite replays the log. `use` is synchronous. */
 async function withSqliteCopy<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
   const key = await storeKey(path)
   if (current?.key !== key) {

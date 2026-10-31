@@ -1,6 +1,5 @@
 import type { HarnessSession, SessionMessage } from '../schema.js'
 
-/** agent-eval's chat-with-tools message (`src/rollout/schema.ts`), declared here structurally. */
 export interface ChatToolCall {
   id: string
   type: 'function'
@@ -18,9 +17,7 @@ export interface ChatMessage {
 }
 
 export interface ChatProjectionOptions {
-  /** Keep messages the harness injected (environment context, instructions). Default true. */
   injected?: boolean
-  /** Keep `system` messages. Default true. */
   system?: boolean
 }
 
@@ -39,7 +36,6 @@ function resultContent(output: unknown, text: string | null): string {
   return JSON.stringify(output)
 }
 
-/** The session as chat-with-tools messages: each assistant message carries its text, reasoning and tool calls; each tool result is a `tool` message answering its call. Content is complete; a projection that needs less trims it itself. */
 export function toChatMessages(session: HarnessSession, options: ChatProjectionOptions = {}): ChatMessage[] {
   const keepInjected = options.injected !== false
   const keepSystem = options.system !== false

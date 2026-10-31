@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Factory Droid sessions: jsonl transcript plus a sibling settings file (model and token totals). */
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
@@ -83,7 +82,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
 
   const finish = (): SessionBuilder => {
     builder.source(stats)
-    // Factory records only the session's token totals, in its settings file.
     if (settings.usage !== null) builder.setSessionUsage(settings.usage)
     builder.inferEnding()
     return builder
@@ -125,7 +123,6 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   const filtered: SessionRef[] = []
   for (const ref of refs) {
     if (opts.cwd) {
-      // The directory name encodes the cwd with `/` as `-`; the session_start line holds it exactly.
       const head = await headRecord(ref.path, (r) => r.type === 'session_start', 1)
       const cwd = head ? str(head.cwd) : null
       ref.cwd = cwd

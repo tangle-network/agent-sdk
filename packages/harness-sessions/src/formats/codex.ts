@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Codex rollout jsonl. turn_context is the configured model. total_token_usage is the session total. */
 import { basename } from 'node:path'
 import {
   SessionBuilder,
@@ -24,7 +23,6 @@ const STORE = STORES[FORMAT]
 const HARNESS = 'codex'
 const ID_IN_NAME = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u
 
-/** Codex counts cached tokens inside `input_tokens`; the normalized input excludes them. */
 function usageOf(value: unknown): TokenUsage | null {
   if (!isRecord(value)) return null
   const input = count(value.input_tokens)
@@ -51,7 +49,6 @@ function addTotals(a: TokenUsage | null, b: TokenUsage | null): TokenUsage | nul
   return { input: sum(a.input, b.input), output: sum(a.output, b.output), reasoning: sum(a.reasoning, b.reasoning), cacheRead: sum(a.cacheRead, b.cacheRead), cacheWrite: sum(a.cacheWrite, b.cacheWrite) }
 }
 
-// Text the harness puts in a user-role message: environment context, instructions, shell output.
 const INJECTED_USER_TEXT = /^\s*(?:<[a-z_]+(?:\s[^>]*)?>|# AGENTS\.md instructions)/u
 
 function contentParts(content: unknown): Part[] {
@@ -68,9 +65,6 @@ function contentParts(content: unknown): Part[] {
   return parts
 }
 
-// `exec_command` and `write_stdin` answer with a text header (`Chunk ID`, `Wall time`, then
-// `Process exited with code N` once the process is done) before `Output:`; a still-running process
-// says `Process running with session ID` instead and has no status yet.
 const PROCESS_EXIT = /^Process exited with code (-?\d+)\s*$/mu
 
 function processFailed(text: string): boolean {
@@ -79,7 +73,6 @@ function processFailed(text: string): boolean {
   return match !== null && Number(match[1]) !== 0
 }
 
-/** A nonzero numeric `exit_code` anywhere in a parsed JSON value (code-mode tool results nest it). */
 function jsonExitFailed(value: unknown, depth = 0): boolean {
   if (depth > 4) return false
   if (Array.isArray(value)) return value.some((v) => jsonExitFailed(v, depth + 1))
@@ -88,10 +81,6 @@ function jsonExitFailed(value: unknown, depth = 0): boolean {
   return Object.values(value).some((v) => jsonExitFailed(v, depth + 1))
 }
 
-/**
- * Code mode runs JavaScript in an `exec` call; its `tools.exec_command(...)` results are printed
- * as JSON items carrying `exit_code`. The first item is `Script failed` when the script threw.
- */
 function codeModeFailed(output: unknown): boolean {
   if (!Array.isArray(output)) return false
   return output.some((item, i) => {
@@ -135,9 +124,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let aborted: { at: string | null; reason: string } | null = null
   let sawMeta = false
   let compacted = 0
-  // A forked rollout replays the parent's history after the parent's own session_meta; that
-  // history is copied context, not this session's turns. It ends at this session's first turn,
-  // whose (time-ordered, UUIDv7) turn id sorts at or after the session id.
   let forked = false
   let inherited = false
   let inheritedRecords = 0
@@ -205,7 +191,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       case 'response_item': {
         const kind = str(payload.type) ?? ''
         if (kind === 'agent_message') {
-          // A message from another agent of the same run (a task or a reply); input to this thread.
           open = null
           builder.message({ id: str(payload.id) ?? `${builder.nativeSessionId}:${stats.line}`, role: 'user', actor: 'subagent-spawn', at, modelCallId: null, parts: contentParts(payload.content) })
         } else if (kind === 'message') {
@@ -235,7 +220,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
           assistantMessage(at, call, [{ type: 'tool-call', toolCallId: callId }])
           tools.set(callId, { name, input: typeof raw === 'string' ? raw : '' })
           builder.toolCall({ id: callId, name, ...argumentsOf(raw), at, messageId: openMessage! })
-          // A web search is answered inside the response; there is no output item.
           if (kind === 'web_search_call') builder.toolResult(callId, { output: payload.action ?? null, text: null, isError: payload.status === 'failed', at, messageId: openMessage! })
         } else if (kind.endsWith('_call_output')) {
           const callId = str(payload.call_id) ?? ''
@@ -249,9 +233,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       case 'event_msg': {
         const kind = str(payload.type)
         if (kind === 'item_completed') {
-          // Items of this thread repeat its response items. Items of another thread are a child
-          // thread's activity (a review or a sub-agent) logged in this rollout; that thread is its
-          // own session.
           const thread = str(payload.thread_id)
           if (thread && thread !== builder.nativeSessionId && !foreignThreads.has(thread)) {
             foreignThreads.add(thread)
@@ -261,12 +242,9 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
           const info = isRecord(payload.info) ? payload.info : null
           if (info === null) break
           const totalSignature = signature(info.total_token_usage)
-          // Codex repeats a token_count without a new response (rate-limit refreshes); a
-          // response is counted once, when the cumulative counter moves.
           if (totalSignature !== '' && totalSignature === lastTotalSignature) break
           if (isRecord(info.total_token_usage)) {
             const raw = info.total_token_usage
-            // A resumed process restarts the counter; bank what the previous process reported.
             if (lastTotalRaw && count(raw.total_tokens) !== null && count(lastTotalRaw.total_tokens) !== null && (raw.total_tokens as number) < (lastTotalRaw.total_tokens as number)) {
               committedTotal = addTotals(committedTotal, lastTotal)
             }
@@ -285,7 +263,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
           call.error = sessionError('error', message, at, httpStatusOf(payload))
           open = null
         } else if (kind === 'stream_error') {
-          // A dropped stream that Codex retries. It is a model request that returned no answer.
           calls += 1
           builder.modelCall({ id: `${builder.nativeSessionId}:response:${calls}`, at, provider, servedModel: model, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: sessionError('stream_error', str(payload.message) ?? 'stream error', at, httpStatusOf(payload)) })
         } else if (kind === 'turn_aborted') {
@@ -297,8 +274,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         } else if (kind === 'task_complete') {
           aborted = null
           open = null
-          // Codex 0.145 records a turn that ended on a failed request only here: the request that
-          // failed returned no answer, so it is a model call with that error and no served model.
           if (isRecord(payload.error)) {
             const failure = payload.error
             calls += 1
@@ -347,7 +322,6 @@ function httpStatusOf(payload: Record<string, unknown>): number | null {
 const ROLLOUT = storeGlob(CODEX_HOME_RULE.rollout)
 const UUID_V7 = /^([0-9a-f]{8})-([0-9a-f]{4})-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
-/** Every rollout file, live and archived, in every Codex home under `home`. */
 async function rollouts(home: string): Promise<string[]> {
   const files: string[] = []
   for (const codexHome of await codexHomes(home)) {
@@ -359,13 +333,11 @@ async function rollouts(home: string): Promise<string[]> {
   return files
 }
 
-/** A UUIDv7's creation time: a session's rollout is written at or after its thread id is made. */
 function uuidV7Ms(id: string): number {
   const match = UUID_V7.exec(id)
   return match ? Number.parseInt(`${match[1]}${match[2]}`, 16) : 0
 }
 
-/** A ref for each of `files` that passes the filters, from its `session_meta`, with the file's bytes. */
 async function refsOf(files: readonly string[], home: string, opts: LocateOptions): Promise<Array<{ ref: SessionRef; bytes: number }>> {
   const found = await mapLimit(files, LOCATE_READS, async (path): Promise<{ ref: SessionRef; bytes: number } | null> => {
     let info
@@ -400,7 +372,6 @@ async function refsOf(files: readonly string[], home: string, opts: LocateOption
   return found.filter((entry): entry is { ref: SessionRef; bytes: number } => entry !== null)
 }
 
-/** Sessions in every Codex home under `home`. A lookup by id takes the rollout named for it; when no name carries the id, it reads the `session_meta` of each rollout written since the id was made. A session copied into several homes (`acct move`) is one ref, its largest copy, which holds every record. */
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
   const files = await rollouts(home)
   const id = opts.nativeSessionId

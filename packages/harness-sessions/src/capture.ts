@@ -1,11 +1,10 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Read sidecar v2 native copies and historical provider retention through their
- * declared stores, preserving recorded execution identities and native families.
- */
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { str } from './builder.js'
 import { opencodeSessionsInStore } from './formats/opencode.js'
+import { hermesSessionsInStore } from './formats/hermes.js'
+import { openclawSessionsInStore } from './formats/openclaw.js'
 import { maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 import type { HarnessSession, HarnessSessionReader, NativeSessionCopy, RawEvidenceArchiveManifestV2, SessionRef } from './schema.js'
 import { isMissing } from './source.js'
@@ -14,18 +13,14 @@ import { storeGlob } from './stores.js'
 export const RETENTION_SESSIONS = join('__retention__', 'sessions')
 export const RETENTION_MANIFEST_KIND = 'tangle-native-session-evidence.v1'
 
-/** One native session found in a capture, with the ids that join it to its execution. */
 export interface CapturedSessionRef {
   ref: SessionRef
   harness: string
-  /** The sandbox (provider) session the capture belongs to. */
   sandboxSessionId: string | null
   executionId: string | null
   attempt: number | null
   copy: NativeSessionCopy['copy'] | 'retained'
-  /** True when the sidecar recorded this native session id for the execution. */
   recordedId: boolean
-  /** The capture's native root the session was found in, relative to the capture directory. */
   root: string
   sourceId: string | null
   rootScope: string | null
@@ -33,13 +28,11 @@ export interface CapturedSessionRef {
 
 export interface CaptureListing {
   sessions: CapturedSessionRef[]
-  /** Executions whose harness has no reader, and ids recorded but not found in the copy. */
   missing: Array<{
     sandboxSessionId: string | null
     harness: string | null
     reason: string
     nativeSessionId?: string
-    /** The capture root (relative to the capture directory) and store file a reason refers to. */
     root?: string
     path?: string
     detail?: string
@@ -64,7 +57,6 @@ async function dirs(path: string): Promise<string[]> {
   }
 }
 
-/** Sessions listed by a v2 archive manifest. Files are resolved against `archiveDir`. */
 async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2, listing: CaptureListing): Promise<void> {
   for (const copy of manifest.nativeSessions) {
     const reader = maybeReaderFor(copy.harness) ?? readerForFormatSafe(copy.format)
@@ -87,14 +79,13 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
         continue
       }
       const path = join(archiveDir, db.path)
-      const refs = await opencodeSessionsInStore(path, null, {})
+      const refs = store.format === 'hermes.state-sqlite' ? await hermesSessionsInStore(path) : store.format === 'openclaw.session-jsonl' ? await openclawSessionsInStore(path) : await opencodeSessionsInStore(path, null, {})
       const children = new Map<string, string[]>()
       for (const ref of refs) if (ref.parentNativeSessionId) {
         const group = children.get(ref.parentNativeSessionId) ?? []
         group.push(ref.nativeSessionId); children.set(ref.parentNativeSessionId, group)
       }
       const ids = new Set([copy.nativeSessionId])
-      // Set iteration visits newly added children once, independent of store order.
       for (const id of ids) for (const child of children.get(id) ?? []) ids.add(child)
       for (const ref of refs.filter((r) => ids.has(r.nativeSessionId))) {
         listing.sessions.push(captured({ ...ref, truncated }, copy, ref.nativeSessionId === copy.nativeSessionId, archiveDir, path))
@@ -124,7 +115,6 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
   }
 }
 
-/** The file's path relative to the runtime HOME, which the store globs match. The sidecar's archive stores payloads under flat member names (`path`) and names the HOME path in `storePath`; a capture laid out like the HOME carries it in `path` itself. */
 function storePathOf(file: NativeSessionCopy['files'][number]): string {
   return file.storePath ?? file.path
 }
@@ -152,7 +142,6 @@ function captured(ref: SessionRef, copy: NativeSessionCopy, recordedId: boolean,
   }
 }
 
-/** Sessions in provider-tangle's retention layout, found through each reader's declared stores. */
 async function fromRetention(captureDir: string, listing: CaptureListing, fallbackHarness: string | null): Promise<void> {
   const sessionsDir = join(captureDir, RETENTION_SESSIONS)
   for (const sandboxSessionId of await dirs(sessionsDir)) {
@@ -163,8 +152,6 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
       await fromV2(dir, manifest as unknown as RawEvidenceArchiveManifestV2, listing)
       continue
     }
-    // The manifest names the harness; a capture whose manifest does not falls back to the
-    // harness the caller ran (the profile's), never to guessing from paths.
     const harness = (source ? str(source.backendType) : null) ?? fallbackHarness
     const reader = harness ? maybeReaderFor(harness) : undefined
     if (!reader) {
@@ -183,7 +170,6 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
     }
     const lastAttempt = attempts[attempts.length - 1]
     const found = new Set<string>()
-    // native/<source id>/<root scope>/ is one execution's runtime HOME (or its workspace).
     for (const sourceId of await dirs(join(dir, 'native'))) {
       for (const rootScope of await dirs(join(dir, 'native', sourceId))) {
         const home = join(dir, 'native', sourceId, rootScope)
@@ -191,7 +177,6 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
         try {
           refs = await reader.locate(home)
         } catch (error) {
-          // A store that cannot be opened (a corrupt SQLite file) proves nothing about the turn.
           const store = reader.stores[0]!
           listing.missing.push({ sandboxSessionId, harness: reader.harness, reason: 'store_unreadable', root: home.slice(captureDir.length + 1), path: store.shared ? `${store.root}/${store.files[0]}` : store.root, detail: error instanceof Error ? error.message : String(error) })
           continue
@@ -220,7 +205,6 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
   }
 }
 
-/** Every native session in a capture: from `manifest.nativeSessions` when a v2 manifest is given (files relative to `dir`), otherwise from the retention layout under `dir`. */
 export async function listCapture(
   dir: string,
   manifest?: RawEvidenceArchiveManifestV2 | null,
@@ -232,7 +216,6 @@ export async function listCapture(
   return listing
 }
 
-/** Every native session in a capture, read in full. */
 export async function* readCapture(
   dir: string,
   manifest?: RawEvidenceArchiveManifestV2 | null,

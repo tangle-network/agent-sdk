@@ -1,4 +1,3 @@
-/** Reading a session that is already in memory: JSONL text (a retained copy, a blob) or records a caller already parsed. The same fold as reading the file, driven synchronously, so a session reads the same whichever way its bytes arrive. */
 import type { BuildMode, SessionBuilder } from './builder.js'
 import { createFold as claudeCodeFold } from './formats/claude-code.js'
 import { createFold as codexFold } from './formats/codex.js'
@@ -13,13 +12,9 @@ import { arrayRecordsSync, memoryStats, textRecordsSync, type SourceStats } from
 export type SessionInput = { text: string } | { records: readonly unknown[] }
 
 export interface SessionInputInit {
-  /** The native session id when the caller knows it; JSONL formats also read it from their records. */
   nativeSessionId?: string
-  /** Set for a subagent's own transcript; its records are the subagent's, not sidechain noise. */
   parentNativeSessionId?: string | null
-  /** Names the source in integrity records (a path, a blob ref). */
   label?: string
-  /** The file line `input` starts on, when it continues a longer file (records appended since a previous read). A record without an id of its own is named by its line, so the same record gets the same id whichever way the file is read. Default 1. */
   firstLine?: number
 }
 
@@ -59,12 +54,10 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
   return fold.finish()
 }
 
-/** Read a JSONL-format session (Claude Code, Codex, Pi, Kimi) from text or parsed records, synchronously. */
 export function readSessionInput(harness: string, input: SessionInput, init: SessionInputInit = {}, options: Pick<ReadOptions, 'corruption'> = {}): HarnessSession {
   return foldInput(harness, input, init, 'full', options).build()
 }
 
-/** Summarize a JSONL-format session from text or parsed records, synchronously. */
 export function summarizeSessionInput(harness: string, input: SessionInput, init: SessionInputInit = {}, options: Pick<ReadOptions, 'corruption'> = {}): SessionSummary {
   return foldInput(harness, input, init, 'summary', options).summary()
 }

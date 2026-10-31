@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** Kimi wire.jsonl: TurnBegin, StepBegin, ToolCall, StatusUpdate, ToolResult, StepRetry. Legacy wire has no model. */
 import { basename, dirname, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionEnding, SessionRef, TokenUsage } from '../schema.js'
@@ -10,11 +9,9 @@ import { runFold, type SessionFold } from './fold.js'
 
 const FORMAT = 'kimi.session-dir' as const
 const HARNESS = 'kimi-code'
-/** The event stream this reader folds; the store also holds context.jsonl and state.json. */
 const WIRE = '*/{id}/wire.jsonl'
 const CHILD_WIRE = '*/*/subagents/{id}/wire.jsonl'
 
-/** Current main agents belong to session_<uuid>; legacy child wires retain their own agent IDs. */
 function sessionIdentity(path: string): { id: string; parent: string | null } {
   const directory = dirname(path)
   const container = dirname(directory)
@@ -62,7 +59,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   const observe = (record: Record<string, unknown>): void => {
     const message = isRecord(record.message) ? record.message : {}
     const outer = str(record.type)
-    // Both protocols have metadata; only flat payload events use namespaced discriminators.
     flat ||= outer?.includes('.') === true
     const payload = outer === 'context.append_loop_event' && isRecord(record.event) ? record.event : outer ? record : isRecord(message.payload) ? message.payload : {}
     const type = outer === 'context.append_loop_event' ? str(payload.type) : outer ?? str(message.type)
@@ -145,7 +141,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         break
       }
       case 'StepRetry': {
-        // A failed attempt Kimi retried: a model call that returned no answer.
         builder.modelCall({
           id: `${builder.nativeSessionId}:turn:${turn}:retry:${builder.modelCalls.length + 1}`, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: null,
           error: sessionError(str(payload.error_type) ?? 'retry', `${str(payload.error_type) ?? 'error'}${payload.status_code ? ` (status ${String(payload.status_code)})` : ''}`, at, count(payload.status_code)),
@@ -245,7 +240,6 @@ export const kimiReader: HarnessSessionReader = {
   },
 }
 
-/** A session read from its `wire.jsonl` outside a HOME layout. */
 export function kimiRefForFile(path: string): SessionRef {
   const { id, parent } = sessionIdentity(path)
   return { harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: parent }

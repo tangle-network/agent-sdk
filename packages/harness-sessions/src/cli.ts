@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** harness-sessions read <file|home|capture> [--harness h] [--session id] [--cwd dir] [--summary] [--json] Reads native harness sessions into the normalized form, for callers that are not JavaScript. A file is one session file (or an OpenCode store); a directory is a capture when it holds `__retention__/sessions`, otherwise a HOME searched through every reader's store layout. `--json` prints one JSON document per session, one per line. */
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listCapture, RETENTION_SESSIONS } from './capture.js'
