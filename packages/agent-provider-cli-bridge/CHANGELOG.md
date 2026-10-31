@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 2.1.0
+
+### Minor Changes
+
+- 92c7514: Add the `./sandbox` entry: `createBridgeSandboxProvider` turns a vendor sandbox that runs CLI Bridge from the box image into a spec-conforming `AgentEnvironmentProvider`, delegating every turn to `createCliBridgeProvider`. It refuses unsupported create fields with a typed error that names the field, validates profiles with the shared materializer, bounds turns by `timeoutMs`, and destroys a sandbox whose create fails. `renderBoxDockerfile` renders the one box image from the registry's harness pins.
+
+### Patch Changes
+
+- Updated dependencies [92c7514]
+  - @tangle-network/agent-interface@5.11.0
+
 ## 2.0.3
 
 ### Patch Changes
