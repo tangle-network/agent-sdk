@@ -19,7 +19,6 @@ export async function headRecord(
     throw error
   }
   let seen = 0
-  // undefined: read on; null: `limit` records without a match; a record: the match.
   const take = (line: string): Record<string, unknown> | null | undefined => {
     const text = line.replace(/\r$/u, '')
     if (text.trim().length === 0) return undefined
@@ -37,7 +36,6 @@ export async function headRecord(
   try {
     const decoder = new StringDecoder('utf8')
     const buffer = Buffer.allocUnsafe(HEAD_CHUNK)
-    // The line being read, in pieces, so a record longer than a step is joined once.
     let pending: string[] = []
     let position = 0
     for (;;) {

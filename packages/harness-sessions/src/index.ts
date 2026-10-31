@@ -1,4 +1,3 @@
-/** One normalized reader for each coding-agent harness session store. */
 export type {
   HarnessSession,
   HarnessSessionReader,

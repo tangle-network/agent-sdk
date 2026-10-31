@@ -86,12 +86,20 @@ function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats, model:
   return { builder, observe, finish: () => { builder.source(stats); builder.inferEnding(); return builder } }
 }
 
+async function markedJson(ref: SessionRef, name: string, mark: string): Promise<unknown> {
+  for (const file of [join(dirname(ref.path), name), ...ref.files]) {
+    if (file === ref.path) continue
+    const parsed = await readJson(file)
+    if (isRecord(parsed) && mark in parsed) return parsed
+  }
+  return null
+}
+
 async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Promise<SessionBuilder> {
   const records = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })
-  const dir = dirname(ref.path)
-  const summary = await readJson(join(dir, 'summary.json'))
+  const summary = await markedJson(ref, 'summary.json', 'current_model_id')
   const model = isRecord(summary) ? str(summary.current_model_id) : null
-  return runFold(createFold(ref, mode, records.stats, model, usageOf(await readJson(join(dir, 'signals.json')))), records)
+  return runFold(createFold(ref, mode, records.stats, model, usageOf(await markedJson(ref, 'signals.json', 'primaryModelId'))), records)
 }
 
 export const grokReader: HarnessSessionReader = {
