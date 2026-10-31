@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.6
+
+### Patch Changes
+
+- c7e3c2f: Read NanoClaw v2 session folders from inbound.db and outbound.db.
+
 ## 1.0.5
 
 ### Patch Changes
