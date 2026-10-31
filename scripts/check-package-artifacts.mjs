@@ -110,7 +110,7 @@ assert.throws(() => parseSeatSpec("invented/model"), { code: "UNKNOWN_HARNESS" }
 assert.throws(() => formatSeatSpec({ harness: "codex", model: "openai/" }), { code: "SEAT_SYNTAX" });
 assert.throws(() => parseSeatSpec("claude/model@none"), { code: "SEAT_EFFORT_UNSUPPORTED" });
 assert.throws(() => parseSeatSpec("kimi/moonshot/kimi-k2.6@xhigh"), { code: "SEAT_EFFORT_UNSUPPORTED" });
-assert.throws(() => parseSeatSpec("kimi/openai/gpt-6.1-sol"), { code: "MODEL_PROVIDER_MISMATCH" });
+assert.throws(() => parseSeatSpec("pi/google/gemini-3.8-flash"), { code: "MODEL_PROVIDER_MISMATCH" });
 
 const first = { harness: "codex", provider: "openai", model: "openai/gpt-6.1-sol", selector: { kind: "all-eligible" } };
 const base = { harness: first.harness, model: { provider: first.provider, default: first.model }, seats: [first] };
