@@ -7,3 +7,4 @@ export { runPortableContextConformance } from "./portable-context-conformance.js
 export { runWorkspaceBranchingConformance } from "./workspace-branching-conformance.js";
 export { runWorkspaceSnapshotConformance, type WorkspaceSnapshotConformanceOptions } from "./workspace-snapshot-conformance.js";
 export { runAgentExactProcessProviderLifecycleChecks } from "./exact-process-conformance.js";
+export * from "./live/index.js";

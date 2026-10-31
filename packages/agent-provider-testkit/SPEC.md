@@ -237,7 +237,7 @@ Structural proof compares bytes read back from the sandbox to the plan; behavior
 
 ## 4. Live proof probes
 
-Every probe runs against a real vendor account, a real harness CLI and a real model, using a per-run capped Router key (company spend policy; never a vault key) and a unique run tag. A probe that cannot run for lack of a credential FAILS; it never skips. A probe passes only when it passes on three consecutive runs where it needs the model. Mock vendors do not count.
+Every probe runs against a real vendor account, a real harness CLI and a real model, using a per-run capped Router key (company spend policy; never a vault key) and a unique run tag. A probe that cannot run for lack of a credential reports `no credential: <NAME>` for every requirement it covers; that result is never a pass, and an adapter is not done while it stands. A probe passes only when it passes on three consecutive runs where it needs the model. Mock vendors do not count.
 
 | Probe | Run | Pass condition |
 |---|---|---|
@@ -270,7 +270,7 @@ Source: `SDK:agent-provider-testkit/src/` at the pinned revision. The kit is fra
 
 Not checked by any kit suite: MAT-1 to MAT-8 (the default profile is `{name}` with `backend: "test"`, `provider-conformance.ts:29-34`, so no harness, model, prompt, tool, mcp, hook or subagent is ever sent), MOD-1 to MOD-5, SEC-1 to SEC-3, TRN-1 to TRN-5, TRN-7 to TRN-10, USE-1 to USE-5, WSP-2 to WSP-6, CAN-1 to CAN-4, TDN-1 to TDN-5 (destroy is called; absence is never checked), ERR-1 to ERR-3, CON-1. Nothing in the kit is a live check. Mock-only checks do not count as proof under the test-value policy, so the base conformance result for any of the three adapters proves nothing about a profile running.
 
-Required kit work, owned by one builder and landed before the adapters: a live profile-execution suite implementing P1 to P14 on the kit's `createProvider` seam, failing (not skipping) when a credential is missing. Three builders must not edit the kit in parallel.
+Landed (phase 2a): `runLiveProfileConformance` implements the probes of section 4 on the kit's `createProvider` seam and reports every requirement id; the kit's fake-backed tests are removed. Not covered at that seam, and reported `unproven`: CAP-3 (two backends), MOD-5 (over-cap key), WSP-7 and the P11 consumer path, TDN-4 (vendor-side lifetime), and the optional tiers (OPT-1). Three builders must not edit the kit in parallel.
 
 ## 6. Provider credentials in the vault
 
@@ -358,12 +358,12 @@ Drew supplies the vendor keys. The Router key for model calls in proof runs is m
 | CON-1 | met | partial: new client per call `D:128-132` | met |
 | OPT-1 | met (claims none) | met | met (see CAP-2) |
 
-## 8. Open decisions for Drew
+## 8. Decisions
 
-- D1 Mechanism. The materializer plan is applied to a local directory (`AC:agent-profile-materialize/src/plan-application.ts:1-30`), and cli-bridge already runs a CLI and parses its stream (`CB:backends/claude.ts:549-550`). A builder can (a) run the plan and the harness runner inside the sandbox from the baked image, or (b) apply the plan through the vendor file API and run the harness through the vendor exec stream. The spec fixes behavior, not mechanism; either must reuse the owners and add no second planner or parser. Whether cli-bridge's backends are importable as a library is unverified.
-- D2 Typed errors. ERR-1 needs a shared code set. Today only the Tangle package defines classes (`T:model-credential-capacity.ts`). A new shared error type in agent-interface needs Drew to name it; until then adapters use `code` on `Error`.
-- D3 Images. Each vendor needs an image with the harness CLIs at the owner's pins (E2B template, Daytona snapshot, ComputeSDK backing-provider image). The owner of the pins is `AC:cli-agent-registry`; who builds and publishes the three images is undecided.
-- D4 E2B keyed create. `e2b@2.62.0` exposes `SandboxOpts.idempotencyKey` (SDK d.ts). Whether it satisfies the same-key-same-environment, changed-input-rejected contract is unproven; CRT-4 holds until it is proven live.
+- D1 Mechanism (decided). Each vendor sandbox runs CLI Bridge from one box image (Node, CLI Bridge at a reviewed commit, the harness CLIs at the registry's pins). The adapter creates the sandbox, starts the Bridge on a port the vendor exposes with the per-run Router key on the Bridge process only, and delegates every turn to `agent-provider-cli-bridge` at that URL. The shared core is `createBridgeSandboxProvider` in `@tangle-network/agent-provider-cli-bridge/sandbox`; a vendor adapter is only `create`, `connect`, `list`, and the sandbox's `exec`, `spawn`, `read`, `write`, `endpoint`, `status`, `destroy`.
+- D2 Typed errors (decided). `EnvironmentProviderError` and the closed `EnvironmentProviderErrorCode` set in `@tangle-network/agent-interface` carry ERR-1 to ERR-3 for every provider.
+- D3 Images (decided). `renderBoxDockerfile` defines the box once; `scripts/build-sandbox-image.mjs` builds the E2B template, the Daytona snapshot and the local Docker image from it. No image is built by hand.
+- D4 E2B keyed create. `e2b@2.62.0` exposes `SandboxOpts.idempotencyKey` (SDK d.ts). Keyed create stays rejected on E2B until a live run proves it meets the same-key-same-environment, changed-input-rejected contract.
 
 ## 9. Limits of this spec
 

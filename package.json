@@ -6,6 +6,7 @@
   "packageManager": "pnpm@12.15.0",
   "scripts": {
     "build": "pnpm -r build",
+    "build:sandbox-image": "node scripts/build-sandbox-image.mjs",
     "check:control-artifacts": "node scripts/check-control-contract-artifacts.mjs && node scripts/sync-trace-contract-version.mjs --check",
     "check:package-artifacts": "node scripts/check-package-artifacts.mjs",
     "check-types": "pnpm -r check-types",

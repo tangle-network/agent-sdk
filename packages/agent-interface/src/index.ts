@@ -78,6 +78,7 @@ export {
   terminalAttachResultMatchesRequest,
   terminalSessionUsable,
 } from "./environment-provider.js";
+export * from "./environment-provider-error.js";
 export * from "./plan.js";
 export * from "./runtime-control.js";
 export * from "./portable-context.js";

@@ -51,3 +51,30 @@ Set `keyedCreate: "unsupported"` for providers that cannot retain keyed admissio
 The conformance check then requires keyed rejection before testing an unkeyed environment.
 The default still requires same-key replay and changed-input refusal.
 Provider tests must also prove rejection occurs before remote effects.
+
+## Live profile conformance
+
+`runLiveProfileConformance()` runs the requirements of [SPEC.md](SPEC.md) against a real provider with a real profile: a harness, a model, a system prompt, an MCP server, a hook, a denied tool, a subagent and mounted files, each carrying a nonce only that axis can reveal.
+It reports every one of the 67 requirement ids as `pass`, `fail`, `skip` or `unproven`, with the observation behind each.
+`unproven` names the probe this seam lacks (for example CAP-3 needs one provider on two backends); it is never counted as a pass.
+
+```ts
+const report = await runLiveProfileConformance({
+  name: 'my-provider',
+  credentials: ['MY_VENDOR_API_KEY'],
+  harness: 'claude-code',
+  model: 'glm-5.3',
+  createProvider: () => createMyProvider(),
+})
+console.log(formatLiveReport(report))
+```
+
+A missing credential skips the run with `no credential: <NAME>` on every requirement; it never reports a pass.
+The probes spend real model tokens and create real sandboxes, so they run only when the credential is present.
+Each environment carries a run tag in its metadata. The suite lists the vendor side with that tag after teardown and fails on any survivor, then destroys it.
+Pass `secretValues` (for example the Router key the adapter was given) so SEC-3 scans events, errors, metadata, workspace files and process command lines for them.
+Keyed create is refused by the probes unless the provider claims `create.durableIdempotency`.
+
+The suite does not cover the optional tiers (OPT-1), the consumer path through `providerAsExecutor` (P11), a vendor-side lifetime read (TDN-4), or capacity propagation from an over-cap key (MOD-5); the report lists them as `unproven`.
+The kit's own fake-backed tests were removed: a suite that agrees with a fake written beside it proves nothing about a provider.
+
