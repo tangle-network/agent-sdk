@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-interface",
-  "version": "5.10.9",
+  "version": "5.10.10",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",

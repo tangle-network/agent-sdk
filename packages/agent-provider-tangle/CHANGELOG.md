@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.2
+
+### Patch Changes
+
+- 28735b7: Accept the Sandbox platform's strict-egress entry shape: `allowDomains` carries `string | { domain, allowPrivateIps: cidr[] }`, the provider forwards each entry unchanged, and its Sandbox SDK floor moves to 1.0.141, the first release that carries the shape.
+- Updated dependencies [28735b7]
+  - @tangle-network/agent-interface@5.10.10
+
 ## 5.0.1
 
 ### Patch Changes
