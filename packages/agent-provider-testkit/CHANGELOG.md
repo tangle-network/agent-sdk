@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.12.3
+
+### Patch Changes
+
+- 2c6dd84: Add the `nativeAuth` option to `runLiveProfileConformance`: it runs a turn that carries native CLI auth and fails MOD-4 if the turn dies on a sidecar's refusal to prepare its profile. Without the fixture MOD-4 reports unproven, and a missing credential reports `no credential: <NAME>`.
+
 ## 0.12.2
 
 ### Patch Changes
