@@ -258,7 +258,8 @@ export class SessionBuilder {
    */
   inferEnding(aborted?: { at: string | null; error: SessionError | null }): void {
     if (aborted) {
-      this.ending = { status: 'aborted', error: aborted.error, at: aborted.at }
+      const error = aborted.error ?? this.modelCalls.at(-1)?.error ?? null
+      this.ending = { status: error ? 'error' : 'aborted', error, at: aborted.at ?? error?.at ?? null }
       return
     }
     const last = this.modelCalls[this.modelCalls.length - 1]
