@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.3
+
+### Patch Changes
+
+- c353fbe: Recognize grok as a harness and read its session directory.
+
 ## 1.0.2
 
 ### Patch Changes
