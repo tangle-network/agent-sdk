@@ -1,10 +1,4 @@
-/**
- * The catalog of native session stores: where each harness format lives under the HOME it ran
- * with, how it is written, and where its served model, usage and ending error come from.
- *
- * Pure data and pure functions with no Node built-ins, so Worker-safe code (the sidecar's harness
- * registry) imports the same declarations the readers use: `@tangle-network/harness-sessions/catalog`.
- */
+/** Store layouts and evidence sources. No Node built-ins; the sidecar imports this module. */
 import type { NativeSessionStore, SessionEvidenceSources, SessionFormatId } from './schema.js'
 
 export const SESSION_FORMAT_IDS = [
@@ -20,6 +14,7 @@ export const SESSION_FORMAT_IDS = [
   'hermes.state-sqlite',
   'prime.session-jsonl',
   'openclaw.session-jsonl',
+  'grok.acp-session-dir',
 ] as const
 
 /** One catalog declaration owns append-only defaults and shared SQLite copy semantics. */
@@ -51,6 +46,7 @@ export const STORES = {
   'hermes.state-sqlite': store('hermes.state-sqlite', '.hermes', ['state.db', 'state.db-wal', 'state.db-shm'], 'sqlite-wal'),
   'prime.session-jsonl': store('prime.session-jsonl', '.prime-provider/prime-agent-dirs', ['**/*_{id}.jsonl']),
   'openclaw.session-jsonl': store('openclaw.session-jsonl', '.openclaw/agents', ['**/{id}.jsonl']),
+  'grok.acp-session-dir': store('grok.acp-session-dir', '.grok/sessions', ['*/{id}/updates.jsonl']),
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
 
 /** Kimi Code's current and retained legacy layouts; the legacy catalog entry stays stable. */
@@ -59,11 +55,6 @@ export const KIMI_STORES = [
   STORES['kimi.session-dir'],
 ] as const satisfies readonly NativeSessionStore[]
 
-/**
- * Where each format's served model, usage and ending error come from. `turn-context` means the
- * model the harness was configured or asked for (Codex `turn_context`, OpenCode's message
- * `modelID`, Factory's settings); `none` means no served identity is proven by the records.
- */
 export const EVIDENCE = {
   'claude-code.projects-jsonl': { servedModel: 'provider-response', usage: 'per-response', endingError: 'session-record' },
   'codex.rollout-jsonl': { servedModel: 'turn-context', usage: 'cumulative', endingError: 'session-record' },
@@ -77,17 +68,10 @@ export const EVIDENCE = {
   'hermes.state-sqlite': { servedModel: 'session-record', usage: 'session-total', endingError: 'none' },
   'prime.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'session-record' },
   'openclaw.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
+  'grok.acp-session-dir': { servedModel: 'session-record', usage: 'session-total', endingError: 'none' },
 } as const satisfies Record<SessionFormatId, SessionEvidenceSources>
 
-/**
- * Codex writes to whichever Codex home it runs with, so one HOME can hold several: `~/.codex`, a
- * sibling such as `~/.codex-lane`, the `$CODEX_HOME` a process set, one acct home per account under
- * `${ACCT_CONFIG:-~/.config/agent-accounts}/codex/<account>`, and on a fleet host a seat's `codex`
- * directory. Every home keeps live rollouts in `sessions/` and archived ones in
- * `archived_sessions/`. `STORES` declares the default home's live store, which is what a sandbox
- * captures; the readers search every home. The same rule as tangle-tools
- * `trace-archive/catalog.py` `classify`.
- */
+/** Codex homes: `.codex`, `.codex-*`, acct homes, and a fleet seat's `codex` directory. */
 export const CODEX_HOME_RULE = {
   /** Directory names directly under HOME that are Codex homes: `.codex` and `.codex-<name>`. */
   siblings: /^\.codex(?:-.+)?$/u,

@@ -1,51 +1,24 @@
-/**
- * The normalized form of one harness session, and the store layouts every harness declares.
- *
- * Each coding-agent harness persists its own native session: Claude Code and Pi append JSONL,
- * Codex appends a rollout JSONL, OpenCode writes SQLite. Every consumer that needs to know what
- * happened in a turn reads it through this one shape, so a count, a served model or an ending
- * error means the same thing in the sidecar, the Discovery gate, agent-eval, agent-record and the
- * blog.
- */
-
 /** One native session format. The id names the harness family and the on-disk layout. */
 export type SessionFormatId = (typeof import('./catalog.js').SESSION_FORMAT_IDS)[number]
 
-/**
- * Where a harness keeps its sessions, relative to the HOME it ran with. Capture consumers can
- * share these declarations; consumer adoption of a producer layout is a separate change.
- */
 export interface NativeSessionStore {
-  /** Relative to the execution's private runtime HOME. Normalized, never absolute, never `..`. */
   root: string
-  /** Globs under `root` that hold one session. `{id}` is replaced by the native session id. */
   files: readonly string[]
-  /** How the harness writes. This decides how a copy is taken while the harness runs. */
   write: 'jsonl-append' | 'json-rewrite' | 'sqlite-wal'
-  /** True when one store holds every session in the HOME (opencode.db). Readers select by id. */
   shared: boolean
   format: SessionFormatId
-  /** Reader files when this layout differs from the harness's default globs. */
   globs?: { session: string; children?: string }
 }
 
-/** Where a format's served-model, usage and ending-error evidence comes from. */
 export interface SessionEvidenceSources {
-  /** `none`: no proven served identity (including Kimi request labels); served models stay empty. */
   servedModel: 'provider-response' | 'session-record' | 'turn-context' | 'none'
   usage: 'per-response' | 'cumulative' | 'session-total'
   endingError: 'session-record' | 'none'
 }
 
 export interface TokenUsage {
-  /**
-   * Prompt tokens that were neither read from nor written to a provider cache. Cache reads and
-   * cache writes are counted in their own fields and never inside `input`, so every field can be
-   * priced at its own rate. A harness that reports an inclusive input (Codex) is converted.
-   */
   input: number | null
   output: number | null
-  /** Reasoning tokens as the harness recorded them; providers count them inside `output`. */
   reasoning: number | null
   cacheRead: number | null
   cacheWrite: number | null
@@ -70,10 +43,6 @@ export type Part =
 export interface SessionMessage {
   id: string
   role: 'system' | 'user' | 'assistant' | 'tool'
-  /**
-   * Who produced the message. `injected` is text the harness or the runtime added to the
-   * conversation (environment context, instructions, error notices), not the human's prompt.
-   */
   actor: 'human' | 'agent' | 'subagent-spawn' | 'injected' | 'tool-result'
   at: string | null
   /** The model call that produced an assistant message; null for every other message. */

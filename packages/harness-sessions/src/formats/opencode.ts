@@ -1,16 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * OpenCode 1.x: one SQLite store for every session in the HOME,
- * `~/.local/share/opencode/opencode.db` (with `-wal` and `-shm` siblings while it is open).
- *
- * `session` rows carry the cwd, the parent session and session totals. `message` rows carry a JSON
- * `data` blob: role, the provider and model the message was sent to, tokens, cost, finish and the
- * error that ended it. `part` rows carry the content: `text`, `reasoning`, `tool` (the call and
- * its result in one row), `step-start` and `step-finish` (one model response, with its tokens and
- * cost), `retry` (a failed attempt) and bookkeeping parts. The store is opened read-only where it
- * lies, so a read sees the rows a running OpenCode has committed to its write-ahead log and never
- * writes the store, its log or a copy of it.
- */
+/** OpenCode sqlite at ~/.local/share/opencode/opencode.db. Opened read-only, including the wal. */
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'

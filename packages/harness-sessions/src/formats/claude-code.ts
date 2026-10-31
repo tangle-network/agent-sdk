@@ -1,14 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
-/**
- * Claude Code: `~/.claude/projects/<cwd slug>/<session id>.jsonl`, one JSON record per line, and
- * each subagent's own transcript at `<session id>/subagents/agent-<agent id>.jsonl`.
- *
- * Claude Code writes one `assistant` record per content block of an API response, repeating the
- * response's `message.id`, `model` and `usage` on each; the blocks are one model call. It writes a
- * failed call as an `assistant` record with `isApiErrorMessage` and model `<synthetic>`, and each
- * retried API failure as a `system` record with subtype `api_error`. `message.model` is the model
- * the API answered with.
- */
+/** Claude Code jsonl under ~/.claude/projects. One assistant record per content block; message.model is served. */
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
