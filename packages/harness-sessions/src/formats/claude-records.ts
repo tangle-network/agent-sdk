@@ -28,10 +28,6 @@ export function claudeRecordIsMachine(facts: ClaudeRecordFacts): boolean {
   return MACHINE_TEXT_PREFIXES.some((prefix) => head.startsWith(prefix))
 }
 
-/**
- * What a person typed. A slash command is stored as a `<command-name>` wrapper; this returns the
- * command and its arguments (`/effort`, `/model opus`). Text without a wrapper is unchanged.
- */
 export function claudeTypedPromptText(text: string): string {
   const name = /<command-name>([\s\S]*?)<\/command-name>/u.exec(text)?.[1]?.trim()
   if (!name) return text

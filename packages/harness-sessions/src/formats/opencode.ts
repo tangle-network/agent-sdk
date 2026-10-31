@@ -1,5 +1,4 @@
 import { isRecord } from '@tangle-network/agent-core'
-/** OpenCode sqlite at ~/.local/share/opencode/opencode.db. Opened read-only, including the wal. */
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -59,8 +58,6 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
   builder.parentNativeSessionId = session.parent_id ?? null
   builder.seen(session.time_created)
 
-  // The session's source is the rows this fold reads, not the whole store: a digest of the store
-  // file would read every other session in it and change whenever any of them did.
   const digest = createHash('sha256').update(JSON.stringify(session))
   let bytes = 0
   const note = (row: Row): void => {
@@ -169,7 +166,6 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
           break
         }
         case 'retry': {
-          // A failed request OpenCode retried: a model call that returned no answer.
           builder.modelCall({ id: `${row.id}:retry:${partId}`, at: isoTime(partTime.created) ?? partAt, provider, servedModel: null, requestedModel: model, usage: null, costUsd: null, stopReason: null, error: errorOf(part.error, partAt) ?? sessionError('retry', 'retried request', partAt) })
           break
         }
@@ -178,7 +174,6 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
       }
     }
     if (steps === 0) {
-      // No response step was recorded: the request failed or the process stopped first.
       builder.modelCall({ id: `${row.id}:request`, at, provider: messageError ? null : provider, servedModel: messageError ? null : model, requestedModel: model, usage: usageOf(data.tokens), costUsd: count(data.cost), stopReason: str(data.finish), error: messageError })
       if (messageError) builder.message({ id: row.id, role: 'assistant', actor: 'injected', at, modelCallId: `${row.id}:request`, parts: [{ type: 'text', text: messageError.message }] })
     } else if (messageError) {
@@ -207,7 +202,6 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
   return builder
 }
 
-/** Every session in one store file, read in place without writing it. */
 export async function opencodeSessionsInStore(path: string, home: string | null, opts: LocateOptions = {}): Promise<SessionRef[]> {
   const mtime = await mtimeMs(path)
   const files = [path]

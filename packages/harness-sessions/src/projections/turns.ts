@@ -1,7 +1,6 @@
 import { isRecord } from '@tangle-network/agent-core'
 import type { HarnessSession, ModelCall, SessionError, SessionMessage, SessionToolCall, TokenUsage } from '../schema.js'
 
-/** One tool invocation in a turn, previewed for storage beside a post. */
 export interface TurnToolCall {
   name: string
   input_preview?: string
@@ -10,7 +9,6 @@ export interface TurnToolCall {
   is_error?: boolean
 }
 
-/** One turn of agent activity, the blog's trace unit (drewstone.github.io tools/harness/types.ts). */
 export interface Turn {
   role: 'user' | 'assistant' | 'system' | 'tool'
   seq?: number
@@ -21,27 +19,17 @@ export interface Turn {
   tool_call_details?: TurnToolCall[]
   files_touched?: string[]
   had_thinking?: boolean
-  /** The model that answered this turn, as the session recorded it. */
   model?: string
   usage?: TokenUsage
-  /** The error the model call ended with, when it failed. */
   error?: SessionError
   ts: string
 }
 
 export interface TurnOptions {
-  /** Working directory to make touched paths relative to. Defaults to the session cwd. */
   cwd?: string | null
-  /** Characters kept in `text`. Default 8000. */
   textChars?: number
-  /** Characters kept in `text_summary`. Default 280. */
   summaryChars?: number
-  /** Characters kept in a tool input or result preview. Default 600. */
   previewChars?: number
-  /**
-   * The files a tool call touched. Defaults to the path of an edit or write tool and the files a
-   * patch names; a caller with its own notion (paths mentioned anywhere in the input) passes it.
-   */
   filesOf?: (call: SessionToolCall) => string[]
 }
 
@@ -58,7 +46,6 @@ function stringField(input: unknown, ...keys: string[]): string | undefined {
   return undefined
 }
 
-/** Paths a patch touches, from `*** Update File:` / `*** Add File:` / `*** Delete File:` headers. */
 function patchPaths(text: string): string[] {
   return [...text.matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gmu)].map((m) => m[1]!.trim())
 }
