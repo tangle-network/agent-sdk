@@ -44,6 +44,7 @@ import {
   harnessSystemPromptIntents,
   resolveModelProvider,
 } from "./harness-capabilities.js";
+import { profileKbNamesModel } from "./profile-kb/index.js";
 import {
   SANDBOX_SIZE_PRESET_NAMES,
   type SandboxSizePreset,
@@ -560,8 +561,8 @@ export const agentProfileSchema = z
         context.addIssue({ code: "custom", path: ["seats", 0, "permissions"], message: "first seat permissions must match profile permissions" });
       }
       for (const [index, seat] of profile.seats.entries()) {
-        const provider = resolveModelProvider(seat.model);
-        if (provider !== seat.provider) {
+        // The bare id's family provider (`glm-5.3` → `zai`), or a spelling the knowledge base lists (opencode's `zai-coding-plan/glm-5.3`).
+        if (resolveModelProvider(seat.model) !== seat.provider && !profileKbNamesModel(`${seat.provider}/${seat.model}`)) {
           context.addIssue({ code: "custom", path: ["seats", index, "provider"], message: "seat provider must match the model provider" });
         }
         if (!harnessHonorsModel(seat.harness)) {
