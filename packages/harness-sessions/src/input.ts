@@ -1,8 +1,4 @@
-/**
- * Reading a session that is already in memory: JSONL text (a retained copy, a blob) or records a
- * caller already parsed. The same fold as reading the file, driven synchronously, so a session
- * reads the same whichever way its bytes arrive.
- */
+/** Reading a session that is already in memory: JSONL text (a retained copy, a blob) or records a caller already parsed. The same fold as reading the file, driven synchronously, so a session reads the same whichever way its bytes arrive. */
 import type { BuildMode, SessionBuilder } from './builder.js'
 import { createFold as claudeCodeFold } from './formats/claude-code.js'
 import { createFold as codexFold } from './formats/codex.js'
@@ -23,11 +19,7 @@ export interface SessionInputInit {
   parentNativeSessionId?: string | null
   /** Names the source in integrity records (a path, a blob ref). */
   label?: string
-  /**
-   * The file line `input` starts on, when it continues a longer file (records appended since a
-   * previous read). A record without an id of its own is named by its line, so the same record
-   * gets the same id whichever way the file is read. Default 1.
-   */
+  /** The file line `input` starts on, when it continues a longer file (records appended since a previous read). A record without an id of its own is named by its line, so the same record gets the same id whichever way the file is read. Default 1. */
   firstLine?: number
 }
 

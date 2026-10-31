@@ -69,13 +69,7 @@ async function childDirs(dir: string): Promise<string[]> {
   }
 }
 
-/**
- * Every Codex home under `home`, by `CODEX_HOME_RULE`: `home` itself when it is one (a fleet seat's
- * `codex` passed as a store root), `.codex` and each `.codex-<name>` in it, and each acct account
- * home. `$CODEX_HOME` and `$ACCT_CONFIG` describe this process's own HOME, so they apply only when
- * `home` is that HOME; another HOME (a store root, a capture) is read by its layout alone. Homes
- * that resolve to one directory, such as an account home linked to `~/.codex`, count once.
- */
+/** Every Codex home under `home`, by `CODEX_HOME_RULE`: `home` itself when it is one (a fleet seat's `codex` passed as a store root), `.codex` and each `.codex-<name>` in it, and each acct account home. `$CODEX_HOME` and `$ACCT_CONFIG` describe this process's own HOME, so they apply only when `home` is that HOME; another HOME (a store root, a capture) is read by its layout alone. Homes that resolve to one directory, such as an account home linked to `~/.codex`, count once. */
 export async function codexHomes(home: string): Promise<string[]> {
   const own = resolve(home) === resolve(process.env.HOME || homedir())
   const candidates = isCodexHome(home) ? [home] : []

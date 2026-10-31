@@ -14,11 +14,7 @@ export interface OtlpProjectionOptions {
 
 const cap = (text: string, n: number): string => (text.length <= n ? text : `${text.slice(0, n)}…`)
 
-/**
- * The session as contract spans: one AGENT span for the session, one LLM span per model call
- * (served model, tokens, cost, error status) and one TOOL span per tool call under the model call
- * that made it. Ids derive from the native session id, so two exports of one session join.
- */
+/** The session as contract spans: one AGENT span for the session, one LLM span per model call (served model, tokens, cost, error status) and one TOOL span per tool call under the model call that made it. Ids derive from the native session id, so two exports of one session join. */
 export function toOtlpSpans(session: HarnessSession, options: OtlpProjectionOptions = {}): ContractSpan[] {
   const chars = options.contentChars ?? 8000
   const traceId = deriveHexId(`${session.harness}:${session.nativeSessionId}`, 16)

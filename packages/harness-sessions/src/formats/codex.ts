@@ -400,12 +400,7 @@ async function refsOf(files: readonly string[], home: string, opts: LocateOption
   return found.filter((entry): entry is { ref: SessionRef; bytes: number } => entry !== null)
 }
 
-/**
- * Sessions in every Codex home under `home`. A lookup by id takes the rollout named for it; when no
- * name carries the id, it reads the `session_meta` of each rollout written since the id was made.
- * A session copied into several homes (`acct move`) is one ref, its largest copy, which holds
- * every record.
- */
+/** Sessions in every Codex home under `home`. A lookup by id takes the rollout named for it; when no name carries the id, it reads the `session_meta` of each rollout written since the id was made. A session copied into several homes (`acct move`) is one ref, its largest copy, which holds every record. */
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
   const files = await rollouts(home)
   const id = opts.nativeSessionId

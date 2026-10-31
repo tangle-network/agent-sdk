@@ -32,6 +32,7 @@ export { piReader, piRefForFile } from './formats/pi.js'
 export { kimiReader, kimiRefForFile } from './formats/kimi.js'
 export { factoryReader, factoryRefForFile } from './formats/factory.js'
 export { grokReader, grokRefForFile } from './formats/grok.js'
+export { nanoclawReader, nanoclawRefForFile } from './formats/nanoclaw.js'
 export {
   listCapture,
   readCapture,
