@@ -1,7 +1,7 @@
 # @tangle-network/agent-provider-tangle
 
 Wraps `@tangle-network/sandbox` as an `AgentEnvironmentProvider`.
-The Sandbox peer range is `>=0.60.88 <2.0.0`, which admits Sandbox 1.x; the minimum version declares create-time `backend.routing`.
+The Sandbox peer range is `>=1.0.151 <2.0.0`. Sandbox 1.0.141 cannot deliver a profile whose files exceed one gateway request when a turn carries it: its file-mount delivery fails reading its upload manifest. 1.0.151 delivers it.
 
 Terminal `result` and `done` events use the Sandbox SDK's `projectAgentTerminalRecord` summary. Cumulative tool history stays in native evidence; bounded approval identity survives projection, and malformed or conflicting approval sources fail closed. Terminal events omit the duplicate raw `providerEvent` payload.
 
