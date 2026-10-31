@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.5
+
+### Patch Changes
+
+- e544750: Read Grok tool output from tool_call_update content and count each agent message as a model call.
+
 ## 1.0.4
 
 ### Patch Changes
