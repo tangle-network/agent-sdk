@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.7
+
+### Patch Changes
+
+- 64af127: Read Hermes, Prime, and OpenClaw native session stores.
+
 ## 1.0.6
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.14
+
+### Patch Changes
+
+- bed491f: A seat whose provider is a knowledge-base alias of its model, such as opencode's `zai-coding-plan/glm-5.3`, passes the profile schema; the seat rule read only the bare model's family provider (`zai`) and refused every GLM coding-plan seat.
+
 ## 5.10.13
 
 ### Patch Changes
