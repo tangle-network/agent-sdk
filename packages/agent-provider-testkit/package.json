@@ -84,10 +84,10 @@
   ],
   "scripts": {
     "build": "pnpm run clean && tsc -p tsconfig.json",
-    "check-types": "tsc --noEmit",
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run src --passWithNoTests"
+    "test": "vitest run src"
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^5.10.12",
