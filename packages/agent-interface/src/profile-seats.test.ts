@@ -42,6 +42,20 @@ describe("AgentProfile.seats", () => {
     expect(agentProfileSchema.safeParse({ ...profile, prompt: { appendSystemPrompt: "extra" } }).success).toBe(false);
   });
 
+  it("accepts a seat whose provider is a knowledge-base alias of its bare model, such as the GLM coding plan", () => {
+    // Discovery's record-families root re-seated to opencode/zai-coding-plan/glm-5.3 on 2026-10-31: `glm-5.3` resolves to `zai`,
+    // and the seat rule refused the plan provider the knowledge base lists as an alias of that model.
+    const plan = {
+      harness: "opencode",
+      model: { default: "glm-5.3", provider: "zai-coding-plan", reasoningEffort: "xhigh" },
+      prompt: { instructions: ["Continue the research."] },
+      seats: [{ harness: "opencode", provider: "zai-coding-plan", model: "glm-5.3", selector: { kind: "all-eligible" } }],
+    } as const;
+    expect(agentProfileSchema.safeParse(plan).success).toBe(true);
+    const unknown = { ...plan, model: { ...plan.model, provider: "zai-coding" }, seats: [{ ...plan.seats[0], provider: "zai-coding" }] };
+    expect(agentProfileSchema.safeParse(unknown).error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.0.provider"]);
+  });
+
   it("allows explicit stage tool replacement without changing the first stage", () => {
     const withControls = {
       ...profile,

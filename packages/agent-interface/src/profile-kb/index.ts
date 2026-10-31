@@ -100,9 +100,8 @@ function matchModelName<T>(
   }
 }
 
-function modelPosition(model: string | undefined): number {
-  return matchModelName(model, (candidate) => modelIndex.get(candidate)) ?? -1;
-}
+/** Whether the knowledge base lists this exact spelling: a model id or one of its aliases, such as `zai-coding-plan/glm-5.3`. */
+export const profileKbNamesModel = (name: string): boolean => modelIndex.has(name.trim().toLowerCase());
 
 function learningsFor(
   harness: ProfileKbHarness | undefined,
@@ -139,7 +138,7 @@ function profileKbGuidance(
   const harness = selection.harness
     ? harnessSnapshot[harnessPosition(selection.harness)]
     : undefined;
-  const model = modelSnapshot[modelPosition(selection.model)];
+  const model = modelSnapshot[matchModelName(selection.model, (candidate) => modelIndex.get(candidate)) ?? -1];
   const blocks: AgentProfileGuidanceBlock[] = [];
   if (harness && harness.prompt.length > 0) {
     blocks.push({
