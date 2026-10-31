@@ -16,8 +16,8 @@ const privateReceipt = `hmac-sha256:${"d".repeat(64)}`;
 type Fault = "missing" | "malformed" | "wrong-box" | "pending" | "generation" | "grant" | "expiry" | "scope" | "subset" | "subset-generation" | "metadata" | "partial-group";
 
 /** Real public provider and SDK against an authenticated HTTP peer; no proxy/HOME enforcement claim. */
-async function fixture(options: { fault?: Fault; canonical?: boolean; native?: boolean; secret?: boolean; empty?: boolean; twoNativeAliases?: boolean } = {}) {
-  const { fault, canonical = true, native = true, secret = false, empty = false, twoNativeAliases = false } = options;
+async function fixture(options: { fault?: Fault; canonical?: boolean; native?: boolean; secret?: boolean; empty?: boolean; twoNativeAliases?: boolean; refusePrepare?: "disabled" | "failed" } = {}) {
+  const { fault, canonical = true, native = true, secret = false, empty = false, twoNativeAliases = false, refusePrepare } = options;
   const declared = twoNativeAliases
     ? [declarations[0]!, { ...declarations[0]!, envName: "NATIVE_ID_ALIAS" }, declarations[1]!]
     : declarations;
@@ -30,7 +30,7 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
   } }));
   const full = (installed: boolean) => ProxySecretReceiptSchema.parse({ protocolVersion: 1, sandboxId: "sandbox-phase", generation: 1,
     status: installed ? "installed" : "proxy-installed", proxyAcknowledged: true, materializationAcknowledged: installed, bindings });
-  let baseUrl = "", prepared = false, faultsArmed = false, runs = 0, currentReads = 0, staleReads = 0;
+  let baseUrl = "", prepared = false, faultsArmed = false, runs = 0, currentReads = 0, staleReads = 0, refusals = 0;
   let pausePreparation = false, holdInfo = false, releaseInfo = () => {}, releasePreparation = () => {}, startedPreparation = () => {};
   const preparationStarted = new Promise<void>(resolve => { startedPreparation = resolve; });
   let startedHeldRead = () => {}, observedPostAckRefresh = () => {};
@@ -67,7 +67,7 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
       if (url.pathname === "/v1/sandboxes" && request.method === "POST") return answer(200, info());
       if (url.pathname === "/v1/sandboxes/sandbox-phase") {
         const snapshot = info();
-        if (prepared || !native) currentReads++;
+        if (prepared || !native || refusePrepare) currentReads++;
         else staleReads++;
         if (holdInfo && !prepared) { startedHeldRead(); await new Promise<void>(resolve => { releaseInfo = resolve; }); }
         return answer(200, snapshot);
@@ -85,6 +85,12 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
         expect(sessions.has(decodeURIComponent(preparation[1]!))).toBe(true);
         expect(body.secret === true).toBe(secret);
         expect(body.expectedPublicProfileRequestDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+        if (refusePrepare) {
+          // The sidecar's own refusal, as served when no public revision root is configured.
+          refusals++;
+          return answer(409, { success: false, error: { code: "PUBLIC_PROFILE_PREPARATION_FAILED",
+            message: refusePrepare === "disabled" ? "Concurrent public profile materialization is disabled" : "Concurrent public profile preparation produced no native plan" } });
+        }
         preparedBodies.push(body); startedPreparation();
         if (pausePreparation) await new Promise<void>(resolve => { releasePreparation = resolve; });
         prepared = true;
@@ -104,9 +110,10 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
         return;
       }
       if (url.pathname.endsWith("/agents/run/stream")) {
-        if (canonical && !empty) { if (native || secret) expect(prepared).toBe(true); expect(currentReads).toBeGreaterThan(0); }
+        if (canonical && !empty) { if (secret || (native && !refusePrepare)) expect(prepared).toBe(true); expect(currentReads).toBeGreaterThan(0); }
         if (secret) expect(body.expectedSecretProfileReceipt).toBe(privateReceipt);
-        else if (canonical && !empty && native) expect(body.expectedPublicProfileRevision).toEqual(publicRevision);
+        else if (canonical && !empty && native && !refusePrepare) expect(body.expectedPublicProfileRevision).toEqual(publicRevision);
+        if (refusePrepare) { expect(body.expectedPublicProfileRevision).toBeUndefined(); expect(body.expectedPublicProfileRequestDigest).toBeUndefined(); }
         if (preparedBodies.length) expect(body.expectedPublicProfileRequestDigest).toBe(preparedBodies.at(-1)!.expectedPublicProfileRequestDigest);
         runs++;
         const executionId = String(request.headers["x-execution-id"]);
@@ -143,7 +150,7 @@ async function fixture(options: { fault?: Fault; canonical?: boolean; native?: b
   faultsArmed = true;
   const turn = (id: string) => ({ profile, prompt: "Return prepared", executionId: id, turnId: id,
     ...(secret ? { providerOptions: { backend: { type: "codex", runtimeSecrets: { TURN_TOKEN: "fixture-turn-only" } } } } : {}) });
-  return { environment, turn, paths, errors, preparedBodies, count: () => runs, reads: () => ({ currentReads, staleReads }),
+  return { environment, turn, paths, errors, preparedBodies, refusals: () => refusals, count: () => runs, reads: () => ({ currentReads, staleReads }),
     pause: () => { pausePreparation = true; }, preparationStarted, heldReadStarted, postAckRefresh, hold: () => { holdInfo = true; },
     release: () => { releasePreparation(); }, releaseRead: () => { holdInfo = false; releaseInfo(); } };
 }
@@ -228,4 +235,17 @@ it.each([false, true])("requires the complete two-alias native group, apart from
   expect(complete.count()).toBe(1); expect(complete.errors).toEqual([]);
   expect(complete.environment.proxySecretReceipt?.bindings).toHaveLength(3);
   expect(complete.environment.proxySecretReceipt?.bindings.filter(binding => binding.secretRef.key === "NATIVE_BUNDLE")).toHaveLength(2);
+});
+
+it("launches native canonical turns unprepared when the sidecar serves no public revision root", async () => {
+  const f = await fixture({ refusePrepare: "disabled" });
+  await f.environment.dispatch!(f.turn("detached"));
+  for await (const _event of f.environment.stream(f.turn("streamed"))) { /* consume public events */ }
+  expect(f.count()).toBe(2); expect(f.refusals()).toBe(2); expect(f.preparedBodies).toEqual([]); expect(f.errors).toEqual([]);
+});
+
+it("still fails a native canonical turn when preparation fails for another reason", async () => {
+  const f = await fixture({ refusePrepare: "failed" });
+  await expect(f.environment.dispatch!(f.turn("refused"))).rejects.toThrow(/produced no native plan/);
+  expect(f.count()).toBe(0); expect(f.paths.some(path => path.endsWith("/agents/run/stream"))).toBe(false); expect(f.errors).toEqual([]);
 });

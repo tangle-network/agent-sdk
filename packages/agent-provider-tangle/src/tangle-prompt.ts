@@ -148,6 +148,13 @@ function containsProxyReceipt(full: ProxySecretReceipt, subset: ProxySecretRecei
     subset.bindings.every((binding) => full.bindings.some((member) => canonicalCandidateDigest(member) === canonicalCandidateDigest(binding)));
 }
 
+/** The sidecar's answer when it serves no public revision root: 409 with this exact text. Any other prepare failure stays an error. */
+function publicPreparationRefusal(error: unknown): undefined {
+  if (error instanceof Error && (error as { status?: unknown }).status === 409 &&
+      error.message.includes("Concurrent public profile materialization is disabled")) return undefined;
+  throw error;
+}
+
 /** Prepare one exact launch; legacy and cursor replay retain their existing path. */
 export async function preparePromptOptions(
   box: SandboxInstanceLike,
@@ -179,7 +186,9 @@ export async function preparePromptOptions(
       options = { ...options, sessionId, backend, expectedPublicProfileRequestDigest: prepared.expectedPublicProfileRequestDigest, expectedSecretProfileReceipt: prepared.expectedSecretProfileReceipt };
       if (canonical) validatePrepared(prepared.proxySecretReceipt);
     } else {
-      const prepared = await awaitWithSignal(box.preparePublicProfileRevision!(args), options.signal);
+      const prepared = await awaitWithSignal(box.preparePublicProfileRevision!(args), options.signal).catch(publicPreparationRefusal);
+      // A sidecar with no public revision root refuses every prepare, so its launch runs unprepared in the session just created.
+      if (prepared === undefined) return { ...options, sessionId, backend };
       options = { ...options, sessionId, backend, expectedPublicProfileRequestDigest: prepared.expectedPublicProfileRequestDigest, expectedPublicProfileRevision: prepared.expectedPublicProfileRevision };
       validatePrepared(prepared.proxySecretReceipt);
     }
@@ -341,14 +350,7 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
     model[field] = boundedString(present[field], `Tangle prompt backend model ${field}`);
   }
   if (present.maxThinkingTokens !== undefined) {
-    if (
-      !Number.isSafeInteger(present.maxThinkingTokens) ||
-      (present.maxThinkingTokens as number) < 0
-    ) {
-      throw new Error(
-        "Tangle prompt backend model maxThinkingTokens must be a non-negative integer",
-      );
-    }
+    if (!Number.isSafeInteger(present.maxThinkingTokens) || (present.maxThinkingTokens as number) < 0) throw new Error("Tangle prompt backend model maxThinkingTokens must be a non-negative integer");
     model.maxThinkingTokens = present.maxThinkingTokens;
   }
   if (present.mode !== undefined) {
@@ -358,11 +360,7 @@ function sandboxPromptBackendModel(value: unknown): Record<string, unknown> {
     model.mode = present.mode;
   }
   if (present.authMode !== undefined) {
-    if (present.authMode !== "api-key" && present.authMode !== "oauth") {
-      throw new Error(
-        'Tangle prompt backend model authMode must be "api-key" or "oauth"',
-      );
-    }
+    if (present.authMode !== "api-key" && present.authMode !== "oauth") throw new Error('Tangle prompt backend model authMode must be "api-key" or "oauth"');
     model.authMode = present.authMode;
   }
   if (present.authFiles !== undefined) {
@@ -385,13 +383,7 @@ function sandboxPromptBackendServer(value: unknown): Record<string, unknown> {
   );
   const server: Record<string, unknown> = {};
   if (present.port !== undefined) {
-    if (
-      !Number.isSafeInteger(present.port) ||
-      (present.port as number) < 1 ||
-      (present.port as number) > 65_535
-    ) {
-      throw new Error("Tangle prompt backend server port must be a TCP port number");
-    }
+    if (!Number.isSafeInteger(present.port) || (present.port as number) < 1 || (present.port as number) > 65_535) throw new Error("Tangle prompt backend server port must be a TCP port number");
     server.port = present.port;
   }
   if (present.hostname !== undefined) {
