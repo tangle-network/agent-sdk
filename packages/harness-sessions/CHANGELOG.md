@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.4
+
+### Patch Changes
+
+- ef9dcd6: Read Grok session/update envelopes from updates.jsonl.
+
 ## 1.0.3
 
 ### Patch Changes
