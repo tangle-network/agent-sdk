@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.16
+
+### Patch Changes
+
+- 98b115c: `AgentProfileSeat.credentialSource` lets one seat stage carry its own credential intent (`subscription` or `managed`); omitted, it inherits `profile.model.metadata.credentialSource`. A first stage that names one must match the profile's effective source.
+
 ## 5.10.15
 
 ### Patch Changes
