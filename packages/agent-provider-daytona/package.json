@@ -49,7 +49,7 @@
   "dependencies": {
     "@daytonaio/sdk": ">=0.226.1 <1.0.0",
     "@tangle-network/agent-interface": "^5.10.12",
-    "@tangle-network/agent-provider-cli-bridge": "^2.1.0"
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.5"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
