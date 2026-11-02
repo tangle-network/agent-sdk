@@ -1,14 +1,14 @@
 # @tangle-network/agent-trace-contract
 
-## 2.3.0
+## 2.2.1
 
-### Minor Changes
+### Patch Changes
 
 - 815a024: Add the `spawned_by` link kind: a child agent's session points at the parent's call that started it, so a reader follows a spawn tree by links instead of a cross-trace parent edge.
 
 ## 2.2.0
 
-### Minor Changes
+### Patch Changes
 
 - 67b07b2: Add one wire-id rule and the OTLP JSON wire, so producers stop disagreeing.
   
@@ -18,7 +18,7 @@
 
 ## 2.1.0
 
-### Minor Changes
+### Patch Changes
 
 - 1e18c88: Say who acted on every span. `ATTR` gains `agent.profile.digest`, `agent.profile.name`, `agent.model`, `agent.harness`, `agent.skills.digest` and `agent.directive.variant`. Every builder takes an optional `agent: AgentIdentity` and stamps one key per non-empty field, never a placeholder; `agentIdentityAttributes(identity)` gives producers that build their own span shape the same keys under the same rule. `validateTraceSpans` reports a new `profile-attribution` capability, available when any span carries a usable `agent.profile.digest` or `agent.profile.name`. `PROFILE_ATTR_KEYS` lists those two keys for readers.
 
@@ -30,13 +30,13 @@
 
 ## 1.3.0
 
-### Minor Changes
+### Patch Changes
 
 - 2c120a7: Export `isModelCallKind`/`MODEL_CALL_SPAN_KINDS`. `LLM`, `EMBEDDING` and `RERANKER` are each a separately billed leaf call to a model; the rest of `SpanKind` (`AGENT`, `CHAIN`, `TOOL`, `RETRIEVER`, `GUARDRAIL`, `EVALUATOR`, `PROMPT`) are aggregates whose own token/cost totals only restate a descendant's. A consumer that classified only `LLM` as a model call (agent-eval's `execution-measurements`) dropped an `EMBEDDING` or `RERANKER` span's tokens whenever a chat call anywhere in the same run also reported tokens.
 
 ## 1.2.0
 
-### Minor Changes
+### Patch Changes
 
 - d132736: Classify spans by `gen_ai.operation.name` before model and token attributes, pinned to OTel GenAI semconv 1.41.0: `invoke_agent` is AGENT, `invoke_workflow` is CHAIN, `execute_tool` is TOOL, `retrieval` is RETRIEVER, and only `chat`, `generate_content` and `text_completion` are LLM. Token counts alone no longer make an undeclared span `LLM`; it needs a model attribute or an LLM-looking name. An agent or workflow span no longer counts its children's tokens a second time. `classifySpan` and `GEN_AI_OPERATION_MAPPINGS` publish what each mapping loses, and the validator reports it as `gen-ai-operation-loss`.
   
