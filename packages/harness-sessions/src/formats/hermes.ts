@@ -1,7 +1,8 @@
+import { foldedReader } from './fold.js'
 import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { SessionBuilder, count, str, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSessionReader, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
+import type { HarnessSessionReader, SessionRef, TokenUsage } from '../schema.js'
 import { withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, walkFiles } from '../stores.js'
 
@@ -66,22 +67,17 @@ export async function hermesSessionsInStore(path: string): Promise<SessionRef[]>
   return refs
 }
 
-export const hermesReader: HarnessSessionReader = {
-  harness: HARNESS, aliases: [], formats: [FORMAT], stores: [STORE], globs: { session: STORE.files[0] }, evidence: EVIDENCE[FORMAT],
-  async locate(home, opts = {}) {
-    const root = join(home, STORE.root)
-    const refs: SessionRef[] = []
-    for (const rel of await walkFiles(root)) {
-      if (basename(rel) !== 'state.db') continue
-      const path = join(root, rel)
-      const mtime = await mtimeMs(path)
-      for (const ref of await hermesSessionsInStore(path)) {
-        if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
-        refs.push({ ...ref, home, mtimeMs: mtime })
-      }
+export const hermesReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT }, async (home, opts) => {
+  const root = join(home, STORE.root)
+  const refs: SessionRef[] = []
+  for (const rel of await walkFiles(root)) {
+    if (basename(rel) !== 'state.db') continue
+    const path = join(root, rel)
+    const mtime = await mtimeMs(path)
+    for (const ref of await hermesSessionsInStore(path)) {
+      if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
+      refs.push({ ...ref, home, mtimeMs: mtime })
     }
-    return refs
-  },
-  async read(ref, _opts: ReadOptions = {}) { return (await fold(ref, 'full')).build() },
-  async summarize(ref, _opts: ReadOptions = {}) { return (await fold(ref, 'summary')).summary() },
-}
+  }
+  return refs
+}, fold)

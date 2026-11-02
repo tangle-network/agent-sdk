@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 
@@ -163,21 +163,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const piReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['pi-coding-agent', 'pi-agent'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0] },
-  evidence: EVIDENCE[FORMAT],
-  locate: (home, opts = {}) => locate(home, opts),
-  async read(ref, opts = {}) {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}) {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const piReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['pi-coding-agent', 'pi-agent'], format: FORMAT }, locate, fold)
 
 export function piRefForFile(path: string): SessionRef {
   return { harness: HARNESS, format: FORMAT, nativeSessionId: idFromName(path), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }

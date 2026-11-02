@@ -1,3 +1,4 @@
+import { foldedReader } from './fold.js'
 import { isRecord } from '@tangle-network/agent-core'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -216,26 +217,12 @@ export async function opencodeSessionsInStore(path: string, home: string | null,
   })
 }
 
-export const opencodeReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['opencode-acp', 'opencode-cli'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0] },
-  evidence: EVIDENCE[FORMAT],
-  async locate(home, opts = {}) {
-    const path = join(home, STORE.root, STORE.files[0])
-    try {
-      return await opencodeSessionsInStore(path, home, opts)
-    } catch (error) {
-      if (isMissing(error)) return []
-      throw error
-    }
-  },
-  async read(ref, opts = {}) {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}) {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const opencodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['opencode-acp', 'opencode-cli'], format: FORMAT }, async (home, opts) => {
+  const path = join(home, STORE.root, STORE.files[0])
+  try {
+    return await opencodeSessionsInStore(path, home, opts)
+  } catch (error) {
+    if (isMissing(error)) return []
+    throw error
+  }
+}, fold)

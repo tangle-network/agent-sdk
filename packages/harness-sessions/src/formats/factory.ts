@@ -5,7 +5,7 @@ import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from 
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { headRecord } from './head.js'
 
 const FORMAT = 'factory.session-jsonl' as const
@@ -133,21 +133,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return filtered.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const factoryReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['factory', 'droid'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0] },
-  evidence: EVIDENCE[FORMAT],
-  locate: (home, opts = {}) => locate(home, opts),
-  async read(ref, opts = {}) {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}) {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const factoryReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['factory', 'droid'], format: FORMAT }, locate, fold)
 
 export function factoryRefForFile(path: string): SessionRef {
   return { harness: HARNESS, format: FORMAT, nativeSessionId: basename(path, '.jsonl'), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }

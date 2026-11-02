@@ -12,7 +12,7 @@ import {
 } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { CODEX_HOME_RULE, EVIDENCE, LOCATE_READS, STORES, codexHomes, mapLimit, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { stat } from 'node:fs/promises'
@@ -393,21 +393,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return [...largest.values()].map((c) => c.ref).sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const codexReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['codex-acp', 'codex-cli'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0] },
-  evidence: EVIDENCE[FORMAT],
-  locate: (home, opts = {}) => locate(home, opts),
-  async read(ref, opts = {}) {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}) {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const codexReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['codex-acp', 'codex-cli'], format: FORMAT }, locate, fold)
 
 export function codexRefForFile(path: string): SessionRef {
   return {

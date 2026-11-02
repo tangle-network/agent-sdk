@@ -34,6 +34,7 @@ export { grokReader, grokRefForFile } from './formats/grok.js'
 export { nanoclawReader, nanoclawRefForFile } from './formats/nanoclaw.js'
 export { hermesReader, hermesSessionsInStore } from './formats/hermes.js'
 export { primeReader } from './formats/prime.js'
+export { sandboxEventsSession, type SandboxEventsRun } from './formats/sandbox-events.js'
 export { openclawReader } from './formats/openclaw.js'
 export {
   listCapture,

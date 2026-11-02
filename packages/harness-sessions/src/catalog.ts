@@ -15,6 +15,7 @@ export const SESSION_FORMAT_IDS = [
   'openclaw.session-jsonl',
   'grok.acp-session-dir',
   'nanoclaw.session-sqlite',
+  'sandbox.events',
 ] as const
 
 function store<const F extends SessionFormatId, const Files extends readonly string[]>(
@@ -44,6 +45,7 @@ export const STORES = {
   'prime.session-jsonl': store('prime.session-jsonl', '.prime-provider/prime-agent-dirs', ['**/sessions/*.jsonl']),
   'openclaw.session-jsonl': store('openclaw.session-jsonl', '.openclaw', ['agents/main/agent/openclaw-agent.sqlite', 'agents/main/agent/openclaw-agent.sqlite-wal', 'agents/main/agent/openclaw-agent.sqlite-shm'], 'sqlite-wal'),
   'grok.acp-session-dir': store('grok.acp-session-dir', '.grok/sessions', ['*/{id}/updates.jsonl', '*/{id}/chat_history.jsonl', '*/{id}/summary.json', '*/{id}/signals.json']),
+  'sandbox.events': store('sandbox.events', 'evidence/live-stream', ['{id}/*.jsonl']),
   'nanoclaw.session-sqlite': store('nanoclaw.session-sqlite', '.nanoclaw/data/v2-sessions', ['*/{id}/outbound.db', '*/{id}/inbound.db'], 'sqlite-wal', false),
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
 
@@ -67,6 +69,7 @@ export const EVIDENCE = {
   'openclaw.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
   'grok.acp-session-dir': { servedModel: 'session-record', usage: 'session-total', endingError: 'none' },
   'nanoclaw.session-sqlite': { servedModel: 'none', usage: 'per-response', endingError: 'none' },
+  'sandbox.events': { servedModel: 'none', usage: 'per-response', endingError: 'none' },
 } as const satisfies Record<SessionFormatId, SessionEvidenceSources>
 
 export const CODEX_HOME_RULE = {

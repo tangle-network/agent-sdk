@@ -1,9 +1,10 @@
+import { foldedReader } from './fold.js'
 import { zstdDecompressSync } from 'node:zlib'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { isRecord } from '@tangle-network/agent-core'
 import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSessionReader, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
+import type { HarnessSessionReader, Part, SessionRef, TokenUsage } from '../schema.js'
 import { withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, walkFiles } from '../stores.js'
 const FORMAT = 'openclaw.session-jsonl' as const
@@ -67,21 +68,16 @@ async function fold(ref: SessionRef, mode: BuildMode): Promise<SessionBuilder> {
   builder.inferEnding()
   return builder
 }
-export const openclawReader: HarnessSessionReader = {
-  harness: HARNESS, aliases: [], formats: [FORMAT], stores: [STORE], globs: { session: STORE.files[0] }, evidence: EVIDENCE[FORMAT],
-  async locate(home, opts = {}) {
-    const refs: SessionRef[] = []
-    for (const rel of await walkFiles(join(home, STORE.root))) {
-      if (!rel.endsWith('openclaw-agent.sqlite')) continue
-      const path = join(home, STORE.root, rel)
-      const mtime = await mtimeMs(path)
-      for (const ref of await openclawSessionsInStore(path)) {
-        if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
-        refs.push({ ...ref, home, mtimeMs: mtime })
-      }
+export const openclawReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT }, async (home, opts) => {
+  const refs: SessionRef[] = []
+  for (const rel of await walkFiles(join(home, STORE.root))) {
+    if (!rel.endsWith('openclaw-agent.sqlite')) continue
+    const path = join(home, STORE.root, rel)
+    const mtime = await mtimeMs(path)
+    for (const ref of await openclawSessionsInStore(path)) {
+      if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
+      refs.push({ ...ref, home, mtimeMs: mtime })
     }
-    return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  },
-  async read(ref, _opts: ReadOptions = {}) { return (await fold(ref, 'full')).build() },
-  async summarize(ref, _opts: ReadOptions = {}) { return (await fold(ref, 'summary')).summary() },
-}
+  }
+  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
+}, fold)

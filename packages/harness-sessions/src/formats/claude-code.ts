@@ -1,9 +1,9 @@
 import { isRecord } from '@tangle-network/agent-core'
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSession, HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionSummary, TokenUsage } from '../schema.js'
+import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, LOCATE_READS, STORES, mapLimit, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { claudeRecordIsMachine, claudeTypedPromptText } from './claude-records.js'
@@ -248,21 +248,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return sessions.flat().sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const claudeCodeReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['claude', 'claude-code-acp', 'claudish'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0], children: STORE.files[1] },
-  evidence: EVIDENCE[FORMAT],
-  locate: (home, opts = {}) => locate(home, opts),
-  async read(ref, opts = {}): Promise<HarnessSession> {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}): Promise<SessionSummary> {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const claudeCodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['claude', 'claude-code-acp', 'claudish'], format: FORMAT, globs: { session: STORE.files[0], children: STORE.files[1] } }, locate, fold)
 
 export function claudeCodeRefForFile(path: string, parentNativeSessionId: string | null = null): SessionRef {
   const name = basename(path, '.jsonl')
