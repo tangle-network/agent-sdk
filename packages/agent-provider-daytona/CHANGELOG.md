@@ -9,7 +9,7 @@
 ### Patch Changes
 
 - Updated dependencies [f368d52]
-  - @tangle-network/agent-provider-cli-bridge@2.1.0
+  - @tangle-network/agent-provider-cli-bridge@2.0.5
 
 ## 0.6.1
 
