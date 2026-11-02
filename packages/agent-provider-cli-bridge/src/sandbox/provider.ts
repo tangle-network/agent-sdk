@@ -21,7 +21,6 @@ import {
 } from "@tangle-network/agent-interface/environment-provider";
 import { harnessModelSupportFor } from "@tangle-network/cli-agent-registry";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "../index.js";
-import { plannerLowers } from "./refusal.js";
 import {
   BOX_WORKSPACE_DIR,
   BRIDGE_PORT,
@@ -30,7 +29,7 @@ import {
   boxHarness,
   boxHarnessVersion,
 } from "./box.js";
-import { assertProfileValid, declarableHarnesses, refuseUnsupportedCreateInput, resolveBoxHarness, validateBoxProfile } from "./refusal.js";
+import { assertProfileValid, declarableHarnesses, plannerLowers, refuseUnsupportedCreateInput, resolveBoxHarness, validateBoxProfile } from "./refusal.js";
 import type { BridgeSandbox, BridgeSandboxVendor } from "./vendor.js";
 
 export const BRIDGE_RUN_TAG = "tangle-bridge-run";

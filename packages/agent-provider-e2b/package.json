@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/agent-provider-e2b",
   "version": "0.6.1",
-  "description": "AgentEnvironmentProvider adapter for E2B sandboxes",
+  "description": "AgentEnvironmentProvider for E2B sandboxes running CLI Bridge from the box template",
   "type": "module",
   "license": "MIT",
   "main": "dist/index.js",
@@ -41,18 +41,12 @@
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run"
+    "test": "vitest run tests"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.10.2"
-  },
-  "peerDependencies": {
-    "e2b": "^2.31.0"
-  },
-  "peerDependenciesMeta": {
-    "e2b": {
-      "optional": true
-    }
+    "@tangle-network/agent-interface": "^5.10.14",
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.4",
+    "e2b": "^2.62.0"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",

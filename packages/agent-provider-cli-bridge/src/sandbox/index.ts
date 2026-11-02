@@ -12,6 +12,7 @@ export {
   BOX_HARNESSES,
   BOX_HOME,
   BOX_PINS,
+  BOX_TEMPLATE_NAME,
   BOX_WORKSPACE_DIR,
   BRIDGE_PORT,
   boxHarnessVersion,

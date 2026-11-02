@@ -58,7 +58,7 @@ async function verifyBridgePin({ cliBridgeRepository, cliBridgeCommit, agentProf
 const targets = {
   docker: {
     output: "DOCKER_IMAGE",
-    defaultName: (revision) => `tangle-cli-bridge-box:${revision}`,
+    defaultName: (box) => `tangle-cli-bridge-box:${box.BOX_PINS.cliBridgeCommit.slice(0, 12)}`,
     async build({ dockerfile, name, box, harnesses }) {
       const built = spawnSync("docker", ["build", "-t", name, "-"], { input: dockerfile, stdio: ["pipe", 2, 2] });
       if (built.error) throw new Failure(`docker could not start: ${built.error.message}`);
@@ -88,7 +88,7 @@ const targets = {
   e2b: {
     credential: "E2B_API_KEY",
     output: "E2B_TEMPLATE",
-    defaultName: (revision) => `tangle-cli-bridge-box-${revision}`,
+    defaultName: (box) => box.BOX_TEMPLATE_NAME,
     async build({ dockerfile, name, apiKey }) {
       const { Template } = await loadSdk("agent-provider-e2b", "e2b");
       const info = await Template.build(Template().fromDockerfile(dockerfile), name, {
@@ -102,7 +102,7 @@ const targets = {
   daytona: {
     credential: "DAYTONA_API_KEY",
     output: "DAYTONA_SNAPSHOT",
-    defaultName: (revision) => `tangle-cli-bridge-box-${revision}`,
+    defaultName: (box) => box.BOX_TEMPLATE_NAME,
     async build({ dockerfile, name, apiKey }) {
       const { Daytona, Image } = await loadSdk("agent-provider-daytona", "@daytonaio/sdk");
       const directory = mkdtempSync(join(tmpdir(), "tangle-cli-bridge-box-"));
@@ -160,7 +160,7 @@ async function main() {
     process.stdout.write(dockerfile);
     return;
   }
-  const name = values.name ?? target.defaultName(box.BOX_PINS.cliBridgeCommit.slice(0, 12));
+  const name = values.name ?? target.defaultName(box);
   const result = await target.build({ dockerfile, name, box, harnesses, apiKey });
   process.stdout.write(`${target.output}=${result}\n`);
 }
