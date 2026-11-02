@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
+
+const CODE_TOOLBOX_LANGUAGE_LABEL = "code-toolbox-language";
 import {
   BOX_PINS,
   BRIDGE_RUN_TAG,
@@ -49,13 +51,14 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
     support: { environment: true, image: false, resources: false, egress: ["open", "strict", "blocked"] },
     async create(request) {
       request.signal?.throwIfAborted();
-      const pending = vendorCall("create", () =>
-        daytona().create(
+      const pending = vendorCall("create", async () => {
+        try {
+          return await daytona().create(
           {
             snapshot: request.environment ?? config.snapshot ?? DAYTONA_BOX_SNAPSHOT,
             user: "node",
             ...(request.name === undefined ? {} : { name: request.name }),
-            labels: request.metadata,
+            labels: { ...request.metadata },
             envVars: request.env,
             public: false,
             ttlMinutes: Math.ceil(request.lifetimeMs / 60_000),
@@ -65,8 +68,14 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
             ...(request.egress?.mode === "strict" ? { domainAllowList: request.egress.allowDomains.join(",") } : {}),
           },
           { timeout: 600 },
-        ),
-      );
+          );
+        } catch (error) {
+          // A create that times out after the POST names the sandbox it leaves running.
+          const leftover = (error as { sandboxId?: unknown }).sandboxId;
+          if (typeof leftover === "string") await daytona().get(leftover).then((sandbox) => sandbox.delete(60, true)).catch(() => undefined);
+          throw error;
+        }
+      });
       return daytonaSandbox(await abortable(pending, request.signal, (late) => late.delete(60, true)));
     },
     async connect(id) {
@@ -87,7 +96,9 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
         for await (const sandbox of listed) {
           if (sandbox.labels[BRIDGE_RUN_TAG] === undefined) continue;
           if (query.name !== undefined && sandbox.name !== query.name) continue;
-          out.push({ id: sandbox.id, status: daytonaStatus(sandbox.state), name: sandbox.name, metadata: sandbox.labels });
+          // The SDK adds its own language label to every sandbox it creates.
+          const { [CODE_TOOLBOX_LANGUAGE_LABEL]: _language, ...metadata } = sandbox.labels;
+          out.push({ id: sandbox.id, status: daytonaStatus(sandbox.state), name: sandbox.name, metadata });
         }
       } catch (error) {
         throw typedError("list", error);
@@ -117,11 +128,11 @@ function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
       const marker = randomBytes(6).toString("hex");
       const env = Object.entries(options?.env ?? {}).map(([key, value]) => `export ${key}=${quote(value)}; `).join("");
       const cwd = options?.cwd === undefined ? "" : `cd ${quote(options.cwd)} && `;
-      await vendorCall("exec", () => sandbox.process.createSession(session));
       const ended = new AbortController();
       const timer = options?.timeoutMs === undefined ? undefined : setTimeout(() => ended.abort(new EnvironmentProviderError("timeout", `exec exceeded ${options.timeoutMs} ms`, { provider: "daytona" })), options.timeoutMs);
       const signal = options?.signal === undefined ? ended.signal : AbortSignal.any([options.signal, ended.signal]);
       try {
+        await abortable(vendorCall("exec", () => sandbox.process.createSession(session)), signal);
         const response = await abortable(
           vendorCall("exec", () => sandbox.process.executeSessionCommand(session, { command: `export TBOX_EXEC=${marker}; ${env}${cwd}${command}`, runAsync: false })),
           signal,
@@ -142,32 +153,34 @@ function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
       const file = `/tmp/tbox-env-${randomBytes(8).toString("hex")}`;
       const lines = Object.entries(options.env).map(([key, value]) => `export ${key}=${quote(value)}`).join("\n");
       await mustRun(`umask 077 && : > ${file}`, "creating the Bridge env file");
-      await vendorCall("spawn", () => sandbox.fs.uploadFile(Buffer.from(`${lines}\n`), file));
       const session = `bridge-${randomUUID()}`;
-      await vendorCall("spawn", () => sandbox.process.createSession(session));
       const cwd = options.cwd === undefined ? "" : `cd ${quote(options.cwd)} && `;
-      await vendorCall("spawn", () =>
-        sandbox.process.executeSessionCommand(session, { command: `. ${file} && rm -f ${file} && ${cwd}exec ${command} >/tmp/bridge.log 2>&1`, runAsync: true }),
-      );
+      try {
+        await vendorCall("spawn", () => sandbox.fs.uploadFile(Buffer.from(`${lines}\n`), file));
+        await vendorCall("spawn", () => sandbox.process.createSession(session));
+        await vendorCall("spawn", () =>
+          sandbox.process.executeSessionCommand(session, { command: `. ${file} && rm -f ${file} && ${cwd}exec ${command} >/tmp/bridge.log 2>&1`, runAsync: true }),
+        );
+      } catch (error) {
+        await run(`rm -f ${file}`).catch(() => undefined);
+        throw error;
+      }
     },
     async read(path, options) {
-      options?.signal?.throwIfAborted();
-      const content = await vendorCall("read", () => sandbox.fs.downloadFile(path));
+      const content = await abortable(vendorCall("read", () => sandbox.fs.downloadFile(path)), options?.signal);
       return content.toString("utf8");
     },
     async write(path, content, options) {
-      options?.signal?.throwIfAborted();
-      await mustRun(`mkdir -p ${quote(posix.dirname(path))}`, `creating the parent of ${path}`);
-      await vendorCall("write", () => sandbox.fs.uploadFile(Buffer.from(content, "utf8"), path));
+      await abortable(mustRun(`mkdir -p ${quote(posix.dirname(path))}`, `creating the parent of ${path}`), options?.signal);
+      await abortable(vendorCall("write", () => sandbox.fs.uploadFile(Buffer.from(content, "utf8"), path)), options?.signal);
     },
     async endpoint(port) {
       const link = await vendorCall("endpoint", () => sandbox.getPreviewLink(port));
       return { url: link.url, headers: { "X-Daytona-Preview-Token": link.token } };
     },
     async status(options) {
-      options?.signal?.throwIfAborted();
       try {
-        await vendorCall("status", () => sandbox.refreshData());
+        await abortable(vendorCall("status", () => sandbox.refreshData()), options?.signal);
         return daytonaStatus(sandbox.state);
       } catch (error) {
         if (error instanceof EnvironmentProviderError && error.code === "not_found") return "expired";
@@ -213,7 +226,8 @@ function typedError(operation: string, error: unknown): EnvironmentProviderError
   if (error instanceof EnvironmentProviderError) return error;
   const status = (error as { statusCode?: unknown } | null)?.statusCode;
   const name = (error as { name?: unknown } | null)?.name;
-  const code = typeof status === "number"
+  // 410 is Daytona's answer for a sandbox that existed and is permanently gone.
+  const code = status === 410 ? "not_found" : typeof status === "number"
     ? environmentProviderErrorCodeForStatus(status)
     : name === "DaytonaNotFoundError" ? "not_found"
       : name === "DaytonaAuthenticationError" ? "auth_failed"
@@ -227,29 +241,13 @@ function typedError(operation: string, error: unknown): EnvironmentProviderError
   });
 }
 
+const STATUS_BY_STATE: Readonly<Record<string, AgentEnvironmentStatus>> = {
+  started: "running", stopped: "stopped", paused: "stopped", archived: "stopped", error: "failed", build_failed: "failed",
+  destroyed: "expired", destroying: "expired", pending_build: "pending",
+};
+const TRANSITION_STATES = new Set(["creating", "restoring", "starting", "stopping", "building_snapshot", "pulling_snapshot", "archiving", "resizing", "snapshotting", "forking", "pausing", "resuming"]);
+
 function daytonaStatus(state: string | undefined): AgentEnvironmentStatus {
-  switch (state) {
-    case "started": return "running";
-    case "stopped":
-    case "paused":
-    case "archived": return "stopped";
-    case "error":
-    case "build_failed": return "failed";
-    case "destroyed":
-    case "destroying": return "expired";
-    case "pending_build": return "pending";
-    case "creating":
-    case "restoring":
-    case "starting":
-    case "stopping":
-    case "building_snapshot":
-    case "pulling_snapshot":
-    case "archiving":
-    case "resizing":
-    case "snapshotting":
-    case "forking":
-    case "pausing":
-    case "resuming": return "provisioning";
-    default: return "unknown";
-  }
+  if (state === undefined) return "unknown";
+  return STATUS_BY_STATE[state] ?? (TRANSITION_STATES.has(state) ? "provisioning" : "unknown");
 }
