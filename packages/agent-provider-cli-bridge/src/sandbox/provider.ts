@@ -19,6 +19,7 @@ import {
   type AgentTurnInput,
   type CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
+import { shellQuote } from "@tangle-network/agent-core/node";
 import { harnessModelSupportFor } from "@tangle-network/cli-agent-registry";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "../index.js";
 import {
@@ -268,12 +269,11 @@ async function cloneRepository(sandbox: BridgeSandbox, input: CreateAgentEnviron
   const repoUrl = input.workspace?.repoUrl;
   if (repoUrl === undefined) return;
   const gitRef = input.workspace?.gitRef;
-  const quote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
   const command = [
-    `rm -rf ${quote(BOX_WORKSPACE_DIR)}/.git`,
-    `git clone ${quote(repoUrl)} ${quote(BOX_WORKSPACE_DIR)}.clone`,
-    ...(gitRef === undefined ? [] : [`git -C ${quote(BOX_WORKSPACE_DIR)}.clone checkout ${quote(gitRef)}`]),
-    `cp -a ${quote(BOX_WORKSPACE_DIR)}.clone/. ${quote(BOX_WORKSPACE_DIR)}/ && rm -rf ${quote(BOX_WORKSPACE_DIR)}.clone`,
+    `rm -rf ${shellQuote(BOX_WORKSPACE_DIR)}/.git`,
+    `git clone ${shellQuote(repoUrl)} ${shellQuote(BOX_WORKSPACE_DIR)}.clone`,
+    ...(gitRef === undefined ? [] : [`git -C ${shellQuote(BOX_WORKSPACE_DIR)}.clone checkout ${shellQuote(gitRef)}`]),
+    `cp -a ${shellQuote(BOX_WORKSPACE_DIR)}.clone/. ${shellQuote(BOX_WORKSPACE_DIR)}/ && rm -rf ${shellQuote(BOX_WORKSPACE_DIR)}.clone`,
   ].join(" && ");
   const result = await sandbox.exec(command, { timeoutMs: 600_000, ...signalOption(input.signal) });
   if (result.exitCode !== 0) {
@@ -282,7 +282,7 @@ async function cloneRepository(sandbox: BridgeSandbox, input: CreateAgentEnviron
 }
 
 async function ensureDirectory(sandbox: BridgeSandbox, directory: string): Promise<void> {
-  const result = await sandbox.exec(`mkdir -p '${directory.replace(/'/g, `'\\''`)}'`, { timeoutMs: 30_000 });
+  const result = await sandbox.exec(`mkdir -p ${shellQuote(directory)}`, { timeoutMs: 30_000 });
   if (result.exitCode !== 0) {
     throw new EnvironmentProviderError("provision_failed", `cannot create workspace directory ${directory}: ${result.stderr.trim().slice(0, 200)}`, { path: "workspace.cwd" });
   }

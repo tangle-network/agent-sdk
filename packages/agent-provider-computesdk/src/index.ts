@@ -1,232 +1,148 @@
+import { posix } from "node:path";
+import { shellQuote } from "@tangle-network/agent-core/node";
 import {
-  commandTurnEvents,
-  execOnlyEnvironmentCapabilities,
-  execResultFromUnknown,
-  WorkspaceRequestSchema,
-  workspaceCwdPathForBase,
+  EnvironmentProviderError,
+  type AgentEnvironmentProvider,
+  type AgentEnvironmentStatus,
+  type ExecResult,
 } from "@tangle-network/agent-interface/environment-provider";
-import type {
-  AgentEnvironment,
-  AgentEnvironmentCapabilities,
-  AgentEnvironmentGetOptions,
-  AgentEnvironmentEvent,
-  AgentEnvironmentProvider,
-  AgentEnvironmentQuery,
-  AgentEnvironmentSummary,
-  AgentTurnInput,
-  CheckpointRef,
-  CheckpointRequest,
-  CreateAgentEnvironmentInput,
-  ExecRequest,
-  ExecResult,
-  ForkRequest,
-  PlacementInfo,
-} from "@tangle-network/agent-interface/environment-provider";
+import {
+  BOX_TEMPLATE_NAME,
+  BRIDGE_RUN_TAG,
+  createBridgeSandboxProvider,
+  envFileLaunch,
+  markedExec,
+  untilAborted,
+  type BridgeSandbox,
+  type BridgeSandboxProviderOptions,
+  type BridgeSandboxSummary,
+  type BridgeSandboxVendor,
+} from "@tangle-network/agent-provider-cli-bridge/sandbox";
+import type { CallableCompute, InstanceInterface } from "computesdk";
 
-export interface ComputeSdkLike {
-  sandbox: {
-    create(options?: Record<string, unknown>): Promise<ComputeSandboxLike>;
-    getById?(id: string): Promise<ComputeSandboxLike | null>;
-    list?(): Promise<ComputeSandboxLike[]>;
-    destroy?(id: string): Promise<void>;
-  };
-  snapshot?: {
-    create?(sandboxId: string, options?: Record<string, unknown>): Promise<{ id: string; metadata?: Record<string, unknown> }>;
-  };
+type Instances = CallableCompute["instances"];
+
+export interface ComputeSdkProviderOptions extends Omit<BridgeSandboxProviderOptions, "vendor"> {
+  /** A computesdk manager with a backing provider set, for example `compute({ provider: e2b({ apiKey }) })`. */
+  compute: { instances: Instances };
+  /** Template or snapshot id the backing provider boots; defaults to the box template `pnpm build:sandbox-image --target e2b` publishes. */
+  template?: string;
 }
 
-export interface ComputeSandboxLike {
-  sandboxId?: string;
-  id?: string;
-  provider?: string;
-  metadata?: Record<string, unknown>;
-  runCommand(command: string, options?: Record<string, unknown>): Promise<unknown>;
-  filesystem?: {
-    readFile(path: string): Promise<string>;
-    writeFile(path: string, content: string): Promise<void>;
-  };
+/** An `AgentEnvironmentProvider` whose environments are sandboxes on any computesdk backing provider, running CLI Bridge from the box image. */
+export function createComputeSdkProvider({ compute, template, ...bridge }: ComputeSdkProviderOptions): AgentEnvironmentProvider {
+  return createBridgeSandboxProvider({ ...bridge, vendor: computeSdkVendor(compute.instances, template ?? BOX_TEMPLATE_NAME) });
 }
 
-export interface ComputeSdkProviderOptions {
-  compute: ComputeSdkLike;
-  name?: string;
-  capabilities?: AgentEnvironmentCapabilities;
-  turnCommand?: (input: AgentTurnInput, environment: AgentEnvironment) => string | Promise<string>;
-  mapCreateInput?: (input: CreateAgentEnvironmentInput) => Record<string, unknown>;
-}
+const NAME = "computesdk";
+// computesdk's listing returns no tags, so each sandbox carries its own in its default environment.
+const TAGS_ENV = "TANGLE_BRIDGE_TAGS";
+const NAME_TAG = "tangle-name";
+// computesdk's e2b provider applies a 60 s default to a command given no timeout; markedExec owns the real deadline.
+const COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
-export function createComputeSdkProvider(options: ComputeSdkProviderOptions): AgentEnvironmentProvider {
-  if (options.capabilities?.contextTransfer?.attach === true) {
-    throw new Error("ComputeSDK provider does not support context transfer attachment");
-  }
-  const name = options.name ?? "computesdk";
-  if (options.capabilities?.create?.workspaceSnapshot === true) {
-    throw new Error("ComputeSDK provider does not support portable workspace snapshots");
-  }
-  const createEnvironment = async (
-    input: CreateAgentEnvironmentInput,
-  ): Promise<AgentEnvironment> => {
-    const normalizedInput = normalizeComputeInput(input);
-    const sandbox = await options.compute.sandbox.create(
-      options.mapCreateInput?.(normalizedInput) ?? computeCreateOptions(normalizedInput),
-    );
-    return computeSandboxAsEnvironment(options, name, sandbox);
+function computeSdkVendor(instances: Instances, template: string): BridgeSandboxVendor {
+  const lookup = (id: string, signal?: AbortSignal) => untilAborted(vendorCall("connect", () => instances.getById(id)), signal);
+  const summary = async (id: string): Promise<BridgeSandboxSummary | undefined> => {
+    const instance = await lookup(id);
+    const printed = instance === null ? undefined : await vendorCall("list", () => instance.runCommand(`printenv ${TAGS_ENV}`, { timeout: 30_000 }));
+    if (instance === null || printed?.exitCode !== 0) return undefined;
+    const { [NAME_TAG]: name, ...metadata } = JSON.parse(printed.stdout) as Record<string, string>;
+    return { id, status: await lifecycleStatus(instance), metadata, ...(name === undefined ? {} : { name }) };
   };
   return {
-    name,
-    capabilities: () => options.capabilities ?? defaultComputeSdkCapabilities(),
-    async create(input) {
-      input.signal?.throwIfAborted();
-      if (input.workspace?.snapshot !== undefined) {
-        throw new Error("ComputeSDK provider does not support portable workspace snapshots");
-      }
-      if (input.runtimeAttachments !== undefined) {
-        throw new Error("ComputeSDK provider does not support runtime MCP attachments");
-      }
-      if (input.idempotencyKey !== undefined) {
-        throw new Error("ComputeSDK provider does not support durable keyed creation");
-      }
-      return createEnvironment(input);
+    name: NAME,
+    // Image, resources and egress mean something different on each backing provider; a template id is the portable choice.
+    support: { environment: true, image: false, resources: false, egress: [] },
+    async create(request) {
+      const tags = request.name === undefined ? request.metadata : { ...request.metadata, [NAME_TAG]: request.name };
+      // computesdk destroys a sandbox that arrives after the signal aborts.
+      const instance = await vendorCall("create", () => instances.create({
+        templateId: request.environment ?? template,
+        timeout: request.lifetimeMs,
+        metadata: tags,
+        envs: { ...request.env, [TAGS_ENV]: JSON.stringify(tags) },
+        ...(request.name === undefined ? {} : { name: request.name }),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      }));
+      return computeSdkSandbox(instance, instances, lookup);
     },
-    ...(options.compute.sandbox.getById
-      ? {
-          async get(id: string, request?: AgentEnvironmentGetOptions): Promise<AgentEnvironment | null> {
-            if (request?.readOnly !== undefined) throw new Error("ComputeSDK does not support read-only environment discovery");
-            if (request?.contextTransfer !== undefined) throw new Error("ComputeSDK provider does not support context transfer attachment");
-            request?.signal?.throwIfAborted();
-            const sandbox = await options.compute.sandbox.getById?.(id);
-            return sandbox ? computeSandboxAsEnvironment(options, name, sandbox) : null;
-          },
-        }
-      : {}),
-    ...(options.compute.sandbox.list
-      ? {
-          async list(_query?: AgentEnvironmentQuery): Promise<AgentEnvironmentSummary[]> {
-            const sandboxes = await options.compute.sandbox.list?.();
-            return (sandboxes ?? []).map((sandbox) => ({
-              id: sandboxId(sandbox),
-              provider: name,
-              status: "running",
-              metadata: sandbox.metadata,
-            }));
-          },
-        }
-      : {}),
+    async connect(id, options) {
+      const instance = await lookup(id, options?.signal);
+      return instance === null ? null : computeSdkSandbox(instance, instances, lookup);
+    },
+    async list(query, options) {
+      const listed = await untilAborted(vendorCall("list", () => instances.list()), options?.signal);
+      // A listed entry cannot run commands on every backing provider, so each is reconnected to read its tags.
+      const found = await untilAborted(Promise.all(listed.map((entry) => summary(entry.sandboxId))), options?.signal);
+      return found.filter((entry): entry is BridgeSandboxSummary =>
+        entry !== undefined
+        && entry.metadata[BRIDGE_RUN_TAG] !== undefined
+        && (query.name === undefined || entry.name === query.name)
+        && Object.entries(query.metadata ?? {}).every(([key, value]) => entry.metadata[key] === value));
+    },
   };
 }
 
-function computeSandboxAsEnvironment(
-  options: ComputeSdkProviderOptions,
-  providerName: string,
-  sandbox: ComputeSandboxLike,
-): AgentEnvironment {
-  const id = sandboxId(sandbox);
-  const environment: AgentEnvironment = {
+function computeSdkSandbox(instance: InstanceInterface, instances: Instances, lookup: (id: string, signal?: AbortSignal) => Promise<InstanceInterface | null>): BridgeSandbox {
+  const id = instance.sandboxId;
+  const run = async (script: string, signal?: AbortSignal): Promise<ExecResult> => {
+    const { exitCode, stdout, stderr } = await untilAborted(vendorCall("exec", () => instance.runCommand(script, { timeout: COMMAND_TIMEOUT_MS })), signal);
+    return { exitCode, stdout, stderr };
+  };
+  const mustRun = async (script: string, what: string, signal?: AbortSignal): Promise<void> => {
+    const result = await run(script, signal);
+    if (result.exitCode !== 0) throw new EnvironmentProviderError("transport", `${what} failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 300)}`, { provider: NAME });
+  };
+  return {
     id,
-    provider: providerName,
-    status: async () => "running",
-    stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent> {
-      return commandTurnEvents({
-        input,
-        environment,
-        providerLabel: "ComputeSDK",
-        turnCommand: options.turnCommand,
-      });
+    exec: (command, options) => markedExec(command, options, NAME, run),
+    async spawn(command, options) {
+      const launch = envFileLaunch(command, options);
+      try {
+        await mustRun(launch.prepare, "creating the Bridge env directory");
+        await vendorCall("spawn", () => instance.filesystem.writeFile(launch.file, launch.content));
+        await mustRun(`nohup sh -c ${shellQuote(launch.launch)} >/dev/null 2>&1 </dev/null &`, "starting the Bridge");
+      } catch (error) {
+        await run(launch.cleanup).catch(() => undefined);
+        throw error;
+      }
     },
-    ...(sandbox.filesystem
-      ? {
-          read: sandbox.filesystem.readFile.bind(sandbox.filesystem),
-          write: sandbox.filesystem.writeFile.bind(sandbox.filesystem),
-        }
-      : {}),
-    async exec(command: string, request?: ExecRequest): Promise<ExecResult> {
-      const result = await sandbox.runCommand(command, {
-        ...(request?.cwd ? { cwd: request.cwd } : {}),
-        ...(request?.env ? { env: request.env } : {}),
-        ...(request?.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
-        ...(request?.signal ? { signal: request.signal } : {}),
-      });
-      return execResultFromUnknown(result, "ComputeSDK sandbox.runCommand");
+    read: (path, options) => untilAborted(vendorCall("read", () => instance.filesystem.readFile(path)), options?.signal),
+    async write(path, content, options) {
+      await mustRun(`mkdir -p ${shellQuote(posix.dirname(path))}`, `creating the parent of ${path}`, options?.signal);
+      await untilAborted(vendorCall("write", () => instance.filesystem.writeFile(path, content)), options?.signal);
     },
-    ...(options.compute.snapshot?.create
-      ? {
-          async checkpoint(request?: CheckpointRequest): Promise<CheckpointRef> {
-            const checkpoint = await options.compute.snapshot?.create?.(id, {
-              name: request?.name,
-              metadata: request?.metadata,
-            });
-            if (!checkpoint?.id) throw new Error("ComputeSDK snapshot.create returned no id");
-            return { id: checkpoint.id, provider: providerName, metadata: checkpoint.metadata };
-          },
-        }
-      : {}),
-    async placement(): Promise<PlacementInfo> {
-      return {
-        kind: "provider",
-        machineId: id,
-        providerMetadata: {
-          provider: sandbox.provider,
-          ...(sandbox.metadata ?? {}),
-        },
-      };
+    endpoint: async (port, options) => ({ url: await untilAborted(vendorCall("endpoint", () => instance.getUrl({ port })), options?.signal) }),
+    async status(options) {
+      const current = await lookup(id, options?.signal);
+      return current === null ? "expired" : lifecycleStatus(current);
     },
-    async destroy(): Promise<void> {
-      await options.compute.sandbox.destroy?.(id);
+    async destroy(options) {
+      await untilAborted(vendorCall("destroy", () => instances.destroy(id)), options?.signal);
+      // computesdk's destroy resolves even when the backing provider failed to delete.
+      if ((await lookup(id, options?.signal)) !== null) {
+        throw new EnvironmentProviderError("cleanup_failed", `sandbox ${id} is still present after destroy`, { provider: NAME, cleanupHandle: { environmentId: id, provider: NAME } });
+      }
     },
   };
-  return {
-    ...environment,
-    ...(environment.checkpoint
-      ? {
-          async fork(checkpoint: CheckpointRef, request?: ForkRequest): Promise<AgentEnvironment> {
-            const forked = await options.compute.sandbox.create({
-              snapshot: checkpoint.id,
-              ...(request?.metadata ? { metadata: request.metadata } : {}),
-            });
-            return computeSandboxAsEnvironment(options, providerName, forked);
-          },
-        }
-      : {}),
-  };
 }
 
-function computeCreateOptions(input: CreateAgentEnvironmentInput): Record<string, unknown> {
-  return {
-    ...(input.workspace?.environment ? { environment: input.workspace.environment } : {}),
-    ...(input.workspace?.image ? { image: input.workspace.image } : {}),
-    ...(input.workspace?.repoUrl ? { repoUrl: input.workspace.repoUrl } : {}),
-    ...(input.workspace?.gitRef ? { gitRef: input.workspace.gitRef } : {}),
-    ...(input.workspace?.cwd ? { cwd: input.workspace.cwd.path } : {}),
-    ...(input.resources ? { resources: input.resources } : {}),
-    ...(input.env ? { env: input.env } : {}),
-    ...(input.metadata ? { metadata: input.metadata } : {}),
-    ...(input.name ? { name: input.name } : {}),
-    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-    ...(input.providerOptions ?? {}),
-  };
+async function lifecycleStatus(instance: InstanceInterface): Promise<AgentEnvironmentStatus> {
+  const { status } = await vendorCall("status", () => instance.getInfo());
+  return status === "running" ? "running" : status === "stopped" ? "stopped" : "failed";
 }
 
-function normalizeComputeInput(input: CreateAgentEnvironmentInput): CreateAgentEnvironmentInput {
-  if (input.workspace === undefined) return input;
-  const workspace = WorkspaceRequestSchema.parse(input.workspace);
-  workspaceCwdPathForBase(workspace.cwd, "repository", "ComputeSDK");
-  return { ...input, workspace };
-}
-
-function sandboxId(sandbox: ComputeSandboxLike): string {
-  const id = sandbox.sandboxId ?? sandbox.id;
-  if (!id) throw new Error("ComputeSDK sandbox returned no id");
-  return id;
-}
-
-export function defaultComputeSdkCapabilities(): AgentEnvironmentCapabilities {
-  return execOnlyEnvironmentCapabilities({
-    read: true,
-    write: true,
-    exec: true,
-    git: false,
-    upload: true,
-    download: true,
-    cwdBases: { repository: true, host: false },
-  });
+async function vendorCall<T>(operation: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof EnvironmentProviderError || (error instanceof Error && error.name === "AbortError")) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    // computesdk providers rewrite vendor errors into plain messages, so the message is all there is to classify.
+    const code = /authentication failed|unauthori[sz]ed|api key/i.test(message) ? "auth_failed"
+      : /quota|rate limit/i.test(message) ? "capacity"
+        : operation === "create" ? "provision_failed" : "transport";
+    throw new EnvironmentProviderError(code, `computesdk ${operation}: ${message}`, { provider: NAME, cause: error });
+  }
 }

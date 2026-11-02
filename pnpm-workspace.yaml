@@ -37,3 +37,6 @@ minimumReleaseAgeExclude:
   - 'zod@4.6.7'
 allowBuilds:
   protobufjs: false
+  # dockerode (via @computesdk/docker, a test backing provider) pulls ssh2 native speedups; the local socket path uses neither.
+  cpu-features: false
+  ssh2: false
