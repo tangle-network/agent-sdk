@@ -125,15 +125,12 @@ export const LINK_KIND_ATTR = "agent.link.kind";
  *   (round N+1 steered by round N's grade).
  * - `graded_by` — the target evaluated this unit of work.
  * - `retry_of` — this unit of work re-attempts the target after a failure.
+ * - `spawned_by` — the target started this unit of work (a child agent's session, spawned by its parent's call).
  */
-export type LinkKind = "steered_by" | "graded_by" | "retry_of";
+export type LinkKind = "steered_by" | "graded_by" | "retry_of" | "spawned_by";
 
 /** Every {@link LinkKind}, for validation. */
-export const LINK_KINDS: readonly LinkKind[] = Object.freeze([
-  "steered_by",
-  "graded_by",
-  "retry_of",
-]);
+export const LINK_KINDS: readonly LinkKind[] = Object.freeze(["steered_by", "graded_by", "retry_of", "spawned_by"]);
 
 /** Span-kind reader candidates, highest priority first. */
 export const SPAN_KIND_ATTR_KEYS: readonly string[] = Object.freeze([
