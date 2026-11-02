@@ -38,6 +38,15 @@ const kimiModel = source(
   "Reasoning effort; vision input; important limits",
 );
 
+/** `opencode models opencode --verbose` on OpenCode 1.18.33: the keyless free routes, all priced at 0. */
+function opencodeFreeClaim(route: string, limits: string) {
+  return claim(
+    `OpenCode serves ${route} keyless (no provider key), at zero cost: ${limits}. A free route can change or leave the catalog without notice.`,
+    { url: "https://opencode.ai/inference/openai/v1", checkedAt: "2026-11-02", authority: "local", locator: `opencode 1.18.33 models opencode --verbose; ${route}` },
+    "local-observation",
+  );
+}
+
 /** Historical acceptance records, not a current serving or quality check. */
 function routerClaim(note: string) {
   return claim(
@@ -385,8 +394,8 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     id: "deepseek-v4.1-flash",
     name: "DeepSeek V4.1 Flash",
     vendor: "DeepSeek",
-    surfaces: ["api", "router"],
-    aliases: ["deepseek-flash", "deepseek/deepseek-v4.1-flash"],
+    surfaces: ["api", "router", "opencode"],
+    aliases: ["deepseek-flash", "deepseek/deepseek-v4.1-flash", "opencode/deepseek-v4.1-flash-free"],
     claims: [
       claim(
         "DeepSeek API ID deepseek-flash denotes V4.1-Flash: 1M context, 384K output, vision and tools; non-thinking mode is available. Router naming is a separate contract.",
@@ -399,7 +408,16 @@ export const profileKbModels: readonly ProfileKbModel[] = [
       routerClaim(
         "deepseek/deepseek-v4.1-flash returned HTTP 200 and served that id",
       ),
+      opencodeFreeClaim("opencode/deepseek-v4.1-flash-free", "200K context, 32K output, image input, efforts low, high and max"),
     ],
+  }),
+  kbEntry({
+    id: "glm-5.3-flash",
+    name: "GLM-5.3-Flash",
+    vendor: "Z.ai",
+    surfaces: ["opencode"],
+    aliases: ["opencode/glm-5.3-flash-free"],
+    claims: [opencodeFreeClaim("opencode/glm-5.3-flash-free", "200K context, 32K output, image input, efforts low, high and max")],
   }),
   kbEntry({
     id: "glm-5.3",
