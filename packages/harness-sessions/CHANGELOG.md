@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.1.0
+
+### Minor Changes
+
+- dd71570: Read a settled Sandbox result's events into a `HarnessSession`, so every harness that ran in a Sandbox gets the chat and OTLP projections.
+
 ## 1.0.7
 
 ### Patch Changes
