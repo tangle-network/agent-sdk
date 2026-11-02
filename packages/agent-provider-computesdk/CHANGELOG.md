@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-computesdk
 
+## 2.0.0
+
+### Major Changes
+
+- fce6d23: `createComputeSdkProvider({ compute, router: { key } })` runs CLI Bridge from the box image on any computesdk backing provider through `createBridgeSandboxProvider`. `turnCommand`, `mapCreateInput`, `capabilities`, `name`, `ComputeSdkLike`, `ComputeSandboxLike` and `defaultComputeSdkCapabilities` are removed: a turn runs the profile's harness through the Bridge, never a shell command built from the prompt. The cli-bridge sandbox entry exports `markedExec`, `envFileLaunch` and `untilAborted`, which the Daytona and computesdk vendors share; the Daytona Bridge env file now sits in a directory only the box user can open.
+
+### Patch Changes
+
+- Updated dependencies [fce6d23]
+  - @tangle-network/agent-provider-cli-bridge@2.0.6
+
 ## 1.0.7
 
 ### Patch Changes
