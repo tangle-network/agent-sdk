@@ -8,6 +8,7 @@ export type {
   BridgeVendorSupport,
 } from "./vendor.js";
 export { validateBoxProfile } from "./refusal.js";
+export { envFileLaunch, markedExec, untilAborted } from "./shell.js";
 export {
   BOX_HARNESSES,
   BOX_HOME,

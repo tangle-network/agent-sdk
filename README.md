@@ -25,7 +25,7 @@ this workspace supplies the shared boundary.
 | [`@tangle-network/agent-provider-testkit`](packages/agent-provider-testkit) | Conformance checks that any `AgentEnvironmentProvider` package can run before publishing. |
 | [`@tangle-network/agent-provider-tangle`](packages/agent-provider-tangle) | Adapter from Tangle sandbox clients into the shared environment provider contract. |
 | [`@tangle-network/agent-provider-cli-bridge`](packages/agent-provider-cli-bridge) | Adapter for a CLI bridge OpenAI-compatible HTTP endpoint. |
-| [`@tangle-network/agent-provider-computesdk`](packages/agent-provider-computesdk) | Adapter for ComputeSDK-backed sandboxes. |
+| [`@tangle-network/agent-provider-computesdk`](packages/agent-provider-computesdk) | CLI Bridge in the box image on any computesdk backing provider. |
 | [`@tangle-network/agent-provider-e2b`](packages/agent-provider-e2b) | E2B sandboxes running CLI Bridge from the box template. |
 | [`@tangle-network/agent-provider-daytona`](packages/agent-provider-daytona) | Daytona sandboxes running CLI Bridge from the box snapshot. |
 

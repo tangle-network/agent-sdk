@@ -200,6 +200,7 @@ The endpoint holds only a scheme, a host, and an explicit port; userinfo, path, 
 
 `@tangle-network/agent-provider-cli-bridge/sandbox` turns a vendor sandbox that runs CLI Bridge into an `AgentEnvironmentProvider`.
 The vendor adapter implements `BridgeSandboxVendor`: `create`, `connect`, `list`, and per sandbox `exec`, `spawn`, `read`, `write`, `endpoint`, `status` and `destroy`.
+A vendor whose command call runs to completion, as Daytona's and computesdk's do, builds `exec` from `markedExec` and `spawn` from `envFileLaunch`.
 `createBridgeSandboxProvider({ vendor, router: { key } })` does the rest:
 
 - It refuses every create field the vendor cannot honor with an `EnvironmentProviderError` that names the field, before any vendor call, and validates the profile with the materializer the Bridge in the box uses.

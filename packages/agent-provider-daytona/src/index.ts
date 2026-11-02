@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
 
@@ -7,10 +7,14 @@ import {
   BOX_TEMPLATE_NAME,
   BRIDGE_RUN_TAG,
   createBridgeSandboxProvider,
+  envFileLaunch,
+  markedExec,
+  untilAborted,
   type BridgeSandbox,
   type BridgeSandboxProviderOptions,
   type BridgeSandboxVendor,
 } from "@tangle-network/agent-provider-cli-bridge/sandbox";
+import { shellQuote } from "@tangle-network/agent-core/node";
 import {
   EnvironmentProviderError,
   environmentProviderErrorCodeForStatus,
@@ -73,7 +77,7 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
           throw error;
         }
       });
-      return daytonaSandbox(await abortable(pending, request.signal, (late) => late.delete(60, true)));
+      return daytonaSandbox(await untilAborted(pending, request.signal, (late) => late.delete(60, true)));
     },
     async connect(id) {
       try {
@@ -106,7 +110,6 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
 }
 
 function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
-  const quote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
   const run = async (command: string): Promise<ExecResult> => {
     const result = await vendorCall("exec", () => sandbox.process.executeCommand(command, undefined, undefined, 60));
     return { exitCode: result.exitCode, stdout: result.result, stderr: "" };
@@ -118,58 +121,37 @@ function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
   return {
     id: sandbox.id,
     region: sandbox.target,
-    async exec(command, options) {
-      options?.signal?.throwIfAborted();
-      // executeCommand returns one output field; a session command returns stdout and stderr apart.
+    // executeCommand returns one output field; a session command returns stdout and stderr apart.
+    exec: (command, options) => markedExec(command, options, "daytona", async (script, signal) => {
       const session = `exec-${randomUUID()}`;
-      const marker = randomBytes(6).toString("hex");
-      const env = Object.entries(options?.env ?? {}).map(([key, value]) => `export ${key}=${quote(value)}; `).join("");
-      const cwd = options?.cwd === undefined ? "" : `cd ${quote(options.cwd)} && `;
-      const ended = new AbortController();
-      const timer = options?.timeoutMs === undefined ? undefined : setTimeout(() => ended.abort(new EnvironmentProviderError("timeout", `exec exceeded ${options.timeoutMs} ms`, { provider: "daytona" })), options.timeoutMs);
-      const signal = options?.signal === undefined ? ended.signal : AbortSignal.any([options.signal, ended.signal]);
       try {
-        await abortable(vendorCall("exec", () => sandbox.process.createSession(session)), signal);
-        const response = await abortable(
-          vendorCall("exec", () => sandbox.process.executeSessionCommand(session, { command: `export TBOX_EXEC=${marker}; ${env}${cwd}${command}`, runAsync: false })),
-          signal,
-        );
+        await untilAborted(vendorCall("exec", () => sandbox.process.createSession(session)), signal);
+        const response = await untilAborted(vendorCall("exec", () => sandbox.process.executeSessionCommand(session, { command: script, runAsync: false })), signal);
         return { exitCode: response.exitCode ?? 1, stdout: response.stdout ?? "", stderr: response.stderr ?? "" };
-      } catch (error) {
-        if (signal.aborted) {
-          await run(`for p in /proc/[0-9]*; do grep -qz 'TBOX_EXEC=${marker}' "$p/environ" 2>/dev/null && kill -9 "\${p#/proc/}" 2>/dev/null; done; true`).catch(() => undefined);
-        }
-        throw error;
       } finally {
-        clearTimeout(timer);
         await sandbox.process.deleteSession(session).catch(() => undefined);
       }
-    },
+    }),
     async spawn(command, options) {
-      // The session API carries no per-command env, so the Bridge reads a 0600 file that it deletes before exec.
-      const file = `/tmp/tbox-env-${randomBytes(8).toString("hex")}`;
-      const lines = Object.entries(options.env).map(([key, value]) => `export ${key}=${quote(value)}`).join("\n");
-      await mustRun(`umask 077 && : > ${file}`, "creating the Bridge env file");
+      const launch = envFileLaunch(command, options);
       const session = `bridge-${randomUUID()}`;
-      const cwd = options.cwd === undefined ? "" : `cd ${quote(options.cwd)} && `;
       try {
-        await vendorCall("spawn", () => sandbox.fs.uploadFile(Buffer.from(`${lines}\n`), file));
+        await mustRun(launch.prepare, "creating the Bridge env directory");
+        await vendorCall("spawn", () => sandbox.fs.uploadFile(Buffer.from(launch.content), launch.file));
         await vendorCall("spawn", () => sandbox.process.createSession(session));
-        await vendorCall("spawn", () =>
-          sandbox.process.executeSessionCommand(session, { command: `. ${file} && rm -f ${file} && ${cwd}exec ${command} >/tmp/bridge.log 2>&1`, runAsync: true }),
-        );
+        await vendorCall("spawn", () => sandbox.process.executeSessionCommand(session, { command: launch.launch, runAsync: true }));
       } catch (error) {
-        await run(`rm -f ${file}`).catch(() => undefined);
+        await run(launch.cleanup).catch(() => undefined);
         throw error;
       }
     },
     async read(path, options) {
-      const content = await abortable(vendorCall("read", () => sandbox.fs.downloadFile(path)), options?.signal);
+      const content = await untilAborted(vendorCall("read", () => sandbox.fs.downloadFile(path)), options?.signal);
       return content.toString("utf8");
     },
     async write(path, content, options) {
-      await abortable(mustRun(`mkdir -p ${quote(posix.dirname(path))}`, `creating the parent of ${path}`), options?.signal);
-      await abortable(vendorCall("write", () => sandbox.fs.uploadFile(Buffer.from(content, "utf8"), path)), options?.signal);
+      await untilAborted(mustRun(`mkdir -p ${shellQuote(posix.dirname(path))}`, `creating the parent of ${path}`), options?.signal);
+      await untilAborted(vendorCall("write", () => sandbox.fs.uploadFile(Buffer.from(content, "utf8"), path)), options?.signal);
     },
     async endpoint(port) {
       const link = await vendorCall("endpoint", () => sandbox.getPreviewLink(port));
@@ -177,7 +159,7 @@ function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
     },
     async status(options) {
       try {
-        await abortable(vendorCall("status", () => sandbox.refreshData()), options?.signal);
+        await untilAborted(vendorCall("status", () => sandbox.refreshData()), options?.signal);
         return daytonaStatus(sandbox.state);
       } catch (error) {
         if (error instanceof EnvironmentProviderError && error.code === "not_found") return "expired";
@@ -192,23 +174,6 @@ function daytonaSandbox(sandbox: Sandbox): BridgeSandbox {
       }
     },
   };
-}
-
-/** The SDK takes no AbortSignal, so an abort settles the call at once and `late` receives a result that arrives afterwards. */
-async function abortable<T>(pending: Promise<T>, signal: AbortSignal | undefined, late?: (value: T) => Promise<unknown>): Promise<T> {
-  if (signal === undefined) return pending;
-  signal.throwIfAborted();
-  let onAbort = (): void => undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-  try {
-    return await Promise.race([pending, aborted]);
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    if (signal.aborted && late !== undefined) void pending.then(late).catch(() => undefined);
-  }
 }
 
 async function vendorCall<T>(operation: string, call: () => Promise<T>): Promise<T> {
