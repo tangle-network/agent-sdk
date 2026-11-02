@@ -4,7 +4,6 @@ import {
   type ReasoningEffort,
 } from "./agent-profile.js";
 import { resolveHarnessType, type HarnessType } from "./harness.js";
-import { profileKbNamesModel } from "./profile-kb/index.js";
 
 /** Canonical harness/model, effort and prompt controls. Model-specific capability comes from the serving catalog. */
 
@@ -40,9 +39,6 @@ export function parseSeatSpec(value: string): SeatSpec {
     throw new SeatSpecError("SEAT_EFFORT_UNSUPPORTED", `Harness ${harness} cannot honor reasoning effort '${reasoningEffort}'`);
   const support = harnessModelSupport(harness, model, { reasoningEffort });
   if (!support.supported) throw new SeatSpecError("MODEL_PROVIDER_MISMATCH", support.message);
-  const provider = modelProvider(model);
-  if (provider && !providerServesModel(provider, model.slice(provider.length + 1)))
-    throw new SeatSpecError("MODEL_PROVIDER_MISMATCH", `Provider ${provider} does not serve ${model.slice(provider.length + 1)}`);
   return { harness, model, provider: support.provider, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
 }
 
@@ -101,13 +97,6 @@ export function resolveModelProvider(modelId: string): string | null {
     if (family.test(id)) return provider;
   }
   return null;
-}
-
-/** Whether `provider` serves `model`: its own provider (prefix or bare-id family), a provider/model spelling the
- *  knowledge base lists (`zai-coding-plan/glm-5.3`, keyless `opencode/glm-5.3-flash-free`), or any provider for a model outside every family. */
-export function providerServesModel(provider: string, model: string): boolean {
-  const owner = resolveModelProvider(model);
-  return owner === null || owner === provider || profileKbNamesModel(`${provider}/${model}`);
 }
 
 /** Always `null`: every harness is router-backed (Claude Code and Codex translate non-vendor models;
