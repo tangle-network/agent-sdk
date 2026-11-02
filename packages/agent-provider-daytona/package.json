@@ -1,9 +1,12 @@
 {
   "name": "@tangle-network/agent-provider-daytona",
   "version": "0.6.1",
-  "description": "AgentEnvironmentProvider adapter for Daytona workspaces",
+  "description": "AgentEnvironmentProvider for Daytona sandboxes running CLI Bridge from the box snapshot",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "main": "dist/index.js",
   "types": "src/index.ts",
   "exports": {
@@ -41,18 +44,12 @@
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run"
+    "test:live": "vitest run tests"
   },
   "dependencies": {
-    "@tangle-network/agent-interface": "^5.10.2"
-  },
-  "peerDependencies": {
-    "@daytonaio/sdk": ">=0.192.0 <1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@daytonaio/sdk": {
-      "optional": true
-    }
+    "@daytonaio/sdk": ">=0.226.1 <1.0.0",
+    "@tangle-network/agent-interface": "^5.10.12",
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.4"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
