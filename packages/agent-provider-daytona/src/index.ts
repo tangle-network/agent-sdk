@@ -4,7 +4,7 @@ import { Daytona, type Sandbox } from "@daytonaio/sdk";
 
 const CODE_TOOLBOX_LANGUAGE_LABEL = "code-toolbox-language";
 import {
-  BOX_PINS,
+  BOX_TEMPLATE_NAME,
   BRIDGE_RUN_TAG,
   createBridgeSandboxProvider,
   type BridgeSandbox,
@@ -18,9 +18,6 @@ import {
   type AgentEnvironmentStatus,
   type ExecResult,
 } from "@tangle-network/agent-interface/environment-provider";
-
-/** The snapshot `pnpm build:sandbox-image --target daytona` publishes for the pinned box. */
-export const DAYTONA_BOX_SNAPSHOT = `tangle-cli-bridge-box-${BOX_PINS.cliBridgeCommit.slice(0, 12)}`;
 
 export interface DaytonaProviderOptions extends Omit<BridgeSandboxProviderOptions, "vendor"> {
   /** Defaults to the SDK's own reading of `DAYTONA_API_KEY`. */
@@ -55,7 +52,7 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
         try {
           return await daytona().create(
           {
-            snapshot: request.environment ?? config.snapshot ?? DAYTONA_BOX_SNAPSHOT,
+            snapshot: request.environment ?? config.snapshot ?? BOX_TEMPLATE_NAME,
             user: "node",
             ...(request.name === undefined ? {} : { name: request.name }),
             labels: { ...request.metadata },

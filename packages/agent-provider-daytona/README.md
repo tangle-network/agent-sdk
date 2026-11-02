@@ -21,7 +21,7 @@ Build it once per CLI Bridge pin from the repository root:
 DAYTONA_API_KEY=... pnpm build:sandbox-image --target daytona
 ```
 
-The script prints `DAYTONA_SNAPSHOT=<name>`; that name is `DAYTONA_BOX_SNAPSHOT`, the default.
+The script prints `DAYTONA_SNAPSHOT=<name>`; that name is `BOX_TEMPLATE_NAME` from `@tangle-network/agent-provider-cli-bridge/sandbox`, the default.
 Pass `snapshot` to use another build, or `workspace.environment` on one create.
 
 ## What a create honors

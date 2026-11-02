@@ -27,6 +27,9 @@ export const BOX_PINS = {
   agentProfileMaterialize: "1.1.4",
 } as const;
 
+/** The E2B template and Daytona snapshot name `pnpm build:sandbox-image` publishes for these pins. */
+export const BOX_TEMPLATE_NAME = `tangle-cli-bridge-box-${BOX_PINS.cliBridgeCommit.slice(0, 12)}`;
+
 export interface BoxRouter {
   /** Router root URL, without a path. */
   baseUrl: string;
@@ -87,11 +90,7 @@ export const BRIDGE_START_COMMAND = "cli-bridge";
  * variables reach the harness through the Bridge's child environment and
  * appear in no command line or file.
  */
-export function bridgeProcessEnv(
-  harness: BoxHarness,
-  bearer: string,
-  router: BoxRouter,
-): Record<string, string> {
+export function bridgeProcessEnv(harness: BoxHarness, bearer: string, router: BoxRouter): Record<string, string> {
   return {
     BRIDGE_HOST: "0.0.0.0",
     BRIDGE_PORT: String(BRIDGE_PORT),
