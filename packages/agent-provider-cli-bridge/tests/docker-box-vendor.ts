@@ -117,6 +117,13 @@ export function dockerBoxVendor(image: string): BridgeSandboxVendor {
       try {
         const result = await docker(["run", "-d", "--name", name, "--label", `${LABEL}=1`, "--label", `tbox.name=${request.name ?? ""}`, ...labels, "--env-file", file.path, "-p", "127.0.0.1::3344", image, "sleep", String(Math.ceil(request.lifetimeMs / 1000))], undefined, request.signal);
         if (result.code !== 0) throw new EnvironmentProviderError("provision_failed", `docker run failed: ${result.stderr.trim()}`);
+      } catch (error) {
+        // Killing the docker client mid-run leaves the container the daemon creates, which can land after the first rm.
+        if (request.signal?.aborted) {
+          await docker(["rm", "-f", name]);
+          setTimeout(() => void docker(["rm", "-f", name]), 5_000).unref();
+        }
+        throw error;
       } finally {
         file.remove();
       }

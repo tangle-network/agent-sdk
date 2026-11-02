@@ -297,11 +297,14 @@ importers:
   packages/agent-provider-daytona:
     dependencies:
       '@daytonaio/sdk':
-        specifier: '>=0.192.0 <1.0.0'
+        specifier: '>=0.226.1 <1.0.0'
         version: 0.226.1(debug@4.4.3)
       '@tangle-network/agent-interface':
         specifier: workspace:*
         version: link:../agent-interface
+      '@tangle-network/agent-provider-cli-bridge':
+        specifier: ^2.0.4
+        version: link:../agent-provider-cli-bridge
     devDependencies:
       '@tangle-network/agent-provider-testkit':
         specifier: workspace:*

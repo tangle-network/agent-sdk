@@ -27,7 +27,7 @@ this workspace supplies the shared boundary.
 | [`@tangle-network/agent-provider-cli-bridge`](packages/agent-provider-cli-bridge) | Adapter for a CLI bridge OpenAI-compatible HTTP endpoint. |
 | [`@tangle-network/agent-provider-computesdk`](packages/agent-provider-computesdk) | Adapter for ComputeSDK-backed sandboxes. |
 | [`@tangle-network/agent-provider-e2b`](packages/agent-provider-e2b) | E2B sandboxes running CLI Bridge from the box template. |
-| [`@tangle-network/agent-provider-daytona`](packages/agent-provider-daytona) | Direct Daytona adapter. |
+| [`@tangle-network/agent-provider-daytona`](packages/agent-provider-daytona) | Daytona sandboxes running CLI Bridge from the box snapshot. |
 
 ## What compatibility means
 
