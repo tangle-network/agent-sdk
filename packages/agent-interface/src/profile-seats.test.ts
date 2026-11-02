@@ -74,6 +74,17 @@ describe("AgentProfile.seats", () => {
     expect(agentProfileSchema.safeParse({ ...pool, seats: [fable, { ...keyless, model: "glm-5.3" }] }).success).toBe(false);
     // A model outside every family is left to its provider, as harnessModelSupport leaves it to the harness.
     expect(agentProfileSchema.safeParse({ ...pool, seats: [fable, { ...keyless, model: "big-pickle" }] }).success).toBe(true);
+
+    // A subscription pool's keyless stage carries its own managed intent (setup-smoke-ad744553 failed its first turn
+    // when stage 1 inherited 'subscription'); stage 0 may restate only the profile's effective source.
+    const subscription = { ...pool, model: { ...pool.model, metadata: { credentialSource: "subscription" } } };
+    const managedStage = { ...keyless, credentialSource: "managed" } as const;
+    expect(agentProfileSchema.parse({ ...subscription, seats: [{ ...fable, credentialSource: "subscription" }, managedStage] }).seats?.[1])
+      .toEqual(managedStage);
+    expect(agentProfileSchema.safeParse({ ...subscription, seats: [{ ...fable, credentialSource: "managed" }, managedStage] })
+      .error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.0.credentialSource"]);
+    expect(agentProfileSchema.safeParse({ ...pool, seats: [{ ...fable, credentialSource: "managed" }, managedStage] }).success).toBe(true);
+    expect(agentProfileSchema.safeParse({ ...pool, seats: [fable, { ...keyless, credentialSource: "byok" }] }).success).toBe(false);
   });
 
   it("allows explicit stage tool replacement without changing the first stage", () => {
