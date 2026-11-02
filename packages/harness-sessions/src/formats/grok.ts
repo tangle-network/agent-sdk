@@ -5,7 +5,7 @@ import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from 
 import type { HarnessSessionReader, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, isMissing, type SourceStats } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 
 const FORMAT = 'grok.acp-session-dir' as const
 const STORE = STORES[FORMAT]
@@ -102,30 +102,20 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
   return runFold(createFold(ref, mode, records.stats, model, usageOf(await markedJson(ref, 'signals.json', 'primaryModelId'))), records)
 }
 
-export const grokReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['grok-build'],
-  formats: [FORMAT],
-  stores: [STORE],
-  globs: { session: STORE.files[0] },
-  evidence: EVIDENCE[FORMAT],
-  async locate(home, opts = {}) {
-    const root = join(home, STORE.root)
-    const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
-    const refs: SessionRef[] = []
-    for (const rel of await walkFiles(root)) {
-      if (!pattern.test(rel)) continue
-      const path = join(root, rel)
-      const mtime = await mtimeMs(path)
-      const id = basename(dirname(rel))
-      if ((opts.sinceMs && mtime < opts.sinceMs) || (opts.nativeSessionId && id !== opts.nativeSessionId)) continue
-      refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home, cwd: null, mtimeMs: mtime, parentNativeSessionId: null })
-    }
-    return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  },
-  async read(ref, opts = {}) { return (await fold(ref, 'full', opts)).build() },
-  async summarize(ref, opts = {}) { return (await fold(ref, 'summary', opts)).summary() },
-}
+export const grokReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['grok-build'], format: FORMAT }, async (home, opts) => {
+  const root = join(home, STORE.root)
+  const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
+  const refs: SessionRef[] = []
+  for (const rel of await walkFiles(root)) {
+    if (!pattern.test(rel)) continue
+    const path = join(root, rel)
+    const mtime = await mtimeMs(path)
+    const id = basename(dirname(rel))
+    if ((opts.sinceMs && mtime < opts.sinceMs) || (opts.nativeSessionId && id !== opts.nativeSessionId)) continue
+    refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home, cwd: null, mtimeMs: mtime, parentNativeSessionId: null })
+  }
+  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
+}, fold)
 
 export function grokRefForFile(path: string): SessionRef {
   return { harness: HARNESS, format: FORMAT, nativeSessionId: basename(dirname(path)), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }

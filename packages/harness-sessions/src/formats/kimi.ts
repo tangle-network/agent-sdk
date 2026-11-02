@@ -5,7 +5,7 @@ import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions,
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { KIMI_STORES } from '../catalog.js'
 import { EVIDENCE, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
-import { runFold, type SessionFold } from './fold.js'
+import { foldedReader, runFold, type SessionFold } from './fold.js'
 
 const FORMAT = 'kimi.session-dir' as const
 const HARNESS = 'kimi-code'
@@ -224,21 +224,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const kimiReader: HarnessSessionReader = {
-  harness: HARNESS,
-  aliases: ['kimi', 'kimi-cli'],
-  formats: [FORMAT],
-  stores: KIMI_STORES,
-  globs: { session: WIRE, children: CHILD_WIRE },
-  evidence: EVIDENCE[FORMAT],
-  locate: (home, opts = {}) => locate(home, opts),
-  async read(ref, opts = {}) {
-    return (await fold(ref, 'full', opts)).build()
-  },
-  async summarize(ref, opts = {}) {
-    return (await fold(ref, 'summary', opts)).summary()
-  },
-}
+export const kimiReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['kimi', 'kimi-cli'], format: FORMAT, globs: { session: WIRE, children: CHILD_WIRE }, stores: KIMI_STORES }, locate, fold)
 
 export function kimiRefForFile(path: string): SessionRef {
   const { id, parent } = sessionIdentity(path)
