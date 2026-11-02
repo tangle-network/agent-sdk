@@ -1,5 +1,11 @@
 # @tangle-network/agent-trace-contract
 
+## 2.3.0
+
+### Minor Changes
+
+- 815a024: Add the `spawned_by` link kind: a child agent's session points at the parent's call that started it, so a reader follows a spawn tree by links instead of a cross-trace parent edge.
+
 ## 2.2.0
 
 ### Minor Changes
