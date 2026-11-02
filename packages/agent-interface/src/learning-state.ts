@@ -59,7 +59,6 @@ export const AgentLearningFileSchema = z.strictObject({
     ctx.addIssue({ code: "custom", path: ["content"], message: "learned file exceeds its character budget" });
   }
 });
-export type AgentLearningFile = z.infer<typeof AgentLearningFileSchema>;
 
 /** A host-resolved reference to exact native state, never a path or credential value. */
 export const AgentLearningNativeRefSchema = z.strictObject({
@@ -69,7 +68,6 @@ export const AgentLearningNativeRefSchema = z.strictObject({
   reference: id,
   digest: sha256DigestSchema,
 });
-export type AgentLearningNativeRef = z.infer<typeof AgentLearningNativeRefSchema>;
 
 const files = z.array(AgentLearningFileSchema).max(1_024).superRefine((value, ctx) => {
   if (new Set(value.map((file) => file.path)).size !== value.length) {

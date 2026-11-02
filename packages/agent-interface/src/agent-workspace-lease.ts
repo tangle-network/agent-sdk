@@ -142,8 +142,6 @@ type WithDigest<Material> = Material extends unknown
 export type AgentWorkspaceLeaseRecord = WithDigest<AgentWorkspaceLeaseRecordMaterial>;
 export type AgentWorkspaceSealedLeaseRecord =
   WithDigest<AgentWorkspaceSealedLeaseRecordMaterial>;
-export type AgentWorkspaceExecutionBoundLeaseRecord =
-  WithDigest<AgentWorkspaceExecutionBoundLeaseRecordMaterial>;
 
 const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 

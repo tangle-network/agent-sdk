@@ -77,9 +77,6 @@ export function isProxySecretParentsTotal(
     selection.data.every((binding) => Object.hasOwn(parsed.data, binding.envName));
 }
 
-/** API control-plane support; intentionally separate from the engine capability contract. */
-export const ProxySecretDelegationCapabilitySchema = z.literal(1);
-
 export const ProxySecretResolvedIdentitySchema = z.strictObject({
   tenantId: boundedIdentifierSchema, issuerId: boundedIdentifierSchema,
   secretId: boundedIdentifierSchema, revision: boundedIdentifierSchema,

@@ -188,6 +188,8 @@ export interface AgentProfileSeat {
   model: string;
   /** Override profile.model.reasoningEffort for this stage; omission inherits, none disables thinking. */
   reasoningEffort?: ReasoningEffort;
+  /** This stage's credential intent; omitted inherits profile.model.metadata.credentialSource (absent there means managed). */
+  credentialSource?: "subscription" | "managed";
   /** Select all eligible accounts in account-manager order, or one named account. */
   selector: { kind: "all-eligible" } | { kind: "seat"; id: string };
   /** Replace the profile-level native tool map for this stage; `{}` clears it. */
