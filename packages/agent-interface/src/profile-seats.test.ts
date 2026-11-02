@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import { profileMaterializationRequests } from "./agent-profile-materialization.js";
+import { parseSeatSpec, SeatSpecError } from "./harness-capabilities.js";
 import { agentProfileSchema } from "./profile-schema.js";
 
 const profile = {
@@ -54,6 +55,25 @@ describe("AgentProfile.seats", () => {
     expect(agentProfileSchema.safeParse(plan).success).toBe(true);
     const unknown = { ...plan, model: { ...plan.model, provider: "zai-coding" }, seats: [{ ...plan.seats[0], provider: "zai-coding" }] };
     expect(agentProfileSchema.safeParse(unknown).error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.0.provider"]);
+  });
+
+  it("accepts opencode's keyless free route as a pool stage or the first stage, and parseSeatSpec agrees", () => {
+    // Discovery's seat pool `claude-code/anthropic/claude-fable-5-1, opencode/opencode/glm-5.3-flash-free` failed at
+    // seats.1.provider on 2026-11-02: `glm-5.3-flash-free` reads as the `zai` family and no spelling named opencode's route.
+    const keyless = { harness: "opencode", provider: "opencode", model: "glm-5.3-flash-free", selector: { kind: "all-eligible" } } as const;
+    const fable = { harness: "claude-code", provider: "anthropic", model: "claude-fable-5-1", selector: { kind: "all-eligible" } } as const;
+    const pool = { harness: "claude-code", model: { default: "claude-fable-5-1", provider: "anthropic" }, seats: [fable, keyless] };
+    expect(agentProfileSchema.safeParse(pool).error?.issues).toBeUndefined();
+    const free = { harness: "opencode", model: { default: "glm-5.3-flash-free", provider: "opencode" }, seats: [keyless, fable] };
+    expect(agentProfileSchema.safeParse(free).error?.issues).toBeUndefined();
+    expect(parseSeatSpec("opencode/opencode/glm-5.3-flash-free")).toMatchObject({ harness: "opencode", provider: "opencode" });
+
+    // A provider that cannot serve its model stays refused, in the schema and in parseSeatSpec alike.
+    const wrong = { ...pool, seats: [fable, { ...keyless, provider: "anthropic" }] };
+    expect(agentProfileSchema.safeParse(wrong).error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.1.provider"]);
+    expect(agentProfileSchema.safeParse({ ...pool, seats: [fable, { ...keyless, model: "glm-5.3" }] }).success).toBe(false);
+    expect(() => parseSeatSpec("opencode/opencode/glm-5.3")).toThrow(SeatSpecError);
+    expect(() => parseSeatSpec("opencode/anthropic/glm-5.3-flash-free")).toThrow(SeatSpecError);
   });
 
   it("allows explicit stage tool replacement without changing the first stage", () => {

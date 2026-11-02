@@ -4,6 +4,7 @@ import {
   type ReasoningEffort,
 } from "./agent-profile.js";
 import { resolveHarnessType, type HarnessType } from "./harness.js";
+import { profileKbNamesModel } from "./profile-kb/index.js";
 
 /** Canonical harness/model, effort and prompt controls. Model-specific capability comes from the serving catalog. */
 
@@ -39,6 +40,9 @@ export function parseSeatSpec(value: string): SeatSpec {
     throw new SeatSpecError("SEAT_EFFORT_UNSUPPORTED", `Harness ${harness} cannot honor reasoning effort '${reasoningEffort}'`);
   const support = harnessModelSupport(harness, model, { reasoningEffort });
   if (!support.supported) throw new SeatSpecError("MODEL_PROVIDER_MISMATCH", support.message);
+  const provider = modelProvider(model);
+  if (provider && !providerServesModel(provider, model.slice(provider.length + 1)))
+    throw new SeatSpecError("MODEL_PROVIDER_MISMATCH", `Provider ${provider} does not serve ${model.slice(provider.length + 1)}`);
   return { harness, model, provider: support.provider, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
 }
 
@@ -50,17 +54,6 @@ export function formatSeatSpec(seat: Pick<SeatSpec, "harness" | "model" | "reaso
 }
 
 // ── Harness ↔ model compatibility ────────────────────────────────────────────
-
-/**
- * Vendor locks, before the measured {@link harnessModelExclusions}. Absent means router-backed.
- * Claude Code and Codex run any Router model: their native vendor wire passes through for vendor
- * models and translates others to chat completions (including images/tools; hosted tools drop).
- * Kimi Code on a managed box writes an `openai_legacy` provider that sends chat completions to the
- * Router, so it runs any Router model too. A caller's vendor key/login remains vendor-limited;
- * this table does not know credentials. {@link vendorHarness} chooses a default harness; it is not
- * a provider restriction.
- */
-const harnessProviderLock: Partial<Record<HarnessType, readonly string[]>> = {};
 
 /**
  * The harness that natively speaks a vendor's models. A model of that vendor adopts it when the
@@ -110,11 +103,17 @@ export function resolveModelProvider(modelId: string): string | null {
   return null;
 }
 
-/** The providers a harness is locked to, or `null` when it is router-backed (any model). */
-export function harnessProviders(
-  harness: HarnessType,
-): readonly string[] | null {
-  return harnessProviderLock[harness] ?? null;
+/** Whether `provider` serves `model`: its own provider (prefix or bare-id family), a provider/model spelling the
+ *  knowledge base lists (`zai-coding-plan/glm-5.3`, keyless `opencode/glm-5.3-flash-free`), or any provider for a model outside every family. */
+export function providerServesModel(provider: string, model: string): boolean {
+  const owner = resolveModelProvider(model);
+  return owner === null || owner === provider || profileKbNamesModel(`${provider}/${model}`);
+}
+
+/** Always `null`: every harness is router-backed (Claude Code and Codex translate non-vendor models;
+ *  Kimi Code's managed provider sends chat completions to the Router). Credentials are not modeled. */
+export function harnessProviders(_harness: HarnessType): readonly string[] | null {
+  return null;
 }
 
 /** A harness × model pair that a production run measured to fail at its first model call. */
@@ -194,8 +193,6 @@ export type HarnessModelSupport =
       readonly supported: false;
       readonly model: string;
       readonly provider: string | null;
-      /** The providers a vendor-locked harness accepts; absent for a measured exclusion. */
-      readonly allowedProviders?: readonly string[];
       /** The measurement behind a refusal of a router-backed pair. */
       readonly exclusion?: HarnessModelExclusion;
       /** One sentence naming the harness, the model and the reason. */
@@ -210,9 +207,8 @@ export interface HarnessModelSupportOptions {
 /**
  * Whether a harness can run a model, and why not. A bare id resolves its provider through
  * {@link resolveModelProvider}; an id whose provider cannot be resolved (a sentinel like `default`)
- * is left to the harness, because its provider only the serving harness knows. A vendor-locked
- * harness refuses every other provider; a router-backed harness refuses only the measured
- * {@link harnessModelExclusions}.
+ * is left to the harness, because its provider only the serving harness knows. Only the measured
+ * {@link harnessModelExclusions} are refused.
  */
 export function harnessModelSupport(
   harness: HarnessType,
@@ -226,21 +222,6 @@ export function harnessModelSupport(
       ? `${provider}/${trimmed}`
       : trimmed;
   if (provider === null) return { supported: true, model, provider };
-
-  const allowedProviders = harnessProviders(harness);
-  if (allowedProviders && !allowedProviders.includes(provider)) {
-    return {
-      supported: false,
-      model,
-      provider,
-      allowedProviders,
-      message:
-        `Harness ${harness} runs only ${allowedProviders.join(" or ")} models, ` +
-        `not ${model} (provider ${provider}). Choose a model whose id starts with ` +
-        `${allowedProviders.map((p) => `${p}/`).join(" or ")}, or a harness that runs ` +
-        `${provider} models, such as opencode.`,
-    };
-  }
 
   const reasoning =
     options.reasoningEffort !== undefined &&

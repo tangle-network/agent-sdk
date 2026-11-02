@@ -42,7 +42,7 @@ export interface ProfileKbHarness {
 }
 
 /** Where a model is reached. A model id means different things on each surface. */
-export type ProfileKbSurface = "api" | "codex" | "chatgpt" | "router";
+export type ProfileKbSurface = "api" | "codex" | "chatgpt" | "router" | "opencode";
 
 /**
  * How to get the best from one model.
