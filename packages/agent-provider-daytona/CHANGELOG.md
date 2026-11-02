@@ -1,5 +1,16 @@
 # @tangle-network/agent-provider-daytona
 
+## 0.7.0
+
+### Minor Changes
+
+- bec73de: `createDaytonaProvider({ router: { key } })` now runs each environment as a Daytona sandbox created from the CLI Bridge box snapshot, so a profile that runs on Tangle runs on Daytona unchanged. Create fields Daytona cannot honor are refused with `EnvironmentProviderError` before any Daytona call. The `turnCommand`, `daytona`, `Daytona`, `config`, `capabilities` and `mapCreateInput` options and `defaultDaytonaCapabilities` are removed; `@daytonaio/sdk` is now a dependency.
+
+### Patch Changes
+
+- Updated dependencies [f368d52]
+  - @tangle-network/agent-provider-cli-bridge@2.1.0
+
 ## 0.6.1
 
 ### Patch Changes

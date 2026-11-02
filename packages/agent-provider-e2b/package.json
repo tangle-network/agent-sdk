@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-e2b",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "AgentEnvironmentProvider for E2B sandboxes running CLI Bridge from the box template",
   "type": "module",
   "license": "MIT",
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^5.10.14",
-    "@tangle-network/agent-provider-cli-bridge": "^2.0.4",
+    "@tangle-network/agent-provider-cli-bridge": "^2.1.0",
     "e2b": "^2.62.0"
   },
   "devDependencies": {
