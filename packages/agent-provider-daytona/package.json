@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-daytona",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "AgentEnvironmentProvider for Daytona sandboxes running CLI Bridge from the box snapshot",
   "type": "module",
   "license": "MIT",
@@ -50,7 +50,7 @@
     "@daytonaio/sdk": ">=0.226.1 <1.0.0",
     "@tangle-network/agent-core": "^1.0.2",
     "@tangle-network/agent-interface": "^5.10.12",
-    "@tangle-network/agent-provider-cli-bridge": "^2.0.5"
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.6"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
