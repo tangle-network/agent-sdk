@@ -2,7 +2,7 @@
 
 `AgentEnvironmentProvider` for [Boat](https://boat.dev): each environment is a Boat sandbox running CLI Bridge, and every turn runs through `@tangle-network/agent-provider-cli-bridge/sandbox`.
 
-> **Experimental — offline-typed, not yet live-verified.** The adapter is written against `@boatdev/sdk` 1.13 but no live conformance run has proven the create/spawn/endpoint paths against boat.dev. The protected hosted-port header scheme in particular is an assumption the live run must confirm. Treat every capability as unproven until `BOAT_API_KEY` live tests land.
+> **Status: typed and conformance-plumbed; live run pending a `BOAT_API_KEY`.** The vendor-snapshot seam this adapter rides (`checkpoint()`/`fork()`, capability advertisement, restore input surgery) is live-proven on the Docker box (`tests/sandbox-checkpoint-live.integration.test.ts` and the full 67-check live profile conformance in `agent-provider-cli-bridge`). The Boat mapping itself — create via `setupScript`, hosted-port endpoint, detached spawn, named snapshots — is written against `@boatdev/sdk` 1.13 and runs `tests/boat-live.integration.test.ts` (the same 67-check conformance plus a checkpoint/fork round trip) as soon as `BOAT_API_KEY` and `TANGLE_API_KEY` are set. The protected hosted-port header scheme is the one assumption that run must confirm.
 
 ```ts
 import { createBoatProvider } from '@tangle-network/agent-provider-boat'

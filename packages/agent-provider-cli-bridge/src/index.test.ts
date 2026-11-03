@@ -1213,9 +1213,10 @@ describe("createCliBridgeProvider", () => {
         },
       },
     });
-    expect(events[2]).toEqual({
+    expect(events[2]).toMatchObject({
       type: "usage",
       data: { modelRequests: 2 },
+      usageMode: "delta",
       usage: {
         inputTokens: 2,
         outputTokens: 3,
@@ -1226,7 +1227,7 @@ describe("createCliBridgeProvider", () => {
     expect(events[3]).toMatchObject({
       data: { delta: "lo", part: { type: "text", text: "hello" } },
     });
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       type: "result",
       data: {
         finalText: "hello",

@@ -360,10 +360,12 @@ function environmentCapabilities(bridge: AgentEnvironmentCapabilities, vendor: B
     ...base,
     profile: { ...base.profile, validation: true, hooks: hooks === true },
     workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false, cwdBases: { repository: true, host: false } },
+    branching: { checkpoint: vendor.snapshots !== undefined, fork: vendor.snapshots !== undefined },
     placement: true,
     create: {
       durableIdempotency: false,
       ...(vendor.support.egress.length === 0 ? {} : { egress: [...vendor.support.egress] }),
+      ...(vendor.snapshots === undefined ? {} : { workspaceSnapshot: false }),
     },
   };
 }
