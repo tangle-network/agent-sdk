@@ -24,7 +24,10 @@
  *
  * The frame layer does no JSON parsing, reconnect/`Last-Event-ID` tracking or
  * event-type filtering; `SSEChunkParser` adds JSON payload handling on top.
+ * `part-text.ts` codes agent part frames' growing text as suffixes.
  */
+
+export * from "./part-text.js";
 
 /** Raw SSE event data from stream */
 export interface SSEEventData {

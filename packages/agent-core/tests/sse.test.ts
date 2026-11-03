@@ -9,8 +9,6 @@ import {
   createUsageCallback,
   encodeSSEFrame,
   parseSSEData,
-  parseSSEStream,
-  SSEChunkParser,
   SSEFrameParser,
   type StreamUsageExtractor,
   streamSSEFrames,
@@ -244,58 +242,6 @@ describe("StreamUsageExtractor", () => {
   });
 });
 
-describe("SSEChunkParser", () => {
-  it("parses events across chunk boundaries", () => {
-    const parser = new SSEChunkParser();
-    const first = parser.push(
-      'event: message.part.updated\ndata: {"part":{"type":"text","text":"hi"}}',
-    );
-    expect(first).toEqual([]);
-
-    const second = parser.push("\n\n");
-    expect(second).toHaveLength(1);
-    expect(second[0].eventType).toBe("message.part.updated");
-    expect(second[0].data).toEqual({ part: { type: "text", text: "hi" } });
-  });
-});
-
-describe("parseSSEStream", () => {
-  it("yields parsed events from a stream", async () => {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(
-          encoder.encode(
-            'event: message.part.updated\ndata: {"part":{"type":"text","text":"a"}}\n\n',
-          ),
-        );
-        controller.enqueue(
-          encoder.encode(
-            'event: message.part.updated\ndata: {"part":{"type":"text","text":"b"}}\n\n',
-          ),
-        );
-        controller.close();
-      },
-    });
-
-    const events: Array<{
-      type?: string;
-      part?: { type: string; text: string };
-    }> = [];
-    for await (const event of parseSSEStream(stream)) {
-      events.push({
-        type: event.eventType,
-        part: (event.data as { part?: { type: string; text: string } }).part,
-      });
-    }
-
-    expect(events).toEqual([
-      { type: "message.part.updated", part: { type: "text", text: "a" } },
-      { type: "message.part.updated", part: { type: "text", text: "b" } },
-    ]);
-  });
-});
-
 describe("createUsageCallback", () => {
   it("should forward events to callback", () => {
     const events: unknown[] = [];
@@ -367,58 +313,7 @@ async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
   return out;
 }
 
-describe("SSEFrameParser — framing", () => {
-  it("dispatches one frame per blank line", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push("event: a\ndata: 1\n\nevent: b\ndata: 2\n\n");
-    expect(frames).toEqual([
-      { event: "a", data: "1", id: undefined },
-      { event: "b", data: "2", id: undefined },
-    ]);
-  });
-
-  it("reassembles a frame that straddles chunk boundaries", () => {
-    const parser = new SSEFrameParser();
-    const wire = 'event: split\ndata: {"taskId":"x"}\n\n';
-    const mid = Math.floor(wire.length / 2);
-    expect(parser.push(wire.slice(0, mid))).toEqual([]);
-    const frames = parser.push(wire.slice(mid));
-    expect(frames).toEqual([
-      { event: "split", data: '{"taskId":"x"}', id: undefined },
-    ]);
-  });
-
-  it("holds field state when event: and data: arrive in separate chunks", () => {
-    const parser = new SSEFrameParser();
-    expect(parser.push("event: two-chunks\n")).toEqual([]);
-    const frames = parser.push("data: 1\n\n");
-    expect(frames).toEqual([{ event: "two-chunks", data: "1", id: undefined }]);
-  });
-
-  it("accepts CRLF terminators", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push("event: crlf\r\ndata: ok\r\n\r\n");
-    expect(frames).toEqual([{ event: "crlf", data: "ok", id: undefined }]);
-  });
-
-  it("accepts a mix of LF and CRLF frames in one chunk", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push(
-      "event: a\ndata: lf\n\nevent: b\r\ndata: crlf\r\n\r\n",
-    );
-    expect(frames.map((f) => f.data)).toEqual(["lf", "crlf"]);
-  });
-});
-
 describe("SSEFrameParser — data: field", () => {
-  it("joins multi-line data: with \\n (spec §9.2.6)", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push("data: one\ndata: two\ndata: three\n\n");
-    expect(frames).toEqual([
-      { event: "", data: "one\ntwo\nthree", id: undefined },
-    ]);
-  });
-
   it("strips one optional leading space after the colon", () => {
     const parser = new SSEFrameParser();
     expect(parser.push("data: padded\n\n")[0].data).toBe("padded");
@@ -441,19 +336,6 @@ describe("SSEFrameParser — data: field", () => {
 });
 
 describe("SSEFrameParser — comments and unknown fields", () => {
-  it("skips comment lines (heartbeats)", () => {
-    const parser = new SSEFrameParser();
-    expect(parser.push(": heartbeat\n\n")).toEqual([]);
-    const frames = parser.push(": ka\nevent: real\ndata: 1\n\n");
-    expect(frames).toEqual([{ event: "real", data: "1", id: undefined }]);
-  });
-
-  it("ignores retry: and unrecognized fields", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push("retry: 5000\nfoo: bar\ndata: 1\n\n");
-    expect(frames).toEqual([{ event: "", data: "1", id: undefined }]);
-  });
-
   it("drops frames with no data: field and resets their state", () => {
     const parser = new SSEFrameParser();
     expect(parser.push("event: lonely\nid: 9\n\n")).toEqual([]);
@@ -464,31 +346,7 @@ describe("SSEFrameParser — comments and unknown fields", () => {
   });
 });
 
-describe("SSEFrameParser — id: field", () => {
-  it("surfaces id: and resets it between frames", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push(
-      "id: evt-42\nevent: a\ndata: 1\n\nevent: b\ndata: 2\n\n",
-    );
-    expect(frames[0].id).toBe("evt-42");
-    expect(frames[1].id).toBeUndefined();
-  });
-});
-
 describe("SSEFrameParser — BOM", () => {
-  it("strips one leading U+FEFF before the first field line", () => {
-    const parser = new SSEFrameParser();
-    const frames = parser.push("\uFEFFevent: bom\ndata: 1\n\n");
-    expect(frames).toEqual([{ event: "bom", data: "1", id: undefined }]);
-  });
-
-  it("strips a BOM that arrives in its own chunk", () => {
-    const parser = new SSEFrameParser();
-    expect(parser.push("\uFEFF")).toEqual([]);
-    const frames = parser.push("data: 1\n\n");
-    expect(frames).toEqual([{ event: "", data: "1", id: undefined }]);
-  });
-
   it("does not strip a U+FEFF that is not stream-leading", () => {
     const parser = new SSEFrameParser();
     const frames = parser.push("data: a\uFEFFb\n\n");

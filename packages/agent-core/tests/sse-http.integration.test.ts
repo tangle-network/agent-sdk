@@ -4,6 +4,9 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { expect, it } from "vitest";
 import {
+  decodePartTextFrame,
+  encodePartTextFrame,
+  PartTextCoder,
   SSEFrameParser,
   parseSSEStream,
   streamSSEFrames,
@@ -160,5 +163,50 @@ it("propagates abort while waiting for the unfinished next HTTP frame", async ()
     await source.closed;
   } finally {
     await source.close();
+  }
+});
+
+it("carries growing part text once over HTTP and restores every frame", async () => {
+  // Surrogate pairs split across deltas, both producer shapes, a rewrite, a tool part.
+  const frames: Record<string, unknown>[] = [];
+  let thought = "";
+  for (let n = 0; n < 300; n++) {
+    thought += `${n} é🙂${"r".repeat(90)}`.slice(n % 2);
+    frames.push({ part: { id: "think", type: "reasoning", text: thought } });
+  }
+  frames.push({ part: { id: "think", type: "reasoning", text: "revised" } });
+  for (const text of ["Every", "Every frame"]) frames.push({ properties: { part: { id: "answer", type: "text", text } } });
+  frames.push({ part: { id: "tool-1", type: "tool", state: { output: "ok" } } });
+  const server = createServer((request, response) => {
+    const coder = request.url === "/suffix" ? new PartTextCoder() : undefined;
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    for (const frame of frames) {
+      const data = JSON.stringify(frame);
+      response.write(`data: ${coder ? encodePartTextFrame(coder, "message.part.updated", data) : data}\n\n`);
+    }
+    response.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const read = async (path: string) => {
+    const response = await fetch(`http://127.0.0.1:${address.port}${path}`);
+    const bytes = (await response.clone().arrayBuffer()).byteLength;
+    const coder = new PartTextCoder();
+    const restored: Record<string, unknown>[] = [];
+    for await (const frame of streamSSEFrames(response.body)) {
+      restored.push(JSON.parse(frame.data));
+      decodePartTextFrame(coder, restored.at(-1) as Record<string, unknown>);
+    }
+    return { bytes, restored };
+  };
+  try {
+    const [whole, suffix] = [await read("/whole"), await read("/suffix")];
+    expect(whole.restored).toEqual(frames);
+    expect(suffix.restored).toEqual(frames);
+    expect(suffix.bytes * 10).toBeLessThan(whole.bytes);
+  } finally {
+    server.close();
   }
 });
