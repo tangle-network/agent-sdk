@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.9
+
+### Patch Changes
+
+- Read what Claude Code put in the model context from its attachment records (`rendered`, and the prompt snapshot's system prompt) as injected system messages naming their `source`, and a message sent while a turn ran (`queued_command`) as a prompt. The chat projection includes that context as system messages, as it does Codex's developer messages; `toChatMessages(session, { system: false })` leaves it out.
+
 ## 1.0.8
 
 ### Minor Changes

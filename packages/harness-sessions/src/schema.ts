@@ -44,6 +44,8 @@ export interface SessionMessage {
   at: string | null
   modelCallId: string | null
   parts: Part[]
+  /** What a harness-injected system message is, in the harness's words: Claude Code's attachment type, such as `instructions`. */
+  source?: string
 }
 
 export interface SessionToolCall {

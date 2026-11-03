@@ -46,7 +46,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       return
     }
     const type = record.type
-    if (type !== 'user' && type !== 'assistant' && type !== 'system') return
+    if (type !== 'user' && type !== 'assistant' && type !== 'system' && type !== 'attachment') return
     if (typeof record.uuid === 'string') {
       if (seenUuids.has(record.uuid)) return
       seenUuids.add(record.uuid)
@@ -66,21 +66,28 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     const machine = (text: string): boolean =>
       claudeRecordIsMachine({ text, isMeta: record.isMeta === true, isCompactSummary: record.isCompactSummary === true, entrypoint: str(record.entrypoint) ?? undefined })
 
+    if (type === 'attachment') {
+      // What Claude Code put in the model's context: `rendered` is its exact text, a prompt snapshot the system prompt.
+      // A queued command is a message sent while the turn ran, so it is a prompt.
+      const attachment = isRecord(record.attachment) ? record.attachment : {}
+      const kind = str(attachment.type) ?? 'attachment'
+      const queued = kind === 'queued_command' ? textOf(attachment.prompt) : null
+      if (queued !== null) {
+        const typed = attachment.commandMode === 'prompt' && !machine(queued)
+        builder.message({ id: uuid, role: 'user', actor: !typed ? 'injected' : subagent ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: [{ type: 'text', text: typed ? claudeTypedPromptText(queued) : queued }] })
+        return
+      }
+      const parts = Array.isArray(record.rendered) ? record.rendered : kind === 'prompt_snapshot' && Array.isArray(attachment.systemPrompt) ? attachment.systemPrompt : []
+      const text = parts.map((part) => (typeof part === 'string' ? part : isRecord(part) ? str(part.content) ?? '' : '')).join('\n')
+      if (text) builder.message({ id: uuid, role: 'system', actor: 'injected', at, modelCallId: null, source: kind, parts: [{ type: 'text', text }] })
+      return
+    }
+
     if (type === 'system') {
       if (record.subtype !== 'api_error') return
       const error = isRecord(record.error) ? record.error : {}
       const message = str(error.formatted) ?? str(error.message) ?? str(record.content) ?? 'API error'
-      builder.modelCall({
-        id: uuid,
-        at,
-        provider: null,
-        servedModel: null,
-        requestedModel: null,
-        usage: null,
-        costUsd: null,
-        stopReason: null,
-        error: sessionError('api_error', message, at, count(error.status)),
-      })
+      builder.modelCall({ id: uuid, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: null, error: sessionError('api_error', message, at, count(error.status)) })
       errors += 1
       return
     }
@@ -96,14 +103,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       const content = message.content
       if (typeof content === 'string') {
         if (INTERRUPTED.test(content)) aborted = { at }
-        builder.message({
-          id: uuid,
-          role: 'user',
-          actor: machine(content) ? 'injected' : subagent ? 'subagent-spawn' : 'human',
-          at,
-          modelCallId: null,
-          parts: [{ type: 'text', text: machine(content) ? content : claudeTypedPromptText(content) }],
-        })
+        builder.message({ id: uuid, role: 'user', actor: machine(content) ? 'injected' : subagent ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: [{ type: 'text', text: machine(content) ? content : claudeTypedPromptText(content) }] })
         return
       }
       if (!Array.isArray(content)) return
@@ -134,16 +134,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         }
       }
       if (toolParts.length > 0) builder.message({ id: `${uuid}:tool`, role: 'tool', actor: 'tool-result', at, modelCallId: null, parts: toolParts })
-      if (userParts.length > 0) {
-        builder.message({
-          id: uuid,
-          role: 'user',
-          actor: machine(firstText(userParts)) ? 'injected' : subagent ? 'subagent-spawn' : 'human',
-          at,
-          modelCallId: null,
-          parts: userParts,
-        })
-      }
+      if (userParts.length > 0) builder.message({ id: uuid, role: 'user', actor: machine(firstText(userParts)) ? 'injected' : subagent ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: userParts })
       return
     }
 
@@ -152,17 +143,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
     const content = Array.isArray(message.content) ? message.content : []
     if (record.isApiErrorMessage === true || model === '<synthetic>') {
       const text = textOf(content) ?? 'API error'
-      const call = builder.modelCall({
-        id: uuid,
-        at,
-        provider: null,
-        servedModel: null,
-        requestedModel: null,
-        usage: null,
-        costUsd: null,
-        stopReason: str(message.stop_reason),
-        error: sessionError(str(record.error) ?? 'api-error', text, at),
-      })
+      const call = builder.modelCall({ id: uuid, at, provider: null, servedModel: null, requestedModel: null, usage: null, costUsd: null, stopReason: str(message.stop_reason), error: sessionError(str(record.error) ?? 'api-error', text, at) })
       builder.message({ id: uuid, role: 'assistant', actor: 'injected', at, modelCallId: call.id, parts: [{ type: 'text', text }] })
       errors += 1
       return
@@ -188,22 +169,11 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       if (builder.hasMessage(apiId)) builder.appendParts(apiId, parts)
       return
     }
-    builder.modelCall({
-      id: apiId,
-      at,
-      provider: null,
-      servedModel: model,
-      requestedModel: null,
-      usage: usageOf(message.usage),
-      costUsd: null,
-      stopReason: str(message.stop_reason),
-      error: null,
-    })
+    builder.modelCall({ id: apiId, at, provider: null, servedModel: model, requestedModel: null, usage: usageOf(message.usage), costUsd: null, stopReason: str(message.stop_reason), error: null })
     builder.message({ id: apiId, role: 'assistant', actor: 'agent', at, modelCallId: apiId, parts })
   }
 
   const finish = (): SessionBuilder => {
-
     builder.source(stats)
     if (sidechainSkipped > 0) builder.gap(`${sidechainSkipped} sidechain records in the main transcript belong to subagents and were not read as this session`)
     if (errors > 0 && builder.modelCalls.every((c) => c.error)) builder.gap('every model call in the session failed')
