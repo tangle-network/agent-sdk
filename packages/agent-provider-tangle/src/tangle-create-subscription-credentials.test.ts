@@ -308,7 +308,7 @@ describe("Tangle per-profile subscription creation", () => {
 
   it("checks native mapped credential grants and mixed authentication before provisioning", async () => {
     expect(() => assertMappedCreateOptions({ backend: { type: "claude-code", profile, model: native } }))
-      .toThrow(/explicitly listed/);
+      .toThrow(/must retain its stored selection/);
     expect(() => assertMappedCreateOptions({ secrets: ["CLAUDE_RESEARCH"], backend: { type: "claude-code", profile, model: { ...native, apiKeyEnv: "API_KEY" } } }))
       .toThrow(/cannot be combined/);
   });
@@ -324,6 +324,7 @@ describe("Tangle per-profile subscription creation", () => {
       if (url.endsWith("/v1/backends")) return json({
         backends: [{
           type: "claude-code", name: "Claude Code", description: "fixture",
+          callerCredentialOnly: false,
           capabilities: {
             streaming: true, toolUse: true, reasoning: true, multimodal: false,
             imageInput: false, contextWindow: 128_000, mcp: true, sessions: true,
@@ -344,7 +345,7 @@ describe("Tangle per-profile subscription creation", () => {
         schema: 1, cliAuthReferences: true, agentInterface: "2.15.0", sidecarVersion: "fixture", image: "fixture",
         dispatch: { runControlRef: false, executionIdOnAdmission: false },
         cancel: { canonicalRunCancellation: false, digestBound: false, idempotent: false },
-        runs: { executionScopedStatus: false, eventReplay: false }, interactions: {},
+        runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false },
       });
       if (url.endsWith("/backend")) return json({ type: "claude-code" });
       if (url.endsWith("/agents/run/stream")) return new Response('id: event-1\nevent: done\ndata: {"status":"completed"}\n\n', { headers: { "content-type": "text/event-stream" } });

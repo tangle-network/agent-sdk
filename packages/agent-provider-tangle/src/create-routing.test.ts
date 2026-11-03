@@ -8,6 +8,7 @@ const routing = { only: ["zai"], allowFallbacks: false, requireModel: true };
 const catalog = {
   backends: [{
     type: "opencode", name: "OpenCode", description: "fixture",
+    callerCredentialOnly: false,
     capabilities: {
       streaming: true, toolUse: true, reasoning: true, multimodal: false,
       imageInput: false, contextWindow: 128_000, mcp: true, sessions: true,

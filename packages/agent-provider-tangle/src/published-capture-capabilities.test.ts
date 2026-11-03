@@ -16,7 +16,7 @@ it("preserves protocol and harness capture through the published Sandbox capabil
     agentInterface: "2.15.0", sidecarVersion: "fixture", image: "fixture-image",
     dispatch: { runControlRef: true, executionIdOnAdmission: true },
     cancel: { canonicalRunCancellation: true, digestBound: true, idempotent: true },
-    runs: { executionScopedStatus: true, eventReplay: true }, interactions: {},
+    runs: { executionScopedStatus: true, eventReplay: true }, interactions: { responseDedupe: false },
   };
   const reads: string[] = [];
   vi.spyOn(client, "fetch").mockImplementation(async (path) => {

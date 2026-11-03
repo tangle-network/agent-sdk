@@ -115,7 +115,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     let creates = 0;
     const provider = createTangleProvider({
       requireNativeSessionCapture: true,
-      mapCreateInput: () => backend === undefined ? {} : { backend: { type: backend } },
+      mapCreateInput: () => backend === undefined ? { backend: {} } : { backend: { type: backend } },
       client: { create: async () => { creates++; throw new Error("unexpected create"); } },
     });
     await expect(provider.create({ profile })).rejects.toThrow(/harness|explicit selected backend/);

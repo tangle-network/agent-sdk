@@ -41,6 +41,24 @@ function recordingBox(recorded: PromptOptions[]): SandboxInstanceLike {
     async *streamPrompt(_message, options) {
       if (options) recorded.push(options);
     },
+    // The session-preparation seam: create a session whose identity is exactly what was asked,
+    // answer public preparation with the sidecar's no-public-root refusal (the launch runs
+    // unprepared in the session just created), and answer secret preparation with the exact
+    // digests an isolated turn's launch carries.
+    async createSession({ sessionId }: { sessionId: string }) {
+      return { session: { id: sessionId }, info: { id: sessionId } } as never;
+    },
+    async preparePublicProfileRevision() {
+      const refusal = new Error("Concurrent public profile materialization is disabled");
+      (refusal as { status?: unknown }).status = 409;
+      throw refusal;
+    },
+    async prepareSecretProfileRevision() {
+      return {
+        expectedPublicProfileRequestDigest: "sha256-fixture",
+        expectedSecretProfileReceipt: { status: "installed", bindings: [] },
+      } as never;
+    },
   };
 }
 
@@ -75,7 +93,7 @@ describe("Tangle per-turn backend options", () => {
     const backend = { type: "opencode", modelId: "glm-5.2", provider: "zai",
       apiKey: "model-key-private", runtimeSecrets: { TURN_AUTH: "turn-secret-private" } };
     for await (const _event of environment.stream({ prompt: "run", providerOptions: { backend } })) {}
-    expect(recorded[0]?.backend).toEqual({ type: "opencode", model: {
+    expect(recorded[0]?.backend).toEqual({ type: "opencode", metadata: { profileSecretIsolation: true }, model: {
       model: backend.modelId, provider: backend.provider, apiKey: backend.apiKey,
     }, runtimeSecrets: backend.runtimeSecrets });
     const identity = backendRequestIdentity(recorded[0]?.backend);
@@ -150,7 +168,7 @@ describe("Tangle per-turn backend options", () => {
         },
         target,
       ),
-    ).toThrow(/backend model options are not supported: secretEnv/);
+    ).toThrow(/backend model are not supported: secretEnv/);
   });
 
   it("refuses an auth file that names no path or content", () => {
