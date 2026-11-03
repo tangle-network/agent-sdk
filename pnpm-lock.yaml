@@ -244,6 +244,34 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
 
+  packages/agent-provider-boat:
+    dependencies:
+      '@boatdev/sdk':
+        specifier: ^1.13.0
+        version: 1.13.0
+      '@tangle-network/agent-core':
+        specifier: ^1.0.2
+        version: link:../agent-core
+      '@tangle-network/agent-interface':
+        specifier: workspace:*
+        version: link:../agent-interface
+      '@tangle-network/agent-provider-cli-bridge':
+        specifier: ^2.0.6
+        version: link:../agent-provider-cli-bridge
+    devDependencies:
+      '@tangle-network/agent-provider-testkit':
+        specifier: workspace:*
+        version: link:../agent-provider-testkit
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.5
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
+
   packages/agent-provider-cli-bridge:
     dependencies:
       '@tangle-network/agent-core':
@@ -527,6 +555,9 @@ packages:
 
   '@balena/dockerignore@1.0.2':
     resolution: {integrity: sha512-wMue2Sy4GAVTk6Ic4tJVcnfdau+gx2EnG7S+uAEe+TWJFqE4YoWN4/H8MSLj4eYJKxGg26lZwboEniNiNwZQ6Q==}
+
+  '@boatdev/sdk@1.13.0':
+    resolution: {integrity: sha512-wSmCyFLDL0QTCLF5NfQR4JTdTccFIvlqBBtCMDLPk61hLj48ZPEH/0nF91j4aiMLBkr+kvmkedfqkyFuokn5dw==}
 
   '@bufbuild/protobuf@2.16.0':
     resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
@@ -2720,6 +2751,8 @@ snapshots:
   '@aws/lambda-invoke-store@0.3.0': {}
 
   '@balena/dockerignore@1.0.2': {}
+
+  '@boatdev/sdk@1.13.0': {}
 
   '@bufbuild/protobuf@2.16.0': {}
 
