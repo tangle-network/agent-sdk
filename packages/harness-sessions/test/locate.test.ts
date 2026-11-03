@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { claudeCodeReader, codexHomes, codexReader, isCodexHome, withinPath, type SessionRef } from '../src/index.js'
+import { claudeCodeReader, codexHomes, codexReader, isCodexHome, withinPath, CLAUDE_CODE_STORES, CODEX_STORES, type SessionRef } from '../src/index.js'
 
 const fixture = (...parts: string[]): string => join(import.meta.dirname, 'fixtures', ...parts)
 const CODEX = readFileSync(fixture('codex', 'rollout-2026-10-04T21-50-21-01a108e5-81d9-71b0-9cec-e5d33586604f.jsonl'), 'utf8')
@@ -149,6 +149,26 @@ describe('Claude Code', () => {
     session('-h-x-agent-sub', 'c3', `${home}/x/agent/sub`)
     expect(ids(await claudeCodeReader.locate(home, { cwd: `${home}/x/agent` }))).toEqual(['c1', 'c3'])
     expect(ids(await claudeCodeReader.locate(home, { cwd: `${home}/x/agent-dev-container` }))).toEqual(['c2'])
+  })
+
+  it('locates the XDG config layout beside the classic home layout (#553)', async () => {
+    const home = scratch()
+    write(join(home, '.config', 'claude', 'projects', '-h-x-agent', 'xdg1.jsonl'), CLAUDE.replaceAll(RECORDED_CWD, '"cwd":"/home/agent"'), '2026-10-15T09:00:00.000Z')
+    write(join(home, '.claude', 'projects', '-h-x-agent', 'classic1.jsonl'), CLAUDE.replaceAll(RECORDED_CWD, '"cwd":"/home/agent"'), '2026-10-15T09:00:00.000Z')
+    expect(ids(await claudeCodeReader.locate(home)).sort()).toEqual(['classic1', 'xdg1'])
+  })
+})
+
+describe('the declared store tables', () => {
+  it('claude-code declares both layouts the pinned CLI writes (#553)', () => {
+    expect(CLAUDE_CODE_STORES.map((store) => store.root)).toEqual(['.claude/projects', '.config/claude/projects'])
+    for (const store of CLAUDE_CODE_STORES) expect(store.files).toEqual(['*/{id}.jsonl', '*/{id}/subagents/**/*.jsonl'])
+  })
+
+  it('codex declares date-directory rollouts and the flat archived_sessions Codex moves finished ones to (#556)', () => {
+    expect(CODEX_STORES.map((store) => store.root)).toEqual(['.codex/sessions', '.codex/archived_sessions'])
+    expect(CODEX_STORES[0].files).toEqual(['*/*/*/rollout-*-{id}.jsonl'])
+    expect(CODEX_STORES[1].files).toEqual(['rollout-*-{id}.jsonl'])
   })
 })
 

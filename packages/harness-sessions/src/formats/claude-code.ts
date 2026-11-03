@@ -4,12 +4,12 @@ import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type Bui
 import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { foldedReader, runFold, type SessionFold } from './fold.js'
-import { EVIDENCE, LOCATE_READS, STORES, mapLimit, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
+import { CLAUDE_CODE_STORES, EVIDENCE, LOCATE_READS, mapLimit, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
 import { claudeRecordIsMachine, claudeTypedPromptText } from './claude-records.js'
 
 const FORMAT = 'claude-code.projects-jsonl' as const
-const STORE = STORES[FORMAT]
+const STORE = CLAUDE_CODE_STORES[0]
 const HARNESS = 'claude-code'
 
 function usageOf(value: unknown): TokenUsage | null {
@@ -188,37 +188,41 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
 }
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
-  const root = join(home, STORE.root)
-  const all = await walkFiles(root)
-  const main = storeGlob(STORE.files[0], opts.nativeSessionId)
-  const nested = storeGlob(STORE.files[1], opts.nativeSessionId)
-  const subagentsBySession = new Map<string, string[]>()
-  for (const rel of all) {
-    if (!nested.test(rel)) continue
-    const [project, id] = rel.split('/')
-    const key = `${project}/${id}`
-    subagentsBySession.set(key, [...(subagentsBySession.get(key) ?? []), join(root, rel)])
-  }
-  const sessions = await mapLimit(all.filter((rel) => main.test(rel)), LOCATE_READS, async (rel): Promise<SessionRef[]> => {
-    const path = join(root, rel)
-    const id = basename(rel, '.jsonl')
-    const mtime = await mtimeMs(path)
-    if (opts.sinceMs && mtime < opts.sinceMs) return []
-    const head = await headRecord(path, (r) => typeof r.cwd === 'string')
-    const cwd = head ? str(head.cwd) : null
-    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) return []
-    const subagents = subagentsBySession.get(`${rel.split('/')[0]}/${id}`) ?? []
-    const refs: SessionRef[] = [{ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path, ...subagents], home, cwd, mtimeMs: mtime, parentNativeSessionId: null }]
-    for (const file of subagents) {
-      const agentId = basename(file, '.jsonl').replace(/^agent-/u, '')
-      refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: agentId, path: file, files: [file], home, cwd, mtimeMs: await mtimeMs(file), parentNativeSessionId: id })
+  const refs: SessionRef[] = []
+  for (const store of CLAUDE_CODE_STORES) {
+    const root = join(home, store.root)
+    const all = await walkFiles(root)
+    const main = storeGlob(store.files[0], opts.nativeSessionId)
+    const nested = storeGlob(store.files[1], opts.nativeSessionId)
+    const subagentsBySession = new Map<string, string[]>()
+    for (const rel of all) {
+      if (!nested.test(rel)) continue
+      const [project, id] = rel.split('/')
+      const key = `${project}/${id}`
+      subagentsBySession.set(key, [...(subagentsBySession.get(key) ?? []), join(root, rel)])
     }
-    return refs
-  })
-  return sessions.flat().sort((a, b) => b.mtimeMs - a.mtimeMs)
+    const sessions = await mapLimit(all.filter((rel) => main.test(rel)), LOCATE_READS, async (rel): Promise<SessionRef[]> => {
+      const path = join(root, rel)
+      const id = basename(rel, '.jsonl')
+      const mtime = await mtimeMs(path)
+      if (opts.sinceMs && mtime < opts.sinceMs) return []
+      const head = await headRecord(path, (r) => typeof r.cwd === 'string')
+      const cwd = head ? str(head.cwd) : null
+      if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) return []
+      const subagents = subagentsBySession.get(`${rel.split('/')[0]}/${id}`) ?? []
+      const found: SessionRef[] = [{ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path, ...subagents], home, cwd, mtimeMs: mtime, parentNativeSessionId: null }]
+      for (const file of subagents) {
+        const agentId = basename(file, '.jsonl').replace(/^agent-/u, '')
+        found.push({ harness: HARNESS, format: FORMAT, nativeSessionId: agentId, path: file, files: [file], home, cwd, mtimeMs: await mtimeMs(file), parentNativeSessionId: id })
+      }
+      return found
+    })
+    refs.push(...sessions.flat())
+  }
+  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const claudeCodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['claude', 'claude-code-acp', 'claudish'], format: FORMAT, globs: { session: STORE.files[0], children: STORE.files[1] } }, locate, fold)
+export const claudeCodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['claude', 'claude-code-acp', 'claudish'], format: FORMAT, globs: { session: STORE.files[0], children: STORE.files[1] }, stores: CLAUDE_CODE_STORES }, locate, fold)
 
 export function claudeCodeRefForFile(path: string, parentNativeSessionId: string | null = null): SessionRef {
   const name = basename(path, '.jsonl')
