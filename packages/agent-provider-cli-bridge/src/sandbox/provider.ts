@@ -17,7 +17,9 @@ import {
   type AgentEnvironmentProvider,
   type AgentEnvironmentStatus,
   type AgentTurnInput,
+  type CheckpointRef,
   type CreateAgentEnvironmentInput,
+  type ForkRequest,
 } from "@tangle-network/agent-interface/environment-provider";
 import { shellQuote } from "@tangle-network/agent-core/node";
 import { harnessModelSupportFor } from "@tangle-network/cli-agent-registry";
@@ -31,6 +33,11 @@ import {
   boxHarnessVersion,
 } from "./box.js";
 import { assertProfileValid, declarableHarnesses, plannerLowers, refuseUnsupportedCreateInput, resolveBoxHarness, validateBoxProfile } from "./refusal.js";
+import {
+  assertForkableCheckpoint,
+  createVendorSnapshot,
+  forkCreateInput,
+} from "./checkpoint.js";
 import type { BridgeSandbox, BridgeSandboxVendor } from "./vendor.js";
 
 export const BRIDGE_RUN_TAG = "tangle-bridge-run";
@@ -76,9 +83,12 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
   const providerCapabilities = (harness?: HarnessType): AgentEnvironmentCapabilities =>
     environmentCapabilities(defaultCliBridgeCapabilities(harness), vendor, harness === undefined ? false : plannerLowers(harness, "hooks"));
 
-  async function create(input: CreateAgentEnvironmentInput): Promise<AgentEnvironment> {
+  async function create(input: CreateAgentEnvironmentInput, restore?: { snapshot: string }): Promise<AgentEnvironment> {
     input.signal?.throwIfAborted();
     refuseUnsupportedCreateInput(input, vendor.support);
+    if (restore !== undefined && input.workspace?.environment !== undefined) {
+      throw new EnvironmentProviderError("refused", "a fork restores its checkpoint; workspace.environment names a different one", { path: "workspace.environment" });
+    }
     const profile = input.profile as AgentProfile;
     const validation = validateBoxProfile(profile, input.backend, declared);
     assertProfileValid(validation);
@@ -98,6 +108,7 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
         env: input.env ?? {},
         lifetimeMs,
         ...(input.workspace?.environment === undefined ? {} : { environment: input.workspace.environment }),
+        ...(restore === undefined ? {} : { snapshot: restore.snapshot }),
         ...(input.workspace?.image === undefined ? {} : { image: input.workspace.image }),
         ...(input.resources === undefined ? {} : { resources: input.resources }),
         ...(input.egress === undefined ? {} : { egress: egressFor(input, routerBaseUrl) }),
@@ -129,7 +140,16 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
         workspace: { cwd: { base: "host", path: workspaceDir } },
       });
       input.signal?.throwIfAborted();
-      return wrapEnvironment({ inner, sandbox, vendor, harness, profile, workspaceDir, dispatcher, capabilities: environmentCapabilities(inner.capabilities ?? providerCapabilities(harness), vendor, plannerLowers(harness, "hooks")), input });
+      const forkFromCheckpoint = vendor.snapshots === undefined ? undefined : (
+        checkpoint: CheckpointRef,
+        request?: ForkRequest,
+        signal?: AbortSignal,
+      ): Promise<AgentEnvironment> =>
+        create(
+          { ...forkCreateInput(input, request), ...(signal === undefined ? {} : { signal }) },
+          { snapshot: checkpoint.id },
+        );
+      return wrapEnvironment({ inner, sandbox, vendor, harness, profile, workspaceDir, dispatcher, capabilities: environmentCapabilities(inner.capabilities ?? providerCapabilities(harness), vendor, plannerLowers(harness, "hooks")), input, ...(forkFromCheckpoint === undefined ? {} : { forkFromCheckpoint }) });
     } catch (error) {
       await dispatcher?.close().catch(() => undefined);
       throw await failAfterProvision(error, sandbox, vendor.name, secrets);
@@ -340,10 +360,12 @@ function environmentCapabilities(bridge: AgentEnvironmentCapabilities, vendor: B
     ...base,
     profile: { ...base.profile, validation: true, hooks: hooks === true },
     workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false, cwdBases: { repository: true, host: false } },
+    branching: { checkpoint: vendor.snapshots !== undefined, fork: vendor.snapshots !== undefined },
     placement: true,
     create: {
       durableIdempotency: false,
       ...(vendor.support.egress.length === 0 ? {} : { egress: [...vendor.support.egress] }),
+      ...(vendor.snapshots === undefined ? {} : { workspaceSnapshot: false }),
     },
   };
 }
@@ -358,6 +380,12 @@ interface WrapArgs {
   dispatcher: Agent;
   capabilities: AgentEnvironmentCapabilities;
   input: CreateAgentEnvironmentInput;
+  /** Restores a checkpoint as a new environment; present only when the vendor snapshots. */
+  forkFromCheckpoint?: (
+    checkpoint: CheckpointRef,
+    request?: ForkRequest,
+    signal?: AbortSignal,
+  ) => Promise<AgentEnvironment>;
 }
 
 function sandboxOperations(sandbox: BridgeSandbox, vendor: BridgeSandboxVendor, workspaceDir: string) {
@@ -438,6 +466,15 @@ function wrapEnvironment(args: WrapArgs): AgentEnvironment {
     status: operations.status,
     stream: exclusive,
     ...(inner.session === undefined ? {} : { session: (id: string, options?: Parameters<NonNullable<AgentEnvironment["session"]>>[1]) => inner.session!(id, options) }),
+    ...(vendor.snapshots === undefined ? {} : {
+      checkpoint: (options?: Parameters<NonNullable<AgentEnvironment["checkpoint"]>>[0]) =>
+        createVendorSnapshot(vendor, sandbox.id, options),
+      fork: async (checkpoint: CheckpointRef, options?: Parameters<NonNullable<AgentEnvironment["fork"]>>[1]) => {
+        assertForkableCheckpoint(checkpoint, vendor.name);
+        const { signal, ...request } = options ?? {};
+        return args.forkFromCheckpoint!(checkpoint, Object.keys(request).length === 0 ? undefined : request, signal);
+      },
+    }),
     ...(inner.dispatch === undefined
       ? {}
       : {

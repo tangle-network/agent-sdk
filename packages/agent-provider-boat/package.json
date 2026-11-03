@@ -1,0 +1,61 @@
+{
+  "name": "@tangle-network/agent-provider-boat",
+  "version": "0.1.0",
+  "description": "AgentEnvironmentProvider for Boat sandboxes (boat.dev) running CLI Bridge from the stock image or a prepared snapshot",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./src/index.ts"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tangle-network/agent-sdk.git",
+    "directory": "packages/agent-provider-boat"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist/index.d.ts",
+    "dist/index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check-types": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm run build",
+    "test:live": "vitest run tests"
+  },
+  "dependencies": {
+    "@boatdev/sdk": "^1.13.0",
+    "@tangle-network/agent-core": "^1.0.2",
+    "@tangle-network/agent-interface": "^5.10.12",
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.6"
+  },
+  "devDependencies": {
+    "@tangle-network/agent-provider-testkit": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "6.0.3",
+    "vitest": "catalog:"
+  }
+}

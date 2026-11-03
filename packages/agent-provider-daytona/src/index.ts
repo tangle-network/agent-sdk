@@ -6,6 +6,7 @@ const CODE_TOOLBOX_LANGUAGE_LABEL = "code-toolbox-language";
 import {
   BOX_TEMPLATE_NAME,
   BRIDGE_RUN_TAG,
+  checkpointSnapshotName,
   createBridgeSandboxProvider,
   envFileLaunch,
   markedExec,
@@ -50,13 +51,25 @@ function daytonaVendor(config: Pick<DaytonaProviderOptions, "apiKey" | "apiUrl" 
   return {
     name: "daytona",
     support: { environment: true, image: false, resources: false, egress: ["open", "strict", "blocked"] },
+    // A Daytona snapshot of a running sandbox restores by name through `create({ snapshot })`.
+    snapshots: {
+      async create(sandboxId, options) {
+        options?.signal?.throwIfAborted();
+        const name = checkpointSnapshotName(options?.name);
+        await vendorCall("snapshot", async () => {
+          const source = await daytona().get(sandboxId);
+          await source.createSnapshot(name, 600);
+        });
+        return { id: name };
+      },
+    },
     async create(request) {
       request.signal?.throwIfAborted();
       const pending = vendorCall("create", async () => {
         try {
           return await daytona().create(
           {
-            snapshot: request.environment ?? config.snapshot ?? BOX_TEMPLATE_NAME,
+            snapshot: request.snapshot ?? request.environment ?? config.snapshot ?? BOX_TEMPLATE_NAME,
             user: "node",
             ...(request.name === undefined ? {} : { name: request.name }),
             labels: { ...request.metadata },

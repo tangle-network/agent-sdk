@@ -53,6 +53,8 @@ export interface BridgeSandboxCreateRequest {
   lifetimeMs: number;
   /** Vendor template, snapshot or image the caller chose; absent selects the published box image. */
   environment?: string;
+  /** Snapshot id {@link BridgeVendorSnapshots.create} returned; restores that exact state. */
+  snapshot?: string;
   image?: string;
   resources?: ResourceRequest;
   egress?: { mode: AgentEnvironmentEgressMode; allowDomains: readonly string[] };
@@ -78,10 +80,34 @@ export interface BridgeVendorSupport {
   egress: readonly AgentEnvironmentEgressMode[];
 }
 
+/** A vendor snapshot of one sandbox's state, restorable through `create`. */
+export interface BridgeVendorSnapshot {
+  /** Vendor snapshot identifier; restores via `BridgeSandboxCreateRequest.snapshot`. */
+  readonly id: string;
+  /** Vendor-reported creation time, when the vendor reports one. */
+  readonly createdAt?: string;
+}
+
+/** Snapshot lifecycle a vendor may expose beyond create, exec and destroy. */
+export interface BridgeVendorSnapshots {
+  /**
+   * Snapshot a running sandbox. The returned id restores via
+   * `create({ snapshot: id })`, producing a sandbox that starts from the
+   * source's captured state. What a snapshot carries (filesystem only, or
+   * memory too) is vendor truth, reported nowhere else.
+   */
+  create(
+    sandboxId: string,
+    options?: { name?: string; metadata?: Record<string, string>; signal?: AbortSignal },
+  ): Promise<BridgeVendorSnapshot>;
+}
+
 export interface BridgeSandboxVendor {
   /** Provider name reported on every environment, for example `e2b`. */
   readonly name: string;
   readonly support: BridgeVendorSupport;
+  /** Present only when the vendor snapshots running sandboxes. */
+  readonly snapshots?: BridgeVendorSnapshots;
   create(request: BridgeSandboxCreateRequest): Promise<BridgeSandbox>;
   /** `null` only when the vendor definitively reports no such sandbox; transport failures throw. */
   connect(id: string, options?: { signal?: AbortSignal }): Promise<BridgeSandbox | null>;

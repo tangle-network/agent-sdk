@@ -108,14 +108,25 @@ function sandbox(name: string): BridgeSandbox {
 export function dockerBoxVendor(image: string): BridgeSandboxVendor {
   return {
     name: "docker-box",
-    support: { environment: false, image: false, resources: false, egress: [] },
+    support: { environment: true, image: false, resources: false, egress: [] },
+    // A snapshot is a docker commit; restore boots a container from the committed image.
+    snapshots: {
+      async create(sandboxId, options) {
+        options?.signal?.throwIfAborted();
+        const name = options?.name ?? `tbox-snap-${randomBytes(5).toString("hex")}`;
+        const result = await docker(["commit", sandboxId, name], undefined, options?.signal);
+        if (result.code !== 0) throw new EnvironmentProviderError("provision_failed", `docker commit failed: ${result.stderr.trim()}`);
+        return { id: name };
+      },
+    },
     async create(request) {
       request.signal?.throwIfAborted();
+      const boot = request.snapshot ?? request.environment ?? image;
       const name = `tbox-${randomBytes(5).toString("hex")}`;
       const labels = Object.entries(request.metadata).flatMap(([key, value]) => ["--label", `${META}${key}=${value}`]);
       const file = envFile(request.env);
       try {
-        const result = await docker(["run", "-d", "--name", name, "--label", `${LABEL}=1`, "--label", `tbox.name=${request.name ?? ""}`, ...labels, "--env-file", file.path, "-p", "127.0.0.1::3344", image, "sleep", String(Math.ceil(request.lifetimeMs / 1000))], undefined, request.signal);
+        const result = await docker(["run", "-d", "--name", name, "--label", `${LABEL}=1`, "--label", `tbox.name=${request.name ?? ""}`, ...labels, "--env-file", file.path, "-p", "127.0.0.1::3344", boot, "sleep", String(Math.ceil(request.lifetimeMs / 1000))], undefined, request.signal);
         if (result.code !== 0) throw new EnvironmentProviderError("provision_failed", `docker run failed: ${result.stderr.trim()}`);
       } catch (error) {
         // Killing the docker client mid-run leaves the container the daemon creates, which can land after the first rm.
