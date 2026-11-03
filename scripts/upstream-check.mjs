@@ -63,6 +63,57 @@ function writeEvidence(upId, slug, body) {
   return path;
 }
 
+// ── Failure diagnostics (#608) ────────────────────────────────────────────────
+// A failed qualification used to leave nothing behind: aggregate counts, then
+// cleanup removed the only JSON report holding the assertion causes. Diagnostics
+// are retained BEFORE cleanup, bounded, scrubbed, and written as a distinct
+// `-failure` artifact so a diagnostic is never mistaken for a qualification
+// receipt.
+
+const MAX_FAILURES_RETAINED = 20;
+const MAX_RETAINED_CHARACTERS = 2_000;
+const SECRET_PATTERNS = /(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{12,}|-----BEGIN\s[A-Z ]+PRIVATE KEY-----[\s\S]*?-----END\s[A-Z ]+PRIVATE KEY-----)/gu;
+
+function scrub(value) {
+  return String(value).replace(SECRET_PATTERNS, "[redacted]");
+}
+
+function bounded(value) {
+  const text = scrub(value);
+  return text.length > MAX_RETAINED_CHARACTERS
+    ? `${text.slice(0, MAX_RETAINED_CHARACTERS)}…[truncated ${text.length - MAX_RETAINED_CHARACTERS} chars]`
+    : text;
+}
+
+/** Bounded, scrubbed failing-test diagnostics out of a Vitest JSON report. */
+function failureDiagnostics(report) {
+  if (!report || !Array.isArray(report.testResults)) return [];
+  const failures = [];
+  for (const suite of report.testResults) {
+    for (const test of Array.isArray(suite.assertionResults) ? suite.assertionResults : []) {
+      if (test.status !== "failed") continue;
+      failures.push({
+        suite: bounded(suite.name ?? ""),
+        test: bounded([...(Array.isArray(test.ancestorTitles) ? test.ancestorTitles : []), test.title].filter(Boolean).join(" › ")),
+        messages: (Array.isArray(test.failureMessages) ? test.failureMessages : []).slice(0, 3).map(bounded),
+      });
+      if (failures.length >= MAX_FAILURES_RETAINED) return failures;
+    }
+  }
+  return failures;
+}
+
+/** Retain a failed check's diagnostics before its cohort cleanup removes the report. */
+function retainFailureDiagnostics(upId, slug, body) {
+  const path = writeEvidence(upId, `${slug}-failure`, {
+    ...body,
+    result: "failure",
+    generatedAt: new Date().toISOString(),
+  });
+  console.error(`${upId}: failure diagnostics retained at ${path}`);
+  return path;
+}
+
 // Behavioral UP-ids run a named subset of the packed control cohort. minTests
 // is the vacuity floor: the measured passed count for the selector on this
 // commit. A drop below the floor means the selector no longer proves the
@@ -201,12 +252,26 @@ function runBehavioral(upId) {
       descriptor.files,
       pattern,
     );
-    const {
-      numTotalTests,
-      numPassedTests,
-      numFailedTests,
-      numPendingTests,
-    } = assertPassingReport(upId, result, descriptor.minTests);
+    const counts = (() => {
+      try {
+        return assertPassingReport(upId, result, descriptor.minTests);
+      } catch (failure) {
+        retainFailureDiagnostics(upId, descriptor.slug, {
+          upId,
+          package: descriptor.packages[0],
+          version: packageVersion(descriptor.packages[0]),
+          tagCommit: tagCommit(),
+          command,
+          error: bounded(failure instanceof Error ? failure.message : String(failure)),
+          diagnostics: {
+            exitStatus: result.status ?? null,
+            failures: failureDiagnostics(result.report),
+            stderrTail: result.stderr === undefined ? undefined : bounded(result.stderr.slice(-8_000)),
+          },
+        });
+        throw failure;
+      }
+    })();
     const path = writeEvidence(upId, descriptor.slug, {
       upId,
       package: descriptor.packages[0],
@@ -321,7 +386,26 @@ function runCliBridgeProvider(upId) {
       ["cli-bridge.integration.test.ts"],
       pattern,
     );
-    const counts = assertPassingReport(upId, result, descriptor.minTests);
+    const counts = (() => {
+      try {
+        return assertPassingReport(upId, result, descriptor.minTests);
+      } catch (failure) {
+        retainFailureDiagnostics(upId, "agent-provider-cli-bridge-real", {
+          upId,
+          package: "@tangle-network/agent-provider-cli-bridge",
+          version: packageVersion("@tangle-network/agent-provider-cli-bridge"),
+          tagCommit: tagCommit(),
+          command: `vitest run cli-bridge.integration.test.ts -t ${JSON.stringify(pattern)}`,
+          error: bounded(failure instanceof Error ? failure.message : String(failure)),
+          diagnostics: {
+            exitStatus: result.status ?? null,
+            failures: failureDiagnostics(result.report),
+            stderrTail: result.stderr === undefined ? undefined : bounded(result.stderr.slice(-8_000)),
+          },
+        });
+        throw failure;
+      }
+    })();
     const path = writeEvidence(upId, "agent-provider-cli-bridge-real", {
       upId,
       package: "@tangle-network/agent-provider-cli-bridge",
@@ -563,6 +647,19 @@ function runLiveTangle(upId) {
     );
     if (result.error) throw result.error;
     if (result.status !== 0) {
+      retainFailureDiagnostics(upId, descriptor.slug, {
+        upId,
+        package: "@tangle-network/agent-provider-tangle",
+        version: packageVersion("@tangle-network/agent-provider-tangle"),
+        tagCommit: tagCommit(),
+        command: `node ${tangleLiveFixture} ${descriptor.mode}`,
+        error: bounded(`${upId} live Tangle fixture failed (exit ${result.status})`),
+        diagnostics: {
+          exitStatus: result.status,
+          failures: [],
+          stderrTail: result.stderr === undefined ? undefined : bounded(result.stderr.slice(-8_000)),
+        },
+      });
       throw new Error(
         `${upId} live Tangle fixture failed (exit ${result.status}).\n${result.stderr}`,
       );

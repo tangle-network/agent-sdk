@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EnvironmentProviderError, type CheckpointRef, type CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
-import {
-  assertForkableCheckpoint,
-  checkpointSnapshotName,
-  createVendorSnapshot,
-  forkCreateInput,
-  vendorSnapshots,
-} from "./checkpoint.js";
+import { assertForkableCheckpoint, checkpointSnapshotName, createVendorSnapshot, forkCreateInput, vendorSnapshots } from "./checkpoint.js";
+import { refuseUnsupportedCreateInput } from "./refusal.js";
 import type { BridgeSandboxVendor, BridgeVendorSnapshot } from "./vendor.js";
 
 function vendorWithSnapshots(): BridgeSandboxVendor {
@@ -141,5 +136,15 @@ describe("checkpointSnapshotName", () => {
     const b = checkpointSnapshotName(undefined);
     expect(a).toMatch(/^tangle-ckpt-/);
     expect(a).not.toBe(b);
+  });
+});
+
+describe("create lifetime fields (#309)", () => {
+  const support = { environment: true, image: false, resources: false, egress: [] as const };
+  it("refuses an idle timeout these sandboxes cannot enforce", () => {
+    expect(() => refuseUnsupportedCreateInput({ profile: { name: "w" }, idleTimeoutMs: 60_000 }, support)).toThrow(/lifetime, not an idle timeout/);
+  });
+  it("accepts a requested hard lifetime the vendor will clamp", () => {
+    expect(() => refuseUnsupportedCreateInput({ profile: { name: "w" }, maxLifetimeMs: 60_000 }, support)).not.toThrow();
   });
 });

@@ -98,6 +98,23 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
     await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({ exitCode: 12, message: "Tangle credential command failed (exit 12)" });
   });
 
+  it("carries the command's bounded last stderr line on the generic failure (#475)", async () => {
+    const fixture = await command('process.stderr.write("acct: first line\\nacct: resolver offline, retry later\\n"); process.exit(1);');
+    await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({
+      exitCode: 1,
+      stderrTail: "acct: resolver offline, retry later",
+    });
+  });
+
+  it("classifies a resolver binding refusal as a terminal credential refusal naming its reason (#475)", async () => {
+    const fixture = await command('process.stderr.write("acct: Resume seat conflicts with the bound dispatch\\n"); process.exit(1);');
+    await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({
+      code: "model_credential_refused",
+      resolutionReason: "acct: Resume seat conflicts with the bound dispatch",
+      message: "Tangle credential command refused the route: acct: Resume seat conflicts with the bound dispatch",
+    });
+  });
+
   it("rejects conflicting validity controls", () => {
     expect(() => createCommandModelCredentialResolver({ command: [process.execPath], minimumValidityMs: 1000, minimumValidUntil: "2026-10-01T06:00:00.000Z" }))
       .toThrow(/one validity deadline/);

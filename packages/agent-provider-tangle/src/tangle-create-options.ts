@@ -222,6 +222,8 @@ export function sandboxOptionsFromCreateInput(
   if (input.billingOwner !== undefined) {
     boundedIdentifier(input.billingOwner, "Tangle billing owner");
   }
+  const maxLifetimeSeconds = wholeSecondsOf(input.maxLifetimeMs, "maxLifetimeMs");
+  const idleTimeoutSeconds = wholeSecondsOf(input.idleTimeoutMs, "idleTimeoutMs");
   const resources = sandboxResourcesFromResourceRequest(input.resources);
   // Sandbox injects secrets by name from its own store. Accepting a name/value
   // record and dropping it would create an environment with no credentials and
@@ -241,6 +243,8 @@ export function sandboxOptionsFromCreateInput(
     ...(resources ? { resources } : {}),
     ...(restore ?? {}),
     ...(input.env ? { env: input.env } : {}),
+    ...(maxLifetimeSeconds === undefined ? {} : { maxLifetimeSeconds }),
+    ...(idleTimeoutSeconds === undefined ? {} : { idleTimeoutSeconds }),
     ...(secrets === undefined ? {} : { secrets }),
     ...(proxySecrets === undefined ? {} : { proxySecrets }),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
@@ -335,6 +339,15 @@ export function assertMappedSecretNames(options: { secrets?: unknown; env?: Reco
   }
 }
 
+/** A lifetime field the Sandbox create accepts: whole, positive, safe seconds, or a refusal naming the field. */
+function wholeSecondsOf(value: number | undefined, field: "maxLifetimeMs" | "idleTimeoutMs"): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1_000 || value % 1_000 !== 0) {
+    throw new Error(`Tangle create ${field} must be a positive whole number of seconds`);
+  }
+  return value / 1_000;
+}
+
 export function assertCreateInputShape(
   input: CreateAgentEnvironmentInput,
   parsedWorkspace?: WorkspaceRequest,
@@ -352,6 +365,8 @@ export function assertCreateInputShape(
     "secrets",
     "egress",
     "billingOwner",
+    "maxLifetimeMs",
+    "idleTimeoutMs",
     "metadata",
     "name",
     "idempotencyKey",

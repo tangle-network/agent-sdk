@@ -236,8 +236,13 @@ export function environmentEventFromSandboxEvent(
     throw new Error("Tangle public stream exposed a private native identity event");
   }
   const identity = sandboxEventIdentity(event);
+  // A live `raw` frame's data is the harness event itself, whose own sessionID is the
+  // harness-native session — backend content, like session.updated's resume key, never a
+  // claim about the Runtime session this iterator is bound to. Replay envelopes keep the
+  // native id under `event`, so only the live shape needs the exemption (#328).
   const runFrameCarriesPublicResumeKey =
-    expected.streamBound === true && record.type === "session.updated";
+    (expected.streamBound === true && record.type === "session.updated") ||
+    record.type === "raw";
   const identityBearingSessionIds = carriedSessionIds(
     runFrameCarriesPublicResumeKey
       ? { envelopeSessionId: identity.envelopeSessionId }
