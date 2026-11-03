@@ -1,5 +1,6 @@
 export type { TangleExactProcessOptions } from "./tangle-types.js";
 export {
+  createProfileBoundViolation,
   JsonBoundError,
   MAX_INLINE_PAYLOAD_BYTES,
   MAX_PAYLOAD_STRING_BYTES,

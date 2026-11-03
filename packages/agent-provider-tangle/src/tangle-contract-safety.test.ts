@@ -394,3 +394,17 @@ describe("a payload bound does not become an unbounded payload", () => {
     expect(thrownMessage(() => assertCreateInputShape({ profile: withMetadata(wide) } as never))).toContain("entries");
   });
 });
+
+describe("a caller sizes a create profile before it spawns", () => {
+  // magnetar-rust-sandbox-20261101d (2026-11-02): a critic mounted 1,019 inline files, which the AgentProfile contract
+  // accepts, and create refused it at the 8,193rd JSON node. The export lets the caller pack files until create accepts.
+  const withFiles = (count: number) => ({
+    name: "critic",
+    resources: { files: Array.from({ length: count }, (_, index) => ({ path: `release/${index}.rs`, resource: { kind: "inline", name: `release/${index}.rs`, content: "fn main() {}\n" } })) },
+  });
+  it("names the node bound a large mount breaks, and accepts the profile once its files fit", async () => {
+    const { createProfileBoundViolation } = await import("./index.js");
+    expect(createProfileBoundViolation(withFiles(1_019))).toMatchObject({ rule: "nodes", limitName: "MAX_JSON_NODES" });
+    expect(createProfileBoundViolation(withFiles(512))).toBeUndefined();
+  });
+});

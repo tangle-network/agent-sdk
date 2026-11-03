@@ -83,21 +83,8 @@ export function boundedString(value: unknown, label: string): string {
  * The rule a value broke. Only the rules that COUNT something carry a limit; the rest are shape
  * rejections, where nothing is oversized and saying so misdirects the reader.
  */
-export type JsonBoundRule =
-  | "string"
-  | "payload"
-  | "inlinePayload"
-  | "totalPayload"
-  | "array"
-  | "entries"
-  | "depth"
-  | "nodes"
-  | "key"
-  | "undefined"
-  | "number"
-  | "type"
-  | "cycle"
-  | "prototype";
+export type JsonBoundRule = "string" | "payload" | "inlinePayload" | "totalPayload" | "array" | "entries" | "depth" | "nodes"
+  | "key" | "undefined" | "number" | "type" | "cycle" | "prototype";
 
 export interface JsonBoundViolation {
   readonly rule: JsonBoundRule;
@@ -338,6 +325,11 @@ export function firstJsonBoundViolation(
 
 export function isBoundedJson(value: unknown, profileAt?: ProfileLocation): boolean {
   return firstJsonBoundViolation(value, profileAt) === undefined;
+}
+
+/** The first bound a create profile breaks, as `createTangleProvider` checks it before create; undefined when it fits. */
+export function createProfileBoundViolation(profile: unknown): JsonBoundViolation | undefined {
+  return firstJsonBoundViolation(profile, PROFILE_AT_ROOT);
 }
 
 /**
