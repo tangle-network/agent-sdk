@@ -555,7 +555,7 @@ export const agentProfileSchema = z
       }
       // `managed` is the deprecated spelling of `router`: an authored profile may still carry
       // either, and the two agree wherever the default would apply (#440).
-      const spell = (value: string | undefined): string | undefined => (value === "managed" ? "router" : value);
+      const spell = (value: unknown): unknown => (value === "managed" ? "router" : value);
       if ((first.credentialSource ?? source) !== source && spell(first.credentialSource) !== spell(source)) {
         context.addIssue({ code: "custom", path: ["seats", 0, "credentialSource"], message: "first seat credentialSource must match profile model.metadata.credentialSource" });
       }
