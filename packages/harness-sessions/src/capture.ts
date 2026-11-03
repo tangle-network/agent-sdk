@@ -1,4 +1,5 @@
 import { isRecord } from '@tangle-network/agent-core'
+import { readJsonValues } from './manifest-scan.js'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { str } from './builder.js'
@@ -45,6 +46,56 @@ async function readJson(path: string): Promise<unknown> {
   } catch (error) {
     if (isMissing(error)) return null
     throw error
+  }
+}
+
+/** The paths a capture listing reads from a raw-manifest.json: the v2 copies and the v1 source fields (#534). */
+const MANIFEST_PATHS = (path: string): boolean =>
+  path === '/nativeSessions'
+  || path === '/source/backendType'
+  || path === '/source/nativeSessionId'
+  || /^\/source\/attempts\/\d+\/(?:nativeSessionIds|executionId|ordinal)$/u.test(path)
+
+interface RetentionManifestAttempt {
+  nativeSessionIds?: unknown
+  executionId?: unknown
+  ordinal?: unknown
+}
+
+interface RetentionManifest {
+  nativeSessions?: unknown
+  source?: { backendType?: unknown; nativeSessionId?: unknown; attempts?: RetentionManifestAttempt[] }
+}
+
+/** A raw-manifest.json read as only the fields a listing needs; a giant manifest streams instead of parsing whole. */
+async function retentionManifest(dir: string): Promise<RetentionManifest | null> {
+  const manifestPath = join(dir, 'raw-manifest.json')
+  let values: Map<string, unknown>
+  try {
+    values = await readJsonValues(manifestPath, MANIFEST_PATHS)
+  } catch (error) {
+    if (isMissing(error)) return null
+    throw error
+  }
+  const attempts: RetentionManifestAttempt[] = []
+  for (const key of values.keys()) {
+    const attempt = /^\/source\/attempts\/(\d+)\//u.exec(key)
+    if (attempt === null) continue
+    const index = Number.parseInt(attempt[1]!, 10)
+    attempts[index] ??= {}
+    const field = key.split('/').at(-1) as 'nativeSessionIds' | 'executionId' | 'ordinal'
+    attempts[index]![field] = values.get(key)
+  }
+  const hasSource = values.has('/source/backendType') || values.has('/source/nativeSessionId') || attempts.length > 0
+  return {
+    ...(values.has('/nativeSessions') ? { nativeSessions: values.get('/nativeSessions') } : {}),
+    ...(hasSource ? {
+      source: {
+        ...(values.has('/source/backendType') ? { backendType: values.get('/source/backendType') } : {}),
+        ...(values.has('/source/nativeSessionId') ? { nativeSessionId: values.get('/source/nativeSessionId') } : {}),
+        ...(attempts.length > 0 ? { attempts } : {}),
+      },
+    } : {}),
   }
 }
 
@@ -145,18 +196,27 @@ function captured(ref: SessionRef, copy: NativeSessionCopy, recordedId: boolean,
 async function fromRetention(captureDir: string, listing: CaptureListing, fallbackHarness: string | null): Promise<void> {
   const sessionsDir = join(captureDir, RETENTION_SESSIONS)
   for (const sandboxSessionId of await dirs(sessionsDir)) {
-    const dir = join(sessionsDir, sandboxSessionId)
-    const manifest = await readJson(join(dir, 'raw-manifest.json'))
+    // One session's unreadable or oversized manifest must not sink the capture's whole listing (#534).
+    try {
+      await retentionSession(captureDir, join(sessionsDir, sandboxSessionId), sandboxSessionId, listing, fallbackHarness)
+    } catch (error) {
+      listing.missing.push({ sandboxSessionId, harness: null, reason: 'manifest_unreadable', detail: error instanceof Error ? error.message : String(error) })
+    }
+  }
+}
+
+async function retentionSession(captureDir: string, dir: string, sandboxSessionId: string, listing: CaptureListing, fallbackHarness: string | null): Promise<void> {
+    const manifest = await retentionManifest(dir)
     const source = isRecord(manifest) && isRecord(manifest.source) ? manifest.source : null
     if (isRecord(manifest) && Array.isArray((manifest as Record<string, unknown>).nativeSessions)) {
       await fromV2(dir, manifest as unknown as RawEvidenceArchiveManifestV2, listing)
-      continue
+      return
     }
     const harness = (source ? str(source.backendType) : null) ?? fallbackHarness
     const reader = harness ? maybeReaderFor(harness) : undefined
     if (!reader) {
       listing.missing.push({ sandboxSessionId, harness, reason: harness ? 'no_reader_for_harness' : 'harness_not_recorded' })
-      continue
+      return
     }
     const attempts = source && Array.isArray(source.attempts) ? source.attempts.filter(isRecord) : []
     const recorded = new Map<string, { executionId: string | null; attempt: number | null }>()
@@ -202,7 +262,6 @@ async function fromRetention(captureDir: string, listing: CaptureListing, fallba
     for (const id of recorded.keys()) {
       if (!found.has(id)) listing.missing.push({ sandboxSessionId, harness: reader.harness, reason: 'native_session_not_in_copy', nativeSessionId: id })
     }
-  }
 }
 
 export async function listCapture(
