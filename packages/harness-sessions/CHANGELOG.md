@@ -1,5 +1,16 @@
 # @tangle-network/harness-sessions
 
+## 1.0.10
+
+### Patch Changes
+
+- e78a70b: `listCapture` no longer parses a retention `raw-manifest.json` whole: it streams only the fields a listing reads (`nativeSessions`, `source.backendType`, `source.nativeSessionId`, `source.attempts[].{nativeSessionIds, executionId, ordinal}`), so a manifest past V8's string limit (production evidence: 1.27 GB) lists its sessions instead of failing as `Invalid string length`. One session's unreadable manifest now lands in `missing` as `manifest_unreadable` instead of sinking the capture's whole listing.
+  
+  Closes #534.
+- 153b178: The store tables declare every root the pinned CLIs write: claude-code gains the XDG layout (`.config/claude/projects`) beside the classic `.claude/projects`, and its reader locates both; codex declares the flat `archived_sessions` store its readers already walked, so catalog-keyed captures, probes and keepers stop treating archived rollouts as undeclared.
+  
+  Closes #553. Closes #556.
+
 ## 1.0.9
 
 ### Patch Changes
