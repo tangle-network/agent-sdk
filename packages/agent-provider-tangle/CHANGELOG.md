@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.6
+
+### Patch Changes
+
+- Export `createProfileBoundViolation(profile)`, the JSON bound check create applies to a profile, so a caller can size mounted files to fit before it spawns: a 1,019-file profile passed the AgentProfile contract and was refused at its 8,193rd JSON node.
+
 ## 5.0.5
 
 ### Patch Changes
