@@ -98,7 +98,7 @@ describe("Tangle per-profile subscription creation", () => {
     const managed = { ...profile, model: { ...profile.model, metadata: { credentialSource: "managed" } } };
     expect(() => promptOptionsFromTurnInput({ prompt: "managed", providerOptions: { backend: {
       type: "claude-code", profile: managed, model: { authMode: "oauth", authFiles: [{ path: ".credentials.json", content: "private-fixture" }] },
-    } } }, { provider: "tangle-sandbox", environmentId: "box" })).toThrow(/explicit managed profile/);
+    } } }, { provider: "tangle-sandbox", environmentId: "box" })).toThrow(/explicit router profile/);
   });
 
   it("refuses subscription intent without available credentials before provisioning", async () => {

@@ -308,9 +308,9 @@ function sandboxPromptBackend(value: unknown): SandboxPromptBackend {
       ? {}
       : { metadata: sandboxPromptBackendMetadata(present.metadata) }),
   };
-  if (backend.profile?.model?.metadata?.credentialSource === "managed" &&
+  if (backend.profile !== undefined && profileCredentialSource(backend.profile) === "router" &&
     (backend.model?.cliAuth !== undefined || backend.model?.authFiles !== undefined || backend.model?.authMode === "oauth")) {
-    throw new Error("Tangle explicit managed profile cannot receive native subscription credentials");
+    throw new Error("Tangle explicit router profile cannot receive native subscription credentials");
   }
   if (backend.profile !== undefined) profileCredentialSource(backend.profile);
   if (backend.model?.cliAuth !== undefined) {

@@ -35,7 +35,7 @@ import {
   awaitSandboxRunning,
   DEFAULT_TANGLE_READY_TIMEOUT_MS,
 } from "./tangle-readiness.js";
-import { profileCredentialSource } from "./model-credential-source.js";
+import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
 import type {
   SandboxInstanceLike,
@@ -174,7 +174,7 @@ export function createTangleProvider(
     assertProxySecretAliases(requestedProxySecrets, input.env, input.secrets);
     const requestedSecrets = structuredClone(Array.isArray(input.secrets) ? input.secrets : undefined);
     const requestedReason = requestedSecrets?.some((entry) => typeof entry !== "string" && "exposeInBox" in entry) ? input.metadata?.reason : undefined;
-    const credentialSource = typeof input.profile === "string" ? "managed" : profileCredentialSource(input.profile);
+    const credentialSource: ProfileCredentialSource = typeof input.profile === "string" ? "router" : profileCredentialSource(input.profile);
     const subscription = credentialSource === "subscription";
     if (Object.hasOwn(input.metadata ?? {}, "modelCredentials")) {
       throw new Error("Tangle credential selection owns metadata.modelCredentials");
@@ -237,7 +237,7 @@ export function createTangleProvider(
       throw new Error("Tangle mapped create options must preserve the exact profile credential source");
     }
     if (!subscription && mappedOptions.backend?.model?.cliAuth !== undefined) {
-      throw new Error("Tangle managed profile cannot provision native subscription credentials");
+      throw new Error("Tangle router profile cannot provision native subscription credentials");
     }
     const createOptions = deepFreeze(structuredClone({
       ...mappedOptions,
