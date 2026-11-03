@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/agent-provider-computesdk",
-  "version": "2.1.0",
+  "version": "2.0.1",
   "description": "AgentEnvironmentProvider running CLI Bridge from the box image on any computesdk backing provider",
   "type": "module",
   "license": "MIT",
@@ -46,7 +46,7 @@
   "dependencies": {
     "@tangle-network/agent-core": "^1.0.2",
     "@tangle-network/agent-interface": "^5.10.14",
-    "@tangle-network/agent-provider-cli-bridge": "^2.1.0"
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.7"
   },
   "peerDependencies": {
     "computesdk": "^4.1.14"
