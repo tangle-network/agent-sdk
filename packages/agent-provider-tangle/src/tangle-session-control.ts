@@ -41,6 +41,30 @@ export class TangleDispatchNotAdmittedError extends Error {
   }
 }
 
+/**
+ * Sandbox confirmed the dispatch but named an execution id other than the requested run's —
+ * a provider contract violation that repeats identically on every retry. Typed so the first
+ * occurrence can stop an invocation instead of looping as a transient (#475): the requested
+ * and returned ids are on the error, never only in prose.
+ */
+export class TangleDispatchExecutionChangedError extends Error {
+  readonly code = "DISPATCH_EXECUTION_CHANGED" as const;
+  readonly sessionId: string;
+  readonly requestedExecutionId: string;
+  readonly returnedExecutionId: string;
+
+  constructor(sessionId: string, requestedExecutionId: string, returnedExecutionId: string) {
+    super(
+      "sandbox dispatch returned an execution id different from the requested run: " +
+        `requested ${requestedExecutionId}, Sandbox named ${returnedExecutionId}`,
+    );
+    this.name = "TangleDispatchExecutionChangedError";
+    this.sessionId = sessionId;
+    this.requestedExecutionId = requestedExecutionId;
+    this.returnedExecutionId = returnedExecutionId;
+  }
+}
+
 export function sessionRefFromSandboxDispatch(
   dispatched: unknown,
   providerName: string,
@@ -79,9 +103,7 @@ export function sessionRefFromSandboxDispatch(
       boundedIdentifier(executionId, "Tangle active execution id");
       throw new TangleDispatchNotAdmittedError(id, expectedExecutionId, executionId);
     }
-    throw new Error(
-      "sandbox dispatch returned an execution id different from the requested run",
-    );
+    throw new TangleDispatchExecutionChangedError(id, expectedExecutionId, executionId);
   }
   boundedIdentifier(executionId, "Tangle dispatched execution id");
   if (record.status !== undefined && typeof record.status !== "string") {

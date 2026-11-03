@@ -18,6 +18,34 @@ export interface CommandModelCredentialResolverOptions {
 }
 
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
+/** How much of the command's stderr is retained, and how much of its last line can surface. */
+const MAX_COMMAND_STDERR_BYTES = 8 * 1024;
+const MAX_STDERR_TAIL_CHARACTERS = 300;
+
+/**
+ * The resolver refused the binding itself — a deterministic refusal named on the error
+ * (bounded, from the command's last stderr line). Carries the same machine code as every
+ * credential route refusal, so a consumer classifies it terminal instead of retrying a
+ * refusal no retry can satisfy (#475).
+ */
+export class TangleCommandCredentialRefusalError extends Error {
+  readonly code = "model_credential_refused" as const;
+  /** The resolver's own bounded reason, safe to journal. */
+  readonly resolutionReason: string;
+
+  constructor(reason: string) {
+    super(`Tangle credential command refused the route: ${reason}`);
+    this.name = "TangleCredentialRefusalError";
+    this.resolutionReason = reason;
+  }
+}
+
+/**
+ * Resolver refusals a retry cannot satisfy, from `acct sandbox resolve`'s ResolutionError lines.
+ * The list is deliberately narrow: anything unmatched stays the generic failure with its
+ * `stderrTail`, and the resolver can later grow an exit-code contract beside exit 75's capacity.
+ */
+const RESOLUTION_REFUSAL = /(?:resume seat conflicts|already bound to a different (?:dispatch|profile)|not enrolled for the exact stage profile)/iu;
 
 /** The account owner selects, binds, refreshes, and stores credentials; this transport reads references. */
 export function createCommandModelCredentialResolver(
@@ -82,6 +110,23 @@ export function createCommandModelCredentialResolver(
       let settled = false;
       let outputBytes = 0;
       const chunks: Buffer[] = [];
+      // The resolver's refusal reason travels on stderr, one line. Keep the tail bounded; the
+      // stdout bound governs the public reference, not this private diagnostic channel.
+      const stderrTail: Buffer[] = [];
+      let stderrBytes = 0;
+      const lastStderrLine = (): string | undefined => {
+        const text = Buffer.concat(stderrTail).toString("utf8");
+        const line = text
+          .split("\n")
+          .map((value) => value.trimEnd())
+          .filter((value) => value.trim().length > 0)
+          // A fatal exit appends Node's own banner and stack lines after the program's output; the
+          // resolver's reason is its own prose line, never a runtime stack frame.
+          .filter((value) => !/^Node\.js v\d/u.test(value.trim()) && !/^\s+at\s/u.test(value))
+          .at(-1);
+        if (line === undefined) return undefined;
+        return line.length > MAX_STDERR_TAIL_CHARACTERS ? line.slice(0, MAX_STDERR_TAIL_CHARACTERS) : line;
+      };
       const cleanup = () => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
@@ -106,6 +151,15 @@ export function createCommandModelCredentialResolver(
         }
         chunks.push(chunk);
       });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderrBytes += chunk.length;
+        stderrTail.push(chunk);
+        // Keep only the bounded tail: the reason is the LAST line a resolver prints.
+        while (stderrBytes > MAX_COMMAND_STDERR_BYTES && stderrTail.length > 1) {
+          stderrBytes -= stderrTail[0]!.length;
+          stderrTail.shift();
+        }
+      });
       child.on("close", (code, terminationSignal) => {
         if (settled) return;
         if (code !== 0) {
@@ -117,9 +171,15 @@ export function createCommandModelCredentialResolver(
             } catch { /* Malformed command output stays a sanitized generic refusal. */ }
             if (refusal !== undefined) { fail(refusal); return; }
           }
+          const stderrTailLine = lastStderrLine();
+          if (stderrTailLine !== undefined && RESOLUTION_REFUSAL.test(stderrTailLine)) {
+            fail(new TangleCommandCredentialRefusalError(stderrTailLine));
+            return;
+          }
           fail(Object.assign(new Error(`Tangle credential command failed (${code === null ? `signal ${terminationSignal}` : `exit ${code}`})`), {
             exitCode: code,
             terminationSignal,
+            ...(stderrTailLine === undefined ? {} : { stderrTail: stderrTailLine }),
           }));
           return;
         }

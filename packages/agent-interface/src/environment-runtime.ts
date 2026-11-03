@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
+import type { AgentEnvironmentLifetime } from "./environment-lifetime.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import {
   canonicalCandidateDigest,
@@ -863,7 +864,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
     }
   }) satisfies z.ZodType<AgentEnvironmentCapabilities>;
 
-export interface CreateAgentEnvironmentInput {
+export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   profile: AgentProfileRef;
   /**
    * Runtime-owned execution inputs, separate from authored profile identity.
@@ -913,7 +914,6 @@ export interface CreateAgentEnvironmentInput {
    * When present, the provider must use this key as one idempotent operation:
    * the same key with canonically equal create input must return or reconstruct
    * the same environment, while a different input must be rejected.
-   * `signal` controls one attempt and is not part of create identity.
    */
   idempotencyKey?: string;
   signal?: AbortSignal;

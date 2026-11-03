@@ -11,6 +11,7 @@ export * from "./mcp.js";
 export * from "./provider-adapter.js";
 
 export type * from "./environment-provider.js";
+export type { AgentEnvironmentLifetime } from "./environment-lifetime.js";
 export {
   AgentEnvironmentCapabilitiesSchema,
   AgentEnvironmentReadOnlyGetOptionsSchema,

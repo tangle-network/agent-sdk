@@ -86,6 +86,14 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
   async function create(input: CreateAgentEnvironmentInput, restore?: { snapshot: string }): Promise<AgentEnvironment> {
     input.signal?.throwIfAborted();
     refuseUnsupportedCreateInput(input, vendor.support);
+    // A caller's requested lifetime can only shorten the configured one; the vendor still enforces the wall clock.
+    let lifetimeRequested = lifetimeMs;
+    if (input.maxLifetimeMs !== undefined) {
+      if (!Number.isSafeInteger(input.maxLifetimeMs) || input.maxLifetimeMs < 1) {
+        throw new EnvironmentProviderError("invalid_input", "maxLifetimeMs must be a positive safe integer of milliseconds", { path: "maxLifetimeMs" });
+      }
+      lifetimeRequested = Math.min(lifetimeMs, input.maxLifetimeMs);
+    }
     if (restore !== undefined && input.workspace?.environment !== undefined) {
       throw new EnvironmentProviderError("refused", "a fork restores its checkpoint; workspace.environment names a different one", { path: "workspace.environment" });
     }
@@ -106,7 +114,7 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
         ...(input.name === undefined ? {} : { name: input.name }),
         metadata: { ...stringMetadata(input.metadata), [BRIDGE_RUN_TAG]: runTag },
         env: input.env ?? {},
-        lifetimeMs,
+        lifetimeMs: lifetimeRequested,
         ...(input.workspace?.environment === undefined ? {} : { environment: input.workspace.environment }),
         ...(restore === undefined ? {} : { snapshot: restore.snapshot }),
         ...(input.workspace?.image === undefined ? {} : { image: input.workspace.image }),

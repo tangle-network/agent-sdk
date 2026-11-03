@@ -188,6 +188,27 @@ describe("public session updates and private native observations", () => {
     expect(event.normalized).toEqual({ type: "session.updated", sessionId: "caller-acp" });
     expect(event).not.toHaveProperty("nativeSessionId");
   });
+  it("treats a live raw frame's harness-native sessionID as backend content (#328)", () => {
+    // The sidecar writes a live OpenCode raw frame's data as the harness event itself; its
+    // sessionID is the harness-native session, not a claim about the bound Runtime session.
+    const event = environmentEventFromSandboxEvent({
+      type: "raw",
+      data: { type: "step_start", sessionID: "ses_f67f4b273ffeq38073UGm8RzAK", sandboxId: "sbx-1", part: { type: "text" } },
+    }, { ...bound, streamBound: true, sessionId: "session-1" });
+    expect(event.type).toBe("raw");
+    // The replay envelope keeps the native id under `event`; its lane is not session-bound,
+    // so delivery needs no identity claim.
+    const replay = environmentEventFromSandboxEvent({
+      type: "raw",
+      data: { type: "raw", backend: "opencode", event: { type: "step_start", sessionID: "ses_f67f4b273ffeq38073UGm8RzAK" } },
+    });
+    expect(replay.type).toBe("raw");
+    // Envelope positions the sidecar rewrites still compare on a raw frame.
+    expect(() => environmentEventFromSandboxEvent({
+      type: "raw",
+      data: { type: "step_start", properties: { sessionId: "session-other", executionId: "execution-1" }, sandboxId: "sbx-1" },
+    }, bound)).toThrow(/identified a different sessionId/);
+  });
   it("refuses a private identity event on the public transport", () => {
     expect(() => environmentEventFromSandboxEvent({ type: "native.session.observed", data: { provider: "claude-code", nativeSessionId: "provider-conversation", executionId: "execution-1", sessionId: "session-1" } }, bound)).toThrow(/private native identity/);
   });

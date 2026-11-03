@@ -150,6 +150,27 @@ function promptResult(executionId = "execution-1") {
 }
 
 describe("Tangle split leaf modules", () => {
+  it("maps whole-second lifetimes onto the Sandbox create and refuses any other shape (#309)", () => {
+    expect(
+      sandboxOptionsFromCreateInput({
+        profile: { name: "worker", harness: "codex" },
+        maxLifetimeMs: 2 * 60 * 60 * 1_000,
+        idleTimeoutMs: 30 * 60 * 1_000,
+      }),
+    ).toMatchObject({ maxLifetimeSeconds: 7_200, idleTimeoutSeconds: 1_800 });
+    expect(
+      sandboxOptionsFromCreateInput({ profile: { name: "worker", harness: "codex" } }),
+    ).not.toHaveProperty("maxLifetimeSeconds");
+    for (const field of ["maxLifetimeMs", "idleTimeoutMs"]) {
+      expect(() =>
+        sandboxOptionsFromCreateInput({
+          profile: { name: "worker", harness: "codex" },
+          [field]: 1_500,
+        } as never),
+      ).toThrow(new RegExp(`Tangle create ${field} must be a positive whole number of seconds`));
+    }
+  });
+
   it("resolves backend placement before falling back to the exact profile harness", () => {
     expect(
       sandboxOptionsFromCreateInput(
