@@ -1,5 +1,11 @@
 # @tangle-network/agent-core
 
+## 1.0.3
+
+### Patch Changes
+
+- a3a2472: `sse` adds `PartTextCoder`, `encodePartTextFrame` and `decodePartTextFrame`. A stream that asks with `?partText=suffix` carries a growing text or reasoning part's text once, as suffixes, instead of the whole text on every token, and the decoder restores the frames every other client receives.
+
 ## 1.0.2
 
 ### Patch Changes
