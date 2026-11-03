@@ -5,7 +5,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { CODEX_HOME_RULE, isCodexHome } from './catalog.js'
 import { isMissing } from './source.js'
 
-export { assertStoreRoot, CODEX_HOME_RULE, EVIDENCE, isCodexHome, SESSION_FORMAT_IDS, STORES, storeGlob, withinPath } from './catalog.js'
+export { assertStoreRoot, CLAUDE_CODE_STORES, CODEX_HOME_RULE, CODEX_STORES, EVIDENCE, isCodexHome, KIMI_STORES, SESSION_FORMAT_IDS, STORES, storeGlob, withinPath } from './catalog.js'
 
 export async function walkFiles(dir: string, signal?: AbortSignal, matches?: (path: string) => boolean): Promise<string[]> {
   const out: string[] = []

@@ -20,7 +20,7 @@ export type {
   TokenUsage,
 } from './schema.js'
 export { HARNESS_SESSION_SCHEMA } from './schema.js'
-export { CODEX_HOME_RULE, EVIDENCE, SESSION_FORMAT_IDS, STORES, assertStoreRoot, isCodexHome, storeGlob, withinPath } from './catalog.js'
+export { CLAUDE_CODE_STORES, CODEX_HOME_RULE, CODEX_STORES, EVIDENCE, KIMI_STORES, SESSION_FORMAT_IDS, STORES, assertStoreRoot, isCodexHome, storeGlob, withinPath } from './catalog.js'
 export { codexHomes } from './stores.js'
 export { knownHarnesses, listReaders, maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 export { claudeCodeReader, claudeCodeRefForFile } from './formats/claude-code.js'

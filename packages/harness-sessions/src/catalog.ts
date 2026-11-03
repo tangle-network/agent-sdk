@@ -54,6 +54,18 @@ export const KIMI_STORES = [
   STORES['kimi.session-dir'],
 ] as const satisfies readonly NativeSessionStore[]
 
+/** Every root the pinned CLIs write transcripts to: the classic home layout and the XDG config layout (#553). */
+export const CLAUDE_CODE_STORES = [
+  STORES['claude-code.projects-jsonl'],
+  { ...STORES['claude-code.projects-jsonl'], root: '.config/claude/projects' },
+] as const satisfies readonly NativeSessionStore[]
+
+/** Rollouts in date directories under each Codex home, and the flat archived_sessions Codex moves finished ones to (#556). */
+export const CODEX_STORES = [
+  STORES['codex.rollout-jsonl'],
+  { ...STORES['codex.rollout-jsonl'], root: '.codex/archived_sessions', files: ['rollout-*-{id}.jsonl'] },
+] as const satisfies readonly NativeSessionStore[]
+
 export const EVIDENCE = {
   'claude-code.projects-jsonl': { servedModel: 'provider-response', usage: 'per-response', endingError: 'session-record' },
   'codex.rollout-jsonl': { servedModel: 'turn-context', usage: 'cumulative', endingError: 'session-record' },
