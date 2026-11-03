@@ -48,7 +48,9 @@ describe('Claude Code', () => {
     expect(s.toolCalls[0]!.result?.text).toContain('TRACEPROOF-WORKER-REAP-TOOL-OUTPUT')
     expect(s.usage).toEqual({ input: 300, output: 60, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
     expect(s.ending.status).toBe('completed')
-    expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
+    // The context Claude Code recorded around each turn is part of the chat, as Codex's developer messages are.
+    expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', ...Array(9).fill('system'), 'assistant', 'tool', 'system', 'system', 'assistant', 'tool', 'system', 'assistant'])
+    expect(toChatMessages(s, { system: false }).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
     expect(toTurns(s).filter((t) => t.role === 'assistant').map((t) => t.model)).toEqual(Array(3).fill('traceproof-scripted-model'))
   })
 
@@ -78,6 +80,24 @@ describe('Claude Code', () => {
     expect(s.integrity.gaps).toEqual([])
     const ids = toOtlpSpans(s).map((span) => span.span_id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('reads what Claude Code put in the context, and a message sent while the turn ran, from its attachment records', async () => {
+    // Records shaped as Claude Code 2.1.290 writes them: `rendered` is the text the model was shown.
+    const s = await both(claudeCodeReader, claudeCodeRefForFile(fixture('claude-code', 'context-records.jsonl')))
+    const text = (m: HarnessSession['messages'][number]): string => m.parts.map((p) => (p.type === 'text' ? p.text : p.type)).join('')
+    expect(s.messages.filter((m) => m.role === 'system').map((m) => [m.actor, m.source, text(m)])).toEqual([
+      ['injected', 'instructions', expect.stringContaining('Contents of /work/CLAUDE.md (project instructions):\n\nRun the tests before you commit.')],
+      ['injected', 'prompt_snapshot', 'You are Claude Code.\nUse the tools you are given.'],
+      ['injected', 'skill_listing', '<system-reminder>\nSkills: verify, simplify\n</system-reminder>'],
+      ['injected', 'output_style', '<system-reminder>\nConcise output style is active.\n</system-reminder>'],
+    ])
+    expect(s.messages.filter((m) => m.role === 'user').map((m) => [m.actor, text(m)])).toEqual([
+      ['human', 'Fix the failing test.'],
+      ['human', 'Also update the changelog.'],
+      ['injected', expect.stringContaining('<task-notification>')],
+    ])
+    expect(toChatMessages(s, { system: false }).map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'user', 'tool', 'assistant'])
   })
 
   it('leaves a turn killed during its tool call open with the call pending', async () => {
