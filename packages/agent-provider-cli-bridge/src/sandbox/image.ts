@@ -6,9 +6,14 @@ import type { HarnessType } from "@tangle-network/agent-interface";
  *
  * Every cloud builds from this text: E2B and Daytona build their template and
  * image from it, and a local Docker build of it is the same box. Harness
- * versions come from the registry that owns the pins.
+ * versions come from the registry that owns the pins. `baseImage` overrides
+ * the Node base for a box that carries more than the pins; the install layer
+ * is unchanged, so every box keeps the same Bridge and harness versions.
  */
-export function renderBoxDockerfile(harnesses: readonly HarnessType[] = Object.keys(BOX_HARNESSES) as HarnessType[]): string {
+export function renderBoxDockerfile(
+  harnesses: readonly HarnessType[] = Object.keys(BOX_HARNESSES) as HarnessType[],
+  baseImage: string = BOX_NODE_IMAGE,
+): string {
   const installs = harnesses.map((name) => {
     const entry = BOX_HARNESSES[name];
     if (entry === undefined) throw new Error(`harness ${name} is not in the box harness table`);
@@ -18,7 +23,7 @@ export function renderBoxDockerfile(harnesses: readonly HarnessType[] = Object.k
   const packages = installs.map(({ entry, version }) => `${entry.npmPackage}@${version}`);
   const probes = installs.map(({ entry, version }) => `test "$(${entry.bin} --version | cut -d' ' -f1)" = "${version}"`);
   return [
-    `FROM ${BOX_NODE_IMAGE}`,
+    `FROM ${baseImage}`,
     "RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates python3 make g++ ripgrep procps \\",
     "    && rm -rf /var/lib/apt/lists/*",
     `RUN npm install -g ${[...packages, bridge].join(" ")} \\`,

@@ -22,16 +22,24 @@ import type { CallableCompute, InstanceInterface } from "computesdk";
 
 type Instances = CallableCompute["instances"];
 
+/** The computesdk snapshot manager, accepted structurally: `compute({ provider }).snapshot`. */
+export interface ComputeSdkSnapshotManager {
+  create(
+    instanceId: string,
+    options?: { name?: string; metadata?: Record<string, unknown> },
+  ): Promise<{ id: string; createdAt?: Date | string; metadata?: Record<string, unknown> }>;
+}
+
 export interface ComputeSdkProviderOptions extends Omit<BridgeSandboxProviderOptions, "vendor"> {
   /** A computesdk manager with a backing provider set, for example `compute({ provider: e2b({ apiKey }) })`. */
-  compute: { instances: Instances };
+  compute: { instances: Instances; snapshot?: ComputeSdkSnapshotManager };
   /** Template or snapshot id the backing provider boots; defaults to the box template `pnpm build:sandbox-image --target e2b` publishes. */
   template?: string;
 }
 
 /** An `AgentEnvironmentProvider` whose environments are sandboxes on any computesdk backing provider, running CLI Bridge from the box image. */
 export function createComputeSdkProvider({ compute, template, ...bridge }: ComputeSdkProviderOptions): AgentEnvironmentProvider {
-  return createBridgeSandboxProvider({ ...bridge, vendor: computeSdkVendor(compute.instances, template ?? BOX_TEMPLATE_NAME) });
+  return createBridgeSandboxProvider({ ...bridge, vendor: computeSdkVendor(compute.instances, compute.snapshot, template ?? BOX_TEMPLATE_NAME) });
 }
 
 const NAME = "computesdk";
@@ -41,7 +49,7 @@ const NAME_TAG = "tangle-name";
 // computesdk's e2b provider applies a 60 s default to a command given no timeout; markedExec owns the real deadline.
 const COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
-function computeSdkVendor(instances: Instances, template: string): BridgeSandboxVendor {
+function computeSdkVendor(instances: Instances, snapshots: ComputeSdkSnapshotManager | undefined, template: string): BridgeSandboxVendor {
   const lookup = (id: string, signal?: AbortSignal) => untilAborted(vendorCall("connect", () => instances.getById(id)), signal);
   const summary = async (id: string): Promise<BridgeSandboxSummary | undefined> => {
     const instance = await lookup(id);
@@ -52,13 +60,32 @@ function computeSdkVendor(instances: Instances, template: string): BridgeSandbox
   };
   return {
     name: NAME,
-    // Image, resources and egress mean something different on each backing provider; a template id is the portable choice.
-    support: { environment: true, image: false, resources: false, egress: [] },
+    // A template id is the portable environment; an image must be box-compatible
+    // (built by `pnpm build:sandbox-image --base-image`), and resources and egress
+    // mean something different on each backing provider, so both stay refused.
+    support: { environment: true, image: true, resources: false, egress: [] },
+    ...(snapshots === undefined ? {} : {
+      snapshots: {
+        async create(sandboxId, options) {
+          options?.signal?.throwIfAborted();
+          const record = await vendorCall("snapshot", () => snapshots.create(sandboxId, {
+            ...(options?.name === undefined ? {} : { name: options.name }),
+            ...(options?.metadata === undefined ? {} : { metadata: options.metadata }),
+          }));
+          const createdAt = record.createdAt instanceof Date ? record.createdAt.toISOString()
+            : typeof record.createdAt === "string" ? record.createdAt
+            : undefined;
+          return { id: record.id, ...(createdAt === undefined ? {} : { createdAt }) };
+        },
+      },
+    }),
     async create(request) {
       const tags = request.name === undefined ? request.metadata : { ...request.metadata, [NAME_TAG]: request.name };
       // computesdk destroys a sandbox that arrives after the signal aborts.
       const instance = await vendorCall("create", () => instances.create({
-        templateId: request.environment ?? template,
+        ...(request.snapshot === undefined && request.image === undefined ? { templateId: request.environment ?? template } : {}),
+        ...(request.snapshot === undefined ? {} : { snapshotId: request.snapshot }),
+        ...(request.image === undefined ? {} : { image: request.image }),
         timeout: request.lifetimeMs,
         metadata: tags,
         envs: { ...request.env, [TAGS_ENV]: JSON.stringify(tags) },

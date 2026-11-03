@@ -23,6 +23,11 @@ DAYTONA_API_KEY=... pnpm build:sandbox-image --target daytona
 
 The script prints `DAYTONA_SNAPSHOT=<name>`; that name is `BOX_TEMPLATE_NAME` from `@tangle-network/agent-provider-cli-bridge/sandbox`, the default.
 Pass `snapshot` to use another build, or `workspace.environment` on one create.
+`pnpm build:sandbox-image --target daytona --base-image <image>` builds the same box on another base layer; the pinned Bridge and harness installs are unchanged.
+
+## Checkpoints
+
+Every environment exposes `checkpoint()` and `fork(ref)`: a checkpoint names a Daytona snapshot of the running sandbox (`tangle-ckpt-…` unless you pass `name`), and `fork` creates a new environment from it, reusing the source profile and dropping what the snapshot already carries (repository, git ref, environment, image).
 
 ## What a create honors
 
@@ -35,7 +40,7 @@ Pass `snapshot` to use another build, or `workspace.environment` on one create.
 | `egress` | `open`; `strict` as `domainAllowList` plus the Router host; `blocked` as `networkBlockAll` |
 | `signal` | an abort settles `create` at once; a sandbox that arrives later is deleted |
 
-Every other field (`workspace.image`, `resources`, `secrets`, `idempotencyKey`, snapshots, checkpoints, provider options and the rest) is refused with an `EnvironmentProviderError` that names it, before any Daytona call.
+Every other field (`workspace.image`, `resources`, `secrets`, `idempotencyKey`, the durable `workspace.snapshot`/`workspace.checkpoint` refs, provider options and the rest) is refused with an `EnvironmentProviderError` that names it, before any Daytona call.
 Each sandbox carries the run tag label and a `ttlMinutes` lifetime; it is private, its port is reached with the preview token, and a stopped sandbox is deleted at once.
 
 ## Proof

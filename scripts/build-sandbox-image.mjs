@@ -129,6 +129,7 @@ async function main() {
       target: { type: "string" },
       name: { type: "string" },
       harnesses: { type: "string" },
+      "base-image": { type: "string" },
       print: { type: "boolean", default: false },
       "skip-pin-check": { type: "boolean", default: false },
     },
@@ -150,7 +151,12 @@ async function main() {
     );
   }
   const harnesses = values.harnesses?.split(",").map((name) => name.trim()).filter(Boolean) ?? Object.keys(box.BOX_HARNESSES);
-  const dockerfile = box.renderBoxDockerfile(harnesses);
+  if (values["base-image"] !== undefined && values.name === undefined && !values.print) {
+    const suffix = values["base-image"].replace(/[^a-z0-9.-]+/gi, "-").replace(/^[-.]+|[-.]+$/g, "").toLowerCase();
+    if (suffix === "") throw new Failure(`--base-image ${values["base-image"]} has no usable name characters`);
+    values.name = `${box.BOX_TEMPLATE_NAME}-base-${suffix.slice(0, 40)}`;
+  }
+  const dockerfile = box.renderBoxDockerfile(harnesses, values["base-image"] ?? undefined);
   const apiKey = target?.credential && process.env[target.credential];
   if (!values.print && target.credential && !apiKey) {
     throw new Failure(`no credential: ${target.credential}`, 3);

@@ -13,7 +13,11 @@ const provider = createComputeSdkProvider({ compute, router: { key: perRunRouter
 ```
 
 The sandbox boots `template` (default: the box template `pnpm build:sandbox-image --target e2b` publishes) with the provider's finite lifetime and the run tag.
-`workspace.environment` selects another template or snapshot id. `workspace.image`, `resources` and `egress` are refused, because each backing provider reads them differently.
+`workspace.environment` selects another template or snapshot id. `workspace.image` boots a box-compatible image (build one with `pnpm build:sandbox-image --base-image`); a create from any other image fails the Bridge readiness probe. `resources` and `egress` are refused, because each backing provider reads them differently — computesdk's egress option is a credential-injection proxy, not the firewall `egress` means here.
+
+## Checkpoints
+
+Pass the computesdk snapshot manager to unlock them: `createComputeSdkProvider({ compute: { instances: compute.instances, snapshot: compute.snapshot }, … })` when your backing provider supports snapshots. Every environment then exposes `checkpoint()` and `fork(ref)`; a fork restores through `CreateInstanceOptions.snapshotId`, whatever that maps to on the backing provider.
 
 computesdk 4.1 limits what the adapter can prove on every backing provider:
 

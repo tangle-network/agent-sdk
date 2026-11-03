@@ -5,8 +5,11 @@ export type {
   BridgeSandboxCreateRequest,
   BridgeSandboxSummary,
   BridgeSandboxVendor,
+  BridgeVendorSnapshot,
+  BridgeVendorSnapshots,
   BridgeVendorSupport,
 } from "./vendor.js";
+export { checkpointSnapshotName } from "./checkpoint.js";
 export { validateBoxProfile } from "./refusal.js";
 export { envFileLaunch, markedExec, untilAborted } from "./shell.js";
 export {
