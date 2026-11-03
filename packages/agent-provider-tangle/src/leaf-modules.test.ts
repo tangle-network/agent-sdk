@@ -230,8 +230,8 @@ describe("Tangle split leaf modules", () => {
     ).toThrow(/providerOptions are not supported/);
     expect(() =>
       assertNoInlineSecretValues({ profile: { name: "worker" }, secrets: { TOKEN: "raw" } }),
-    ).toThrow(/inline secret values/);
-    expect(() => assertMappedSecretNames({ secrets: { TOKEN: "raw" } } as never)).toThrow(/mapped secrets/);
+    ).toThrow(/Tangle secrets require bounded explicit stored selection/);
+    expect(() => assertMappedSecretNames({ secrets: { TOKEN: "raw" } } as never)).toThrow(/Tangle secrets require bounded explicit stored selection/);
     const support = sandboxCapabilitySupport(
       { id: "sbx-1", async *streamPrompt() {}, read: async () => "", write: async () => undefined },
       minimalClient,

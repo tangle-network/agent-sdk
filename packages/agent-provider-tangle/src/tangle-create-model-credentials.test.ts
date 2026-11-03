@@ -47,7 +47,7 @@ describe("Tangle create-time named model credentials", () => {
     const { client, creates } = capturingClient();
     const profile = { name: "researcher", harness: "opencode" as const };
     await createTangleProvider({ client }).create({ profile });
-    expect(creates).toEqual([{ backend: { type: "opencode", profile } }]);
+    expect(creates).toEqual([{ backend: { type: "opencode", profile }, cwd: "workspace" }]);
   });
 
   it("preserves profile selection, placement, identity, and the explicit secret grant", async () => {

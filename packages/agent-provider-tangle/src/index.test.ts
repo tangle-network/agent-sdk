@@ -284,7 +284,7 @@ describe("createTangleProvider", () => {
     });
     const provider = createTangleProvider({
       client: { create },
-      mapCreateInput: () => ({}),
+      mapCreateInput: () => ({ backend: { type: "opencode" } }) as never,
     });
 
     await expect(
@@ -1448,16 +1448,16 @@ describe("createTangleProvider", () => {
         profile: { name: "worker" },
         secrets: { TOKEN: "value" },
       }),
-    ).rejects.toThrow(/inline secret values are not accepted/);
+    ).rejects.toThrow(/Tangle secrets require bounded explicit stored selection/);
     expect(create).not.toHaveBeenCalled();
 
     const mappedOnlyProvider = createTangleProvider({
       client: { create },
-      mapCreateInput: () => ({ secrets: { TOKEN: "value" } }) as never,
+      mapCreateInput: () => ({ backend: { type: "opencode" }, secrets: { TOKEN: "value" } }) as never,
     });
     await expect(
       mappedOnlyProvider.create({ profile: { name: "worker" } }),
-    ).rejects.toThrow(/mapped secrets must be an array/);
+    ).rejects.toThrow(/Tangle secrets require bounded explicit stored selection/);
     expect(create).not.toHaveBeenCalled();
   });
 

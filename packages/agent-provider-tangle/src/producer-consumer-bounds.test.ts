@@ -90,10 +90,10 @@ const SEAMS: readonly Seam[] = [
     producer: "MAX_GIT_REPOSITORY_PATH_SEGMENT_LENGTH",
     consumer: { name: "CONTRACT_MAX_IDENTIFIER_LENGTH", value: CONTRACT_MAX_IDENTIFIER_LENGTH },
   },
-  {
-    producer: "MAX_MACHINE_ID_LENGTH",
-    consumer: { name: "CONTRACT_MAX_IDENTIFIER_LENGTH", value: CONTRACT_MAX_IDENTIFIER_LENGTH },
-  },
+  // MAX_MACHINE_ID_LENGTH (paired here through 1.0.141) is gone from the SDK: machine identity
+  // moved to unbounded instance metadata (`tangle.fleet.machine_id`), so the SDK writes no length
+  // the provider could refuse. The boundary still bounds what it reads (boundedId in
+  // tangle-environment-values.ts); an over-long legal value now surfaces as a provider refusal.
   {
     producer: "MAX_EGRESS_DENIALS_LIMIT",
     consumer: { name: "CONTRACT_MAX_ARRAY_LENGTH", value: CONTRACT_MAX_ARRAY_LENGTH },
@@ -136,6 +136,9 @@ describe("producer/consumer bound seam", () => {
       // the evidence download path, never as one normalized stream event.
       "MAX_METADATA",
       "MAX_RECORD",
+      // Bounds the archive parser's omit-content query string, which the SDK keeps
+      // whole on its side of the evidence download path (same class as MAX_RECORD).
+      "MAX_OMIT_CONTENT_QUERY_BYTES",
       "MAX_CONCURRENT_ARTIFACT_READS",
       "MAX_CONCURRENT_DRIVE_TURNS",
       "MAX_RECONNECT_ATTEMPTS",
