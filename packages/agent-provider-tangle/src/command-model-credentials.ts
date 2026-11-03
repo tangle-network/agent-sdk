@@ -86,7 +86,7 @@ export function createCommandModelCredentialResolver(
   const environment = { ...process.env, ...options.env };
   return (input: Readonly<CreateAgentEnvironmentInput>) => {
     if (typeof input.profile === "string") throw new Error("Tangle credential command requires an inline profile");
-    if (profileCredentialSource(input.profile) === "managed") return undefined;
+    if (profileCredentialSource(input.profile) === "router") return undefined;
     if (typeof input.idempotencyKey !== "string" || input.idempotencyKey.length === 0) {
       throw new Error("Tangle credential command requires a stable create idempotencyKey");
     }

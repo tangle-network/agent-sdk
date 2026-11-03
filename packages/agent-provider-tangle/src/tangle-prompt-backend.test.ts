@@ -138,7 +138,7 @@ describe("Tangle per-turn backend options", () => {
     expect(() => promptOptionsFromTurnInput({ prompt: "run", providerOptions: { backend: {
       type: "opencode", profile: { name: "managed", model: { provider: "zai", default: "glm-5.2", metadata: { credentialSource: "managed" } } },
       authMode: "oauth", authFiles: SEAT_BACKEND.model.authFiles,
-    } } }, target)).toThrow(/managed profile cannot receive native subscription credentials/);
+    } } }, target)).toThrow(/router profile cannot receive native subscription credentials/);
   });
 
   it("refuses a provider option the Sandbox prompt does not declare", () => {

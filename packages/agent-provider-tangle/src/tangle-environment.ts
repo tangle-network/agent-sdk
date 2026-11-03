@@ -144,7 +144,7 @@ export async function sandboxInstanceAsEnvironment(
   const nativeReference = request?.nativeAuth?.cliAuth ?? persistedReference;
   const credentialHarness = request?.nativeAuth?.harness ?? request?.credentialHarness;
   const boundCredentialSource = request?.credentialSource ??
-    (recordedCredentials !== undefined ? "subscription" : "managed");
+    (recordedCredentials !== undefined ? "subscription" : "router");
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
       capabilitiesForSandbox(
@@ -363,7 +363,7 @@ function environmentTurnPreparation(
       throw new Error("Tangle turn credential source differs from its environment; create a separate environment for that profile");
     }
     if (backend?.model?.cliAuth !== undefined && boundCredentialSource !== "subscription") {
-      throw new Error("Tangle managed environment cannot inherit native subscription credentials");
+      throw new Error("Tangle router environment cannot inherit native subscription credentials");
     }
     if (backend?.model?.cliAuth !== undefined && !deployment.cliAuthReferences) {
       throw new Error("Tangle selected sandbox does not prove native credential reference support");

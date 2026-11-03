@@ -168,7 +168,7 @@ export const agentProfileSeatSchema = z.strictObject({
   provider: z.string().regex(/^[a-z][a-z0-9-]*$/),
   model: z.string().min(1).refine((value) => value.trim() === value, "model must be canonical"),
   reasoningEffort: reasoningEffortSchema.optional(),
-  credentialSource: z.enum(["subscription", "managed"]).optional(),
+  credentialSource: z.enum(["router", "api-key", "subscription", "managed"]).optional(),
   selector: z.union([
     z.strictObject({ kind: z.literal("all-eligible") }),
     z.strictObject({ kind: z.literal("seat"), id: z.string().min(1).refine((value) => value.trim() === value, "seat id must be canonical") }),
@@ -545,7 +545,7 @@ export const agentProfileSchema = z
   .superRefine((profile, context) => {
     validateNestedRecordKeys(profile, context, [], new Set<object>());
     if (profile.seats?.length) {
-      const first = profile.seats[0]!, source = profile.model?.metadata?.credentialSource ?? "managed";
+      const first = profile.seats[0]!, source = profile.model?.metadata?.credentialSource ?? "router";
       if (first.harness !== profile.harness || first.provider !== profile.model?.provider ||
           first.model !== profile.model?.default) {
         context.addIssue({ code: "custom", path: ["seats", 0], message: "first seat must match profile harness, model.provider, and model.default" });
@@ -553,7 +553,10 @@ export const agentProfileSchema = z
       if (first.reasoningEffort !== undefined && first.reasoningEffort !== profile.model?.reasoningEffort) {
         context.addIssue({ code: "custom", path: ["seats", 0, "reasoningEffort"], message: "first seat reasoningEffort must match profile model.reasoningEffort" });
       }
-      if ((first.credentialSource ?? source) !== source) {
+      // `managed` is the deprecated spelling of `router`: an authored profile may still carry
+      // either, and the two agree wherever the default would apply (#440).
+      const spell = (value: string | undefined): string | undefined => (value === "managed" ? "router" : value);
+      if ((first.credentialSource ?? source) !== source && spell(first.credentialSource) !== spell(source)) {
         context.addIssue({ code: "custom", path: ["seats", 0, "credentialSource"], message: "first seat credentialSource must match profile model.metadata.credentialSource" });
       }
       if (first.tools !== undefined &&

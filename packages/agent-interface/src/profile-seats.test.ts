@@ -85,6 +85,16 @@ describe("AgentProfile.seats", () => {
       .error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.0.credentialSource"]);
     expect(agentProfileSchema.safeParse({ ...pool, seats: [{ ...fable, credentialSource: "managed" }, managedStage] }).success).toBe(true);
     expect(agentProfileSchema.safeParse({ ...pool, seats: [fable, { ...keyless, credentialSource: "byok" }] }).success).toBe(false);
+
+    // #440: the credential vocabulary is router | api-key | subscription; `managed` remains a
+    // deprecated spelling of `router`, and the first-seat agreement accepts either spelling
+    // against either default.
+    expect(agentProfileSchema.safeParse({ ...pool, seats: [{ ...fable, credentialSource: "router" }, { ...keyless, credentialSource: "router" }] }).success).toBe(true);
+    expect(agentProfileSchema.safeParse({ ...pool, model: { ...pool.model, metadata: { credentialSource: "router" } }, seats: [{ ...fable, credentialSource: "managed" }] }).success).toBe(true);
+    expect(agentProfileSchema.safeParse({ ...pool, model: { ...pool.model, metadata: { credentialSource: "managed" } }, seats: [{ ...fable, credentialSource: "router" }] }).success).toBe(true);
+    expect(agentProfileSchema.safeParse({ ...pool, model: { ...pool.model, metadata: { credentialSource: "api-key" } }, seats: [{ ...fable, credentialSource: "router" }] }).success).toBe(false);
+    expect(agentProfileSchema.safeParse({ ...pool, seats: [{ ...fable, credentialSource: "api-key" }, { ...keyless, credentialSource: "subscription" }] }).seats?.[0]).toBeUndefined();
+    expect(agentProfileSchema.parse({ ...pool, model: { ...pool.model, metadata: { credentialSource: "api-key" } }, seats: [{ ...fable, credentialSource: "api-key" }] }).seats?.[0]?.credentialSource).toBe("api-key");
   });
 
   it("allows explicit stage tool replacement without changing the first stage", () => {
