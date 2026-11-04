@@ -9,6 +9,7 @@ import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "root", harness: "claude-code" as const };
+const createInput = {profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]}};
 const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
@@ -37,6 +38,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString());
+      if (creates.length) expect(input).toEqual(creates[0]);
       creates.push(input);
       metadata = input.metadata;
       response.end(JSON.stringify(info()));
@@ -92,7 +94,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   baseUrl = `http://127.0.0.1:${address.port}`;
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
-  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture", deleteAfterStoppedMs: 900_000, retain:{paths:["artifacts"]}, ...(egress ? { egress } : {}) });
+  const environment = await provider.create({ ...createInput, ...(egress ? { egress } : {}) });
   return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
 
@@ -111,7 +113,7 @@ it("starts the refused turn after original-key create replay without requiring a
   expect(error, JSON.stringify(requests)).toMatchObject({ status: 503, code: "HUB_CREDENTIAL_REFRESH_FAILED" });
   await expect(provider.get!(environment.id)).rejects.toThrow(/requires the current selected backend before reconnect/);
   allowDispatch();
-  const replayed = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const replayed = await reconnect().create(createInput);
   const reference = await replayed.dispatch!(turn);
   expect(replayed.id).toBe(environment.id);
   expect(replayed.creation).toBe("replayed");
@@ -134,7 +136,7 @@ it.each([false, true])("recovers the authoritative reference after a lost reply 
   const { environment, reconnect, creates, dispatches, state } = await fixture("SERVER_ERROR", 503, true, undefined, completed);
   const turn = { prompt: "research", turnId: "root:0", profile };
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
-  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const recovered = await reconnect().create(createInput);
   const reference = await recovered.dispatch!(turn);
   expect(reference.controlRef).toEqual(state().run!.runControlRef);
   expect(reference.metadata).toMatchObject({ dispatched: false, alreadyExisted: true });
@@ -147,7 +149,7 @@ it.each(["missing", "environment", "digest", "execution-race", "read-failure"] a
   const { environment, reconnect, dispatches, state } = await fixture("SERVER_ERROR", 503, true, fault);
   const turn = { prompt: "research", turnId: "root:0", profile };
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
-  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const recovered = await reconnect().create(createInput);
   await expect(recovered.dispatch!(turn)).rejects.toThrow(fault === "read-failure" ? /status unavailable/ : /exact.*control reference/);
   expect(dispatches).toHaveLength(1);
   expect(state().run).toBeDefined();
@@ -159,7 +161,7 @@ it.each([
   const {environment,reconnect} = await fixture("SERVER_ERROR",503,true,undefined,true,undefined,failure);
   const turn = {prompt:"research",turnId:"root:0",profile};
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({status:503});
-  const recovered = await reconnect().create({profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]}});
+  const recovered = await reconnect().create(createInput);
   const ref = await recovered.dispatch!(turn);
   const result = await recovered.session!(ref.id,{controlRef:ref.controlRef}).result();
   expect(AgentTurnResultSchema.parse(result)).toMatchObject({success:false,failure});
