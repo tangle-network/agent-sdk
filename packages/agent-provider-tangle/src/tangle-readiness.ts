@@ -21,11 +21,6 @@ export const DEFAULT_TANGLE_READY_TIMEOUT_MS = 120_000;
  * filesystem is still being built until then. An environment composed before
  * that is an environment that cannot accept a turn.
  *
- * Readiness also decides what the environment can claim. Composing an
- * environment reads the sandbox's deployment capability document once, and a
- * sandbox that is not yet running cannot answer that read, so an environment
- * composed during provisioning claims nothing for the rest of its life.
- *
  * The platform owns the wait, and this adapter runs no status loop of its own.
  * `waitFor` on the created instance is preferred because it refreshes that
  * instance in place, which keeps the create receipt and gains the runtime
@@ -62,11 +57,7 @@ export async function awaitSandboxRunning(
       { cause: error },
     );
   }
-  // A wait that resolves is the platform's answer, and the status it leaves
-  // behind is that answer in a readable form. Reading it back costs nothing
-  // and refuses a client whose wait resolves over a sandbox that is not
-  // running, which is the one way a half-started environment could still
-  // reach the caller.
+  // A client whose wait resolves over a sandbox that is not running is refused here.
   assertRunning(box, observed, "its wait resolved without reaching running");
 }
 
