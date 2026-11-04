@@ -34,6 +34,7 @@ import { requireNativeCaptureCapability, requireNativeCaptureProof } from "./tan
 import {
   awaitSandboxRunning,
   DEFAULT_TANGLE_READY_TIMEOUT_MS,
+  servedSandbox,
 } from "./tangle-readiness.js";
 import { profileCredentialSource, type ProfileCredentialSource } from "./model-credential-source.js";
 import { requestedResourceProfile } from "./tangle-resources.js";
@@ -473,7 +474,7 @@ export function createTangleProvider(
             boundedIdentifier(id, "Tangle environment id");
             await resolveCapabilities();
             operation?.signal?.throwIfAborted();
-            const box = await awaitWithSignal(options.client.get?.(id, operation?.signal ? { signal: operation.signal } : undefined), operation?.signal);
+            const box = await awaitWithSignal(servedSandbox(options.client, id, operation?.signal), operation?.signal);
             operation?.signal?.throwIfAborted();
             if (!box || boundedIdentifier(box.id, "Tangle environment id") !== id) return null;
             if (options.requireNativeSessionCapture) {

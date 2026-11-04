@@ -21,16 +21,6 @@ export const DEFAULT_TANGLE_READY_TIMEOUT_MS = 120_000;
  * filesystem is still being built until then. An environment composed before
  * that is an environment that cannot accept a turn.
  *
- * WHAT THIS WAIT IS NOT FOR. An earlier version of this comment claimed the
- * wait also closed the platform's "A sandbox lifecycle operation is already in
- * progress", and that claim is withdrawn: measured 2026-09-01 (issue #280),
- * that refusal comes from `DELETE /v1/sandboxes/:id`, not from a turn. The
- * platform guards exactly three routes with the per-sandbox lifecycle lease —
- * resume, stop and delete — and the runtime path a prompt takes is not one of
- * them, so no readiness wait here can prevent it and none is trying to. The
- * collision is answered where it happens, in `destroy()`
- * (`tangle-environment.ts`).
- *
  * Readiness also decides what the environment can claim. Composing an
  * environment reads the sandbox's deployment capability document once, and a
  * sandbox that is not yet running cannot answer that read, so an environment
@@ -118,4 +108,37 @@ function waitForRunning(
     };
   }
   return undefined;
+}
+
+/**
+ * The state of a box the Sandbox API no longer serves: "deleted" for a 404,
+ * or the "failed"/"deleted" status it reports. Runtime replaces such a box,
+ * so reconnect and stop answer not-live instead of throwing. Any other
+ * refresh error (5xx, network) is not evidence the box is gone: undefined.
+ */
+export async function notLiveState(
+  box: SandboxInstanceLike,
+  signal?: AbortSignal,
+): Promise<"failed" | "deleted" | undefined> {
+  try {
+    await box.refresh?.(signal);
+  } catch (error) {
+    return (error as { status?: unknown } | null)?.status === 404 ? "deleted" : undefined;
+  }
+  return box.status === "failed" || box.status === "deleted" ? box.status : undefined;
+}
+
+/** Reconnect lookup: null for a box the Sandbox API answers 404, failed or deleted. */
+export async function servedSandbox(
+  client: SandboxClientLike,
+  id: string,
+  signal?: AbortSignal,
+): Promise<SandboxInstanceLike | null> {
+  try {
+    const box = await client.get?.(id, signal ? { signal } : undefined);
+    return box && box.status !== "failed" && box.status !== "deleted" ? box : null;
+  } catch (error) {
+    if ((error as { status?: unknown } | null)?.status === 404) return null;
+    throw error;
+  }
 }
