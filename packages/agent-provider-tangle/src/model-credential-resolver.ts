@@ -81,5 +81,5 @@ export function ownerCredentialResolver(
       return { ok: false, issues: [{level:"error",code:refusal.code,message:refusal.message}] };
     };
   }
-  return resolver;
+  return kind === "broker" ? Object.assign(async (input: Readonly<CreateAgentEnvironmentInput>) => resolver(input), {validate:resolver.validate}) : resolver;
 }
