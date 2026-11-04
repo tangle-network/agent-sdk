@@ -224,6 +224,12 @@ export function sandboxOptionsFromCreateInput(
   }
   const maxLifetimeSeconds = wholeSecondsOf(input.maxLifetimeMs, "maxLifetimeMs");
   const idleTimeoutSeconds = wholeSecondsOf(input.idleTimeoutMs, "idleTimeoutMs");
+  const deleteAfterStoppedSeconds = wholeSecondsOf(input.deleteAfterStoppedMs, "deleteAfterStoppedMs");
+  const retain = input.retain;
+  if (retain !== undefined && (!retain || typeof retain !== "object" ||
+    Object.keys(retain).some(key => key !== "paths") || !Array.isArray(retain.paths) ||
+    retain.paths.length > MAX_ARRAY_LENGTH || retain.paths.some(path => typeof path !== "string" || !path || path.length > 4096 || path.includes("\0"))))
+    throw new Error("Tangle retain must contain bounded paths");
   const resources = sandboxResourcesFromResourceRequest(input.resources);
   // Sandbox injects secrets by name from its own store. Accepting a name/value
   // record and dropping it would create an environment with no credentials and
@@ -245,6 +251,8 @@ export function sandboxOptionsFromCreateInput(
     ...(input.env ? { env: input.env } : {}),
     ...(maxLifetimeSeconds === undefined ? {} : { maxLifetimeSeconds }),
     ...(idleTimeoutSeconds === undefined ? {} : { idleTimeoutSeconds }),
+    ...(deleteAfterStoppedSeconds === undefined ? {} : { deleteAfterStoppedSeconds }),
+    ...(retain === undefined ? {} : { retain: { paths: [...retain.paths] } }),
     ...(secrets === undefined ? {} : { secrets }),
     ...(proxySecrets === undefined ? {} : { proxySecrets }),
     ...(input.egress === undefined ? {} : { egressPolicy: sandboxEgressPolicy(input.egress) }),
@@ -340,7 +348,7 @@ export function assertMappedSecretNames(options: { secrets?: unknown; env?: Reco
 }
 
 /** A lifetime field the Sandbox create accepts: whole, positive, safe seconds, or a refusal naming the field. */
-function wholeSecondsOf(value: number | undefined, field: "maxLifetimeMs" | "idleTimeoutMs"): number | undefined {
+function wholeSecondsOf(value: number | undefined, field: "maxLifetimeMs" | "idleTimeoutMs" | "deleteAfterStoppedMs"): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || value < 1_000 || value % 1_000 !== 0) {
     throw new Error(`Tangle create ${field} must be a positive whole number of seconds`);
@@ -367,6 +375,8 @@ export function assertCreateInputShape(
     "billingOwner",
     "maxLifetimeMs",
     "idleTimeoutMs",
+    "deleteAfterStoppedMs",
+    "retain",
     "metadata",
     "name",
     "idempotencyKey",

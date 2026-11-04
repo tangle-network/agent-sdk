@@ -437,7 +437,7 @@ export function createTangleProvider(
     ...(typeof options.client.secrets?.update !== "function" ? {} : { secrets: options.client.secrets }),
     ...(workspaceBranching === undefined ? {} : { workspaceBranching }),
     capabilities: resolveCapabilities,
-    validateProfile: tangleProfileValidator(options.validateProfile),
+    validateProfile: tangleProfileValidator(options.validateProfile, resolveModelCredentials),
     async create(input) {
       const { signal, ...material } = input;
       signal?.throwIfAborted();

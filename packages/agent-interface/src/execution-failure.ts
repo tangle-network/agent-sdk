@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { boundedIdentifierSchema } from "./contract-limits.js";
 import { deepFreeze } from "./deep-freeze.js";
 import { TokenUsageSchema } from "./execution-types.js";
 
@@ -24,3 +25,12 @@ export class AgentExecutionError extends Error {
     this.receipt = deepFreeze(AgentExecutionFailureReceiptSchema.parse(receipt));
   }
 }
+
+/** Stable producer-owned turn classification, retained independently of its diagnostic text. */
+export const AgentTurnFailureSchema = z.strictObject({
+  kind: z.enum(["capacity", "caller", "infra", "work"]),
+  code: boundedIdentifierSchema,
+  resetAt: z.iso.datetime().optional(),
+  retryAfterMs: z.number().int().nonnegative().safe().optional(),
+});
+export type AgentTurnFailure = z.infer<typeof AgentTurnFailureSchema>;

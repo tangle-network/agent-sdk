@@ -30,7 +30,7 @@ import {
   contextTransferResultMatchesRequest,
 } from "@tangle-network/agent-interface";
 import { tokenUsageFromData } from "./tangle-result-values.js";
-import { TangleCredentialCapacityError } from "./model-credential-capacity.js";
+import { TangleCredentialCapacityError, tangleTurnFailure } from "./model-credential-capacity.js";
 import {
   assertBoundedJson,
   awaitWithSignal,
@@ -768,21 +768,16 @@ export function agentTurnResultFromPromptRecord(
   ) {
     throw new Error("Tangle prompt result context receipt does not match its request");
   }
-  // Preserve the credential owner's typed quota refusal and reset time.
-  if (!record.success && record.errorCode === "provider_quota_exhausted") {
-    const resetAt = record.resetAt;
-    throw new TangleCredentialCapacityError(
-      "provider_quota_exhausted",
-      "exhausted",
-      typeof resetAt === "string" && new Date(resetAt).toISOString() === resetAt ? resetAt : undefined,
-      429,
-    );
-  }
+  const failure = !record.success ? tangleTurnFailure(record) : undefined;
+  // Old Runtime consumes this legacy rejection; typed producers carry failure on the returned result.
+  if (record.failure === undefined && failure?.code === "provider_quota_exhausted")
+    throw new TangleCredentialCapacityError("provider_quota_exhausted", "exhausted", failure.resetAt, 429);
   const usage = tokenUsageFromData(record);
   const awaiting = AWAITING_STATUSES.has(record.status);
   return {
     text,
     success: record.success,
+    ...(failure ? { failure } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
     ...(usage ? { usage } : {}),

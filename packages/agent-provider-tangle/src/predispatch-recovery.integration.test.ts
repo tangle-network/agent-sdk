@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
-import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import { AgentTurnResultSchema, type AgentTurnFailure, type AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
@@ -9,11 +9,12 @@ import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "root", harness: "claude-code" as const };
+const createInput = {profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]}};
 const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
 type RefFault = "missing" | "environment" | "digest" | "execution-race" | "read-failure";
-async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false, egress?: AgentEnvironmentEgressPolicy) {
+async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false, egress?: AgentEnvironmentEgressPolicy, failure?: AgentTurnFailure) {
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
   let admit = false, selected = false;
@@ -37,6 +38,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString());
+      if (creates.length) expect(input).toEqual(creates[0]);
       creates.push(input);
       metadata = input.metadata;
       response.end(JSON.stringify(info()));
@@ -44,8 +46,13 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: { responseDedupe: false }, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
+    } else if (run && completed && path.endsWith("/events")) {
+      const terminal = {success:!failure,status:failure ? "failed" : "success",executionId:run.executionId,durationMs:1,
+        ...(failure ? {error:"producer failure",errorCode:failure.code,resetAt:failure.resetAt,failure} : {})};
+      response.setHeader("content-type","text/event-stream");
+      response.end(`event: result\ndata: ${JSON.stringify(terminal)}\n\nevent: done\ndata: ${JSON.stringify(terminal)}\n\n`);
     } else if (path.endsWith("/messages/turns")) {
-      if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: true, status: "success", executionId: run.executionId, durationMs: 1 } }));
+      if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: !failure, status: failure ? "failed" : "success", executionId: run.executionId, durationMs: 1, ...(failure ? {error:"producer failure",errorCode:failure.code,resetAt:failure.resetAt,failure} : {}) } }));
       else { response.writeHead(204); response.end(); }
     } else if (run && path.endsWith(`/agents/sessions/${run.sessionId}`)) {
       statusReads++;
@@ -87,7 +94,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   baseUrl = `http://127.0.0.1:${address.port}`;
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
-  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture", ...(egress ? { egress } : {}) });
+  const environment = await provider.create({ ...createInput, ...(egress ? { egress } : {}) });
   return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
 
@@ -96,6 +103,7 @@ it("forwards a strict allowlist with a private-range entry verbatim in the Sandb
   const { creates } = await fixture("SERVER_ERROR", 503, false, undefined, false, { mode: "strict", allowDomains });
   expect(creates).toHaveLength(1);
   expect(creates[0]!.egressPolicy).toEqual({ mode: "strict", allowDomains });
+  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]},idempotencyKey:"runtime:fixture",backend:{model:{apiKeyEnv:"FIXTURE_MODEL",baseUrl:"https://model.invalid"},profile}});
 });
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
@@ -105,7 +113,7 @@ it("starts the refused turn after original-key create replay without requiring a
   expect(error, JSON.stringify(requests)).toMatchObject({ status: 503, code: "HUB_CREDENTIAL_REFRESH_FAILED" });
   await expect(provider.get!(environment.id)).rejects.toThrow(/requires the current selected backend before reconnect/);
   allowDispatch();
-  const replayed = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const replayed = await reconnect().create(createInput);
   const reference = await replayed.dispatch!(turn);
   expect(replayed.id).toBe(environment.id);
   expect(replayed.creation).toBe("replayed");
@@ -128,7 +136,7 @@ it.each([false, true])("recovers the authoritative reference after a lost reply 
   const { environment, reconnect, creates, dispatches, state } = await fixture("SERVER_ERROR", 503, true, undefined, completed);
   const turn = { prompt: "research", turnId: "root:0", profile };
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
-  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const recovered = await reconnect().create(createInput);
   const reference = await recovered.dispatch!(turn);
   expect(reference.controlRef).toEqual(state().run!.runControlRef);
   expect(reference.metadata).toMatchObject({ dispatched: false, alreadyExisted: true });
@@ -141,8 +149,20 @@ it.each(["missing", "environment", "digest", "execution-race", "read-failure"] a
   const { environment, reconnect, dispatches, state } = await fixture("SERVER_ERROR", 503, true, fault);
   const turn = { prompt: "research", turnId: "root:0", profile };
   await expect(environment.dispatch!(turn)).rejects.toMatchObject({ status: 503 });
-  const recovered = await reconnect().create({ profile, idempotencyKey: "runtime:fixture" });
+  const recovered = await reconnect().create(createInput);
   await expect(recovered.dispatch!(turn)).rejects.toThrow(fault === "read-failure" ? /status unavailable/ : /exact.*control reference/);
   expect(dispatches).toHaveLength(1);
   expect(state().run).toBeDefined();
+});
+
+it.each([
+  {kind:"infra",code:"EXECUTION_INTERRUPTED"},
+] satisfies AgentTurnFailure[])("preserves producer failure through retained SDK readback: $code", async failure => {
+  const {environment,reconnect} = await fixture("SERVER_ERROR",503,true,undefined,true,undefined,failure);
+  const turn = {prompt:"research",turnId:"root:0",profile};
+  await expect(environment.dispatch!(turn)).rejects.toMatchObject({status:503});
+  const recovered = await reconnect().create(createInput);
+  const ref = await recovered.dispatch!(turn);
+  const result = await recovered.session!(ref.id,{controlRef:ref.controlRef}).result();
+  expect(AgentTurnResultSchema.parse(result)).toMatchObject({success:false,failure});
 });

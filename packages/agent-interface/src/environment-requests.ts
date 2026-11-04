@@ -1,3 +1,7 @@
+import { canonicalCandidateDigest, canonicalCandidateJson } from "./agent-candidate-schema-common.js";
+import type { Sha256Digest } from "./agent-candidate.js";
+import type { CreateAgentEnvironmentInput } from "./environment-runtime.js";
+import { deepFreeze } from "./deep-freeze.js";
 import { z } from "zod";
 import {
   boundedIdentifierSchema,
@@ -215,4 +219,92 @@ export interface PlacementInfo {
   machineId?: string;
   region?: string;
   providerMetadata?: Record<string, unknown>;
+}
+
+/** Canonical create identity excludes the operation key and per-attempt abort signal.
+ * Keyed creates require canonical JSON; unkeyed creates may retain opaque mapper values.
+ * @internal */
+export function agentEnvironmentCreateInputDigest(
+  input: CreateAgentEnvironmentInput,
+): Sha256Digest {
+  const { idempotencyKey: _idempotencyKey, signal: _signal, ...material } = input;
+  return canonicalCandidateDigest({
+    kind: "agent-environment-create.v1",
+    input: material,
+  });
+}
+
+/** @internal State held by one provider adapter for keyed create retries. */
+export interface AgentEnvironmentCreateIdempotencyRecord<T> {
+  readonly digest: Sha256Digest;
+  readonly pending: Promise<T>;
+  environment?: T;
+}
+
+/** Same-key callers share one environment, with creation:"replayed" because they provisioned nothing.
+ * Members must not read this; shallow replay views reject classes whose prototype would be lost.
+ * @internal */
+function replayedAgentEnvironmentView<T extends object>(
+  environment: T,
+): T {
+  const prototype = Object.getPrototypeOf(environment) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(
+      "a replayed agent environment view requires a plain object environment",
+    );
+  }
+  return { ...environment, creation: "replayed" };
+}
+
+/** Coalesce concurrent keyed creates and reject changed-input collisions before another create effect.
+ * The backing service retains keys across adapter reconstruction.
+ * The creating call keeps the provider's verdict; subsequent same-key calls receive a replayed view.
+ * Keyed callbacks receive an immutable canonical JSON snapshot shared by their digest, so later caller
+ * mutation cannot change accepted input. Unkeyed callbacks retain opaque mapper values by identity.
+ * @internal */
+export async function createAgentEnvironmentWithIdempotency<T extends object>(
+  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
+  input: CreateAgentEnvironmentInput,
+  create: (input: CreateAgentEnvironmentInput) => Promise<T>,
+): Promise<T> {
+  const { idempotencyKey: key, signal, ...material } = input;
+  signal?.throwIfAborted();
+  if (key === undefined) return create(input);
+
+  const snapshot = deepFreeze(
+    JSON.parse(canonicalCandidateJson(material)),
+  ) as Omit<CreateAgentEnvironmentInput, "idempotencyKey" | "signal">;
+  const acceptedInput = Object.freeze({
+    ...snapshot,
+    idempotencyKey: key,
+    ...(signal === undefined ? {} : { signal }),
+  });
+
+  const digest = agentEnvironmentCreateInputDigest(acceptedInput);
+  const existing = records.get(key);
+  if (existing !== undefined) {
+    if (existing.digest !== digest) {
+      throw new Error(
+        "agent environment create idempotency key conflicts with a different create input",
+      );
+    }
+    return replayedAgentEnvironmentView(
+      existing.environment ?? (await existing.pending),
+    );
+  }
+
+  const pending = Promise.resolve().then(() => create(acceptedInput));
+  const record: AgentEnvironmentCreateIdempotencyRecord<T> = {
+    digest,
+    pending,
+  };
+  records.set(key, record);
+  try {
+    const environment = await pending;
+    if (records.get(key) === record) record.environment = environment;
+    return environment;
+  } catch (error) {
+    if (records.get(key) === record) records.delete(key);
+    throw error;
+  }
 }

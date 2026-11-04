@@ -42,7 +42,7 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
   it("refuses missing identity before spawning the command", async () => {
     const fixture = await command(`process.stdout.write(JSON.stringify(${JSON.stringify(publicReference)}));`);
     const resolver = createCommandModelCredentialResolver(fixture);
-    expect(() => resolver({ profile: input.profile })).toThrow(/idempotencyKey/);
+    expect(() => resolver({ profile: input.profile })).toThrow(/identity/);
   });
 
   it.each([
@@ -65,7 +65,7 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
 
   it("stops a stalled command at its timeout", async () => {
     const fixture = await command('setInterval(() => {}, 1000);');
-    await expect(createCommandModelCredentialResolver({ ...fixture, timeoutMs: 50 })(input)).rejects.toThrow(/timed out/);
+    await expect(createCommandModelCredentialResolver({ ...fixture, timeoutMs: 50 })(input)).rejects.toMatchObject({code:"credential_command_failed",exitCode:null});
   });
 
   it("terminates the child on caller cancellation", async () => {
@@ -96,23 +96,6 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
   it("keeps the owner exit code while discarding its private diagnostic", async () => {
     const fixture = await command('process.stderr.write("private-token-fixture"); process.exit(12);');
     await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({ exitCode: 12, message: "Tangle credential command failed (exit 12)" });
-  });
-
-  it("carries the command's bounded last stderr line on the generic failure (#475)", async () => {
-    const fixture = await command('process.stderr.write("acct: first line\\nacct: resolver offline, retry later\\n"); process.exit(1);');
-    await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({
-      exitCode: 1,
-      stderrTail: "acct: resolver offline, retry later",
-    });
-  });
-
-  it("classifies a resolver binding refusal as a terminal credential refusal naming its reason (#475)", async () => {
-    const fixture = await command('process.stderr.write("acct: Resume seat conflicts with the bound dispatch\\n"); process.exit(1);');
-    await expect(createCommandModelCredentialResolver(fixture)(input)).rejects.toMatchObject({
-      code: "model_credential_refused",
-      resolutionReason: "acct: Resume seat conflicts with the bound dispatch",
-      message: "Tangle credential command refused the route: acct: Resume seat conflicts with the bound dispatch",
-    });
   });
 
   it("rejects conflicting validity controls", () => {
@@ -173,7 +156,7 @@ it.each([
   });`);
   const pending = createCommandModelCredentialResolver(fixture)(input);
   await expect(pending).rejects.toMatchObject({ exitCode: 78, message: "Tangle credential command failed (exit 78)" });
-  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.toMatchObject({ code:"credential_command_failed" });
   await expect(pending).rejects.not.toThrow(/private-token-fixture/);
 });
 
@@ -183,5 +166,5 @@ it.each([1, 75])("does not infer permanent refusal from a mismatched command exi
   });`);
   const pending = createCommandModelCredentialResolver(fixture)(input);
   await expect(pending).rejects.toMatchObject({ exitCode });
-  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.toMatchObject({ code:"credential_command_failed" });
 });

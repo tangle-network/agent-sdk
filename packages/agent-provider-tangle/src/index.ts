@@ -32,3 +32,5 @@ export { safeEndpointFromConnection } from "./tangle-observation.js";
 
 export { profileCredentialSource } from "./model-credential-source.js";
 export type { ProfileCredentialSource } from "./model-credential-source.js";
+
+export { TangleCredentialCapacityError, TangleCredentialRefusalError, TangleCredentialCommandError } from "./model-credential-capacity.js";

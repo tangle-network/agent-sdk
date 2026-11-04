@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.12
+
+### Patch Changes
+
+- 69ff234: Carry producer-owned turn failures as kind, code, resetAt and retryAfterMs. Map stopped-generation retirement and retained paths onto the platform lifecycle. Tangle credential resolvers expose read-only route validation during spawn preflight; unclassified command failures retain a stable code and process status without private stderr.
+- Updated dependencies [69ff234]
+  - @tangle-network/agent-interface@5.10.19
+
 ## 5.0.11
 
 ### Patch Changes

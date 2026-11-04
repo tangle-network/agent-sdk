@@ -1,13 +1,10 @@
+import { AgentTurnFailureSchema, type AgentTurnFailure } from "./execution-failure.js";
 import { z } from "zod";
 import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 import type { AgentEnvironmentLifetime } from "./environment-lifetime.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
-import {
-  canonicalCandidateDigest,
-  canonicalCandidateJson,
-} from "./agent-candidate-schema-common.js";
-import type { AgentCandidateArtifactPort, Sha256Digest } from "./agent-candidate.js";
+import type { AgentCandidateArtifactPort } from "./agent-candidate.js";
 import type { AgentProfile, AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
 import { agentProfileSchema } from "./profile-schema.js";
 import type { InputPart } from "./parts.js";
@@ -23,7 +20,6 @@ import type {
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
 import { boundedEventContentJsonSchema, boundedEventContentRecordSchema, boundedEventContentStringSchema, boundedIdentifierSchema, boundedJsonRecordSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
-import { deepFreeze } from "./deep-freeze.js";
 import type { AgentEnvironmentEgressMode, AgentEnvironmentEgressPolicy, AgentEnvironmentQuery, AgentEnvironmentStatus, AgentEnvironmentSummary, AgentProfileRef, AgentSessionStatus, CheckpointRef, CheckpointRequest, ExecRequest, ExecResult, ForkRequest, PlacementInfo, ResourceRequest, WorkspaceRequest } from "./environment-requests.js";
 import type { AgentExactProcessEgressMode, AgentExactProcessProvider } from "./environment-exact-process.js";
 import type { AgentEnvironmentObservation } from "./environment-observation.js";
@@ -99,6 +95,7 @@ export interface AgentTurnResult {
   text: string;
   success: boolean;
   error?: string;
+  failure?: AgentTurnFailure;
   sessionId?: string;
   usage?: TokenUsage;
   metadata?: Record<string, unknown>;
@@ -121,6 +118,7 @@ export const AgentTurnResultSchema = z.strictObject({
   text: boundedEventContentStringSchema,
   success: z.boolean(),
   error: boundedStringSchema.optional(),
+  failure: AgentTurnFailureSchema.optional(),
   sessionId: boundedIdentifierSchema.optional(),
   usage: TokenUsageSchema.optional(),
   metadata: boundedJsonRecordSchema.optional(),
@@ -345,12 +343,8 @@ export interface AgentEnvironment {
   readonly id: string;
   readonly provider: string;
   readonly name?: string;
-  /**
-   * The verdict of the create call that returned this object. It is a
-   * per-call fact: a same-key replay returns a view of the same environment
-   * with `creation: "replayed"`. Absent on `get()` results and when the
-   * provider cannot prove which outcome happened.
-   */
+  /** Per-create verdict: a same-key replay returns this environment with creation:"replayed".
+   * Absent on get() or when the provider cannot prove the create's outcome. */
   readonly creation?: AgentEnvironmentCreation;
   /** Authoritative receipt returned only by a qualified context-transfer attachment. */
   readonly contextTransferReceipt?: ContextTransferReceipt;
@@ -358,23 +352,12 @@ export interface AgentEnvironment {
   readonly proxySecretReceipt?: ProxySecretReceipt;
   /** API-verified effective parent pins read from current custody. */
   readonly proxySecretParents?: ProxySecretParents;
-  /**
-   * Detached metadata returned by the provider.
-   * It can contain caller-authored annotations and is not authorization evidence.
-   */
+  /** Detached provider metadata can include caller annotations; it is not authorization evidence. */
   readonly metadata?: Readonly<Record<string, unknown>>;
-  /**
-   * The capability document for THIS environment, and the document a caller
-   * reads to decide which operation to offer against it.
-   *
-   * A capability the connected deployment decides is environment-scoped: one
-   * provider reaches deployments of different ages, so
-   * {@link AgentEnvironmentProvider.capabilities} can only state what holds
-   * before an environment exists. A provider that measures a capability per
-   * environment publishes the measured answer here, and the operations this
-   * environment exposes match it exactly. Absent when the provider document
-   * already describes every environment it creates.
-   */
+  /** This deployment's capability document; exposed operations match it.
+   * Provider capabilities describe what is known before create; deployments
+   * reached by one provider can differ in age. Absent when provider capabilities
+   * already describe every environment it creates. */
   readonly capabilities?: AgentEnvironmentCapabilities;
   status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus>;
   stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent>;
@@ -866,18 +849,16 @@ export const AgentEnvironmentCapabilitiesSchema = z
 
 export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   profile: AgentProfileRef;
-  /**
-   * Runtime-owned execution inputs, separate from authored profile identity.
-   * Providers must refuse unsupported attachments and authored MCP alias collisions.
-   * Credentials are sensitive transport input; never include them in receipts or logs.
-   * Attachments participate in keyed create identity and cannot be refreshed by replay.
-   */
+  /** Runtime-owned attachments participate in keyed identity, not profile identity, and cannot refresh by replay.
+   * Refuse unsupported attachments or MCP alias collisions; never log their credentials. */
   runtimeAttachments?: AgentRuntimeAttachments;
   /** Exact caller-owned id required by an accepted destination contract. */
   requestedId?: string;
   /** Agent backend inside the provider, for example "opencode" or "codex". */
   backend?: string;
   workspace?: WorkspaceRequest;
+  /** Paths the platform seals with the stopped generation before retirement. */
+  retain?: { paths: readonly string[] };
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: (string | { name: string; host: string; header?: string } | { name: string; exposeInBox: true })[] | "all" | Record<string, string>;
@@ -886,154 +867,23 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   proxySecrets?: readonly ProxySecretBinding[];
   /** Host-only total destination-to-parent selection; null means explicit independent root. */
   proxySecretParents?: ProxySecretParents;
-  /**
-   * Outbound network policy for this environment.
-   *
-   * When absent the provider applies its own default. That default can be a strict allowlist,
-   * and a model endpoint the environment must reach is then refused inside the environment as an
-   * authorization error that names no policy. Declare the policy whenever the destinations the
-   * environment needs are known.
-   *
-   * A provider that cannot satisfy the requested mode must fail the create rather than weaken or
-   * widen the policy. {@link AgentEnvironmentCapabilities.create} names the modes it accepts.
-   */
+  /** Outbound network policy. Omission uses the provider default, which may be a strict allowlist.
+   * Declare known required destinations; providers must refuse unsupported modes instead of widening
+   * or weakening them. create capabilities name the accepted modes. */
   egress?: AgentEnvironmentEgressPolicy;
-  /**
-   * Platform account whose balance funds this environment's managed model usage.
-   *
-   * A trusted first-party service acting for an authenticated user sets it. The provider honors
-   * it only for a caller its platform has authorized to bill that account, and rejects the create
-   * otherwise. It never grants a caller permission to charge an arbitrary account.
-   */
+  /** Platform account funding managed model usage. Only a trusted service authorized to bill
+   * that authenticated user's account may set it; other creates are rejected. */
   billingOwner?: string;
   metadata?: Record<string, unknown>;
   name?: string;
-  /**
-   * Stable identity for one logical environment create.
-   *
-   * When present, the provider must use this key as one idempotent operation:
-   * the same key with canonically equal create input must return or reconstruct
-   * the same environment, while a different input must be rejected.
-   */
+  /** Idempotent create identity: the same key with equal canonical input reconstructs the same
+   * environment; different input under that key is refused. */
   idempotencyKey?: string;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;
 }
 
-/**
- * Compute the canonical identity of a generic environment create request.
- *
- * The operation key names the request and the abort signal controls one
- * attempt, so neither belongs in the input identity. Every other field is
- * canonicalized with the shared RFC 8785 JSON representation.
- * A keyed create therefore accepts only canonical JSON material.
- * Unkeyed creates can retain opaque provider-native mapper values.
- * @internal
- */
-export function agentEnvironmentCreateInputDigest(
-  input: CreateAgentEnvironmentInput,
-): Sha256Digest {
-  const { idempotencyKey: _idempotencyKey, signal: _signal, ...material } = input;
-  return canonicalCandidateDigest({
-    kind: "agent-environment-create.v1",
-    input: material,
-  });
-}
-
-/** @internal State held by one provider adapter for keyed create retries. */
-export interface AgentEnvironmentCreateIdempotencyRecord<T> {
-  readonly digest: Sha256Digest;
-  readonly pending: Promise<T>;
-  environment?: T;
-}
-
-/**
- * Return the per-call view of an environment that a same-key create replayed.
- *
- * The view shares every member of the environment, so operations act on the
- * one environment, and it states `creation: "replayed"` because this call
- * provisioned nothing. The copy is shallow, so the environment must be a plain
- * object whose members do not read `this`; a class instance loses its
- * prototype members in a copy and is rejected.
- * @internal
- */
-function replayedAgentEnvironmentView<T extends object>(
-  environment: T,
-): T {
-  const prototype = Object.getPrototypeOf(environment) as unknown;
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new Error(
-      "a replayed agent environment view requires a plain object environment",
-    );
-  }
-  return { ...environment, creation: "replayed" };
-}
-
-/**
- * Apply the generic create contract to one provider adapter's keyed requests.
- *
- * The provider's backing service remains responsible for retaining the key
- * across adapter reconstruction. This helper coalesces concurrent retries and
- * rejects collisions before the provider performs another create effect.
- *
- * The call that runs `create` receives the environment the provider built,
- * with the creation verdict the provider could prove. Every same-key call
- * after it, including one that awaited the same pending create, receives
- * {@link replayedAgentEnvironmentView} of that environment.
- *
- * A keyed create callback receives one immutable canonical JSON snapshot.
- * Its digest and provider therefore read identical request bytes even when
- * the caller mutates its original object after this function returns.
- * An unkeyed create retains its original input so opaque provider-native
- * mapper values retain their public identity.
- * @internal
- */
-export async function createAgentEnvironmentWithIdempotency<T extends object>(
-  records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
-  input: CreateAgentEnvironmentInput,
-  create: (input: CreateAgentEnvironmentInput) => Promise<T>,
-): Promise<T> {
-  const { idempotencyKey: key, signal, ...material } = input;
-  signal?.throwIfAborted();
-  if (key === undefined) return create(input);
-
-  const snapshot = deepFreeze(
-    JSON.parse(canonicalCandidateJson(material)),
-  ) as Omit<CreateAgentEnvironmentInput, "idempotencyKey" | "signal">;
-  const acceptedInput = Object.freeze({
-    ...snapshot,
-    idempotencyKey: key,
-    ...(signal === undefined ? {} : { signal }),
-  });
-
-  const digest = agentEnvironmentCreateInputDigest(acceptedInput);
-  const existing = records.get(key);
-  if (existing !== undefined) {
-    if (existing.digest !== digest) {
-      throw new Error(
-        "agent environment create idempotency key conflicts with a different create input",
-      );
-    }
-    return replayedAgentEnvironmentView(
-      existing.environment ?? (await existing.pending),
-    );
-  }
-
-  const pending = Promise.resolve().then(() => create(acceptedInput));
-  const record: AgentEnvironmentCreateIdempotencyRecord<T> = {
-    digest,
-    pending,
-  };
-  records.set(key, record);
-  try {
-    const environment = await pending;
-    if (records.get(key) === record) record.environment = environment;
-    return environment;
-  } catch (error) {
-    if (records.get(key) === record) records.delete(key);
-    throw error;
-  }
-}
+export { agentEnvironmentCreateInputDigest, createAgentEnvironmentWithIdempotency, type AgentEnvironmentCreateIdempotencyRecord } from "./environment-requests.js";
 
 /** Reconstruct an existing environment; never allocates a replacement. */
 export interface AgentEnvironmentGetOptions {

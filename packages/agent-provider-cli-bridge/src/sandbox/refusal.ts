@@ -120,6 +120,8 @@ export function refuseUnsupportedCreateInput(
   if (input.runtimeAttachments !== undefined) refuse("runtimeAttachments", "runtime MCP attachments are not supported");
   if (input.idempotencyKey !== undefined) refuse("idempotencyKey", "durable keyed create is not implemented");
   if (input.billingOwner !== undefined) refuse("billingOwner", "billing owners are not supported");
+  if (input.deleteAfterStoppedMs !== undefined) refuse("deleteAfterStoppedMs", "stopped-generation retirement is not supported");
+  if (input.retain !== undefined) refuse("retain", "stopped-generation retention is not supported");
   if (input.idleTimeoutMs !== undefined) refuse("idleTimeoutMs", "these sandboxes enforce a lifetime, not an idle timeout");
   if (input.secrets !== undefined) refuse("secrets", "secrets are not supported; pass env");
   if (input.proxySecrets !== undefined) refuse("proxySecrets", "proxy secrets are not supported");
