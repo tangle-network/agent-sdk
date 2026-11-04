@@ -1,13 +1,5 @@
 # @tangle-network/agent-provider-cli-bridge
 
-## 2.0.9
-
-### Patch Changes
-
-- dd76439: Carry producer-owned turn failures as kind, code, resetAt and retryAfterMs. Map stopped-generation retirement and retained paths onto the platform lifecycle. Tangle credential resolvers expose read-only route validation during spawn preflight; unclassified command failures retain a stable code and process status without private stderr.
-- Updated dependencies [dd76439]
-  - @tangle-network/agent-interface@5.11.0
-
 ## 2.0.8
 
 ### Patch Changes
