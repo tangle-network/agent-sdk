@@ -43,7 +43,7 @@ async function peer() {
   baseUrl = `http://127.0.0.1:${address.port}`;
   const provider = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }) });
   const environment = await provider().get!(run.environmentId);
-  if (!environment?.interactive) throw new Error("fixture environment exposes no interactive control");
+  if (!environment?.interactive) throw new Error("fixture environment exposes no interactive control " + JSON.stringify(environment?.capabilities?.interactiveAgent) + Object.keys(environment ?? {}));
   const ref = AgentInteractiveSessionRefSchema.parse({ run, preparationReceipt, incarnationId, startedAt });
   const control = AgentInteractiveSessionControlClaimSchema.parse({
     refDigest: canonicalCandidateDigest(ref), generation: 1, leaseId: "lease-1", holderId: "holder-1", expiresAt: "2099-01-01T00:00:00.000Z",
