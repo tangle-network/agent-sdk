@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -44,7 +44,7 @@ async function directoryBox(root: string, archived: string[], corrupt = false): 
       async openArchive(directory: string) {
         archived.push(directory);
         const { stdout } = await promisify(execFile)("tar", ["-cz", "-C", join(root, directory), ...(await readdir(join(root, directory))).sort()],
-          { encoding: "buffer", maxBuffer: 256 * 1024 * 1024 });
+          { encoding: "buffer", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, COPYFILE_DISABLE: "1" } });
         // Flip one byte in the middle of the compressed stream.
         if (corrupt) stdout[stdout.byteLength >> 1] ^= 0xff;
         return new Blob([stdout]).stream();
@@ -56,9 +56,13 @@ async function directoryBox(root: string, archived: string[], corrupt = false): 
 
 async function workspace(root: string) {
   const files: Record<string, Buffer> = {};
+  // Fixed whole-second mtimes: the expected metadata floors the source stat and the archive
+  // member carries what tar stored, and the two round sub-second times differently per platform.
+  const stamp = new Date(1_000_000_000_000);
   const put = async (path: string, bytes: Buffer, mode = 0o644) => {
     await mkdir(join(root, path, ".."), { recursive: true });
     await writeFile(join(root, path), bytes, { mode });
+    await utimes(join(root, path), stamp, stamp);
     files[path] = bytes;
   };
   for (let index = 0; index < 120; index++) {

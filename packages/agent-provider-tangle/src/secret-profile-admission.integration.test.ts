@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,7 +130,8 @@ async function fixture(fault?: "prepare-refused" | "invalid-receipt" | "active",
           process.stdout.write(JSON.stringify({ pid: process.pid, cwd: process.cwd(), text: source.trim() }));
         `], { cwd: session!.root, env: { PATH: process.env.PATH, AGENT_RUNTIME_COORDINATION_TOKEN: currentBearer } });
         const observation = JSON.parse(native.stdout);
-        expect(observation.cwd).toBe(root);
+        // A process reports its cwd as the realpath (macOS resolves /var → /private/var).
+        expect(await realpath(observation.cwd)).toBe(await realpath(root));
         expect(observation.pid).not.toBe(process.pid);
         nativeProcesses++;
         const run = { sessionId: body.sessionId, executionId, turnId: body.turnId, runControlRef: body.runControlRef, text: observation.text };
