@@ -77,7 +77,7 @@ export function ownerCredentialResolver(
       if (reply.ok && body?.supported === true && Object.keys(body).length === 1) return { ok: true, issues: [] };
       const refusal = reply.status === 400 && body?.supported === false && Object.keys(body).every(k => k === "supported" || k === "error")
         ? parseCredentialRefusal({error:body.error}, kind === "broker" ? reply.status : undefined) : undefined;
-      if (!refusal) rejectReply(reply);
+      if (!refusal) return rejectReply(reply);
       return { ok: false, issues: [{level:"error",code:refusal.code,message:refusal.message}] };
     };
   }
