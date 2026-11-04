@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.11
+
+### Patch Changes
+
+- a1ea476: A profile over the Sandbox gateway bound now refuses at spawn (PAYLOAD_TOO_LARGE) instead of only warning: create sends the whole profile, and a live 1.5 MB create answered 413.
+
 ## 5.0.10
 
 ### Patch Changes
