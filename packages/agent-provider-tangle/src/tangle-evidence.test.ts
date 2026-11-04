@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -102,8 +102,15 @@ function fixture(overrides: { complete?: boolean; native?: boolean; wrongDigest?
           const member = join(tree, "content", filePath.slice(directory.length + 1));
           await mkdir(dirname(member), { recursive: true });
           await writeFile(member, content, { mode: 0o644 });
+          // A fixed whole-second mtime keeps the archive bytes deterministic: the test captures
+          // twice and compares provenance deep-equal, and macOS bsdtar embeds sub-second PAX
+          // mtimes where GNU tar truncates to seconds.
+          await utimes(member, new Date(1_000_000_000_000), new Date(1_000_000_000_000));
           const target = join(tree, "archive.tar.gz");
-          await promisify(execFile)("tar", ["-czf", target, "-C", join(tree, "content"), ...(await readdir(join(tree, "content"))).sort()]);
+          // COPYFILE_DISABLE keeps macOS bsdtar from embedding ._* AppleDouble members for
+          // extended attributes; the Sidecar builds archives on Linux, whose tar never adds
+          // them, and the walk would otherwise admit phantom files the usage scan never saw.
+          await promisify(execFile)("tar", ["-czf", target, "-C", join(tree, "content"), ...(await readdir(join(tree, "content"))).sort()], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
           return new Blob([await readFile(target)]).stream();
         } finally {
           await rm(tree, { recursive: true, force: true });
