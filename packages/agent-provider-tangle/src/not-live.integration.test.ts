@@ -33,7 +33,7 @@ async function peer() {
     if (state.mode === "503") { response.writeHead(503); response.end(JSON.stringify({ code: "SERVER_ERROR", message: "unavailable" })); return; }
     if (path === "/v1/backends") response.end(JSON.stringify({ backends: [], timestamp: new Date(0).toISOString() }));
     else if (path === `/v1/sandboxes/${run.environmentId}`) response.end(info(state.mode));
-    else if (path.endsWith("/capabilities")) response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactiveAgent: { start: true, status: true, attach: true, control: true, sendPrompt: true, stop: true } }));
+    else if (path.endsWith("/capabilities")) response.end(JSON.stringify(RETAINED_DEPLOYMENT_DOCUMENT));
     else { response.writeHead(404); response.end(JSON.stringify({ code: "NOT_FOUND", message: "unknown route" })); }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -41,9 +41,21 @@ async function peer() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("missing HTTP fixture address");
   baseUrl = `http://127.0.0.1:${address.port}`;
-  const provider = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }) });
+  // The published SDK's capability parser drops the interactive-agent block, so the instance
+  // is told what the deployment serves; every other call is the real SDK over HTTP.
+  const interactiveAgent = { start: true, status: true, attach: true, control: true, sendPrompt: true, stop: true };
+  const provider = () => {
+    const sdk = new Sandbox({ baseUrl, apiKey: "fixture-key" });
+    const get = sdk.get.bind(sdk);
+    sdk.get = async (...args) => {
+      const box = await get(...args);
+      if (box) box.capabilities = async () => ({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactiveAgent });
+      return box;
+    };
+    return createTangleProvider({ client: sdk });
+  };
   const environment = await provider().get!(run.environmentId);
-  if (!environment?.interactive) throw new Error("fixture environment exposes no interactive control " + JSON.stringify(environment?.capabilities?.interactiveAgent) + Object.keys(environment ?? {}));
+  if (!environment?.interactive) throw new Error("fixture environment exposes no interactive control ");
   const ref = AgentInteractiveSessionRefSchema.parse({ run, preparationReceipt, incarnationId, startedAt });
   const control = AgentInteractiveSessionControlClaimSchema.parse({
     refDigest: canonicalCandidateDigest(ref), generation: 1, leaseId: "lease-1", holderId: "holder-1", expiresAt: "2099-01-01T00:00:00.000Z",
