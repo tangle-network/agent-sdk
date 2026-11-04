@@ -106,6 +106,13 @@ describe('Claude Code', () => {
     expect(s.toolCalls.map((t) => t.status)).toEqual(['pending'])
     expect(s.ending).toEqual({ status: 'open', error: null, at: null })
   })
+
+  it('rejects a read whose signal aborts while the file opens, with no unhandled stream error', async () => {
+    const controller = new AbortController()
+    const read = claudeCodeReader.read(claudeCodeRefForFile(fixture('claude-code', 'completed.jsonl')), { signal: controller.signal })
+    controller.abort()
+    await expect(read).rejects.toThrow(/abort/iu)
+  })
 })
 
 describe('Codex', () => {
