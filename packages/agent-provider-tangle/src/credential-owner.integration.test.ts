@@ -51,7 +51,7 @@ it("uses the owner's read-only command at spawn preflight, without resolving or 
 });
 
 it("preserves a command's machine failure and discards its private diagnostics",async () => {
-  const fixture = await processFixture("process.stderr.write('private-fixture-value');process.exitCode=7;");
+  const fixture = await processFixture("process.stdin.resume();process.stdin.on('end',()=>{process.stderr.write('private-fixture-value');process.exitCode=7;});");
   const error = await Promise.resolve(createCommandModelCredentialResolver(fixture)(input)).catch(error => error);
   expect(error).toBeInstanceOf(TangleCredentialCommandError);
   expect(error).toMatchObject({code:"credential_command_failed",exitCode:7,terminationSignal:null,failure:{kind:"infra",code:"credential_command_failed"}});
@@ -60,7 +60,7 @@ it("preserves a command's machine failure and discards its private diagnostics",
 
 it("retains the owner's capacity reset without inventing an HTTP status",async () => {
   const resetAt = "2026-11-10T18:00:00.000Z";
-  const fixture = await processFixture(`process.stdout.write(JSON.stringify({error:{code:'provider_quota_exhausted',reason:'exhausted',resetAt:${JSON.stringify(resetAt)}}}));process.exitCode=75;`);
+  const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({error:{code:'provider_quota_exhausted',reason:'exhausted',resetAt:${JSON.stringify(resetAt)}}}));process.exitCode=75;});`);
   const error = await Promise.resolve(createCommandModelCredentialResolver(fixture)(input)).catch(error => error);
   expect(error).toMatchObject({code:"provider_quota_exhausted",resetAt,failure:{kind:"capacity",code:"provider_quota_exhausted",resetAt}});
   expect(error).not.toHaveProperty("status");
