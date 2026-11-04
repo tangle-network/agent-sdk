@@ -349,6 +349,8 @@ describe("Tangle per-profile subscription creation", () => {
       });
       if (url.endsWith("/backend")) return json({ type: "claude-code" });
       if (url.endsWith("/agents/run/stream")) return new Response('id: event-1\nevent: done\ndata: {"status":"completed"}\n\n', { headers: { "content-type": "text/event-stream" } });
+      // The profile's file mounts, written before the turn (Sandbox SDK >= 1.0.2xx).
+      if (url.endsWith("/files/write-batch")) return json({ data: { files: Object.fromEntries((body.files as { path: string }[]).map(({ path }) => [path, { success: true, path, hash: "sha256:fixture", size: 1, mtime: 0 }])) } });
       throw new Error(`Unexpected SDK request: ${url}`);
     });
     try {
