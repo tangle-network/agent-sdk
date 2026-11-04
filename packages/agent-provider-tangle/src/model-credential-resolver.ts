@@ -1,10 +1,12 @@
-import type { SeatOwnerReply, SeatOwnerTransport } from "@tangle-network/sandbox";
+import type { SeatOwnerReply } from "@tangle-network/sandbox";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
 import { parseCredentialCapacity, parseCredentialRefusal, TangleCredentialCommandError } from "./model-credential-capacity.js";
 import { profileCredentialSource } from "./model-credential-source.js";
 import { parseModelCredentialResolverRequest, type ModelCredentialResolverRequest } from "./model-credential-request.js";
 import { captureModelCredentials } from "./tangle-create-options.js";
 import type { TangleModelCredentialResolver } from "./tangle-types.js";
+
+type CredentialTransport = (request: ModelCredentialResolverRequest, signal?: AbortSignal) => Promise<SeatOwnerReply>;
 
 export interface CredentialValidityOptions {
   minimumValidUntil?: string;
@@ -25,10 +27,10 @@ export function credentialDeadline(options: CredentialValidityOptions): string |
 }
 
 export function ownerCredentialResolver(
-  transport: SeatOwnerTransport<ModelCredentialResolverRequest>,
+  transport: CredentialTransport,
   minimumValidUntil: string | undefined,
   kind: "command" | "broker",
-  validation?: SeatOwnerTransport<ModelCredentialResolverRequest>,
+  validation?: CredentialTransport,
 ): TangleModelCredentialResolver {
   const request = (input: Readonly<CreateAgentEnvironmentInput>) => {
     const { signal: _, ...data } = input;

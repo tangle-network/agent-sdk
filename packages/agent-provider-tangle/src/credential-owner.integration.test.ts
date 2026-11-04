@@ -88,3 +88,8 @@ it("does not turn a capacity-exit validation reply into a permanent route refusa
   const resolver = createCommandModelCredentialResolver({...fixture,validationCommand:fixture.command});
   await expect(resolver.validate!(profile)).rejects.toMatchObject({code:"credential_command_failed",exitCode:75});
 });
+
+it.each(["Resume seat conflicts with the bound dispatch","already bound to a different profile","not enrolled for the exact stage profile"])("retains a legacy permanent owner refusal: %s",async reason => {
+  const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stderr.write(${JSON.stringify(reason)});process.exitCode=1;});`);
+  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"model_credential_refused",failure:{kind:"caller",code:"model_credential_refused"},resolutionReason:reason});
+});

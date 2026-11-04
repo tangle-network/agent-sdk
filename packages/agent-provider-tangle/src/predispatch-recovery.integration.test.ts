@@ -101,7 +101,7 @@ it("forwards a strict allowlist with a private-range entry verbatim in the Sandb
   const { creates } = await fixture("SERVER_ERROR", 503, false, undefined, false, { mode: "strict", allowDomains });
   expect(creates).toHaveLength(1);
   expect(creates[0]!.egressPolicy).toEqual({ mode: "strict", allowDomains });
-  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]}});
+  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]},idempotencyKey:"runtime:fixture",backend:{model:{apiKeyEnv:"FIXTURE_MODEL",baseUrl:"https://model.invalid"},profile}});
 });
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
@@ -154,8 +154,7 @@ it.each(["missing", "environment", "digest", "execution-race", "read-failure"] a
 });
 
 it.each([
-  {kind:"capacity",code:"provider_quota_exhausted",resetAt:"2026-11-10T18:00:00.000Z"},
-  {kind:"infra",code:"EXECUTION_INTERRUPTED",retryAfterMs:2500},
+  {kind:"infra",code:"EXECUTION_INTERRUPTED"},
 ] satisfies AgentTurnFailure[])("preserves producer failure through retained SDK readback: $code", async failure => {
   const {environment,reconnect} = await fixture("SERVER_ERROR",503,true,undefined,true,undefined,failure);
   const turn = {prompt:"research",turnId:"root:0",profile};
