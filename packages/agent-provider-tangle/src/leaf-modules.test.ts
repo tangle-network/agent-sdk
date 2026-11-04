@@ -1023,71 +1023,6 @@ describe("Tangle split leaf modules", () => {
     ).toBe("status");
   });
 
-  it("refuses a supplied normalized block that names a session the frame does not carry", () => {
-    const bound = {
-      executionId: "execution-1",
-      sessionId: "runtime-session-1",
-      streamBound: true,
-    };
-
-    expect(() =>
-      environmentEventFromSandboxEvent(
-        {
-          type: "session.updated",
-          id: "event-supplied-foreign",
-          data: {
-            sessionId: "ses_opencode_native",
-            normalized: {
-              type: "session.updated",
-              sessionId: "other-session",
-            },
-          },
-        } as never,
-        bound,
-      ),
-    ).toThrow(/named a session the frame does not carry/);
-
-    // A frame that carries no session id can supply none either.
-    expect(() =>
-      environmentEventFromSandboxEvent(
-        {
-          type: "session.updated",
-          id: "event-supplied-invented",
-          data: {
-            normalized: {
-              type: "session.updated",
-              sessionId: "other-session",
-            },
-          },
-        } as never,
-        bound,
-      ),
-    ).toThrow(/named a session the frame does not carry/);
-
-    // A block that repeats the frame's own session id is accepted.
-    expect(
-      environmentEventFromSandboxEvent(
-        {
-          type: "session.updated",
-          id: "event-supplied-own",
-          data: {
-            sessionId: "ses_opencode_native",
-            normalized: {
-              type: "session.updated",
-              sessionId: "ses_opencode_native",
-              title: "Native harness session",
-            },
-          },
-        } as never,
-        bound,
-      ).normalized,
-    ).toEqual({
-      type: "session.updated",
-      sessionId: "ses_opencode_native",
-      title: "Native harness session",
-    });
-  });
-
   it("refuses a supplied normalized block naming a session the frame does not carry", () => {
     const bound = {
       executionId: "execution-1",
@@ -1115,6 +1050,13 @@ describe("Tangle split leaf modules", () => {
 
     expect(() =>
       environmentEventFromSandboxEvent(withSupplied("ses_somebody_else"), bound),
+    ).toThrow(/named a session the frame does not carry/);
+    // A frame that carries no session id can supply none either.
+    expect(() =>
+      environmentEventFromSandboxEvent(
+        { type: "session.updated", id: "event-supplied-invented", data: { normalized: { type: "session.updated", sessionId: "other-session" } } } as never,
+        bound,
+      ),
     ).toThrow(/named a session the frame does not carry/);
 
     for (const carried of ["ses_opencode_native", "runtime-session-1"]) {
