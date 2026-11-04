@@ -33,7 +33,7 @@ async function peer() {
     if (state.mode === "503") { response.writeHead(503); response.end(JSON.stringify({ code: "SERVER_ERROR", message: "unavailable" })); return; }
     if (path === "/v1/backends") response.end(JSON.stringify({ backends: [], timestamp: new Date(0).toISOString() }));
     else if (path === `/v1/sandboxes/${run.environmentId}`) response.end(info(state.mode));
-    else if (path.endsWith("/capabilities")) response.end(JSON.stringify(RETAINED_DEPLOYMENT_DOCUMENT));
+    else if (path.endsWith("/capabilities")) response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactiveAgent: { start: true, status: true, attach: true, control: true, sendPrompt: true, stop: true } }));
     else { response.writeHead(404); response.end(JSON.stringify({ code: "NOT_FOUND", message: "unknown route" })); }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
