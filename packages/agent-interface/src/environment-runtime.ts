@@ -854,12 +854,8 @@ export const AgentEnvironmentCapabilitiesSchema = z
 
 export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   profile: AgentProfileRef;
-  /**
-   * Runtime-owned execution inputs, separate from authored profile identity.
-   * Providers must refuse unsupported attachments and authored MCP alias collisions.
-   * Credentials are sensitive transport input; never include them in receipts or logs.
-   * Attachments participate in keyed create identity and cannot be refreshed by replay.
-   */
+  /** Runtime-owned attachments participate in keyed identity, not profile identity, and cannot refresh by replay.
+   * Refuse unsupported attachments or MCP alias collisions; never log their credentials. */
   runtimeAttachments?: AgentRuntimeAttachments;
   /** Exact caller-owned id required by an accepted destination contract. */
   requestedId?: string;
@@ -898,13 +894,8 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   billingOwner?: string;
   metadata?: Record<string, unknown>;
   name?: string;
-  /**
-   * Stable identity for one logical environment create.
-   *
-   * When present, the provider must use this key as one idempotent operation:
-   * the same key with canonically equal create input must return or reconstruct
-   * the same environment, while a different input must be rejected.
-   */
+  /** Idempotent create identity: the same key with equal canonical input reconstructs the same
+   * environment; different input under that key is refused. */
   idempotencyKey?: string;
   signal?: AbortSignal;
   providerOptions?: Record<string, unknown>;

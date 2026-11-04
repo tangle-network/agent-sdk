@@ -156,7 +156,7 @@ it.each([
   });`);
   const pending = createCommandModelCredentialResolver(fixture)(input);
   await expect(pending).rejects.toMatchObject({ exitCode: 78, message: "Tangle credential command failed (exit 78)" });
-  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.toMatchObject({ code:"credential_command_failed" });
   await expect(pending).rejects.not.toThrow(/private-token-fixture/);
 });
 
@@ -166,5 +166,5 @@ it.each([1, 75])("does not infer permanent refusal from a mismatched command exi
   });`);
   const pending = createCommandModelCredentialResolver(fixture)(input);
   await expect(pending).rejects.toMatchObject({ exitCode });
-  await expect(pending).rejects.not.toHaveProperty("code");
+  await expect(pending).rejects.toMatchObject({ code:"credential_command_failed" });
 });

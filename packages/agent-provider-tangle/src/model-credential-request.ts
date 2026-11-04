@@ -30,7 +30,6 @@ export function parseModelCredentialResolverRequest(value: unknown): ModelCreden
   if (!agentProfileSchema.safeParse(data.profile).success || typeof data.profile === "string") {
     throw new Error("Tangle credential request requires an inline AgentProfile");
   }
-  // The wire carries JSON. Schema parsing validates it, but must not normalize the caller's profile.
   const acceptedInput = input as CreateAgentEnvironmentInput;
   profileCredentialSource(acceptedInput.profile as Exclude<CreateAgentEnvironmentInput["profile"], string>);
   const deadline = request.minimumValidUntil;

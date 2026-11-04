@@ -36,16 +36,24 @@ export function ownerCredentialResolver(
   };
   const rejectReply = (reply: SeatOwnerReply): never => {
     const status = kind === "broker" ? reply.status : undefined;
-    throw parseCredentialCapacity(reply.body, status) ?? parseCredentialRefusal(reply.body, status) ??
-      (kind === "command" ? new TangleCredentialCommandError(reply.status === 400 ? 78 : 75, null)
-        : new Error(`Tangle credential broker refused resolution (status ${reply.status})`));
+    const typed = parseCredentialCapacity(reply.body, status) ?? parseCredentialRefusal(reply.body, status);
+    if (typed) throw typed;
+    if (kind === "command") throw new TangleCredentialCommandError(reply.status === 400 ? 78 : 75, null);
+    const detail = reply.body && typeof reply.body === "object" && "error" in reply.body ? reply.body.error : undefined;
+    const exitCode = detail && typeof detail === "object" && "exitCode" in detail ? detail.exitCode : undefined;
+    throw Object.assign(new Error(`Tangle credential broker refused resolution (HTTP ${reply.status})`), {
+      status:reply.status, ...(typeof exitCode === "number" && Number.isInteger(exitCode) && exitCode >= 0 && exitCode <= 255 ? {exitCode} : {}),
+    });
   };
   const resolver: TangleModelCredentialResolver = (input) => {
     if (typeof input.profile === "string") throw new Error(`Tangle credential ${kind} requires an inline profile`);
     if (profileCredentialSource(input.profile) === "router") return undefined;
     input.signal?.throwIfAborted();
     const body = request(input);
-    return transport(body, input.signal).then(reply => {
+    return transport(body, input.signal).catch(error => {
+      if (kind === "command") throw error;
+      throw new Error(input.signal?.aborted ? "Tangle credential broker request aborted" : "Tangle credential broker request failed or returned an invalid public reference");
+    }).then(reply => {
       if (!reply.ok) rejectReply(reply);
       try {
         const selected = captureModelCredentials(reply.body as Parameters<typeof captureModelCredentials>[0]);
