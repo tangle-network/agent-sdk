@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.11
+
+### Patch Changes
+
+- c704bdd: A read whose `signal` aborts before the session file is streamed (for example a deadline that fires while the file opens) now rejects with the `AbortError` only. Before, the file stream created on the aborted signal also emitted an `'error'` event with no listener, which crashed the process.
+
 ## 1.0.10
 
 ### Patch Changes
