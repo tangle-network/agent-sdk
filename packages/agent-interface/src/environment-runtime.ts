@@ -872,17 +872,9 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   proxySecrets?: readonly ProxySecretBinding[];
   /** Host-only total destination-to-parent selection; null means explicit independent root. */
   proxySecretParents?: ProxySecretParents;
-  /**
-   * Outbound network policy for this environment.
-   *
-   * When absent the provider applies its own default. That default can be a strict allowlist,
-   * and a model endpoint the environment must reach is then refused inside the environment as an
-   * authorization error that names no policy. Declare the policy whenever the destinations the
-   * environment needs are known.
-   *
-   * A provider that cannot satisfy the requested mode must fail the create rather than weaken or
-   * widen the policy. {@link AgentEnvironmentCapabilities.create} names the modes it accepts.
-   */
+  /** Outbound network policy. Omission uses the provider default, which may be a strict allowlist.
+   * Declare known required destinations; providers must refuse unsupported modes instead of widening
+   * or weakening them. create capabilities name the accepted modes. */
   egress?: AgentEnvironmentEgressPolicy;
   /**
    * Platform account whose balance funds this environment's managed model usage.

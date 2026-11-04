@@ -44,6 +44,11 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       response.end(JSON.stringify(info()));
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: { responseDedupe: false }, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
+    } else if (run && completed && path.endsWith("/events")) {
+      const terminal = {success:!failure,status:failure ? "failed" : "success",executionId:run.executionId,durationMs:1,
+        ...(failure ? {error:"producer failure",errorCode:failure.code,resetAt:failure.resetAt,failure} : {})};
+      response.setHeader("content-type","text/event-stream");
+      response.end(`event: result\ndata: ${JSON.stringify(terminal)}\n\nevent: done\ndata: ${JSON.stringify(terminal)}\n\n`);
     } else if (path.endsWith("/messages/turns")) {
       if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: !failure, status: failure ? "failed" : "success", executionId: run.executionId, durationMs: 1, ...(failure ? {error:"producer failure",errorCode:failure.code,resetAt:failure.resetAt,failure} : {}) } }));
       else { response.writeHead(204); response.end(); }
