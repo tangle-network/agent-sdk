@@ -361,7 +361,7 @@ describe("Tangle per-profile subscription creation", () => {
       const environment = await provider.create({ profile, idempotencyKey: "runtime:root" });
       for await (const _event of environment.stream({ prompt: "research" })) {}
       const create = requests.find((request) => request.url.endsWith("/v1/sandboxes"));
-      const turn = requests.find((request) => request.new URL(url).pathname.endsWith("/agents/run/stream"));
+      const turn = requests.find((request) => new URL(request.url).pathname.endsWith("/agents/run/stream"));
       expect(create?.body.backend).toEqual({ type: "claude-code", profile, model: { ...native, authMode: "oauth" } });
       expect(create?.body.secrets).toEqual(["CLAUDE_RESEARCH"]);
       expect(create?.body.metadata).toEqual({ modelCredentials: native });
@@ -370,7 +370,7 @@ describe("Tangle per-profile subscription creation", () => {
       expect(recovered?.metadata).toEqual({ modelCredentials: native });
       if (!recovered) throw new Error("Expected native environment recovery");
       for await (const _event of recovered.stream({ prompt: "continue research" })) {}
-      const turns = requests.filter((request) => request.new URL(url).pathname.endsWith("/agents/run/stream"));
+      const turns = requests.filter((request) => new URL(request.url).pathname.endsWith("/agents/run/stream"));
       expect(turns).toHaveLength(2);
       // The recovered Provider carries the persisted account on a new turn.
       expect(turns[1]?.body.backend).toEqual({ type: "claude-code", model: { ...native, authMode: "oauth" } });
