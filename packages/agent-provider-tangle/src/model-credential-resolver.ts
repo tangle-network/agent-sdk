@@ -39,7 +39,7 @@ export function ownerCredentialResolver(
     const typed = ([429,503].includes(reply.status) ? parseCredentialCapacity(reply.body, status) : undefined) ??
       (reply.status === 400 ? parseCredentialRefusal(reply.body, status) : undefined);
     if (typed) throw typed;
-    if (kind === "command") throw new TangleCredentialCommandError(reply.status === 400 ? 78 : 75, null);
+    if (kind === "command") throw new TangleCredentialCommandError(reply.status === 200 ? 0 : reply.status === 400 ? 78 : reply.status === 503 ? 75 : null, null);
     const detail = reply.body && typeof reply.body === "object" && "error" in reply.body ? reply.body.error : undefined;
     const exitCode = detail && typeof detail === "object" && "exitCode" in detail ? detail.exitCode : undefined;
     throw Object.assign(new Error(`Tangle credential broker refused resolution (HTTP ${reply.status})`), {

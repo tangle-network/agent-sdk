@@ -81,3 +81,10 @@ it.each([75,78])("does not classify a refusal envelope under mismatched process 
   const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify(${JSON.stringify(body)}));process.exitCode=${exitCode};});`);
   await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"credential_command_failed",exitCode});
 });
+
+it("does not turn a capacity-exit validation reply into a permanent route refusal",async () => {
+  const body = {supported:false,...refusal};
+  const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify(${JSON.stringify(body)}));process.exitCode=75;});`);
+  const resolver = createCommandModelCredentialResolver({...fixture,validationCommand:fixture.command});
+  await expect(resolver.validate!(profile)).rejects.toMatchObject({code:"credential_command_failed",exitCode:75});
+});

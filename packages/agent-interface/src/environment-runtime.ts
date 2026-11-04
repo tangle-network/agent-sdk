@@ -930,25 +930,12 @@ function replayedAgentEnvironmentView<T extends object>(
   return { ...environment, creation: "replayed" };
 }
 
-/**
- * Apply the generic create contract to one provider adapter's keyed requests.
- *
- * The provider's backing service remains responsible for retaining the key
- * across adapter reconstruction. This helper coalesces concurrent retries and
- * rejects collisions before the provider performs another create effect.
- *
- * The call that runs `create` receives the environment the provider built,
- * with the creation verdict the provider could prove. Every same-key call
- * after it, including one that awaited the same pending create, receives
- * {@link replayedAgentEnvironmentView} of that environment.
- *
- * A keyed create callback receives one immutable canonical JSON snapshot.
- * Its digest and provider therefore read identical request bytes even when
- * the caller mutates its original object after this function returns.
- * An unkeyed create retains its original input so opaque provider-native
- * mapper values retain their public identity.
- * @internal
- */
+/** Coalesce concurrent keyed creates and reject changed-input collisions before another create effect.
+ * The backing service retains keys across adapter reconstruction.
+ * The creating call keeps the provider's verdict; subsequent same-key calls receive a replayed view.
+ * Keyed callbacks receive an immutable canonical JSON snapshot shared by their digest, so later caller
+ * mutation cannot change accepted input. Unkeyed callbacks retain opaque mapper values by identity.
+ * @internal */
 export async function createAgentEnvironmentWithIdempotency<T extends object>(
   records: Map<string, AgentEnvironmentCreateIdempotencyRecord<T>>,
   input: CreateAgentEnvironmentInput,
