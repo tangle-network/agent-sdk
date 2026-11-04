@@ -49,7 +49,6 @@ export async function* readJsonlRecords(
 ): AsyncGenerator<Record<string, unknown>> {
   const hash = createHash('sha256')
   let pending: Buffer[] = []
-  let pendingBytes = 0
   let lineNumber = 0
 
   const parse = (bytes: Buffer, terminated: boolean): Record<string, unknown> | undefined => {
@@ -73,6 +72,7 @@ export async function* readJsonlRecords(
       noteUnparsed(stats, lineNumber)
       return undefined
     }
+    stats.line = lineNumber
     return value as Record<string, unknown>
   }
 
@@ -80,6 +80,8 @@ export async function* readJsonlRecords(
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     if (!(await file.stat()).isFile()) throw new Error(`${path}: native session must be a regular file`)
+    // A stream created on an aborted signal emits an 'error' no one listens to, which crashes the process.
+    options.signal?.throwIfAborted()
     const stream = file.createReadStream({ highWaterMark: 1 << 20, signal: options.signal, autoClose: false })
     for await (const chunk of stream as AsyncIterable<Buffer>) {
       hash.update(chunk)
@@ -89,32 +91,22 @@ export async function* readJsonlRecords(
         const index = chunk.indexOf(NEWLINE, start)
         if (index === -1) break
         let line: Buffer
-        if (pendingBytes > 0) {
+        if (pending.length > 0) {
           pending.push(chunk.subarray(start, index))
           line = Buffer.concat(pending)
           pending = []
-          pendingBytes = 0
         } else {
           line = chunk.subarray(start, index)
         }
         const record = parse(line, true)
-        if (record !== undefined) {
-          stats.line = lineNumber
-          yield record
-        }
+        if (record !== undefined) yield record
         start = index + 1
       }
-      if (start < chunk.length) {
-        pending.push(chunk.subarray(start))
-        pendingBytes += chunk.length - start
-      }
+      if (start < chunk.length) pending.push(chunk.subarray(start))
     }
-    if (pendingBytes > 0) {
+    if (pending.length > 0) {
       const record = parse(Buffer.concat(pending), false)
-      if (record !== undefined) {
-        stats.line = lineNumber
-        yield record
-      }
+      if (record !== undefined) yield record
     }
     stats.sha256 = `sha256:${hash.digest('hex')}`
   } finally {
