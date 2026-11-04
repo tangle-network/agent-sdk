@@ -348,7 +348,9 @@ describe("Tangle per-profile subscription creation", () => {
         runs: { executionScopedStatus: false, eventReplay: false }, interactions: { responseDedupe: false },
       });
       if (url.endsWith("/backend")) return json({ type: "claude-code" });
-      if (url.endsWith("/agents/run/stream")) return new Response('id: event-1\nevent: done\ndata: {"status":"completed"}\n\n', { headers: { "content-type": "text/event-stream" } });
+      if (new URL(url).pathname.endsWith("/agents/run/stream")) return new Response('id: event-1\nevent: done\ndata: {"status":"completed"}\n\n', { headers: { "content-type": "text/event-stream" } });
+      // The profile's file mounts, written before the turn (Sandbox SDK >= 1.0.2xx).
+      if (url.endsWith("/files/write-batch")) return json({ data: { files: Object.fromEntries((body.files as { path: string }[]).map(({ path }) => [path, { success: true, path, hash: "sha256:fixture", size: 1, mtime: 0 }])) } });
       throw new Error(`Unexpected SDK request: ${url}`);
     });
     try {
@@ -359,7 +361,7 @@ describe("Tangle per-profile subscription creation", () => {
       const environment = await provider.create({ profile, idempotencyKey: "runtime:root" });
       for await (const _event of environment.stream({ prompt: "research" })) {}
       const create = requests.find((request) => request.url.endsWith("/v1/sandboxes"));
-      const turn = requests.find((request) => request.url.endsWith("/agents/run/stream"));
+      const turn = requests.find((request) => new URL(request.url).pathname.endsWith("/agents/run/stream"));
       expect(create?.body.backend).toEqual({ type: "claude-code", profile, model: { ...native, authMode: "oauth" } });
       expect(create?.body.secrets).toEqual(["CLAUDE_RESEARCH"]);
       expect(create?.body.metadata).toEqual({ modelCredentials: native });
@@ -368,7 +370,7 @@ describe("Tangle per-profile subscription creation", () => {
       expect(recovered?.metadata).toEqual({ modelCredentials: native });
       if (!recovered) throw new Error("Expected native environment recovery");
       for await (const _event of recovered.stream({ prompt: "continue research" })) {}
-      const turns = requests.filter((request) => request.url.endsWith("/agents/run/stream"));
+      const turns = requests.filter((request) => new URL(request.url).pathname.endsWith("/agents/run/stream"));
       expect(turns).toHaveLength(2);
       // The recovered Provider carries the persisted account on a new turn.
       expect(turns[1]?.body.backend).toEqual({ type: "claude-code", model: { ...native, authMode: "oauth" } });

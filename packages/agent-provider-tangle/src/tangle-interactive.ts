@@ -34,6 +34,7 @@ import type {
 } from "@tangle-network/agent-interface";
 import { assertOptionKeys } from "./tangle-environment-validation.js";
 import { transportFailureReason } from "./tangle-failure-reason.js";
+import { notLiveState } from "./tangle-readiness.js";
 import type {
   SandboxInstanceLike,
   SandboxInteractiveSessionLike,
@@ -380,17 +381,15 @@ export function createTangleInteractiveAgentRegistry(
           const exactCommand =
             AgentInteractiveSessionStopCommandSchema.parse(command);
           assertRef(ref, exactCommand.ref);
-          await validateControl(exactCommand.control, options);
-          let raw;
-          try {
-            raw = await mutationHandle(exactCommand.control).stop(
-              exactCommand,
-              options
-            );
-          } catch (error) {
-            options?.signal?.throwIfAborted();
-            throw new Error(transportFailureReason("interactive stop", error));
-          }
+          const raw = await stopOrNotLive(box, exactCommand, options?.signal, async () => {
+            await validateControl(exactCommand.control, options);
+            return await mutationHandle(exactCommand.control)
+              .stop(exactCommand, options)
+              .catch((error: unknown) => {
+                options?.signal?.throwIfAborted();
+                throw new Error(transportFailureReason("interactive stop", error));
+              });
+          });
           options?.signal?.throwIfAborted();
           const acknowledgement =
             AgentInteractiveSessionStopAcknowledgementSchema.parse(raw);
@@ -409,6 +408,24 @@ export function createTangleInteractiveAgentRegistry(
       };
     },
   };
+}
+
+/** A stop against a failed or deleted sandbox is acknowledged not_live; any other failure stands. */
+async function stopOrNotLive(
+  box: SandboxInstanceLike,
+  command: AgentInteractiveSessionStopCommand,
+  signal: AbortSignal | undefined,
+  attempt: () => Promise<unknown>
+): Promise<unknown> {
+  try {
+    return await attempt();
+  } catch (error) {
+    signal?.throwIfAborted();
+    const gone = await notLiveState(box, signal);
+    if (gone === undefined) throw error;
+    const { operationId, requestDigest, ref, control } = command;
+    return { operationId, requestDigest, ref, control, status: "accepted", effect: "not_live", message: `sandbox ${gone}` };
+  }
 }
 
 function isSandboxInteractiveSession(

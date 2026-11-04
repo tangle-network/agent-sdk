@@ -9,14 +9,8 @@ import {
   AgentInteractiveSessionStopCommandSchema,
   agentInteractiveSessionControlClaimRequestDigest,
   agentInteractiveSessionStopRequestDigest,
-  agentInteractiveSessionRunRef,
-  buildAgentExecutionPreparationReceipt,
-  buildAgentWorkspaceLeaseRecord,
-  canonicalAgentProfileDigest,
   canonicalCandidateDigest,
   agentInteractiveSessionPromptRequestDigest,
-  profileMaterializationRequests,
-  type AgentExecutionPreparationReceipt,
   type AgentInteractiveSessionControlClaim,
   type AgentInteractiveSessionControlClaimRequest,
   type AgentInteractiveSessionControlClaimAcknowledgement,
@@ -27,7 +21,6 @@ import {
   type AgentInteractiveSessionRef,
   type AgentInteractiveSessionStatus,
   type AgentInteractiveTerminalSession,
-  type AgentProfile,
 } from "@tangle-network/agent-interface";
 import { runInteractiveSessionConformance } from "@tangle-network/agent-provider-testkit";
 import { Sandbox, SandboxInstance } from "@tangle-network/sandbox";
@@ -36,110 +29,11 @@ import {
   createTangleInteractiveAgentRegistry,
   sandboxBacksInteractiveAgent,
 } from "./tangle-interactive.js";
+import { coordinates, endedAt, incarnationId, preparationReceipt, profile, profileDigest, interactiveRun as run, sha, startInput, startedAt } from "./interactive-test-helpers.js";
 import type {
   SandboxInstanceLike,
   SandboxInteractiveSessionLike,
 } from "./tangle-types.js";
-
-const sha = (digit: string) => `sha256:${digit.repeat(64)}` as const;
-const startedAt = "2026-08-16T00:00:00.000Z";
-const endedAt = "2026-08-16T00:05:00.000Z";
-const profile: AgentProfile = {
-  name: "braid-test-agent",
-  harness: "pi",
-  model: {
-    provider: "tangle-router",
-    default: "zai/glm-5.2",
-    reasoningEffort: "high",
-  },
-  prompt: { instructions: ["Fix the failing test."] },
-};
-const profileDigest = canonicalAgentProfileDigest(profile);
-const startInput = {
-  profile,
-  requestedProfileDigest: profileDigest,
-  initialPrompt: "Find and fix the failing test.",
-  cwd: "/workspace",
-  cols: 120,
-  rows: 40,
-} as const;
-const coordinates = {
-  provider: "tangle-sandbox",
-  environmentId: "sandbox-1",
-  sessionId: "session-1",
-  executionId: "execution-1",
-};
-const run = agentInteractiveSessionRunRef(coordinates, startInput);
-const preparationReceipt = preparationReceiptFor(run.requestDigest, profile);
-const incarnationId = "interactive-incarnation-1";
-
-function preparationReceiptFor(
-  requestDigest: `sha256:${string}`,
-  authoredProfile: AgentProfile
-): AgentExecutionPreparationReceipt {
-  const sourceSnapshotPolicy = {
-    kind: "provider-declared" as const,
-    name: "tangle-sandbox/workspace",
-    version: 1,
-    digest: sha("7"),
-  };
-  const workspaceLease = buildAgentWorkspaceLeaseRecord({
-    kind: "agent-workspace-lease" as const,
-    schemaVersion: 1 as const,
-    phase: "workspace-sealed" as const,
-    leaseId: "sandbox-lease-1",
-    ownerId: "tangle-sandbox",
-    workspace: {
-      provider: "tangle-sandbox",
-      root: "/workspace",
-      identityDigest: sha("2"),
-    },
-    isolation: "per-run" as const,
-    sourceSnapshotDigest: sha("8"),
-    sourceSnapshotPolicy,
-    preparedWorkspaceDigest: sha("9"),
-    profileActivationDigest: sha("3"),
-    createdAtMs: 100,
-    updatedAtMs: 200,
-    expiresAtMs: 3_000,
-    cleanupAttempts: 0,
-  });
-  const axisResults = profileMaterializationRequests(authoredProfile).map(
-    ({ axis, path }) => ({
-      axis,
-      path,
-      disposition: "behavior" as const,
-      owner: "executor" as const,
-      mechanism: "sandbox-profile-materializer",
-    })
-  );
-  return buildAgentExecutionPreparationReceipt({
-    preparationId: "sandbox-preparation-1",
-    requestDigest,
-    authoredProfile,
-    effectiveProfile: authoredProfile,
-    backend: "tangle-router",
-    harness: "pi",
-    harnessVersion: "pi-1",
-    resolvedModel: {
-      requested: "zai/glm-5.2",
-      resolved: "zai/glm-5.2",
-      provider: "tangle-router",
-      reasoningEffort: {
-        requested: "high",
-        resolved: "high",
-        fidelity: "exact",
-      },
-    },
-    workspaceLease,
-    profileActivation: { digest: sha("3") },
-    axisResults,
-    executionPlanDigest: sha("4"),
-    materializer: { name: "agent-profile-materialize", version: "0.15.3" },
-    expiresAtMs: 2_000,
-    nowMs: 1_000,
-  });
-}
 
 function fakeInteractive() {
   const ref = AgentInteractiveSessionRefSchema.parse({

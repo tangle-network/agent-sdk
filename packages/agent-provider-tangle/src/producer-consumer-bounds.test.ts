@@ -163,6 +163,8 @@ describe("producer/consumer bound seam", () => {
       "MAX_FILE_CONCURRENCY",
       "MAX_UPLOAD_CONCURRENCY",
       "MAX_LIVE_CAPTURES",
+      // The attestation parser's ceiling on a JWT's evidence claim, checked inside the SDK.
+      "MAX_EVIDENCE_BYTES",
     ]);
     const unpaired = [...shipped].filter((name) => !declared.has(name) && !internal.has(name));
     expect(

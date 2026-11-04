@@ -32,4 +32,18 @@ describe("Tangle profile validation", () => {
     expect(result.ok).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toEqual(["PROFILE_FILE_MOUNT_INVALID", "CALLER"]);
   });
+
+  it("refuses a codex reader that asks for no tools before any box exists (tangle-engine-20261104a s3:s6)", async () => {
+    const reader = {
+      name: "reader-rc1-update-outcome-1",
+      harness: "codex",
+      prompt: { systemPrompt: "Read the outcome and report it." },
+      tools: { exec_command: false },
+      permissions: { bash: "deny", edit: "deny" },
+    } as never;
+    const result = await provider.validateProfile!(reader);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([expect.objectContaining({ level: "error", code: "PROFILE_UNSUPPORTED" })]);
+  });
 });
+
