@@ -8,7 +8,7 @@ export class TangleCredentialCapacityError extends Error {
   readonly code: CredentialCapacityCode;
   readonly reason: CredentialCapacityReason;
   readonly resetAt?: string;
-  get failure(): AgentTurnFailure { return { kind: "capacity", code: this.code, ...(this.resetAt ? { resetAt: this.resetAt } : {}) }; }
+  readonly failure: AgentTurnFailure;
   declare readonly status?: number;
 
   constructor(code: CredentialCapacityCode, reason: CredentialCapacityReason, resetAt?: string, httpStatus?: number) {
@@ -17,6 +17,7 @@ export class TangleCredentialCapacityError extends Error {
     this.code = code;
     this.reason = reason;
     if (resetAt !== undefined) this.resetAt = resetAt;
+    this.failure = {kind:"capacity",code,...(resetAt === undefined ? {} : {resetAt})};
     if (httpStatus !== undefined) {
       if (httpStatus !== 429 && httpStatus !== 503) throw new Error("Credential capacity requires a real capacity response");
       Object.defineProperty(this, "status", { value: httpStatus, enumerable: true });
@@ -46,7 +47,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
     ? value as Record<string, unknown> : undefined;
 }
 
-/** The fixed public route refusal shares the bounded capacity transport, never private diagnostics. */
 export function parseCredentialRefusal(value: unknown, httpStatus?: number): TangleCredentialRefusalError | undefined {
   if (httpStatus !== undefined && httpStatus !== 400) return undefined;
   const envelope = record(value);
@@ -57,7 +57,6 @@ export function parseCredentialRefusal(value: unknown, httpStatus?: number): Tan
   return new TangleCredentialRefusalError(httpStatus);
 }
 
-/** Only fixed public fields survive parsing; upstream messages and private diagnostics do not. */
 export function parseCredentialCapacity(value: unknown, httpStatus?: number): TangleCredentialCapacityError | undefined {
   if (httpStatus !== undefined && httpStatus !== 429 && httpStatus !== 503) return undefined;
   const envelope = record(value);
