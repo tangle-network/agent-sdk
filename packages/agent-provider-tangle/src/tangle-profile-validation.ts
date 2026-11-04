@@ -24,14 +24,13 @@ function profileFileMountIssues(profile: Parameters<ProfileValidator>[0]): Agent
   }
 }
 
-/** Sandbox's pre-box verdict where the SDK ships it; oversize only warns: this provider stages a large profile's files. */
+/** Sandbox's pre-box verdict where the SDK ships it: create sends the whole profile, so oversize refuses too (a live 1.5 MB create answered 413). */
 function profileVerdictIssues(profile: Parameters<ProfileValidator>[0]): AgentProfileValidationIssue[] {
   const verdict = (Sandbox as { validateProfileForCreate?: (p: unknown, h: string) => { ok: boolean; error?: { code?: string; message: string } } }).validateProfileForCreate;
   const harness = typeof profile === "string" ? undefined : (profile as { harness?: string }).harness;
   const result = verdict && harness ? verdict(profile, harness) : undefined;
   if (!result || result.ok || !result.error) return [];
-  const code = result.error.code ?? "PROFILE_UNSUPPORTED";
-  return [{ level: code === "PAYLOAD_TOO_LARGE" ? "warning" : "error", code, message: result.error.message }];
+  return [{ level: "error", code: result.error.code ?? "PROFILE_UNSUPPORTED", message: result.error.message }];
 }
 
 /** The provider's validateProfile: the Sandbox mount check and pre-box verdict, then any caller-supplied validator. */

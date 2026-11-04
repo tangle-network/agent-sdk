@@ -45,5 +45,11 @@ describe("Tangle profile validation", () => {
     expect(result.ok).toBe(false);
     expect(result.issues).toEqual([expect.objectContaining({ level: "error", code: "PROFILE_UNSUPPORTED" })]);
   });
-});
 
+  it("refuses a profile over the gateway bound before any box: create would answer 413", async () => {
+    const big = { name: "big", harness: "opencode", prompt: { systemPrompt: "x".repeat(1_500_000) } } as never;
+    const result = await provider.validateProfile!(big);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([expect.objectContaining({ level: "error", code: "PAYLOAD_TOO_LARGE" })]);
+  });
+});
