@@ -49,7 +49,7 @@ async function peer() {
     const get = sdk.get.bind(sdk);
     sdk.get = async (...args) => {
       const box = await get(...args);
-      if (box) box.capabilities = async () => ({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactiveAgent });
+      if (box) box.capabilities = (async () => ({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactiveAgent })) as never;
       return box;
     };
     return createTangleProvider({ client: sdk });
