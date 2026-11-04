@@ -855,9 +855,12 @@ export type TangleModelCredentials =
   | { cliAuth: CliAuthReference; proxySecrets?: ProxySecretBinding[] };
 
 /** Select one public stored-secret reference for a stable create or fresh-turn identity. */
-export type TangleModelCredentialResolver = (
+export type TangleModelCredentialResolver = ((
   input: Readonly<CreateAgentEnvironmentInput>,
-) => TangleModelCredentials | undefined | Promise<TangleModelCredentials | undefined>;
+) => TangleModelCredentials | undefined | Promise<TangleModelCredentials | undefined>) & {
+  /** Read-only owner route check; no seat selection, binding or secret access. */
+  validate?: NonNullable<AgentEnvironmentProvider["validateProfile"]>;
+};
 
 export interface TangleProviderOptions {
   client: SandboxClientLike;

@@ -25,7 +25,7 @@ export function parseModelCredentialResolverRequest(value: unknown): ModelCreden
   assertBoundedJson(profile, "Tangle credential request profile", []);
   if ("signal" in data || typeof data.idempotencyKey !== "string" ||
     data.idempotencyKey.length === 0 || data.idempotencyKey.length > 512) {
-    throw new Error("Tangle credential request requires a stable create identity without a serialized signal");
+    throw new Error("Tangle credential request requires a stable create identity (idempotencyKey) without a serialized signal");
   }
   if (!agentProfileSchema.safeParse(data.profile).success || typeof data.profile === "string") {
     throw new Error("Tangle credential request requires an inline AgentProfile");

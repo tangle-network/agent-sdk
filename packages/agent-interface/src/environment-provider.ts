@@ -12,3 +12,5 @@ export * from "./workspace-cwd.js";
 export * from "./workspace-snapshot.js";
 
 export * from "./proxy-secrets.js";
+
+export { AgentTurnFailureSchema, type AgentTurnFailure } from "./execution-failure.js";

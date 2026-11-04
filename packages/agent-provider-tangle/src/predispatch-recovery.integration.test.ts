@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox } from "@tangle-network/sandbox";
-import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import { AgentTurnResultSchema, type AgentTurnFailure, type AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
@@ -13,7 +13,7 @@ const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `s
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
 type RefFault = "missing" | "environment" | "digest" | "execution-race" | "read-failure";
-async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false, egress?: AgentEnvironmentEgressPolicy) {
+async function fixture(code: string, status = 503, lostReply = false, refFault?: RefFault, completed = false, egress?: AgentEnvironmentEgressPolicy, failure?: AgentTurnFailure) {
   const requests: string[] = [];
   const creates: Record<string, unknown>[] = [], dispatches: Record<string, unknown>[] = [];
   let admit = false, selected = false;
@@ -45,7 +45,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
     } else if (path.endsWith("/capabilities")) {
       response.end(JSON.stringify({ ...RETAINED_DEPLOYMENT_DOCUMENT, interactions: { responseDedupe: false }, nativeSessionCaptureVersion: 2, nativeSessionCaptureHarnesses: ["claude-code"] }));
     } else if (path.endsWith("/messages/turns")) {
-      if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: true, status: "success", executionId: run.executionId, durationMs: 1 } }));
+      if (run && completed) response.end(JSON.stringify({ turnId: run.turnId, sessionId: run.sessionId, completedAt: new Date(0).toISOString(), result: { success: !failure, status: failure ? "failed" : "success", executionId: run.executionId, durationMs: 1, ...(failure ? {error:"producer failure",errorCode:failure.code,resetAt:failure.resetAt,failure} : {}) } }));
       else { response.writeHead(204); response.end(); }
     } else if (run && path.endsWith(`/agents/sessions/${run.sessionId}`)) {
       statusReads++;
@@ -87,7 +87,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   baseUrl = `http://127.0.0.1:${address.port}`;
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
-  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture", ...(egress ? { egress } : {}) });
+  const environment = await provider.create({ profile, idempotencyKey: "runtime:fixture", deleteAfterStoppedMs: 900_000, retain:{paths:["artifacts"]}, ...(egress ? { egress } : {}) });
   return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
 
@@ -96,6 +96,7 @@ it("forwards a strict allowlist with a private-range entry verbatim in the Sandb
   const { creates } = await fixture("SERVER_ERROR", 503, false, undefined, false, { mode: "strict", allowDomains });
   expect(creates).toHaveLength(1);
   expect(creates[0]!.egressPolicy).toEqual({ mode: "strict", allowDomains });
+  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]}});
 });
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
@@ -145,4 +146,17 @@ it.each(["missing", "environment", "digest", "execution-race", "read-failure"] a
   await expect(recovered.dispatch!(turn)).rejects.toThrow(fault === "read-failure" ? /status unavailable/ : /exact.*control reference/);
   expect(dispatches).toHaveLength(1);
   expect(state().run).toBeDefined();
+});
+
+it.each([
+  {kind:"capacity",code:"provider_quota_exhausted",resetAt:"2026-11-10T18:00:00.000Z"},
+  {kind:"infra",code:"EXECUTION_INTERRUPTED",retryAfterMs:2500},
+] satisfies AgentTurnFailure[])("preserves producer failure through retained SDK readback: $code", async failure => {
+  const {environment,reconnect} = await fixture("SERVER_ERROR",503,true,undefined,true,undefined,failure);
+  const turn = {prompt:"research",turnId:"root:0",profile};
+  await expect(environment.dispatch!(turn)).rejects.toMatchObject({status:503});
+  const recovered = await reconnect().create({profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]}});
+  const ref = await recovered.dispatch!(turn);
+  const result = await recovered.session!(ref.id,{controlRef:ref.controlRef}).result();
+  expect(AgentTurnResultSchema.parse(result)).toMatchObject({success:false,failure});
 });

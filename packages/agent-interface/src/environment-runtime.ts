@@ -1,3 +1,4 @@
+import { AgentTurnFailureSchema, type AgentTurnFailure } from "./execution-failure.js";
 import { z } from "zod";
 import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
@@ -99,6 +100,7 @@ export interface AgentTurnResult {
   text: string;
   success: boolean;
   error?: string;
+  failure?: AgentTurnFailure;
   sessionId?: string;
   usage?: TokenUsage;
   metadata?: Record<string, unknown>;
@@ -121,6 +123,7 @@ export const AgentTurnResultSchema = z.strictObject({
   text: boundedEventContentStringSchema,
   success: z.boolean(),
   error: boundedStringSchema.optional(),
+  failure: AgentTurnFailureSchema.optional(),
   sessionId: boundedIdentifierSchema.optional(),
   usage: TokenUsageSchema.optional(),
   metadata: boundedJsonRecordSchema.optional(),
@@ -345,12 +348,8 @@ export interface AgentEnvironment {
   readonly id: string;
   readonly provider: string;
   readonly name?: string;
-  /**
-   * The verdict of the create call that returned this object. It is a
-   * per-call fact: a same-key replay returns a view of the same environment
-   * with `creation: "replayed"`. Absent on `get()` results and when the
-   * provider cannot prove which outcome happened.
-   */
+  /** Per-create verdict: a same-key replay returns this environment with creation:"replayed".
+   * Absent on get() or when the provider cannot prove the create's outcome. */
   readonly creation?: AgentEnvironmentCreation;
   /** Authoritative receipt returned only by a qualified context-transfer attachment. */
   readonly contextTransferReceipt?: ContextTransferReceipt;
@@ -358,10 +357,7 @@ export interface AgentEnvironment {
   readonly proxySecretReceipt?: ProxySecretReceipt;
   /** API-verified effective parent pins read from current custody. */
   readonly proxySecretParents?: ProxySecretParents;
-  /**
-   * Detached metadata returned by the provider.
-   * It can contain caller-authored annotations and is not authorization evidence.
-   */
+  /** Detached provider metadata can include caller annotations; it is not authorization evidence. */
   readonly metadata?: Readonly<Record<string, unknown>>;
   /**
    * The capability document for THIS environment, and the document a caller
@@ -878,6 +874,8 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   /** Agent backend inside the provider, for example "opencode" or "codex". */
   backend?: string;
   workspace?: WorkspaceRequest;
+  /** Paths the platform seals with the stopped generation before retirement. */
+  retain?: { paths: readonly string[] };
   resources?: ResourceRequest;
   env?: Record<string, string>;
   secrets?: (string | { name: string; host: string; header?: string } | { name: string; exposeInBox: true })[] | "all" | Record<string, string>;
