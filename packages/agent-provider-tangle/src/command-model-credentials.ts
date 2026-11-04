@@ -1,4 +1,4 @@
-import { commandSeatTransport } from "@tangle-network/sandbox/select-seat/command";
+import { commandSeatTransport, SeatOwnerCommandError } from "@tangle-network/sandbox/select-seat/command";
 import { TangleCredentialCommandError } from "./model-credential-capacity.js";
 import { credentialDeadline, ownerCredentialResolver, type CredentialValidityOptions } from "./model-credential-resolver.js";
 import type { ModelCredentialResolverRequest } from "./model-credential-request.js";
@@ -29,8 +29,8 @@ export function createCommandModelCredentialResolver(options: CommandModelCreden
       try { return await send(request, signal); }
       catch (error) {
         if (signal?.aborted) throw signal.reason ?? error;
-        const detail = error as { exitCode?: number | null; terminationSignal?: NodeJS.Signals | null };
-        throw new TangleCredentialCommandError(detail.exitCode ?? null, detail.terminationSignal ?? null);
+        throw new TangleCredentialCommandError(error instanceof SeatOwnerCommandError ? error.exitCode : null,
+          error instanceof SeatOwnerCommandError ? error.terminationSignal : null);
       }
     };
   };

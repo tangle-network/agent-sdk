@@ -1,6 +1,6 @@
 import type { SeatOwnerReply, SeatOwnerTransport } from "@tangle-network/sandbox";
 import type { CreateAgentEnvironmentInput } from "@tangle-network/agent-interface/environment-provider";
-import { parseCredentialCapacity, parseCredentialRefusal } from "./model-credential-capacity.js";
+import { parseCredentialCapacity, parseCredentialRefusal, TangleCredentialCommandError } from "./model-credential-capacity.js";
 import { profileCredentialSource } from "./model-credential-source.js";
 import { parseModelCredentialResolverRequest, type ModelCredentialResolverRequest } from "./model-credential-request.js";
 import { captureModelCredentials } from "./tangle-create-options.js";
@@ -37,7 +37,8 @@ export function ownerCredentialResolver(
   const rejectReply = (reply: SeatOwnerReply): never => {
     const status = kind === "broker" ? reply.status : undefined;
     throw parseCredentialCapacity(reply.body, status) ?? parseCredentialRefusal(reply.body, status) ??
-      new Error(`Tangle credential ${kind} refused resolution (status ${reply.status})`);
+      (kind === "command" ? new TangleCredentialCommandError(reply.status === 400 ? 78 : 75, null)
+        : new Error(`Tangle credential broker refused resolution (status ${reply.status})`));
   };
   const resolver: TangleModelCredentialResolver = (input) => {
     if (typeof input.profile === "string") throw new Error(`Tangle credential ${kind} requires an inline profile`);
@@ -46,9 +47,14 @@ export function ownerCredentialResolver(
     const body = request(input);
     return transport(body, input.signal).then(reply => {
       if (!reply.ok) rejectReply(reply);
-      const selected = captureModelCredentials(reply.body as Parameters<typeof captureModelCredentials>[0]);
-      if (selected === undefined) throw new Error(`Tangle credential ${kind} returned an invalid public reference`);
-      return selected;
+      try {
+        const selected = captureModelCredentials(reply.body as Parameters<typeof captureModelCredentials>[0]);
+        if (selected === undefined) throw new Error();
+        return selected;
+      } catch {
+        throw kind === "command" ? new TangleCredentialCommandError(0, null)
+          : new Error("Tangle credential broker returned an invalid public reference");
+      }
     });
   };
   if (validation) {
