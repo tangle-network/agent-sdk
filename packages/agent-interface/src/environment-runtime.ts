@@ -876,13 +876,8 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
    * Declare known required destinations; providers must refuse unsupported modes instead of widening
    * or weakening them. create capabilities name the accepted modes. */
   egress?: AgentEnvironmentEgressPolicy;
-  /**
-   * Platform account whose balance funds this environment's managed model usage.
-   *
-   * A trusted first-party service acting for an authenticated user sets it. The provider honors
-   * it only for a caller its platform has authorized to bill that account, and rejects the create
-   * otherwise. It never grants a caller permission to charge an arbitrary account.
-   */
+  /** Platform account funding managed model usage. Only a trusted service authorized to bill
+   * that authenticated user's account may set it; other creates are rejected. */
   billingOwner?: string;
   metadata?: Record<string, unknown>;
   name?: string;
@@ -893,16 +888,9 @@ export interface CreateAgentEnvironmentInput extends AgentEnvironmentLifetime {
   providerOptions?: Record<string, unknown>;
 }
 
-/**
- * Compute the canonical identity of a generic environment create request.
- *
- * The operation key names the request and the abort signal controls one
- * attempt, so neither belongs in the input identity. Every other field is
- * canonicalized with the shared RFC 8785 JSON representation.
- * A keyed create therefore accepts only canonical JSON material.
- * Unkeyed creates can retain opaque provider-native mapper values.
- * @internal
- */
+/** Canonical create identity excludes the operation key and per-attempt abort signal.
+ * Keyed creates require canonical JSON; unkeyed creates may retain opaque mapper values.
+ * @internal */
 export function agentEnvironmentCreateInputDigest(
   input: CreateAgentEnvironmentInput,
 ): Sha256Digest {

@@ -75,3 +75,9 @@ it("validates through a separate HTTP route without resolving credentials or pro
   expect(await resolver(input)).toEqual(reference);
   expect(http.requests.map(request => request.path)).toEqual(["/validate","/resolve"]);
 });
+
+it.each([75,78])("does not classify a refusal envelope under mismatched process exit %s",async exitCode => {
+  const body = exitCode === 75 ? refusal : {error:{code:"provider_quota_exhausted",reason:"exhausted"}};
+  const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify(${JSON.stringify(body)}));process.exitCode=${exitCode};});`);
+  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"credential_command_failed",exitCode});
+});

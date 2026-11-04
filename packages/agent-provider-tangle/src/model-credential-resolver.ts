@@ -36,7 +36,8 @@ export function ownerCredentialResolver(
   };
   const rejectReply = (reply: SeatOwnerReply): never => {
     const status = kind === "broker" ? reply.status : undefined;
-    const typed = parseCredentialCapacity(reply.body, status) ?? parseCredentialRefusal(reply.body, status);
+    const typed = ([429,503].includes(reply.status) ? parseCredentialCapacity(reply.body, status) : undefined) ??
+      (reply.status === 400 ? parseCredentialRefusal(reply.body, status) : undefined);
     if (typed) throw typed;
     if (kind === "command") throw new TangleCredentialCommandError(reply.status === 400 ? 78 : 75, null);
     const detail = reply.body && typeof reply.body === "object" && "error" in reply.body ? reply.body.error : undefined;
