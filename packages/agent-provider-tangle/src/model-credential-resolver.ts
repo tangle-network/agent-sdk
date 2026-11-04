@@ -73,7 +73,7 @@ export function ownerCredentialResolver(
       const reply = await validation(request({ profile, idempotencyKey: "profile-preflight" }));
       const body = reply.body as { supported?: unknown; error?: unknown } | null;
       if (reply.ok && body?.supported === true && Object.keys(body).length === 1) return { ok: true, issues: [] };
-      const refusal = body?.supported === false && Object.keys(body).every(k => k === "supported" || k === "error")
+      const refusal = reply.status === 400 && body?.supported === false && Object.keys(body).every(k => k === "supported" || k === "error")
         ? parseCredentialRefusal({error:body.error}, kind === "broker" ? reply.status : undefined) : undefined;
       if (!refusal) rejectReply(reply);
       return { ok: false, issues: [{level:"error",code:refusal.code,message:refusal.message}] };
