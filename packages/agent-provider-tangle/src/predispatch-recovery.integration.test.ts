@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
-import { Sandbox } from "@tangle-network/sandbox";
+import { Sandbox, type CreateSandboxOptions } from "@tangle-network/sandbox";
 import { AgentTurnResultSchema, type AgentTurnFailure, type AgentExactRunControlRef } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
@@ -9,7 +9,7 @@ import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 const profile = { name: "root", harness: "claude-code" as const };
-const createInput = {profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]}};
+const createInput = {profile,idempotencyKey:"runtime:fixture",deleteAfterStoppedMs:900_000,retain:{paths:["artifacts"]},billingOwner:"fixture-billing"};
 const proof = { hostId: "fixture-host", containerId: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, bundleRevision: "c".repeat(40), bundleChecksum: `sha256:${"d".repeat(64)}` };
 
 /** A real SDK transport: credential preflight refuses before a backend is selected. */
@@ -38,7 +38,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString());
-      if (creates.length) expect(input).toEqual(creates[0]);
+      if (creates.length && input.idempotencyKey === createInput.idempotencyKey) expect(input).toEqual(creates[0]);
       creates.push(input);
       metadata = input.metadata;
       response.end(JSON.stringify(info()));
@@ -95,7 +95,7 @@ async function fixture(code: string, status = 503, lostReply = false, refFault?:
   const reconnect = () => createTangleProvider({ client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), modelCredentials: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" }, requireNativeSessionCapture: true });
   const provider = reconnect();
   const environment = await provider.create({ ...createInput, ...(egress ? { egress } : {}) });
-  return { provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
+  return { client: new Sandbox({ baseUrl, apiKey: "fixture-key" }), provider, environment, requests, creates, dispatches, reconnect, allowDispatch: () => { admit = true; }, state: () => ({ run, statusReads }) };
 }
 
 it("forwards a strict allowlist with a private-range entry verbatim in the Sandbox create body", async () => {
@@ -103,7 +103,28 @@ it("forwards a strict allowlist with a private-range entry verbatim in the Sandb
   const { creates } = await fixture("SERVER_ERROR", 503, false, undefined, false, { mode: "strict", allowDomains });
   expect(creates).toHaveLength(1);
   expect(creates[0]!.egressPolicy).toEqual({ mode: "strict", allowDomains });
-  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]},idempotencyKey:"runtime:fixture",backend:{model:{apiKeyEnv:"FIXTURE_MODEL",baseUrl:"https://model.invalid"},profile}});
+  expect(creates[0]).toMatchObject({deleteAfterStoppedSeconds:900,retain:{paths:["artifacts"]},billingOwnerId:"fixture-billing",idempotencyKey:"runtime:fixture",backend:{model:{apiKeyEnv:"FIXTURE_MODEL",baseUrl:"https://model.invalid"},profile}});
+});
+
+it("refuses custom retention changes before HTTP create and admits an exact policy", async () => {
+  const { client, creates } = await fixture("SERVER_ERROR");
+  const policy = { deleteAfterStoppedSeconds: 900, retain: { paths: ["artifacts"] } };
+  for (const changed of [
+    { retain: policy.retain },
+    { ...policy, deleteAfterStoppedSeconds: 899 },
+    { deleteAfterStoppedSeconds: 900 },
+    { ...policy, retain: { paths: ["other"] } },
+  ]) {
+    const provider = createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "claude-code", profile }, ...changed }) });
+    await expect(provider.create({ ...createInput, idempotencyKey: undefined })).rejects.toThrow(/preserve.*(?:deleteAfterStoppedMs|retain)/);
+    expect(creates).toHaveLength(1);
+  }
+  const mapped: CreateSandboxOptions = { backend: { type: "claude-code", profile }, ...policy,
+    egressPolicy: { mode: "blocked" }, billingOwnerId: "custom-billing", name: "mapped-retention" };
+  const provider = createTangleProvider({ client, mapCreateInput: () => mapped });
+  await provider.create({ profile, deleteAfterStoppedMs: 900_000, retain: { paths: ["artifacts"] } });
+  expect(creates).toHaveLength(2);
+  expect(creates[1]).toMatchObject(mapped);
 });
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {
