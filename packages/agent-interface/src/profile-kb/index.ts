@@ -16,7 +16,7 @@ import type { HarnessType } from "../harness.js";
 import { deepFreeze } from "../deep-freeze.js";
 import { harnessSystemPromptIntents } from "../harness-capabilities.js";
 import { profileKbHarnesses } from "./harnesses.js";
-import { profileKbModels } from "./models.js";
+import { findProfileKbModel, profileKbModels, profileKbNamesModel } from "./models.js";
 import { profileKbDiscrepancies, profileKbLearnings } from "./records.js";
 import type {
   ProfileKbHarness,
@@ -36,6 +36,7 @@ export {
   profileKbHarnesses,
   profileKbLearnings,
   profileKbModels,
+  profileKbNamesModel,
 };
 
 /**
@@ -53,9 +54,6 @@ export const PROFILE_KB_SOURCES = ["harness", "model", "learning"] as const;
 const harnessSnapshot: readonly ProfileKbHarness[] = deepFreeze(
   structuredClone(profileKbHarnesses),
 );
-const modelSnapshot: readonly ProfileKbModel[] = deepFreeze(
-  structuredClone(profileKbModels),
-);
 const learningSnapshot: readonly ProfileKbLearning[] = deepFreeze(
   structuredClone(profileKbLearnings),
 );
@@ -63,45 +61,6 @@ const learningSnapshot: readonly ProfileKbLearning[] = deepFreeze(
 function harnessPosition(harness: string): number {
   return harnessSnapshot.findIndex((entry) => entry.id === harness);
 }
-
-const modelIndex: ReadonlyMap<string, number> = (() => {
-  const index = new Map<string, number>();
-  modelSnapshot.forEach((model, position) => {
-    for (const name of [model.id, ...model.aliases]) {
-      const key = name.toLowerCase();
-      if (index.has(key)) {
-        throw new Error(`profile-kb: model name ${name} is declared twice`);
-      }
-      index.set(key, position);
-    }
-  });
-  return index;
-})();
-
-/**
- * Try the name as given, then without each leading `provider/` or route
- * segment, after dropping a trailing `:suffix`.
- */
-function matchModelName<T>(
-  model: string | undefined,
-  lookup: (candidate: string) => T | undefined,
-): T | undefined {
-  if (!model) return undefined;
-  const colon = model.lastIndexOf(":");
-  let candidate = (colon > 0 ? model.slice(0, colon) : model)
-    .trim()
-    .toLowerCase();
-  for (;;) {
-    const found = lookup(candidate);
-    if (found !== undefined) return found;
-    const slash = candidate.indexOf("/");
-    if (slash < 0) return undefined;
-    candidate = candidate.slice(slash + 1);
-  }
-}
-
-/** Whether the knowledge base lists this exact spelling: a model id or one of its aliases, such as `zai-coding-plan/glm-5.3`. */
-export const profileKbNamesModel = (name: string): boolean => modelIndex.has(name.trim().toLowerCase());
 
 function learningsFor(
   harness: ProfileKbHarness | undefined,
@@ -138,7 +97,7 @@ function profileKbGuidance(
   const harness = selection.harness
     ? harnessSnapshot[harnessPosition(selection.harness)]
     : undefined;
-  const model = modelSnapshot[matchModelName(selection.model, (candidate) => modelIndex.get(candidate)) ?? -1];
+  const model = findProfileKbModel(selection.model);
   const blocks: AgentProfileGuidanceBlock[] = [];
   if (harness && harness.prompt.length > 0) {
     blocks.push({

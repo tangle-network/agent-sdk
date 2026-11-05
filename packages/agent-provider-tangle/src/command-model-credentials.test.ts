@@ -77,7 +77,7 @@ process.stdin.on("end", () => { writeFileSync(process.env.RECEIPT, data); proces
   });
 
   it("forwards identical immutable inputs across separate provider and command instances", async () => {
-    const fixture = await command(`import { appendFileSync } from "node:fs"; let data = ""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => { appendFileSync(process.env.RECEIPT, data); process.stdout.write(JSON.stringify(${JSON.stringify(publicReference)})); });`);
+    const fixture = await command(`import { appendFileSync } from "node:fs"; let data = ""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => { appendFileSync(process.env.RECEIPT, JSON.stringify(JSON.parse(data))+"\\n"); process.stdout.write(JSON.stringify(${JSON.stringify(publicReference)})); });`);
     const receipt = join(fixture.directory, "replays.jsonl");
     const deadline = "2026-10-01T06:00:00.000Z";
     const creates: unknown[] = [];

@@ -60,6 +60,8 @@ export interface ProfileKbModel {
   aliases: string[];
   /** Documented API default mapped onto the portable scale (ultracode means max); harness defaults can differ. */
   defaultEffort?: ReasoningEffort;
+  /** Documented native tokens for the portable thinking rungs; none stays off. */
+  nativeEfforts?: Readonly<Record<Exclude<ReasoningEffort, "none">, string>>;
   sources: ProfileKbSource[];
   prompt: string[];
   operator: string[];

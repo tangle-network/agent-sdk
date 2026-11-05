@@ -182,8 +182,8 @@ Changing credential sources or harnesses requires a separate environment.
 
 ### A command owned by the account system
 
-The Node subpath provides direct process transport for an existing account resolver.
-It executes arguments without a shell and discards subprocess stderr.
+The Node subpath uses the Sandbox command transport, with fresh `env` overrides on each invocation.
+Arguments run without a shell; subprocess stderr is discarded.
 
 ```ts
 import { createCommandModelCredentialResolver } from "@tangle-network/agent-provider-tangle/node";
@@ -210,6 +210,7 @@ Timeouts, cancellation, nonzero exit, and malformed or oversized output refuse c
 
 The Node subpath also provides `createHttpModelCredentialResolver`.
 Use a narrow resolve-only grant and the owner's maintained HTTPS endpoint.
+Pass a `bearer` callback when that grant rotates.
 HTTP is accepted only on loopback for local forwarding.
 The client never follows redirects or sends private account-owner credentials.
 
@@ -232,7 +233,7 @@ The response contains only the selected stored reference.
 Errors, redirects, invalid references, cancellation, and bounded response time refuse provisioning.
 The client makes one request; recovery may retry the same immutable dispatch identity through the account owner's durable binding.
 `parseModelCredentialResolverRequest` validates this public wire envelope without normalizing the authored profile.
-Requests are bounded at 64 MiB and responses at 64 KiB.
+Request and response bounds come from the Sandbox transport.
 
 The account owner retains authority over registration, namespace verification, holds, quota, selection, and trusted renewal.
 Updating a stored secret does not refresh credentials already injected into a live Sandbox.

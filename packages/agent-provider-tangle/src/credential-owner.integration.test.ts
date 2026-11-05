@@ -58,6 +58,22 @@ it("preserves a command's machine failure and discards its private diagnostics",
   expect(JSON.stringify(error)).not.toContain("private-fixture-value");
 });
 
+it("reads refreshed run authority on each call through one retained resolver",async () => {
+  const fixture = await processFixture("import { appendFileSync } from 'node:fs'; process.stdin.resume(); process.stdin.on('end',()=>{ appendFileSync(process.env.RECEIPT,process.env.RUN_AUTHORITY+'\\n'); process.stdout.write(JSON.stringify({cliAuth:{account:'owner-account',secretEnv:'OWNER_REFERENCE',format:'token'}})); });");
+  const receipt = join(fixture.directory,"authority.txt");
+  let authority = "first-fixture-generation";
+  const env = {RECEIPT:receipt,get RUN_AUTHORITY(){return authority;}};
+  const resolver = createCommandModelCredentialResolver({...fixture,env});
+  expect(await resolver(input)).toEqual(reference);
+  authority = "replacement-fixture-generation";
+  const selected = await resolver(input);
+  expect(selected).toEqual(reference);
+  expect((await readFile(receipt,"utf8")).trim().split("\n")).toEqual([
+    "first-fixture-generation","replacement-fixture-generation",
+  ]);
+  expect(JSON.stringify(selected)).not.toContain(authority);
+});
+
 it("retains the owner's capacity reset without inventing an HTTP status",async () => {
   const resetAt = "2026-11-10T18:00:00.000Z";
   const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({error:{code:'provider_quota_exhausted',reason:'exhausted',resetAt:${JSON.stringify(resetAt)}}}));process.exitCode=75;});`);
@@ -89,7 +105,27 @@ it("does not turn a capacity-exit validation reply into a permanent route refusa
   await expect(resolver.validate!(profile)).rejects.toMatchObject({code:"credential_command_failed",exitCode:75});
 });
 
-it.each(["Resume seat conflicts with the bound dispatch","already bound to a different profile","not enrolled for the exact stage profile"])("retains a legacy permanent owner refusal: %s",async reason => {
+it.each(["Resume seat conflicts with the bound dispatch","already bound to a different profile","not enrolled for the exact stage profile"])("does not classify private diagnostic text as a public refusal: %s",async reason => {
   const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stderr.write(${JSON.stringify(reason)});process.exitCode=1;});`);
-  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"model_credential_refused",failure:{kind:"caller",code:"model_credential_refused"},resolutionReason:reason});
+  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"credential_command_failed",exitCode:1,failure:{kind:"infra",code:"credential_command_failed"}});
+});
+
+it.each([null,"caller cancelled",{code:"CALLER_CANCELLED"}])("preserves the HTTP caller's arbitrary abort reason %j and closes its response",async reason => {
+  let open!: () => void, close!: () => void;
+  const opened = new Promise<void>(resolve => { open = resolve; });
+  const closed = new Promise<void>(resolve => { close = resolve; });
+  const server = createServer((request,response) => {
+    request.resume(); response.writeHead(200,{"content-type":"application/json"}); response.flushHeaders();
+    response.on("close",close); open();
+  });
+  await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
+  cleanups.push(() => new Promise<void>(resolve => { server.closeAllConnections();server.close(() => resolve()); }));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("No peer address");
+  const resolver = createHttpModelCredentialResolver({url:`http://127.0.0.1:${address.port}/resolve`,bearer:"fixture-narrow-grant".repeat(3)});
+  const controller = new AbortController();
+  const outcome = Promise.resolve(resolver({...input,signal:controller.signal})).then(value => ({value}),error => ({error}));
+  await opened; controller.abort(reason);
+  const settled = await outcome;
+  expect("error" in settled && settled.error === reason).toBe(true);
+  await closed;
 });
