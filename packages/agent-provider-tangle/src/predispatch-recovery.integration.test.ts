@@ -126,6 +126,8 @@ it("refuses custom retention changes before HTTP create and admits an exact poli
   await provider.create({ profile, deleteAfterStoppedMs: 900_000, retain: { paths: ["artifacts"] } });
   expect(creates).toHaveLength(2);
   expect(creates[1]).toMatchObject(mapped);
+  await provider.create({ profile });
+  expect(creates[2]).toMatchObject(mapped);
 });
 
 it("starts the refused turn after original-key create replay without requiring a previously selected backend", async () => {

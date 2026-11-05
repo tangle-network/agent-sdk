@@ -196,7 +196,6 @@ describe("Tangle create input: egress policy and billing owner", () => {
 
 
 
-
   it("refuses a domain list outside strict mode instead of sending an ignored one", async () => {
     const { provider, creates } = capturingProvider();
 
@@ -290,6 +289,5 @@ describe("Tangle create input: egress policy and billing owner", () => {
     ).rejects.toThrow("Tangle create input contains unsupported fields");
     expect(creates).toHaveLength(0);
   });
-
 
 });
