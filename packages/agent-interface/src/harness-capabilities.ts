@@ -4,6 +4,7 @@ import {
   type ReasoningEffort,
 } from "./agent-profile.js";
 import { resolveHarnessType, type HarnessType } from "./harness.js";
+import { findProfileKbModel } from "./profile-kb/models.js";
 
 /** Canonical harness/model, effort and prompt controls. Model-specific capability comes from the serving catalog. */
 
@@ -370,12 +371,7 @@ export function reasoningEffortsFor(
 // ── Native reasoning control (the exact token the harness process receives) ───
 
 /**
- * Canonical effort → the harness's OWN control token, or `null` when the harness applies no
- * native reasoning control for that request. This is the value a materialization receipt carries
- * as `reasoningEffort.applied`, so a caller can check that the effort it asked for reached the
- * process instead of trusting an echo of its own request.
- *
- * Read from the argv builders that actually spawn each CLI, not from help text:
+ * CLI controls recorded as reasoningEffort.applied in materialization receipts:
  *   - claude-code — `--effort <value>`; it cannot express `none` or `minimal`, so both clamp to
  *     `low`, and `ultracode` becomes its ceiling `max`.
  *   - codex — `-c model_reasoning_effort="<value>"`; it takes the canonical rungs directly and
@@ -384,16 +380,10 @@ export function reasoningEffortsFor(
  *     `max` (pi 1.4.0 `cli/args.js`, the prime fork's `cli/args.ts`, openclaw `agent --help`).
  *   - kimi-code — the control is the FLAG itself, `--thinking` or `--no-thinking`, because kimi's
  *     thinking switch is binary. `medium` is its default and passes no flag at all.
- *   - opencode — `--variant <value>`, forwarded verbatim as the provider's reasoning effort; `none`
- *     omits the flag, as the sandbox adapter does. No
- *     provider spells `ultracode`, so it becomes the model's ceiling: `max` for GLM (Z.ai answers
- *     400 code 1210 for anything outside `none…max`) and `xhigh` for every other model (GPT-6
- *     answers `max` with 400). Pass `model` so this rung resolves; without it `xhigh` is sent.
- *
- * A harness with no entry applies NO native control: either it derives thinking from the model
- * (gemini's `--thinking-budget`) or it plumbs no thinking flag at all (see
- * {@link harnessHonorsEffort}). Both answer `null`, which is what their receipts carry — so an
- * unknown harness is never asserted to have applied a control it cannot apply.
+ *   - opencode — `--variant <value>`; `none` omits the flag. The sourced model KB owns native
+ *     effort translations (Flash uses low/high/max). Otherwise `ultracode` becomes `max` for GLM
+ *     and `xhigh` for other/unknown models; other rungs pass through.
+ * Unlisted harnesses apply no native control (see {@link harnessHonorsEffort}).
  */
 const thinkingRung = (effort: ReasoningEffort) => {
   if (effort === "none") return "off";
@@ -419,19 +409,14 @@ const harnessNativeReasoningControl: Partial<
   },
   opencode: (effort, model) => {
     if (effort === "none") return null;
+    const native = findProfileKbModel(model)?.nativeEfforts?.[effort];
+    if (native !== undefined) return native;
     if (effort !== "ultracode") return effort;
     return /(?:^|\/)glm-/iu.test(model ?? "") ? "max" : "xhigh";
   },
 };
 
-/**
- * The native control token a harness applies for one canonical effort, or `null` when it applies
- * none. `effort: null` (nothing requested) is always `null`.
- *
- * One owner for both sides of the check: the adapter that builds the harness argv and the caller
- * that verifies the receipt read this function, so a CLI that renames a rung moves both at once
- * instead of turning into a refused run.
- */
+/** Native token shared by argv builders and receipt verification; null means no control. */
 export function nativeReasoningControl(
   harness: HarnessType,
   effort: ReasoningEffort | null,

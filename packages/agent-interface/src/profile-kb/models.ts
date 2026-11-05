@@ -1,3 +1,4 @@
+import { deepFreeze } from "../deep-freeze.js";
 import type { ProfileKbModel, ProfileKbSource } from "./types.js";
 import { claim, kbEntry } from "./entry.js";
 
@@ -396,6 +397,14 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     vendor: "DeepSeek",
     surfaces: ["api", "router", "opencode"],
     aliases: ["deepseek-flash", "deepseek/deepseek-v4.1-flash", "opencode/deepseek-v4.1-flash-free"],
+    nativeEfforts: {
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "high",
+      ultracode: "max",
+    },
     claims: [
       claim(
         "DeepSeek API ID deepseek-flash denotes V4.1-Flash: 1M context, 384K output, vision and tools; non-thinking mode is available. Router naming is a separate contract.",
@@ -474,3 +483,40 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     ],
   }),
 ];
+
+// Both guidance and native controls read this snapshot, never mutable exports.
+const modelSnapshot: readonly ProfileKbModel[] = deepFreeze(
+  structuredClone(profileKbModels),
+);
+const modelIndex: ReadonlyMap<string, ProfileKbModel> = (() => {
+  const index = new Map<string, ProfileKbModel>();
+  for (const model of modelSnapshot) {
+    for (const name of [model.id, ...model.aliases]) {
+      const key = name.toLowerCase();
+      if (index.has(key)) {
+        throw new Error(`profile-kb: model name ${name} is declared twice`);
+      }
+      index.set(key, model);
+    }
+  }
+  return index;
+})();
+
+/** Match an id/alias, then strip leading route segments and a trailing :suffix. */
+export function findProfileKbModel(model: string | undefined): ProfileKbModel | undefined {
+  if (!model) return undefined;
+  const colon = model.lastIndexOf(":");
+  let candidate = (colon > 0 ? model.slice(0, colon) : model)
+    .trim()
+    .toLowerCase();
+  for (;;) {
+    const found = modelIndex.get(candidate);
+    if (found !== undefined) return found;
+    const slash = candidate.indexOf("/");
+    if (slash < 0) return undefined;
+    candidate = candidate.slice(slash + 1);
+  }
+}
+
+/** Whether this exact spelling is a declared model id or alias. */
+export const profileKbNamesModel = (name: string): boolean => modelIndex.has(name.trim().toLowerCase());
