@@ -224,7 +224,7 @@ export function createTangleProvider(
       }
     }
     if (requestedReason !== undefined && canonicalCandidateDigest(mappedOptions.metadata?.reason ?? null) !== canonicalCandidateDigest(requestedReason)) throw new Error("Tangle mapped raw consent must preserve its named reason");
-    assertMappedCreateOptions(mappedOptions);
+    assertMappedCreateOptions(mappedOptions, input);
     const mappedRouting = mappedOptions.backend?.model?.routing;
     if (canonicalCandidateDigest(mappedRouting ?? null) !== canonicalCandidateDigest(requestedRouting ?? null)) {
       throw new Error("Tangle mapped create options must carry exactly the requested providerOptions.routing");

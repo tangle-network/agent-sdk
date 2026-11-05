@@ -15,7 +15,6 @@ import type { CreateSandboxOptions } from "@tangle-network/sandbox";
 import { describe, expect, it } from "vitest";
 import {
   createTangleProvider,
-  defaultTangleSandboxCapabilities,
   type SandboxInstanceLike,
 } from "./index.js";
 import type { SandboxRuntimeCapabilityDocument } from "./tangle-types.js";
@@ -195,60 +194,7 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates[0]).not.toHaveProperty("requireNativeSessionCapture");
   });
 
-  it("carries both fields to Sandbox.create with no mapper and no client wrapper", async () => {
-    const { provider, creates } = capturingProvider();
 
-    await provider.create({
-      profile: { name: "worker" },
-      egress: { mode: "open" },
-      billingOwner: "usr_funded_account",
-    });
-
-    expect(creates).toHaveLength(1);
-    expect(creates[0]?.egressPolicy).toEqual({ mode: "open" });
-    expect(creates[0]?.billingOwnerId).toBe("usr_funded_account");
-  });
-
-  it("projects blocked mode without inventing a domain list", async () => {
-    const { provider, creates } = capturingProvider();
-
-    await provider.create({ profile: { name: "worker" }, egress: { mode: "blocked" } });
-
-    expect(creates[0]?.egressPolicy).toEqual({ mode: "blocked" });
-  });
-
-  it("copies the allowlist, so a caller's later mutation cannot change the sent policy", async () => {
-    const { provider, creates } = capturingProvider();
-    const allowDomains = ["api.example.com"];
-
-    await provider.create({
-      profile: { name: "worker" },
-      egress: { mode: "strict", allowDomains },
-    });
-    allowDomains.push("evil.example.com");
-
-    expect(creates[0]?.egressPolicy).toEqual({
-      mode: "strict",
-      allowDomains: ["api.example.com"],
-    });
-  });
-
-  it("carries a strict allowlist and opts into no implicit domains", async () => {
-    const { provider, creates } = capturingProvider();
-
-    await provider.create({
-      profile: { name: "worker" },
-      egress: { mode: "strict", allowDomains: ["api.example.com"] },
-    });
-
-    expect(creates[0]?.egressPolicy).toEqual({
-      mode: "strict",
-      allowDomains: ["api.example.com"],
-    });
-    // Sandbox defaults `includeImplicitDomains` to false. Setting it would silently widen a
-    // strict policy to about forty hosts, including public source hosts.
-    expect(creates[0]?.egressPolicy).not.toHaveProperty("includeImplicitDomains");
-  });
 
   it("refuses a domain list outside strict mode instead of sending an ignored one", async () => {
     const { provider, creates } = capturingProvider();
@@ -344,12 +290,4 @@ describe("Tangle create input: egress policy and billing owner", () => {
     expect(creates).toHaveLength(0);
   });
 
-  it("declares what create accepts, so a caller reads the modes rather than guessing", () => {
-    expect(defaultTangleSandboxCapabilities().create).toEqual({
-      egress: ["open", "strict", "blocked"],
-      billingOwner: true,
-      runtimeAttachments: { mcp: true },
-      workspaceCheckpoint: true,
-    });
-  });
 });

@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.13
+
+### Patch Changes
+
+- 5355015: Refuse a custom create mapper that drops or changes requested stopped-generation retirement or retained paths before Sandbox creation.
+
 ## 5.0.12
 
 ### Patch Changes

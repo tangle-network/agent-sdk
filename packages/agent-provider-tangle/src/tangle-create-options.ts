@@ -32,7 +32,7 @@ import {
 import { profileCredentialSource } from "./model-credential-source.js";
 import { sandboxResourcesFromResourceRequest } from "./tangle-resources.js";
 import { tangleRuntimeAttachments } from "./tangle-runtime-attachments.js";
-import { deepFreeze } from "@tangle-network/agent-interface";
+import { canonicalCandidateDigest, deepFreeze } from "@tangle-network/agent-interface";
 import { assertProxySecretAliases, captureProxySecrets, mergeProxySecrets, proxySecretsFromInput, sandboxSecretBindingIdentity } from "./tangle-proxy-secrets.js";
 import type { TangleCreateSandboxOptions, TangleModelCredentials } from "./tangle-types.js";
 
@@ -226,10 +226,6 @@ export function sandboxOptionsFromCreateInput(
   const idleTimeoutSeconds = wholeSecondsOf(input.idleTimeoutMs, "idleTimeoutMs");
   const deleteAfterStoppedSeconds = wholeSecondsOf(input.deleteAfterStoppedMs, "deleteAfterStoppedMs");
   const retain = input.retain;
-  if (retain !== undefined && (!retain || typeof retain !== "object" ||
-    Object.keys(retain).some(key => key !== "paths") || !Array.isArray(retain.paths) ||
-    retain.paths.length > MAX_ARRAY_LENGTH || retain.paths.some(path => typeof path !== "string" || !path || path.length > 4096 || path.includes("\0"))))
-    throw new Error("Tangle retain must contain bounded paths");
   const resources = sandboxResourcesFromResourceRequest(input.resources);
   // Sandbox injects secrets by name from its own store. Accepting a name/value
   // record and dropping it would create an environment with no credentials and
@@ -405,17 +401,26 @@ export function assertCreateInputShape(
     for (const key of ["cpu", "memoryMb", "diskMb", "gpu", "providerOptions"]) resourceKeys.delete(key);
     if (resourceKeys.size > 0) throw new Error("Tangle resources contain unsupported fields");
   }
+  const retain = input.retain;
+  if (retain !== undefined && (!retain || typeof retain !== "object" ||
+    Object.keys(retain).some(key => key !== "paths") || !Array.isArray(retain.paths) ||
+    retain.paths.length > MAX_ARRAY_LENGTH || retain.paths.some(path => typeof path !== "string" || !path || path.length > 4096 || path.includes("\0"))))
+    throw new Error("Tangle retain must contain bounded paths");
   if (input.workspace === undefined) return undefined;
   const workspace = parsedWorkspace ?? WorkspaceRequestSchema.parse(input.workspace);
   workspaceCwdPathForBase(workspace.cwd, "repository", "Tangle");
   return workspace;
 }
 
-export function assertMappedCreateOptions(options: TangleCreateSandboxOptions): void {
+export function assertMappedCreateOptions(options: TangleCreateSandboxOptions, input?: CreateAgentEnvironmentInput): void {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Tangle mapped create options must be an object");
   }
   assertBoundedJson(options, "Tangle mapped create options", PROFILE_AT_BACKEND_PROFILE);
+  if (input?.deleteAfterStoppedMs !== undefined && options.deleteAfterStoppedSeconds !== wholeSecondsOf(input.deleteAfterStoppedMs, "deleteAfterStoppedMs"))
+    throw new Error("Tangle mapped create options must preserve requested deleteAfterStoppedMs");
+  if (input?.retain !== undefined && canonicalCandidateDigest(options.retain ?? null) !== canonicalCandidateDigest(input.retain))
+    throw new Error("Tangle mapped create options must preserve requested retain");
   if (options.backend?.model?.cliAuth !== undefined) {
     if (options.backend.type === undefined) {
       throw new Error("Tangle mapped native credentials require the selected backend type");
