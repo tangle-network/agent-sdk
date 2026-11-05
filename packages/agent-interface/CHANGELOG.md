@@ -1,5 +1,13 @@
 # @tangle-network/agent-interface
 
+## 5.10.20
+
+### Patch Changes
+
+- bf7c90a: Reuse Sandbox account-owner transports while preserving rotating authority, caller cancellation and typed owner failures.
+  
+  Normalize DeepSeek Flash native reasoning controls from the shared sourced model knowledge base while preserving authored effort and model identity.
+
 ## 5.10.19
 
 ### Patch Changes
