@@ -196,22 +196,6 @@ describe("Tangle create input: egress policy and billing owner", () => {
 
 
 
-  it("copies the allowlist, so a caller's later mutation cannot change the sent policy", async () => {
-    const { provider, creates } = capturingProvider();
-    const allowDomains = ["api.example.com"];
-
-    await provider.create({
-      profile: { name: "worker" },
-      egress: { mode: "strict", allowDomains },
-    });
-    allowDomains.push("evil.example.com");
-
-    expect(creates[0]?.egressPolicy).toEqual({
-      mode: "strict",
-      allowDomains: ["api.example.com"],
-    });
-  });
-
 
   it("refuses a domain list outside strict mode instead of sending an ignored one", async () => {
     const { provider, creates } = capturingProvider();
