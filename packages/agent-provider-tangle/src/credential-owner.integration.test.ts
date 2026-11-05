@@ -58,6 +58,22 @@ it("preserves a command's machine failure and discards its private diagnostics",
   expect(JSON.stringify(error)).not.toContain("private-fixture-value");
 });
 
+it("reads refreshed run authority on each call through one retained resolver",async () => {
+  const fixture = await processFixture("import { appendFileSync } from 'node:fs'; process.stdin.resume(); process.stdin.on('end',()=>{ appendFileSync(process.env.RECEIPT,process.env.RUN_AUTHORITY+'\\n'); process.stdout.write(JSON.stringify({cliAuth:{account:'owner-account',secretEnv:'OWNER_REFERENCE',format:'token'}})); });");
+  const receipt = join(fixture.directory,"authority.txt");
+  let authority = "first-fixture-generation";
+  const env = {RECEIPT:receipt,get RUN_AUTHORITY(){return authority;}};
+  const resolver = createCommandModelCredentialResolver({...fixture,env});
+  expect(await resolver(input)).toEqual(reference);
+  authority = "replacement-fixture-generation";
+  const selected = await resolver(input);
+  expect(selected).toEqual(reference);
+  expect((await readFile(receipt,"utf8")).trim().split("\n")).toEqual([
+    "first-fixture-generation","replacement-fixture-generation",
+  ]);
+  expect(JSON.stringify(selected)).not.toContain(authority);
+});
+
 it("retains the owner's capacity reset without inventing an HTTP status",async () => {
   const resetAt = "2026-11-10T18:00:00.000Z";
   const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({error:{code:'provider_quota_exhausted',reason:'exhausted',resetAt:${JSON.stringify(resetAt)}}}));process.exitCode=75;});`);
