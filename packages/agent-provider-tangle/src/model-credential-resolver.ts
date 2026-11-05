@@ -54,9 +54,11 @@ export function ownerCredentialResolver(
     input.signal?.throwIfAborted();
     const body = request(input);
     return transport(body, input.signal).catch(error => {
+      input.signal?.throwIfAborted();
       if (kind === "command") throw error;
-      throw new Error(input.signal?.aborted ? "Tangle credential broker request aborted" : "Tangle credential broker request failed or returned an invalid public reference");
+      throw new Error("Tangle credential broker request failed or returned an invalid public reference");
     }).then(reply => {
+      input.signal?.throwIfAborted();
       if (!reply.ok) rejectReply(reply);
       try {
         const selected = captureModelCredentials(reply.body as Parameters<typeof captureModelCredentials>[0]);
