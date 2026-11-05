@@ -109,17 +109,18 @@ it("forwards a strict allowlist with a private-range entry verbatim in the Sandb
 it("refuses custom retention changes before HTTP create and admits an exact policy", async () => {
   const { client, creates } = await fixture("SERVER_ERROR");
   const policy = { deleteAfterStoppedSeconds: 900, retain: { paths: ["artifacts"] } };
+  const backend = { type: "claude-code" as const, profile, model: { apiKeyEnv: "FIXTURE_MODEL", baseUrl: "https://model.invalid" } };
   for (const changed of [
     { retain: policy.retain },
     { ...policy, deleteAfterStoppedSeconds: 899 },
     { deleteAfterStoppedSeconds: 900 },
     { ...policy, retain: { paths: ["other"] } },
   ]) {
-    const provider = createTangleProvider({ client, mapCreateInput: () => ({ backend: { type: "claude-code", profile }, ...changed }) });
+    const provider = createTangleProvider({ client, mapCreateInput: () => ({ backend, ...changed }) });
     await expect(provider.create({ ...createInput, idempotencyKey: undefined })).rejects.toThrow(/preserve.*(?:deleteAfterStoppedMs|retain)/);
     expect(creates).toHaveLength(1);
   }
-  const mapped: CreateSandboxOptions = { backend: { type: "claude-code", profile }, ...policy,
+  const mapped: CreateSandboxOptions = { backend, ...policy,
     egressPolicy: { mode: "blocked" }, billingOwnerId: "custom-billing", name: "mapped-retention" };
   const provider = createTangleProvider({ client, mapCreateInput: () => mapped });
   await provider.create({ profile, deleteAfterStoppedMs: 900_000, retain: { paths: ["artifacts"] } });
