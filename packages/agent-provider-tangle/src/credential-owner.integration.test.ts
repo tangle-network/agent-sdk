@@ -111,10 +111,12 @@ it.each(["Resume seat conflicts with the bound dispatch","already bound to a dif
 });
 
 it.each([null,"caller cancelled",{code:"CALLER_CANCELLED"}])("preserves the HTTP caller's arbitrary abort reason %j and closes its response",async reason => {
-  const opened = Promise.withResolvers<void>(), closed = Promise.withResolvers<void>();
+  let open!: () => void, close!: () => void;
+  const opened = new Promise<void>(resolve => { open = resolve; });
+  const closed = new Promise<void>(resolve => { close = resolve; });
   const server = createServer((request,response) => {
     request.resume(); response.writeHead(200,{"content-type":"application/json"}); response.flushHeaders();
-    response.on("close",() => closed.resolve()); opened.resolve();
+    response.on("close",close); open();
   });
   await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
   cleanups.push(() => new Promise<void>(resolve => { server.closeAllConnections();server.close(() => resolve()); }));
@@ -122,8 +124,8 @@ it.each([null,"caller cancelled",{code:"CALLER_CANCELLED"}])("preserves the HTTP
   const resolver = createHttpModelCredentialResolver({url:`http://127.0.0.1:${address.port}/resolve`,bearer:"fixture-narrow-grant".repeat(3)});
   const controller = new AbortController();
   const outcome = Promise.resolve(resolver({...input,signal:controller.signal})).then(value => ({value}),error => ({error}));
-  await opened.promise; controller.abort(reason);
+  await opened; controller.abort(reason);
   const settled = await outcome;
   expect("error" in settled && settled.error === reason).toBe(true);
-  await closed.promise;
+  await closed;
 });
