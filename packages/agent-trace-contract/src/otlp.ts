@@ -71,6 +71,11 @@ export interface OtlpSpan {
   endTimeUnixNano: string;
   attributes: OtlpKeyValue[];
   events?: OtlpSpanEvent[];
+  /** Causal references to spans in this trace or another. */
+  links?: Array<Pick<OtlpSpan, "traceId" | "spanId" | "traceState" | "flags"> & {
+    attributes?: OtlpKeyValue[];
+    droppedAttributesCount?: number;
+  }>;
   status?: OtlpStatus;
 }
 

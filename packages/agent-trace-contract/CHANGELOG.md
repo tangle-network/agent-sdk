@@ -1,5 +1,11 @@
 # @tangle-network/agent-trace-contract
 
+## 2.2.2
+
+### Patch Changes
+
+- Admit optional causal links on the existing OTLP wire span, sharing its trace context and encoded attribute types. Packed TypeScript producers can export links without defining a second wire contract.
+
 ## 2.2.1
 
 ### Patch Changes

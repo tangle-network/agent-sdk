@@ -163,7 +163,7 @@ It imports nothing but the id rule, so a Worker or a published SDK can take it w
 - `decodeOtlpAttributes(list)` reads an attribute list into plain JSON, camelCase or snake_case, and reports repeated keys.
 - `decodeOtlpTraceExport(body)` flattens a whole export (one collector file line) into one row per span: ids, numeric kind and status (absent when the export has none), scope, nanosecond times as the export's own strings, and resource attributes merged under span attributes. A span without a `traceId` or `spanId` is skipped.
 - Decoding is lossless by default (`attributeValues: 'rich'`): an int64 above 2^53 stays its exact decimal string, and every key, `__proto__` included, is an own property. `attributeValues: 'scalar'` keeps the flat-scalar reading agent-eval's analyst index uses.
-- `OtlpSpan`, `OtlpKeyValue`, `OtlpTraceExport`, `OTLP_SPAN_KIND` and `OTLP_STATUS_CODE` are the wire types and codes.
+- `OtlpSpan`, `OtlpKeyValue`, `OtlpTraceExport`, `OTLP_SPAN_KIND` and `OTLP_STATUS_CODE` are the wire types and codes. Optional `OtlpSpan.links` use camelCase trace/span IDs and attributes encoded by `toOtlpAttributes`.
 
 ## Emit your first conforming trace
 
