@@ -105,7 +105,25 @@ it("does not turn a capacity-exit validation reply into a permanent route refusa
   await expect(resolver.validate!(profile)).rejects.toMatchObject({code:"credential_command_failed",exitCode:75});
 });
 
-it.each(["Resume seat conflicts with the bound dispatch","already bound to a different profile","not enrolled for the exact stage profile"])("retains a legacy permanent owner refusal: %s",async reason => {
+it.each(["Resume seat conflicts with the bound dispatch","already bound to a different profile","not enrolled for the exact stage profile"])("does not classify private diagnostic text as a public refusal: %s",async reason => {
   const fixture = await processFixture(`process.stdin.resume();process.stdin.on('end',()=>{process.stderr.write(${JSON.stringify(reason)});process.exitCode=1;});`);
-  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"model_credential_refused",failure:{kind:"caller",code:"model_credential_refused"},resolutionReason:reason});
+  await expect(Promise.resolve(createCommandModelCredentialResolver(fixture)(input))).rejects.toMatchObject({code:"credential_command_failed",exitCode:1,failure:{kind:"infra",code:"credential_command_failed"}});
+});
+
+it.each([null,"caller cancelled",{code:"CALLER_CANCELLED"}])("preserves the HTTP caller's arbitrary abort reason %j and closes its response",async reason => {
+  const opened = Promise.withResolvers<void>(), closed = Promise.withResolvers<void>();
+  const server = createServer((request,response) => {
+    request.resume(); response.writeHead(200,{"content-type":"application/json"}); response.flushHeaders();
+    response.on("close",() => closed.resolve()); opened.resolve();
+  });
+  await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
+  cleanups.push(() => new Promise<void>(resolve => { server.closeAllConnections();server.close(() => resolve()); }));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("No peer address");
+  const resolver = createHttpModelCredentialResolver({url:`http://127.0.0.1:${address.port}/resolve`,bearer:"fixture-narrow-grant".repeat(3)});
+  const controller = new AbortController();
+  const outcome = Promise.resolve(resolver({...input,signal:controller.signal})).then(value => ({value}),error => ({error}));
+  await opened.promise; controller.abort(reason);
+  const settled = await outcome;
+  expect("error" in settled && settled.error === reason).toBe(true);
+  await closed.promise;
 });
