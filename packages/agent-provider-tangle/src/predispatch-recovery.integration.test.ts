@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { Sandbox, type CreateSandboxOptions } from "@tangle-network/sandbox";
 import { AgentTurnResultSchema, type AgentTurnFailure, type AgentExactRunControlRef } from "@tangle-network/agent-interface";
-import type { AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
+import type { CreateAgentEnvironmentInput, AgentEnvironmentEgressPolicy } from "@tangle-network/agent-interface/environment-provider";
 import { createTangleProvider } from "./index.js";
 import { RETAINED_DEPLOYMENT_DOCUMENT } from "./retained-control-test-helpers.js";
 
@@ -118,6 +118,15 @@ it("refuses custom retention changes before HTTP create and admits an exact poli
   ]) {
     const provider = createTangleProvider({ client, mapCreateInput: () => ({ backend, ...changed }) });
     await expect(provider.create({ ...createInput, idempotencyKey: undefined })).rejects.toThrow(/preserve.*(?:deleteAfterStoppedMs|retain)/);
+    expect(creates).toHaveLength(1);
+  }
+  for (const mutate of [
+    (input: CreateAgentEnvironmentInput) => { delete input.deleteAfterStoppedMs; },
+    (input: CreateAgentEnvironmentInput) => { delete input.retain; },
+    (input: CreateAgentEnvironmentInput) => { (input.retain!.paths as string[]).push("other"); },
+  ]) for (const idempotencyKey of [undefined, "custom-retention"]) {
+    const provider = createTangleProvider({ client, mapCreateInput: input => { mutate(input); return { backend, ...policy }; } });
+    await expect(provider.create({ ...createInput, idempotencyKey })).rejects.toThrow(TypeError);
     expect(creates).toHaveLength(1);
   }
   const mapped: CreateSandboxOptions = { backend, ...policy,
