@@ -10,7 +10,6 @@ import {
 } from "@tangle-network/agent-interface/environment-provider";
 import {
   BOX_HARNESSES,
-  BOX_PINS,
   BRIDGE_PORT,
   BRIDGE_RUN_TAG,
   checkpointSnapshotName,
@@ -18,12 +17,13 @@ import {
   envFileLaunch,
   markedExec,
   untilAborted,
-  boxHarnessVersion,
+  boxInstallScript,
   type BridgeSandbox,
   type BridgeSandboxProviderOptions,
   type BridgeSandboxVendor,
 } from "@tangle-network/agent-provider-cli-bridge/sandbox";
 import type { CommandRecord, Sandbox } from "@boatdev/sdk";
+import type { HarnessType } from "@tangle-network/agent-interface";
 
 export interface BoatProviderOptions extends Omit<BridgeSandboxProviderOptions, "vendor"> {
   /** Defaults to the SDK's reading of `BOAT_API_KEY`. */
@@ -47,10 +47,7 @@ export function createBoatProvider(options: BoatProviderOptions): AgentEnvironme
 
 /** The `setupScript` that turns Boat's stock image into a box: the exact pins the box image installs. */
 export function boatBridgeSetupScript(): string {
-  const bridge = `https://github.com/${BOX_PINS.cliBridgeRepository}/archive/${BOX_PINS.cliBridgeCommit}.tar.gz`;
-  const packages = Object.values(BOX_HARNESSES).map((entry) => `${entry.npmPackage}@${boxHarnessVersion(entry.harness)}`);
-  if (packages.length === 0) throw new Error("the box harness table is empty; nothing to install");
-  return `npm install -g ${[...packages, bridge].join(" ")} && command -v cli-bridge`;
+  return boxInstallScript(Object.keys(BOX_HARNESSES) as HarnessType[]);
 }
 
 function boatVendor(config: Pick<BoatProviderOptions, "apiKey" | "baseUrl" | "from">): BridgeSandboxVendor {

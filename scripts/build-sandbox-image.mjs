@@ -3,7 +3,7 @@
 // Usage: node scripts/build-sandbox-image.mjs --target <e2b|daytona|docker> [--name <name>]
 //          [--harnesses claude-code,...] [--print [--skip-pin-check]]
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -55,6 +55,28 @@ async function verifyBridgePin({ cliBridgeRepository, cliBridgeCommit, agentProf
   log(`CLI Bridge pin verified: ${cliBridgeRepository}@${cliBridgeCommit} uses agent-profile-materialize ${pinned}`);
 }
 
+// The registry publishes the harness catalog on every agent-container change; a lockfile behind it would ship older
+// CLIs than the Tangle sandbox image. Its native-session-contracts entry imports only its own chunk, so it loads bare.
+async function verifyCatalogCurrent(box, harnesses) {
+  const name = "@tangle-network/cli-agent-registry";
+  const installed = JSON.parse(readFileSync(join(root, "packages/agent-provider-cli-bridge/node_modules", name, "package.json"), "utf8")).version;
+  const directory = mkdtempSync(join(tmpdir(), "tangle-box-catalog-"));
+  try {
+    const latest = await (await fetch(`https://registry.npmjs.org/${name}/latest`, { signal: AbortSignal.timeout(30_000) })).json();
+    writeFileSync(join(directory, "r.tgz"), Buffer.from(await (await fetch(latest.dist.tarball, { signal: AbortSignal.timeout(60_000) })).arrayBuffer()));
+    if (spawnSync("tar", ["-xzf", "r.tgz"], { cwd: directory, stdio: ["ignore", 2, 2] }).status !== 0) throw new Error("tar failed");
+    const { NATIVE_SESSION_CONTRACTS } = await import(pathToFileURL(join(directory, "package/dist/native-session-contracts.mjs")).href);
+    const moved = harnesses.filter((h) => NATIVE_SESSION_CONTRACTS[h]?.cliVersion !== box.boxHarnessVersion(h))
+      .map((h) => `${h} ${box.boxHarnessVersion(h)} -> ${NATIVE_SESSION_CONTRACTS[h]?.cliVersion ?? "(removed)"}`);
+    if (moved.length > 0) throw new Failure(`${name} ${installed} is behind ${latest.version} (${moved.join(", ")}); bump it in packages/agent-provider-cli-bridge`);
+    log(`harness catalog current: ${name} ${installed}, latest ${latest.version}`);
+  } catch (error) {
+    throw error instanceof Failure ? error : new Failure(`cannot read the latest ${name}: ${error.message}`);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 const targets = {
   docker: {
     output: "DOCKER_IMAGE",
@@ -68,11 +90,10 @@ const targets = {
         ["the container user is node", 'test "$(id -un)" = node'],
         [`HOME is ${box.BOX_HOME}`, `test "$HOME" = ${box.BOX_HOME}`],
         [`${box.BOX_WORKSPACE_DIR} is the writable working directory`, `test "$PWD" = ${box.BOX_WORKSPACE_DIR} && test -w .`],
-        ...harnesses.map((harness) => {
-          const { bin } = box.BOX_HARNESSES[harness];
-          const version = box.boxHarnessVersion(harness);
-          return [`${bin} --version is ${version} as node`, `test "$(${bin} --version | cut -d' ' -f1)" = "${version}"`];
-        }),
+        ...harnesses.map((harness) => [
+          `${box.boxVersionCommand(harness)} reports ${box.boxHarnessVersion(harness)} as node`,
+          box.boxVersionProbe(harness),
+        ]),
       ];
       for (const [label, test] of checks) {
         const { status } = spawnSync("docker", ["run", "--rm", name, "sh", "-c", test], { stdio: ["ignore", 2, 2] });
@@ -135,7 +156,7 @@ async function main() {
     },
   });
   if (values["skip-pin-check"] && !values.print) {
-    throw new Failure("--skip-pin-check only applies to --print; a build always verifies the CLI Bridge pin");
+    throw new Failure("--skip-pin-check only applies to --print; a build always verifies the CLI Bridge pin and the harness catalog");
   }
   const target = Object.hasOwn(targets, values.target) ? targets[values.target] : undefined;
   if (!values.print && target === undefined) {
@@ -161,7 +182,10 @@ async function main() {
   if (!values.print && target.credential && !apiKey) {
     throw new Failure(`no credential: ${target.credential}`, 3);
   }
-  if (!values["skip-pin-check"]) await verifyBridgePin(box.BOX_PINS);
+  if (!values["skip-pin-check"]) {
+    await verifyBridgePin(box.BOX_PINS);
+    await verifyCatalogCurrent(box, harnesses);
+  }
   if (values.print) {
     process.stdout.write(dockerfile);
     return;

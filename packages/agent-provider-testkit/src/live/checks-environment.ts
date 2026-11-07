@@ -3,7 +3,7 @@ import { NATIVE_SESSION_CONTRACTS } from "@tangle-network/cli-agent-registry/nat
 import { materializeProfile } from "@tangle-network/agent-profile-materialize";
 import type { AgentProfile } from "@tangle-network/agent-interface";
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
-import { errorSummary, listRun, until, versionBinary, type LiveContext } from "./context.js";
+import { errorSummary, listRun, until, versionCommand, type LiveContext } from "./context.js";
 import { checkExposure } from "./checks-capability.js";
 import { describeError, observeTurn, turnOutcome } from "./turns.js";
 
@@ -18,14 +18,15 @@ export async function checkBoot(ctx: LiveContext, environment: AgentEnvironment)
   const placement = typeof environment.placement === "function" ? await environment.placement() : undefined;
   const placed = placement !== undefined && placement.kind !== "local" && typeof placement.sandboxId === "string" && placement.sandboxId.length > 0;
   rec.observe("CRT-8", placed, placement === undefined ? "no placement()" : `placement kind ${placement.kind}, sandboxId ${placement.sandboxId ?? "absent"}`);
-  const binary = versionBinary(options);
+  const command = versionCommand(options);
   const pin = (NATIVE_SESSION_CONTRACTS as Record<string, { cliVersion?: string } | undefined>)[options.harness]?.cliVersion;
-  if (binary === undefined || pin === undefined || typeof environment.exec !== "function") {
+  if (command === undefined || pin === undefined || typeof environment.exec !== "function") {
     rec.unproven("MAT-2", "no version command or pin for this harness");
   } else {
-    const probe = await environment.exec(`${binary} --version`, { timeoutMs: 60_000 });
-    const printed = probe.stdout.trim().split(/\s+/)[0];
-    rec.observe("MAT-2", probe.exitCode === 0 && printed === pin, `${binary} --version printed "${probe.stdout.trim() || probe.stderr.trim()}" (exit ${probe.exitCode}); the registry pins ${pin}`);
+    const probe = await environment.exec(command, { timeoutMs: 60_000 });
+    // The version is one printed token, with or without a leading v: `2.1.318 (Claude Code)`, `codex-cli 0.164.0`.
+    const printed = `${probe.stdout}\n${probe.stderr}`.split(/\s+/).map((token) => token.replace(/^v/, ""));
+    rec.observe("MAT-2", probe.exitCode === 0 && printed.includes(pin), `${command} printed "${probe.stdout.trim() || probe.stderr.trim()}" (exit ${probe.exitCode}); the registry pins ${pin}`);
   }
 }
 

@@ -12,13 +12,12 @@ export type {
 export { checkpointSnapshotName } from "./checkpoint.js";
 export { validateBoxProfile } from "./refusal.js";
 export { envFileLaunch, markedExec, untilAborted } from "./shell.js";
+export type { BoxExclusion, BoxHarness } from "./box.js";
 export {
+  BOX_EXCLUSIONS,
   BOX_HARNESSES,
-  BOX_HOME,
-  BOX_PINS,
-  BOX_TEMPLATE_NAME,
-  BOX_WORKSPACE_DIR,
+  BOX_HOME, BOX_PINS, BOX_TEMPLATE_NAME, BOX_WORKSPACE_DIR,
   BRIDGE_PORT,
-  boxHarnessVersion,
+  boxHarnessVersion, boxInstallScript, boxVersionCommand, boxVersionProbe,
 } from "./box.js";
 export { renderBoxDockerfile } from "./image.js";

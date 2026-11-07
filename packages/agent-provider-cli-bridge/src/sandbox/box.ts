@@ -1,4 +1,4 @@
-import { NATIVE_SESSION_CONTRACTS } from "@tangle-network/cli-agent-registry/native-session-contracts";
+import { HARNESSES } from "@tangle-network/cli-agent-registry";
 import type { HarnessType } from "@tangle-network/agent-interface";
 
 /**
@@ -37,49 +37,106 @@ export interface BoxRouter {
   key: string;
 }
 
-/**
- * A harness the box carries and routes through the Tangle Router.
- *
- * A harness joins this table only after a live turn through the Router
- * completed in a box, so the declared set is the proven set.
- */
+/** A harness the box carries and routes through the Tangle Router. */
 export interface BoxHarness {
   readonly harness: HarnessType;
   /** The Bridge backend name in `BRIDGE_BACKENDS`. */
   readonly bridgeBackend: string;
-  /** The npm package that installs the CLI. */
+  /** The npm package that installs the CLI at the catalog's version. */
   readonly npmPackage: string;
-  /** The CLI binary; `<bin> --version` prints the pinned version first. */
-  readonly bin: string;
   /** Environment that points this harness at the Router, set on the Bridge process only. */
   routerEnv(router: BoxRouter): Record<string, string>;
 }
 
-export const BOX_HARNESSES: Readonly<Partial<Record<HarnessType, BoxHarness>>> = {
-  "claude-code": {
-    harness: "claude-code",
-    bridgeBackend: "claude",
-    npmPackage: "@anthropic-ai/claude-code",
-    bin: "claude",
-    // The Router authenticates a Bearer token. ANTHROPIC_API_KEY sends x-api-key, which it rejects.
-    routerEnv: (router) => ({
-      ANTHROPIC_BASE_URL: router.baseUrl,
-      ANTHROPIC_AUTH_TOKEN: router.key,
-    }),
-  },
+/** Why a catalog harness is not in the box, and who owns closing the gap. */
+export interface BoxExclusion {
+  readonly reason: string;
+  readonly owner: string;
+}
+
+// The catalog is the registry's HARNESSES, generated from agent-container's infra/nix/agent-clis.json: the pins
+// the Tangle sandbox image is built from. The box decides only how it installs and routes a catalog harness.
+type Catalog = typeof HARNESSES;
+type CatalogHarness = keyof Catalog & HarnessType;
+/** Harnesses whose catalog entry has no native CLI or no Router endpoint; the catalog says why. */
+type RouterIneligible = {
+  [H in CatalogHarness]: Catalog[H] extends { session: { kind: "native" }; config: { baseUrl: "caller-or-managed" } } ? never : H;
+}[CatalogHarness];
+
+const unproven: BoxExclusion = { reason: "no live Router turn in a box yet", owner: "tangle-network/agent-sdk" };
+const noBridgeBackend: BoxExclusion = { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} registers no backend for it`, owner: BOX_PINS.cliBridgeRepository };
+
+/**
+ * Every Router-eligible catalog harness, as a recipe or an exclusion; the type
+ * fails when the registry adds a harness the box does not place. A recipe joins
+ * only after a live turn through the Router completed in a box.
+ */
+const BOX_ROWS: { readonly [H in Exclude<CatalogHarness, RouterIneligible>]: Omit<BoxHarness, "harness"> | BoxExclusion } = {
+  // The Router authenticates a Bearer token. ANTHROPIC_API_KEY sends x-api-key, which it rejects.
+  "claude-code": { bridgeBackend: "claude", npmPackage: "@anthropic-ai/claude-code", routerEnv: (router) => ({ ANTHROPIC_BASE_URL: router.baseUrl, ANTHROPIC_AUTH_TOKEN: router.key }) },
+  codex: unproven,
+  opencode: unproven,
+  pi: { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} runs pi only in a bubblewrap fs-jail, which a Docker box cannot create (no user namespace; unconfined, --proc /proc is denied), and takes its endpoint only from a models.json file`, owner: BOX_PINS.cliBridgeRepository },
+  "kimi-code": { reason: "the catalog pins Python kimi-cli 1.49.0, which refuses the Bridge's Kimi Code argv (`--output-format stream-json` without `--print`, exit 2); it joins once the catalog ports to npm @moonshot-ai/kimi-code (ops-board#10682)", owner: "tangle-network/agent-container (cli-agent-registry)" },
+  prime: { reason: "not on npm, and the catalog publishes only its version: no tarball url, hash or pythonPackages to install prime-agent from", owner: "tangle-network/agent-container (cli-agent-registry)" },
+  hermes: { reason: "hermes 0.22.4 has no PyPI or official npm release, and the registry publishes no install source (git repository, ref, installer) for it; after that, the Bridge's AcpBackend forwards no request model to `hermes acp`", owner: "tangle-network/agent-container (cli-agent-registry)" },
+  openclaw: { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} runs \`openclaw acp\`, a client of an OpenClaw Gateway the box never starts (ECONNREFUSED 127.0.0.1:18789) that also rejects per-session MCP; openclaw reads its endpoint only from an openclaw.json the Bridge never writes`, owner: BOX_PINS.cliBridgeRepository },
+  "factory-droids": noBridgeBackend,
+  grok: noBridgeBackend,
+  nanoclaw: noBridgeBackend,
+  acp: noBridgeBackend,
 };
+
+const rows = Object.entries(BOX_ROWS) as Array<[HarnessType, Omit<BoxHarness, "harness"> | BoxExclusion]>;
+
+export const BOX_HARNESSES: Readonly<Partial<Record<HarnessType, BoxHarness>>> = Object.fromEntries(
+  rows.flatMap(([harness, row]) => ("npmPackage" in row ? [[harness, { harness, ...row }]] : [])),
+);
+
+/** Every catalog harness the box does not carry, with the reason and its owner. */
+export const BOX_EXCLUSIONS: Readonly<Partial<Record<HarnessType, BoxExclusion>>> = Object.fromEntries([
+  ...rows.filter(([, row]) => !("npmPackage" in row)),
+  ...Object.entries(HARNESSES as Record<string, { config: { baseUrl?: string } }>)
+    .filter(([harness]) => !(harness in BOX_ROWS))
+    .map(([harness, { config }]) => [harness, {
+      reason: config.baseUrl === "vendor-only" ? "the catalog declares it vendor-only: no Router endpoint" : "the catalog declares no native CLI for it",
+      owner: "tangle-network/agent-container (cli-agent-registry)",
+    }]),
+]);
 
 export function boxHarness(harness: string | undefined): BoxHarness | undefined {
   return harness === undefined ? undefined : (BOX_HARNESSES as Record<string, BoxHarness | undefined>)[harness];
 }
 
-/** The CLI version the harness registry pins; the box image installs exactly this. */
-export function boxHarnessVersion(harness: HarnessType): string {
-  const contract = (NATIVE_SESSION_CONTRACTS as Record<string, { cliVersion?: string } | undefined>)[harness];
-  if (contract?.cliVersion === undefined) {
-    throw new Error(`cli-agent-registry pins no CLI version for harness ${harness}`);
-  }
-  return contract.cliVersion;
+function catalogCli(harness: HarnessType): { versionCommand: string; cliVersion: string } {
+  const session = (HARNESSES as Record<string, { session: { kind: string; processProbe?: { versionCommand: string }; contract?: { cliVersion: string } } } | undefined>)[harness]?.session;
+  if (session?.kind !== "native") throw new Error(`the harness catalog declares no native CLI for ${harness}`);
+  return { versionCommand: session.processProbe!.versionCommand, cliVersion: session.contract!.cliVersion };
+}
+
+/** The CLI version the harness catalog pins; the box image installs exactly this. */
+export const boxHarnessVersion = (harness: HarnessType): string => catalogCli(harness).cliVersion;
+
+/** The catalog's command that prints the installed CLI version. */
+export const boxVersionCommand = (harness: HarnessType): string => catalogCli(harness).versionCommand;
+
+/** A shell test that the version command prints the pin as one token, with or without a leading `v` (`codex-cli 0.164.0`). */
+export function boxVersionProbe(harness: HarnessType): string {
+  const { versionCommand, cliVersion } = catalogCli(harness);
+  return `(${versionCommand}) 2>&1 | tr -s ' \\t' '\\n\\n' | sed 's/^v//' | grep -Fxq -- '${cliVersion}'`;
+}
+
+/** The one install step every box runs, the image build and Boat's setup script alike: the pinned CLIs and Bridge, then a version probe for each. */
+export function boxInstallScript(harnesses: readonly HarnessType[]): string {
+  if (harnesses.length === 0) throw new Error("no harness to install; the box needs at least one");
+  const entries = harnesses.map((name) => {
+    const entry = boxHarness(name);
+    if (entry === undefined) throw new Error(`harness ${name} is not in the box: ${(BOX_EXCLUSIONS as Record<string, BoxExclusion | undefined>)[name]?.reason ?? "not in the harness catalog"}`);
+    return entry;
+  });
+  const bridge = `https://github.com/${BOX_PINS.cliBridgeRepository}/archive/${BOX_PINS.cliBridgeCommit}.tar.gz`;
+  const packages = entries.map((entry) => `${entry.npmPackage}@${boxHarnessVersion(entry.harness)}`);
+  return [`npm install -g ${[...packages, bridge].join(" ")}`, ...entries.map((entry) => boxVersionProbe(entry.harness)), "command -v cli-bridge >/dev/null"].join(" \\\n    && ");
 }
 
 /** The command that starts the Bridge; its settings come from the process environment. */

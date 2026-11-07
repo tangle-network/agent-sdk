@@ -209,8 +209,12 @@ A vendor whose command call runs to completion, as Daytona's and computesdk's do
 - Turns run through the Bridge. `turn.timeoutMs` cancels the run and ends the stream with a failed `result` that names the timeout, an abort rejects with `AbortError`, and a second turn on a busy environment is refused with `conflict`.
 - Events carry `execution.started` with the declared model and a terminal `result` with the model the harness reported serving. The Bridge's dollar figure is the harness's catalog estimate, so events omit `usage.cost`.
 
-The box image is `renderBoxDockerfile()`: Node, CLI Bridge at the commit in `BOX_PINS`, and each harness CLI at the version `@tangle-network/cli-agent-registry` pins.
-A harness joins `BOX_HARNESSES` only after a live turn through the Router completed in a box; `claude-code` is the proven row.
+The box image is `renderBoxDockerfile()`: Node, CLI Bridge at the commit in `BOX_PINS`, and each harness CLI at the version the harness catalog pins.
+The catalog is `HARNESSES` from `@tangle-network/cli-agent-registry`, which agent-container generates from `infra/nix/agent-clis.json`, the pins the Tangle sandbox image is built from.
+The box decides only how it installs and routes each catalog harness: every Router-eligible catalog harness has a recipe in `BOX_HARNESSES` or a reason and owner in `BOX_EXCLUSIONS`, and the type fails when the registry adds a harness the box does not place.
+A harness joins `BOX_HARNESSES` only after a live turn through the Router completed in a box.
+`boxInstallScript()` is the one install step; the image build and Boat's setup script both run it.
+The image build refuses a lockfile whose registry pins differ from the latest published registry, so the box never ships older CLIs than the Tangle image.
 Build the image for a cloud with `pnpm build:sandbox-image --target e2b|daytona|docker` from the repository root.
 `@tangle-network/agent-provider-testkit` runs the live profile conformance suite against the result.
 
