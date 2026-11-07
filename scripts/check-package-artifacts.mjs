@@ -47,6 +47,43 @@ const ADMIT = `set -e; git init -q; git fetch -q --depth=1 https://github.com/ta
 git checkout -q FETCH_HEAD -- scripts; npm install -s --no-save --no-package-lock oxc-parser@0.155.0
 for tarball; do node scripts/check-version-bump.mjs --archive "$tarball"; done`;
 
+// Exercise the packed Bridge's Profile dependency as an application does, without a workspace alias.
+function assertInstalledBridgeProfile(consumerDirectory) {
+  console.log(run(node, ["--input-type=module", "--eval", `
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { materializeProfile, applyWorkspacePlan } from "@tangle-network/agent-profile-materialize";
+import { validateBoxProfile } from "@tangle-network/agent-provider-cli-bridge/sandbox";
+const fromConsumer = createRequire(join(process.cwd(), "package.json"));
+const fromBridge = createRequire(fromConsumer.resolve("@tangle-network/agent-provider-cli-bridge/sandbox"));
+const profileModule = fromConsumer.resolve("@tangle-network/agent-profile-materialize");
+assert.equal(realpathSync(fromBridge.resolve("@tangle-network/agent-profile-materialize")), realpathSync(profileModule), "Bridge must share the application's supported Profile copy");
+const installed = JSON.parse(readFileSync(join(dirname(dirname(profileModule)), "package.json"), "utf8"));
+if (process.env.AGENT_PROFILE_COMPAT_VERSION) assert.equal(installed.version, process.env.AGENT_PROFILE_COMPAT_VERSION);
+const profile = { name: "packed-profile-consumer", harness: "claude-code", resources: {
+  instructions: "Read the reference before answering.",
+  files: [{ path: "reference/proof.txt", resource: { kind: "inline", name: "proof", content: "profile bytes reached the workspace\\n" } }],
+} };
+const verdict = validateBoxProfile(profile, undefined, ["claude-code"]);
+assert.equal(verdict.ok, true, JSON.stringify(verdict));
+const plan = materializeProfile(profile, "claude-code");
+assert.deepEqual(plan.unsupported, []);
+const workspace = mkdtempSync(join(tmpdir(), "packed-bridge-profile-"));
+try {
+  const receipt = applyWorkspacePlan(plan, workspace);
+  assert.equal(readFileSync(join(workspace, "reference/proof.txt"), "utf8"), "profile bytes reached the workspace\\n");
+  assert.ok(receipt);
+} finally { rmSync(workspace, { recursive: true, force: true }); }
+const refused = validateBoxProfile({ ...profile, model: { metadata: { credentialSource: "subscription" } } }, undefined, ["claude-code"]);
+assert.equal(refused.ok, false);
+assert.ok(refused.issues.some((issue) => issue.code === "subscription_refused"));
+console.log(JSON.stringify({ proof: "packed-bridge-profile-consumer", version: installed.version, sharedCopy: true, materialized: true, unsupportedCredentialRefused: true }));
+`], { cwd: consumerDirectory }));
+}
+
 // Verify record-key semantics through the installed package, not workspace aliases.
 function assertInstalledProfileRecordKeys(consumerDirectory) {
   run(node, ["--input-type=module", "--eval", `
@@ -591,6 +628,10 @@ try {
         ];
       }),
     );
+    // A consumer selects its supported Profile directly; this is not a dependency override.
+    if (entry.manifest.name === "@tangle-network/agent-provider-cli-bridge") {
+      dependencies["@tangle-network/agent-profile-materialize"] = process.env.AGENT_PROFILE_COMPAT_VERSION ?? entry.manifest.dependencies["@tangle-network/agent-profile-materialize"];
+    }
     writeFileSync(
       join(consumerDirectory, "package.json"),
       `${JSON.stringify(
@@ -639,6 +680,7 @@ try {
       exportsCheck.specifiers,
       optionalPeers,
     );
+    if (manifest.name === "@tangle-network/agent-provider-cli-bridge") assertInstalledBridgeProfile(consumerDirectory);
     if (manifest.name === "@tangle-network/agent-interface") {
       assertInstalledProfileRecordKeys(consumerDirectory);
       assertInstalledSeatSpecs(consumerDirectory);
