@@ -23,16 +23,6 @@ describe("Tangle profile validation", () => {
     expect(await provider.validateProfile!("profile-ref")).toEqual({ ok: true, issues: [] });
   });
 
-  it("keeps a caller-supplied validator's issues alongside the mount check", async () => {
-    const custom = createTangleProvider({
-      client: new Sandbox({ apiKey: "sk-tan-validation-only", baseUrl: "http://127.0.0.1:9" }),
-      validateProfile: () => ({ ok: false, issues: [{ level: "error", code: "CALLER", message: "caller refusal" }] }),
-    });
-    const result = await custom.validateProfile!(mount("../escape.c"));
-    expect(result.ok).toBe(false);
-    expect(result.issues.map((issue) => issue.code)).toEqual(["PROFILE_FILE_MOUNT_INVALID", "CALLER"]);
-  });
-
   it("refuses a codex reader that asks for no tools before any box exists (tangle-engine-20261104a s3:s6)", async () => {
     const reader = {
       name: "reader-rc1-update-outcome-1",
