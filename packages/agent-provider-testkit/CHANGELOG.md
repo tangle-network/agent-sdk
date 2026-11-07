@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-testkit
 
+## 0.12.6
+
+### Patch Changes
+
+- b866947: Keep live secret inspection on the host instead of sending credential values in sandbox command arguments, and fail both secret and Router-key absence checks when inspection is incomplete.
+
 ## 0.12.5
 
 ### Patch Changes
