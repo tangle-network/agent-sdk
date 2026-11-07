@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.15
+
+### Patch Changes
+
+- 1fa54fb: Recover a checkpoint's acknowledged seal ID and creation time from its uniquely marked physical snapshot and succeeded operation. Preserve source, request and digest checks; ambiguous aliases remain unresolved, and alias-only cleanup remains refused. The separately required create idempotency acknowledgement is unchanged.
+- e7357db: `validateProfile` refuses an invalid inline file mount, or an oversize profile, before any box exists even when the profile names no harness. Create still applies those checks to such a profile, so validation no longer reports ok for a create that fails.
+
 ## 5.0.14
 
 ### Patch Changes
