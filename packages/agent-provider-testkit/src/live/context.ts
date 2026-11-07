@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { AgentProfile, HarnessType } from "@tangle-network/agent-interface";
+import { HARNESSES } from "@tangle-network/cli-agent-registry";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -39,9 +40,9 @@ export interface LiveProfileConformanceOptions {
     createInput?: Partial<CreateAgentEnvironmentInput>;
     turn?: Partial<AgentTurnInput>;
   };
-  /** The harness binary whose `--version` the pin must equal. Defaults by harness. */
+  /** The harness binary whose `--version` the pin must equal. Defaults to the harness catalog's version command. */
   versionBinary?: string;
-  /** `pgrep` arguments that match the harness process. Defaults by harness. */
+  /** `pgrep` arguments that match the harness process. Defaults to the harness catalog's. */
   harnessProcess?: readonly [string, string];
   /** Secret values that must appear nowhere (SEC-3). Add the Router key here when the adapter was given one. */
   secretValues?: readonly string[];
@@ -85,26 +86,19 @@ export const DEFAULT_REPOSITORY = {
   file: "SPEC.md",
 } as const;
 
-const VERSION_BINARY: Partial<Record<HarnessType, string>> = {
-  "claude-code": "claude",
-  codex: "codex",
-  opencode: "opencode",
-  pi: "pi",
-  "kimi-code": "kimi",
-};
+/** The catalog's process probe for a harness with a native CLI. */
+function catalogProbe(harness: HarnessType): { versionCommand: string; kill: readonly [string, string] } | undefined {
+  const session = (HARNESSES as Record<string, { session: { kind: string; processProbe?: { versionCommand: string; kill: readonly [string, string] } } } | undefined>)[harness]?.session;
+  return session?.kind === "native" ? session.processProbe : undefined;
+}
 
-const HARNESS_PROCESS: Partial<Record<HarnessType, readonly [string, string]>> = {
-  "claude-code": ["-x", "claude"],
-  codex: ["-x", "codex"],
-  opencode: ["-x", "opencode"],
-};
-
-export function versionBinary(options: LiveProfileConformanceOptions): string | undefined {
-  return options.versionBinary ?? VERSION_BINARY[options.harness];
+/** The command that prints the harness CLI version: `<versionBinary> --version`, or the catalog's own. */
+export function versionCommand(options: LiveProfileConformanceOptions): string | undefined {
+  return options.versionBinary === undefined ? catalogProbe(options.harness)?.versionCommand : `${options.versionBinary} --version`;
 }
 
 export function harnessProcess(options: LiveProfileConformanceOptions): readonly [string, string] | undefined {
-  return options.harnessProcess ?? HARNESS_PROCESS[options.harness];
+  return options.harnessProcess ?? catalogProbe(options.harness)?.kill;
 }
 
 /** Wait until `check` returns true, polling every `everyMs`, for at most `timeoutMs`. */

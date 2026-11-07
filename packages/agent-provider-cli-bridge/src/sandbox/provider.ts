@@ -31,6 +31,8 @@ import {
   bridgeProcessEnv,
   boxHarness,
   boxHarnessVersion,
+  boxVersionCommand,
+  boxVersionProbe,
 } from "./box.js";
 import { assertProfileValid, declarableHarnesses, plannerLowers, refuseUnsupportedCreateInput, resolveBoxHarness, validateBoxProfile } from "./refusal.js";
 import {
@@ -285,12 +287,11 @@ async function waitForBridge(
 }
 
 async function assertHarnessVersion(sandbox: BridgeSandbox, harness: HarnessType, signal: AbortSignal | undefined): Promise<void> {
-  const box = boxHarness(harness)!;
-  const pinned = boxHarnessVersion(harness);
-  const result = await sandbox.exec(`${box.bin} --version`, { ...signalOption(signal), timeoutMs: 30_000 });
-  if (result.exitCode !== 0 || result.stdout.trim().split(/\s+/)[0] !== pinned) {
-    throw new EnvironmentProviderError("materialization_failed", `${box.bin} --version reported "${result.stdout.trim() || result.stderr.trim()}" (exit ${result.exitCode}); the registry pins ${pinned}`);
-  }
+  const probe = await sandbox.exec(boxVersionProbe(harness), { ...signalOption(signal), timeoutMs: 30_000 });
+  if (probe.exitCode === 0) return;
+  const command = boxVersionCommand(harness);
+  const shown = await sandbox.exec(command, { ...signalOption(signal), timeoutMs: 30_000 });
+  throw new EnvironmentProviderError("materialization_failed", `${command} reported "${(shown.stdout.trim() || shown.stderr.trim()).slice(0, 200)}" (exit ${shown.exitCode}); the harness catalog pins ${boxHarnessVersion(harness)}`);
 }
 
 async function cloneRepository(sandbox: BridgeSandbox, input: CreateAgentEnvironmentInput, secrets: readonly string[]): Promise<void> {
