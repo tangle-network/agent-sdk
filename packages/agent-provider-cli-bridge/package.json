@@ -58,7 +58,7 @@
   "dependencies": {
     "@tangle-network/agent-core": "^1.0.2",
     "@tangle-network/agent-interface": "^5.10.19",
-    "@tangle-network/agent-profile-materialize": "1.1.4",
+    "@tangle-network/agent-profile-materialize": "^1.1.4",
     "@tangle-network/cli-agent-registry": "^0.15.30",
     "undici": "catalog:"
   },

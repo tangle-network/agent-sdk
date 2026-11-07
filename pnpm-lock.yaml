@@ -283,7 +283,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-profile-materialize':
-        specifier: 1.1.4
+        specifier: ^1.1.4
         version: 1.1.4(@tangle-network/agent-interface@packages+agent-interface)
       '@tangle-network/cli-agent-registry':
         specifier: ^0.15.30
