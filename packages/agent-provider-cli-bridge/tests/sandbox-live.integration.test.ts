@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { BOX_HARNESSES, createBridgeSandboxProvider } from "../src/sandbox/index.js";
 import { dockerBoxVendor } from "./docker-box-vendor.js";
 
-const model = process.env.LIVE_CONFORMANCE_MODEL ?? "glm-5.3";
+const model = process.env.LIVE_CONFORMANCE_MODEL ?? "zai/glm-5.3";
 // Every harness the box carries; LIVE_CONFORMANCE_HARNESSES narrows the run to a comma-separated subset.
 const selected = process.env.LIVE_CONFORMANCE_HARNESSES?.split(",").map((name) => name.trim()).filter(Boolean);
 const harnesses = (Object.keys(BOX_HARNESSES) as HarnessType[]).filter((harness) => selected === undefined || selected.includes(harness));
