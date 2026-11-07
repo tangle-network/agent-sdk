@@ -63,7 +63,6 @@ type RouterIneligible = {
   [H in CatalogHarness]: Catalog[H] extends { session: { kind: "native" }; config: { baseUrl: "caller-or-managed" } } ? never : H;
 }[CatalogHarness];
 
-const unproven: BoxExclusion = { reason: "no live Router turn in a box yet", owner: "tangle-network/agent-sdk" };
 const noBridgeBackend: BoxExclusion = { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} registers no backend for it`, owner: BOX_PINS.cliBridgeRepository };
 
 /**
@@ -74,8 +73,8 @@ const noBridgeBackend: BoxExclusion = { reason: `CLI Bridge ${BOX_PINS.cliBridge
 const BOX_ROWS: { readonly [H in Exclude<CatalogHarness, RouterIneligible>]: Omit<BoxHarness, "harness"> | BoxExclusion } = {
   // The Router authenticates a Bearer token. ANTHROPIC_API_KEY sends x-api-key, which it rejects.
   "claude-code": { bridgeBackend: "claude", npmPackage: "@anthropic-ai/claude-code", routerEnv: (router) => ({ ANTHROPIC_BASE_URL: router.baseUrl, ANTHROPIC_AUTH_TOKEN: router.key }) },
-  codex: unproven,
-  opencode: unproven,
+  codex: { reason: `codex 0.164.0 takes its endpoint only from config (openai_base_url or a model_providers table), which CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} never writes: with OPENAI_BASE_URL set the box turn went to api.openai.com (401 Incorrect API key), and the Bridge splits the Router slug zai/glm-5.3 into -c model_provider="zai" (Model provider \`zai\` not found)`, owner: BOX_PINS.cliBridgeRepository },
+  opencode: { reason: "the live suite's probe profile carries a PostToolUse command hook, which agent-profile-materialize 1.1.4 refuses for opencode (it needs JS/TS plugins), so no opencode turn can run; the Router route itself needs only an ambient OPENCODE_CONFIG_CONTENT provider block, which the Bridge merges under each profile's config", owner: "tangle-network/agent-sdk (agent-provider-testkit probeProfile)" },
   pi: { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} runs pi only in a bubblewrap fs-jail, which a Docker box cannot create (no user namespace; unconfined, --proc /proc is denied), and takes its endpoint only from a models.json file`, owner: BOX_PINS.cliBridgeRepository },
   "kimi-code": { reason: "the catalog pins Python kimi-cli 1.49.0, which refuses the Bridge's Kimi Code argv (`--output-format stream-json` without `--print`, exit 2); it joins once the catalog ports to npm @moonshot-ai/kimi-code (ops-board#10682)", owner: "tangle-network/agent-container (cli-agent-registry)" },
   prime: { reason: "not on npm, and the catalog publishes only its version: no tarball url, hash or pythonPackages to install prime-agent from", owner: "tangle-network/agent-container (cli-agent-registry)" },
