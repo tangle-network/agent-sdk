@@ -258,7 +258,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-provider-cli-bridge':
-        specifier: ^2.0.7
+        specifier: ^2.0.10
         version: link:../agent-provider-cli-bridge
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -314,7 +314,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-provider-cli-bridge':
-        specifier: ^2.0.7
+        specifier: ^2.0.10
         version: link:../agent-provider-cli-bridge
     devDependencies:
       '@computesdk/docker':
@@ -351,7 +351,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-provider-cli-bridge':
-        specifier: ^2.0.7
+        specifier: ^2.0.10
         version: link:../agent-provider-cli-bridge
     devDependencies:
       '@tangle-network/agent-provider-testkit':
@@ -373,7 +373,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-provider-cli-bridge':
-        specifier: ^2.0.5
+        specifier: ^2.0.10
         version: link:../agent-provider-cli-bridge
       e2b:
         specifier: ^2.62.0
