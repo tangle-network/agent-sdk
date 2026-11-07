@@ -10,7 +10,8 @@ export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: T
     const result = await supplied?.(profile);
     if (result && !result.ok) return result;
     const candidate = result?.normalizedProfile ?? profile;
-    const verdict = typeof candidate !== "string" && candidate.harness ? validateProfileForCreate(candidate, candidate.harness) : undefined;
+    // Without a harness the SDK still runs create's inline-mount and size checks; it skips only materialization.
+    const verdict = typeof candidate !== "string" ? validateProfileForCreate(candidate, candidate.harness!) : undefined;
     const issues = verdict && !verdict.ok ? [{level:"error" as const,code:verdict.error.code,message:verdict.error.message}] : [];
     if (issues.length) return {ok:false,issues};
     const route = await resolver?.validate?.(candidate);
