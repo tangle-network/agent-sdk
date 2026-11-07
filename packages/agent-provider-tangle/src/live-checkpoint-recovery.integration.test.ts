@@ -24,6 +24,7 @@ it.skipIf(!source)("recovers an existing sealed checkpoint through live Sandbox 
   expect(answer, JSON.stringify(answer)).toMatchObject({ status: "found" });
   if (answer.status !== "found") throw new Error("checkpoint recovery failed");
   const box = await client.get(source);
+  if (!box) throw new Error("checkpoint source is no longer present");
   const inventory = await box.listSnapshots();
   const witnesses = inventory.filter((snapshot) => snapshot.tags.includes(`seal.${answer.checkpoint.checkpointId}`));
   expect(witnesses).toHaveLength(1);
