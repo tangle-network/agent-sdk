@@ -182,17 +182,17 @@ export async function checkTurnRefusals(ctx: LiveContext, environment: AgentEnvi
 }
 
 /** SEC-1 and SEC-3: the canary set in create input reaches the harness and appears nowhere it must not. */
-export async function checkSecrets(ctx: LiveContext, environment: AgentEnvironment, observed: readonly Observed[]): Promise<void> {
-  const { rec, nonces, options } = ctx;
+export async function checkSecrets({ rec, nonces, options, refusals }: LiveContext, environment: AgentEnvironment, observed: readonly Observed[]): Promise<void> {
   const secrets = [nonces.canary, ...(options.secretValues ?? [])];
   const haystack = JSON.stringify({
     events: observed.flatMap((entry) => entry.turn.events.map((timed) => timed.event)),
-    errors: ctx.refusals.map((error) => (error instanceof Error ? error.message : String(error))),
+    errors: refusals.map((error) => (error instanceof Error ? error.message : String(error))),
     metadata: environment.metadata ?? {},
   });
+  for (const [id, values] of [["SEC-3", secrets], ["MOD-3", options.secretValues ?? []]] as const)
+    if (values.some((secret) => haystack.includes(secret))) rec.fail(id, "a secret value appears in events, errors or metadata");
   if (typeof environment.exec !== "function") return;
-  const files = await environment.exec("find . -type f -print0");
-  const argv = await environment.exec("ps -eo args");
+  const [files, argv] = await Promise.all([environment.exec("find . -type f -print0"), environment.exec("ps -eo args")]);
   let clean = files.exitCode === 0 && argv.exitCode === 0 && !secrets.some((secret) => haystack.includes(secret) || files.stdout.includes(secret) || argv.stdout.includes(secret));
   for (const path of files.stdout.split("\0").filter(Boolean)) {
     const content = await environment.read?.(path).catch(() => undefined);
