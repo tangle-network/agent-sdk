@@ -110,7 +110,7 @@ export async function checkAxes(ctx: LiveContext, environment: AgentEnvironment)
   const hook = await run("hook", tasks.hook);
   const hookOk = (await fileText(environment, hookLog(ctx.runTag)))?.includes(nonces.hook) === true;
   ctx.axes.hook = hookOk;
-  rec.observe("MAT-7", hookOk, hookOk ? "hooks: the hook marker was written by a tool call" : "hooks: no hook marker after a Bash tool call");
+  if (capabilities.profile.hooks === true) rec.observe("MAT-7", hookOk, hookOk ? "hooks: the hook marker was written by a tool call" : "hooks: no hook marker after a Bash tool call");
   rec.observe("CAP-4", hookOk === (capabilities.profile.hooks === true), `hooks flag is ${capabilities.profile.hooks === true} and the hook ${hookOk ? "fired" : "did not fire"}`);
   const perms = await run("deny", tasks.deny);
   const denied = await environment.exec?.(`test -e '${deniedFile(ctx.runTag)}'`);

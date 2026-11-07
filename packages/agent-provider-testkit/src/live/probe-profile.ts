@@ -47,7 +47,7 @@ export const deniedFile = (runTag: string): string => `/tmp/${runTag}-denied.txt
  * server, a hook, a denied tool, a subagent and mounted files, each with a
  * nonce only that axis can reveal.
  */
-export function probeProfile(harness: HarnessType, model: string, nonces: ProbeNonces, runTag: string): AgentProfile {
+export function probeProfile(harness: HarnessType, model: string, nonces: ProbeNonces, runTag: string, declaredHooks = true): AgentProfile {
   const intents = harnessSystemPromptIntents(harness);
   const note = `Conformance nonce ${nonces.system}. When asked for the conformance nonce, reply with exactly that token and nothing else.`;
   return {
@@ -65,7 +65,7 @@ export function probeProfile(harness: HarnessType, model: string, nonces: ProbeN
       Bash: { "*": "allow", "echo *": "deny", "tee *": "deny", "touch *": "deny", "printf *": "deny" },
     },
     mcp: { probe: { command: "node", args: [{ kind: "public", value: mcpServerPath(runTag) }] } },
-    hooks: { PostToolUse: [{ matcher: "Bash", command: `sh -c "printf '%s\\n' ${nonces.hook} >> ${hookLog(runTag)}"`, timeoutMs: 10_000 }] },
+    ...(declaredHooks ? { hooks: { PostToolUse: [{ matcher: "Bash", command: `sh -c "printf '%s\\n' ${nonces.hook} >> ${hookLog(runTag)}"`, timeoutMs: 10_000 }] } } : {}),
     subagents: {
       "probe-child": {
         description: "Answers with the child code. Use it when asked to delegate to probe-child.",
