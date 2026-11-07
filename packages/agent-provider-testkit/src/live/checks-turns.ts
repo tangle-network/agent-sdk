@@ -190,19 +190,19 @@ export async function checkSecrets(ctx: LiveContext, environment: AgentEnvironme
     errors: ctx.refusals.map((error) => (error instanceof Error ? error.message : String(error))),
     metadata: environment.metadata ?? {},
   });
-  const leaked = secrets.filter((secret) => haystack.includes(secret));
-  rec.observe("SEC-3", leaked.length === 0, leaked.length === 0 ? `${secrets.length} secret values are absent from events, errors and metadata` : `a secret value appears in events, errors or metadata`);
   if (typeof environment.exec !== "function") return;
-  for (const secret of secrets) {
-    const files = await environment.exec(`grep -rlF -e '${secret}' . 2>/dev/null | head -3`);
-    rec.observe("SEC-3", files.stdout.trim() === "", files.stdout.trim() === "" ? "no workspace file holds a secret value" : `a workspace file holds a secret value: ${files.stdout.trim().split("\n")[0]}`);
-    const argv = await environment.exec(`ps -eo args | grep -F -e '${secret}' | grep -v -e 'grep' -e 'ps -eo' | wc -l`);
-    rec.observe("SEC-3", argv.stdout.trim() === "0", argv.stdout.trim() === "0" ? "no process command line holds a secret value" : "a process command line holds a secret value");
+  const files = await environment.exec("find . -type f -print0");
+  const argv = await environment.exec("ps -eo args");
+  let clean = files.exitCode === 0 && argv.exitCode === 0 && !secrets.some((secret) => haystack.includes(secret) || files.stdout.includes(secret) || argv.stdout.includes(secret));
+  for (const path of files.stdout.split("\0").filter(Boolean)) {
+    const content = await environment.read?.(path).catch(() => undefined);
+    clean &&= content !== undefined && !secrets.some((secret) => content.includes(secret));
   }
+  rec.observe("SEC-3", clean, clean ? `${secrets.length} secret values are absent from events, errors, metadata, workspace files and process arguments` : "a secret was observed or workspace/process inspection was incomplete");
   const harnessSees = await environment.exec("printenv CONFORMANCE_CANARY | wc -c");
   rec.observe("SEC-1", Number(harnessSees.stdout.trim()) === nonces.canary.length + 1, "input.env canary reaches the default exec environment exactly");
   if (options.secretValues === undefined || options.secretValues.length === 0) rec.unproven("MOD-3", "no Router key value was supplied, so its absence from argv and files is not probed");
-  else rec.observe("MOD-3", leaked.length === 0, "the Router key is absent from events, errors, metadata, files and command lines");
+  else rec.observe("MOD-3", clean, clean ? "the Router key is absent from events, errors, metadata, files and command lines" : "Router key absence was not established");
 }
 
 /** A sidecar that serves no public revision root refuses profile preparation with this text (Discovery's first-turn 409, 2026-10-31). */
