@@ -215,19 +215,6 @@ async function checkpointOperationLookupByKey(
   );
 }
 
-async function checkpointOperationSucceeded(
-  box: SandboxInstanceLike,
-  marker: CheckpointMarker,
-  signal?: AbortSignal
-): Promise<boolean> {
-  const lookup = await checkpointOperationLookup(box, marker, signal);
-  return (
-    lookup?.outcome === "found" &&
-    lookup.kind === "checkpoint" &&
-    lookup.state === "succeeded"
-  );
-}
-
 /** Confirm a fork child through its marker or the legacy fork ledger. */
 async function forkOperationLookup(
   box: SandboxInstanceLike,
@@ -306,8 +293,8 @@ async function findCheckpointByKey(
         lookup.kind === "checkpoint" &&
         lookup.state === "succeeded"
       ) {
-        const authoritative = snapshotFromOperationResult(snapshot, lookup);
-        if (authoritative === undefined) return undefined;
+        const authoritative = snapshotFromOperationResult(snapshot, lookup, marker);
+        if (authoritative === undefined || snapshots.filter((candidate) => snapshotHasId(candidate, authoritative.snapshotId) !== false).length !== 1) return undefined;
         if (found !== undefined) return undefined;
         found = { state: "found", snapshot: authoritative, marker };
         continue;
@@ -345,11 +332,10 @@ async function findCheckpointByKey(
   if (snapshots.length === 0) return { state: "retired" };
   if (!validTaggedSnapshotOperationResult(lookup.result)) return undefined;
 
-  const live = snapshots.filter(
-    (snapshot) => snapshot.snapshotId === lookup.result?.snapshotId
-  );
+  const result = lookup.result;
+  const live = snapshots.filter((snapshot) => snapshotHasId(snapshot, result.snapshotId) !== false);
   if (live.length === 0) return { state: "retired" };
-  if (live.length !== 1) return undefined;
+  if (live.length !== 1 || snapshotHasId(live[0], lookup.result.snapshotId) !== true) return undefined;
   const marker = checkpointMarkerFromTags(lookup.result.tags, key);
   if (
     !marker ||
@@ -357,7 +343,7 @@ async function findCheckpointByKey(
   ) {
     return undefined;
   }
-  const authoritative = snapshotFromOperationResult(live[0], lookup);
+  const authoritative = snapshotFromOperationResult(live[0], lookup, marker);
   return authoritative === undefined
     ? undefined
     : { state: "found", snapshot: authoritative, marker };
@@ -399,26 +385,28 @@ export async function reconcileCheckpoint(
     : { state: "found", record };
 }
 
-/**
- * Prefer the durable operation result over inventory metadata.
- *
- * Snapshot inventory and the operation ledger can expose different creation
- * timestamps. The ledger result is the acknowledgement returned by the
- * idempotent operation, so recovery must rebuild the exact checkpoint ref
- * from it when the service provides that result.
- */
+/** Sandbox lists a sealed capture by its physical id, retaining the acknowledged id in its native seal tag. */
+function snapshotHasId(snapshot: SandboxSnapshotInfoLike, id: string): boolean | "unknown" {
+  if (snapshot.snapshotId === id) return true;
+  const seals = snapshot.tags.filter((tag) => tag.startsWith("seal."));
+  if (!seals.includes(`seal.${id}`)) return false;
+  return seals.length === 1 ? true : "unknown";
+}
+
+/** Recover the exact acknowledged id/time, with a marked live inventory witness. */
 function snapshotFromOperationResult(
   snapshot: SandboxSnapshotInfoLike,
-  lookup: SandboxWorkspaceOperationLookupLike
+  lookup: SandboxWorkspaceOperationLookupLike,
+  marker: CheckpointMarker
 ): SandboxSnapshotInfoLike | undefined {
   if (lookup.result === undefined) return snapshot;
-  if (
-    !validSnapshotOperationResult(lookup.result) ||
-    lookup.result.snapshotId !== snapshot.snapshotId
-  ) {
-    return undefined;
+  if (!validSnapshotOperationResult(lookup.result) || snapshotHasId(snapshot, lookup.result.snapshotId) !== true) return undefined;
+  if (lookup.result.snapshotId !== snapshot.snapshotId) {
+    if (!validTaggedSnapshotOperationResult(lookup.result)) return undefined;
+    const operationMarker = checkpointMarkerFromTags(lookup.result.tags, marker.idempotencyKey);
+    if (!operationMarker || canonicalCandidateDigest(operationMarker.request) !== canonicalCandidateDigest(marker.request)) return undefined;
   }
-  return { ...snapshot, createdAt: lookup.result.createdAt };
+  return { ...snapshot, snapshotId: lookup.result.snapshotId, createdAt: lookup.result.createdAt };
 }
 
 /**
@@ -440,9 +428,13 @@ export async function findManagedCheckpoint(
     if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
       return "unknown";
     }
-    const snapshot = snapshots.find((candidate) => candidate.snapshotId === id);
-    if (!snapshot) return false;
-    if (!validSnapshotInfo(snapshot, box.id)) return "unknown";
+    const candidates = snapshots.filter((candidate) => snapshotHasId(candidate, id) !== false);
+    if (candidates.length === 0) return false;
+    if (candidates.length !== 1) return "unknown";
+    const snapshot = candidates[0];
+    if (!validSnapshotInfo(snapshot, box.id) || snapshotHasId(snapshot, id) !== true) return "unknown";
+    // An expected reference can prove a fork source; an alias alone never authorizes cleanup.
+    if (snapshot.snapshotId !== id && expected === undefined) return "unknown";
     const marker = checkpointMarkerFromTags(
       snapshot.tags,
       expected?.idempotencyKey
@@ -462,9 +454,9 @@ export async function findManagedCheckpoint(
     ) {
       return false;
     }
-    return (await checkpointOperationSucceeded(box, marker, signal))
-      ? true
-      : "unknown";
+    const lookup = await checkpointOperationLookup(box, marker, signal);
+    if (lookup?.outcome !== "found" || lookup.kind !== "checkpoint" || lookup.state !== "succeeded") return "unknown";
+    return snapshot.snapshotId === id || snapshotFromOperationResult(snapshot, lookup, marker)?.snapshotId === id ? true : "unknown";
   } catch {
     signal?.throwIfAborted();
     return "unknown";
