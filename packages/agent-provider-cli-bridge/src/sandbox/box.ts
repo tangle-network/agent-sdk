@@ -1,4 +1,4 @@
-import { HARNESSES } from "@tangle-network/cli-agent-registry";
+import { HARNESSES, MANAGED_MODEL_LADDER } from "@tangle-network/cli-agent-registry";
 import type { HarnessType } from "@tangle-network/agent-interface";
 
 /**
@@ -74,8 +74,8 @@ const noBridgeBackend: BoxExclusion = { reason: `CLI Bridge ${BOX_PINS.cliBridge
 const BOX_ROWS: { readonly [H in Exclude<CatalogHarness, RouterIneligible>]: Omit<BoxHarness, "harness"> | BoxExclusion } = {
   // The Router authenticates a Bearer token. ANTHROPIC_API_KEY sends x-api-key, which it rejects.
   "claude-code": { bridgeBackend: "claude", npmPackage: "@anthropic-ai/claude-code", routerEnv: (router) => ({ ANTHROPIC_BASE_URL: router.baseUrl, ANTHROPIC_AUTH_TOKEN: router.key }) },
-  codex: unproven,
-  opencode: unproven,
+  codex: { bridgeBackend: "codex", npmPackage: "@openai/codex", routerEnv: (router) => ({ OPENAI_BASE_URL: `${router.baseUrl}/v1`, CODEX_API_KEY: router.key }) },
+  opencode: { bridgeBackend: "opencode", npmPackage: "opencode-ai", routerEnv: (router) => ({ TANGLE_API_KEY: router.key, OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: MANAGED_MODEL_LADDER.reduce<Record<string, { npm: string; options: object; models: Record<string, { id: string }> }>>((providers, { id }) => { const [provider, ...model] = id.split("/"); (providers[provider!] ??= { npm: "@ai-sdk/openai-compatible", options: { baseURL: `${router.baseUrl}/v1`, apiKey: "{env:TANGLE_API_KEY}" }, models: {} }).models[model.join("/")] = { id }; return providers; }, {}) }) }) }, // opencode resolves only configured models; the Bridge merges this config under each profile's, routing every Router-servable `<provider>/<model>` through the Router's chat wire.
   pi: unproven,
   "kimi-code": unproven,
   prime: unproven,
