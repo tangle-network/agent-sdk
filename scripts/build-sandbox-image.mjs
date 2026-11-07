@@ -59,7 +59,7 @@ async function verifyBridgePin({ cliBridgeRepository, cliBridgeCommit, agentProf
 // CLIs than the Tangle sandbox image. Its native-session-contracts entry imports only its own chunk, so it loads bare.
 async function verifyCatalogCurrent(box, harnesses) {
   const name = "@tangle-network/cli-agent-registry";
-  const installed = JSON.parse(readFileSync(createRequire(join(root, "packages/agent-provider-cli-bridge/package.json")).resolve(`${name}/package.json`), "utf8")).version;
+  const installed = JSON.parse(readFileSync(join(root, "packages/agent-provider-cli-bridge/node_modules", name, "package.json"), "utf8")).version;
   const directory = mkdtempSync(join(tmpdir(), "tangle-box-catalog-"));
   try {
     const latest = await (await fetch(`https://registry.npmjs.org/${name}/latest`, { signal: AbortSignal.timeout(30_000) })).json();
