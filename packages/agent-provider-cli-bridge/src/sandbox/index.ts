@@ -16,12 +16,8 @@ export type { BoxExclusion, BoxHarness } from "./box.js";
 export {
   BOX_EXCLUSIONS,
   BOX_HARNESSES,
-  BOX_HOME,
-  BOX_PINS,
-  BOX_TEMPLATE_NAME,
-  BOX_WORKSPACE_DIR,
+  BOX_HOME, BOX_PINS, BOX_TEMPLATE_NAME, BOX_WORKSPACE_DIR,
   BRIDGE_PORT,
-  boxHarnessVersion,
-  boxInstallScript,
+  boxHarnessVersion, boxInstallScript, boxVersionCommand, boxVersionProbe,
 } from "./box.js";
 export { renderBoxDockerfile } from "./image.js";
