@@ -80,7 +80,7 @@ const BOX_ROWS: { readonly [H in Exclude<CatalogHarness, RouterIneligible>]: Omi
   "kimi-code": unproven,
   prime: unproven,
   hermes: unproven,
-  openclaw: unproven,
+  openclaw: { bridgeBackend: "openclaw", npmPackage: "openclaw", routerEnv: (router) => ({ OPENCODE_MODEL_API_KEY: router.key }) },
   "factory-droids": noBridgeBackend,
   grok: noBridgeBackend,
   nanoclaw: noBridgeBackend,
