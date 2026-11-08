@@ -6,7 +6,7 @@ import type {
   TokenUsage,
 } from "@tangle-network/agent-interface";
 import {
-  AgentExactRunControlRefSchema,
+  AgentExactRunControlRefSchema, AgentRuntimeAttachmentsSchema,
   CONTRACT_MAX_ARRAY_LENGTH,
   RequestedInteractionsSchema,
   WorkspaceRequestSchema,
@@ -18,6 +18,11 @@ import type {
 } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
+
+function runtimeAttachmentsField(input: CreateAgentEnvironmentInput) {
+  if (input.runtimeAttachments === undefined) return {};
+  return { runtime_attachments: AgentRuntimeAttachmentsSchema.parse(input.runtimeAttachments) };
+}
 
 export function toChatCompletionsBody(
   options: CliBridgeProviderOptions,
@@ -55,6 +60,7 @@ export function toChatCompletionsBody(
     ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(execution ? { execution } : {}),
     ...(interactions === undefined ? {} : { interactions }),
+    ...runtimeAttachmentsField(environmentInput),
     ...(turn.contextTransfer === undefined
       ? {}
       : { context_transfer: turn.contextTransfer }),
@@ -112,6 +118,7 @@ export function toRetainedSessionBody(
     ...(environmentInput.providerOptions !== undefined
       ? { provider_options: environmentInput.providerOptions }
       : {}),
+    ...runtimeAttachmentsField(environmentInput),
   };
 }
 
