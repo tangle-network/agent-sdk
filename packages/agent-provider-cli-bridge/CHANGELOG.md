@@ -1,5 +1,12 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 2.0.11
+
+### Patch Changes
+
+- 70dfdd7: The box carries opencode and codex, each routed through the Router: opencode by an ambient `OPENCODE_CONFIG_CONTENT` provider table built from the registry's `MANAGED_MODEL_LADDER`, codex by `CODEX_TANGLE_ROUTER_URL`, which the pinned CLI Bridge turns into a `model_providers` entry pointing at the Router's responses wire. The live suite proves where a codex turn dials by pointing the provider at a key-rejecting listener inside the box and asserting the captured request. The live suite declares a probe axis only when the provider claims it, builds each row's provider for that row's harness alone so the document is exact, and the provider's capability document lowers the hooks, permissions and subagents axes to what a turn actually honors for the harness (opencode hooks; codex permissions, hooks and subagents), so those probes are skipped instead of failing create. Codex hooks and subagents lower on measured behavior: the pinned planner emits no codex hook artifact, and codex 0.164 exposes no in-turn delegation tool through the box's exec path.
+- 2e8c48f: Every turn now restores the box's process set: the provider snapshots `/proc` before a turn and sweeps any pid the turn left behind after the stream settles, so timing-out and aborted turns no longer leak detached tool children (opencode's Bash tool spawns them detached) into later checks. The testkit accepts opencode's per-turn config files as ephemeral when the axis that proves them (deny, subagent, system) ran green.
+
 ## 2.0.10
 
 ### Patch Changes
