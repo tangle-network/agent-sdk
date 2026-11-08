@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@tangle-network/agent-interface": "^5.10.14",
-    "@tangle-network/agent-provider-cli-bridge": "^2.0.10",
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.11",
     "e2b": "^2.62.0"
   },
   "devDependencies": {
