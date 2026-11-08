@@ -128,9 +128,6 @@ export function createCliBridgeProvider(
     if (input.workspace?.snapshot !== undefined) {
       throw new Error("CLI Bridge provider does not support portable workspace snapshots");
     }
-    if (input.runtimeAttachments !== undefined) {
-      throw new Error("CLI Bridge provider does not support runtime MCP attachments");
-    }
     if (typeof input.profile === "string") {
       throw new Error(
         `createCliBridgeProvider requires an inline AgentProfile; named profile "${input.profile}" is unsupported`,
@@ -314,11 +311,7 @@ function assertRequestedEnvironmentId(value: string): void {
   }
 }
 
-/**
- * Describe the bridge backend, not this adapter.
- *
- * The adapter forwards an AgentProfile but does not own harness prompt controls.
- */
+/** Bridge capabilities. The adapter forwards an AgentProfile and does not own harness prompt controls. */
 export function defaultCliBridgeCapabilities(
   harness?: HarnessType,
 ): AgentEnvironmentCapabilities {
@@ -393,9 +386,8 @@ export function defaultCliBridgeCapabilities(
     placement: true,
     usage: true,
     confidential: false,
-    // cli-bridge measures what a turn cost and where it forwarded that turn.
-    // It provisions no compute and holds no account, so the surfaces that
-    // describe provisioned resources and billing are never claimed.
+    create: { runtimeAttachments: { mcp: true } },
+    // cli-bridge measures turn cost and forwarding. It provisions no compute and holds no account.
     observation: {
       identity: true,
       lifecycle: true,

@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { runWorkspaceSnapshotConformance } from "@tangle-network/agent-provider-testkit";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
-import { toChatCompletionsBody } from "./wire.js";
+import { toChatCompletionsBody, toRetainedSessionBody } from "./wire.js";
 
 describe("createCliBridgeProvider", () => {
   it("refuses unsupported read-only discovery before any remote lookup", async () => {
@@ -40,21 +40,68 @@ describe("createCliBridgeProvider", () => {
     expect(effects).toBe(0);
   });
 
-  it("refuses runtime attachments before capability discovery or environment creation", async () => {
+  it("advertises and forwards runtime MCP attachments for a seated provider", async () => {
     let calls = 0;
     const provider = createCliBridgeProvider({
       baseUrl: "http://bridge.local",
-      defaultModel: "codex/fixture",
       fetch: async () => {
         calls += 1;
         throw new Error("Remote calls must not occur");
       },
     });
+    const runtimeAttachments = {
+      mcp: {
+        "agent-runtime-coordination": {
+          transport: "http" as const,
+          url: "https://coordination.example/mcp",
+          headers: {
+            Authorization: {
+              kind: "secret-ref" as const,
+              key: "AGENT_RUNTIME_COORDINATION_TOKEN",
+              format: "bearer" as const,
+            },
+          },
+        },
+      },
+    };
+    expect((await provider.capabilities()).create?.runtimeAttachments?.mcp).toBe(true);
     await expect(provider.create({
       profile: { harness: "codex" },
-      runtimeAttachments: { mcp: {} },
-    })).rejects.toThrow(/does not support runtime MCP attachments/);
+      runtimeAttachments,
+    })).resolves.toBeDefined();
     expect(calls).toBe(0);
+    const environmentInput = { profile: { harness: "codex" as const }, runtimeAttachments };
+    expect(toChatCompletionsBody(
+      { baseUrl: "http://bridge.local" },
+      environmentInput,
+      { prompt: "seat turn" },
+      {
+        runId: "run",
+        provider: "cli-bridge",
+        environmentId: "env",
+        sessionId: "session",
+        executionId: "execution",
+      },
+    ).runtime_attachments).toEqual(runtimeAttachments);
+    expect(toRetainedSessionBody(
+      { baseUrl: "http://bridge.local" },
+      environmentInput,
+      { harness: "codex" },
+      "session",
+      "codex",
+    ).runtime_attachments).toEqual(runtimeAttachments);
+    expect(toChatCompletionsBody(
+      { baseUrl: "http://bridge.local" },
+      { profile: { harness: "codex" } },
+      { prompt: "seat turn" },
+      {
+        runId: "run",
+        provider: "cli-bridge",
+        environmentId: "env",
+        sessionId: "session",
+        executionId: "execution",
+      },
+    )).not.toHaveProperty("runtime_attachments");
   });
 
   it("rejects a named profile before network use", async () => {
