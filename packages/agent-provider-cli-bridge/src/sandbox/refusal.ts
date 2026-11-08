@@ -151,12 +151,12 @@ export function declarableHarnesses(): HarnessType[] {
   return Object.keys(BOX_HARNESSES) as HarnessType[];
 }
 
-/** Whether the shared planner lowers this profile dimension for the harness. */
+/** Whether the box lowers this profile dimension for the harness: the planner accepts and emits it, and the runtime honors it. The planner silently drops codex hooks (no refusal, no artifact), and codex 0.164 exposes no in-turn delegation tool through the box's exec path, so hooks and subagents lower there. */
 export function plannerLowers(harness: HarnessType, dimension: "hooks" | "permissions" | "subagents"): boolean {
   const probe: AgentProfile = dimension === "hooks" ? { hooks: { PostToolUse: [{ command: "true" }] } } : dimension === "permissions" ? { permissions: { Write: "deny" } } : { subagents: { "probe-child": { description: "probe", prompt: "probe" } } };
   try {
     const plan = materializeProfile(probe, harness as Parameters<typeof materializeProfile>[1]);
-    return !plan.unsupported.some((entry) => entry.dimension === dimension);
+    return !plan.unsupported.some((entry) => entry.dimension === dimension) && (dimension !== "hooks" || JSON.stringify(plan.files).includes("PostToolUse")) && (dimension !== "subagents" || harness !== "codex");
   } catch {
     return false;
   }
