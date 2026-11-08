@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.21
+
+### Patch Changes
+
+- 3418f5f: pi runs google/gemini-3.8-flash again: Router #994 carries Gemini 3's thought_signature in the tool call id, so the measured exclusion is removed.
+
 ## 5.10.20
 
 ### Patch Changes
