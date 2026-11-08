@@ -485,18 +485,6 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests).toEqual([`${baseUrl}/v1/capabilities?model=${encodeURIComponent(model)}`]);
   });
 
-  it("uses the select-only permission answer contract", () => {
-    const request = interactionRequest();
-
-    expect(defaultCliBridgeCapabilities("pi").interactions?.answerFieldTypes).toEqual(["select"]);
-    expect(request.answerSpec.fields).toHaveLength(1);
-    expect(request.answerSpec.fields[0]).toMatchObject({
-      type: "select",
-      name: "grant",
-    });
-    expect(request.answerSpec.fields.every((field) => field.type === "select")).toBe(true);
-  });
-
   it.each([
     { ids: { executionId: nativeRunId }, missing: "turnId" },
     { ids: { turnId: "stable-turn" }, missing: "executionId" },

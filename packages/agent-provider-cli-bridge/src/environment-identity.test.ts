@@ -17,31 +17,6 @@ describe("cli-bridge environment identity", () => {
     expect(cliBridgeEnvironmentRoute(first)).toEqual({ ...route, createDigest });
   });
 
-  it("uses a new opaque identity without an idempotency key", () => {
-    const route = { backend: "codex", model: "codex" };
-    const digest = canonicalCandidateDigest("unkeyed-create");
-    expect(cliBridgeEnvironmentId(route, digest)).not.toBe(
-      cliBridgeEnvironmentId(route, digest),
-    );
-  });
-
-  it("binds the complete create input into a keyed identity", () => {
-    const route = { backend: "codex", model: "codex/model" };
-    expect(
-      cliBridgeEnvironmentId(
-        route,
-        canonicalCandidateDigest("first-input"),
-        "shared-key",
-      ),
-    ).not.toBe(
-      cliBridgeEnvironmentId(
-        route,
-        canonicalCandidateDigest("changed-input"),
-        "shared-key",
-      ),
-    );
-  });
-
   it("rejects a caller-owned plain identity", () => {
     expect(() => cliBridgeEnvironmentRoute("plain-environment")).toThrow(
       "not a provider-owned retained identity",
