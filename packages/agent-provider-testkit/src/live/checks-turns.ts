@@ -107,24 +107,24 @@ export async function checkAxes(ctx: LiveContext, environment: AgentEnvironment)
   rec.observe("MAT-7", mcpOk, mcpOk ? "mcp: the probe server recorded the call" : "mcp: the probe server recorded no call");
   if (capabilities.profile.mcp) rec.observe("CAP-4", mcpOk, `mcp flag ${mcpOk ? "proven" : "claimed but no MCP call was recorded"}`);
 
-  const hook = await run("hook", tasks.hook);
+  await run("hook", tasks.hook);
   const hookOk = (await fileText(environment, hookLog(ctx.runTag)))?.includes(nonces.hook) === true;
   ctx.axes.hook = hookOk;
   if (capabilities.profile.hooks === true) rec.observe("MAT-7", hookOk, hookOk ? "hooks: the hook marker was written by a tool call" : "hooks: no hook marker after a Bash tool call");
   rec.observe("CAP-4", hookOk === (capabilities.profile.hooks === true), `hooks flag is ${capabilities.profile.hooks === true} and the hook ${hookOk ? "fired" : "did not fire"}`);
-  const perms = await run("deny", tasks.deny);
-  const denied = await environment.exec?.(`test -e '${deniedFile(ctx.runTag)}'`);
-  const deniedOk = denied?.exitCode !== 0;
-  ctx.axes.deny = deniedOk;
-  rec.observe("MAT-7", deniedOk, deniedOk ? "permissions: the denied Write left no file" : "permissions: the denied Write created the file");
-  if (capabilities.profile.permissions) rec.observe("CAP-4", deniedOk, `permissions flag ${deniedOk ? "proven" : "claimed but the denied tool ran"}`);
-  void perms;
-  const sub = await run("subagent", tasks.subagent);
-  const subOk = finalText(sub.turn).includes(nonces.child);
-  ctx.axes.subagent = subOk;
-  rec.observe("MAT-7", subOk, subOk ? "subagents: the child's token came back through delegation" : "subagents: the child's token was not returned");
-  if (capabilities.profile.subagents) rec.observe("CAP-4", subOk, `subagents flag ${subOk ? "proven" : "claimed but delegation did not return the child's token"}`);
-  void hook;
+  if (capabilities.profile.permissions) {
+    await run("deny", tasks.deny);
+    const deniedOk = (await environment.exec?.(`test -e '${deniedFile(ctx.runTag)}'`))?.exitCode !== 0;
+    ctx.axes.deny = deniedOk;
+    rec.observe("MAT-7", deniedOk, deniedOk ? "permissions: the denied Write left no file" : "permissions: the denied Write created the file");
+  }
+  rec.observe("CAP-4", (ctx.axes.deny ?? false) === (capabilities.profile.permissions === true), `permissions flag is ${capabilities.profile.permissions === true}; the denial ${ctx.axes.deny === true ? "held" : "was not probed"}`);
+  if (capabilities.profile.subagents) {
+    const sub = await run("subagent", tasks.subagent);
+    ctx.axes.subagent = finalText(sub.turn).includes(nonces.child);
+    rec.observe("MAT-7", ctx.axes.subagent === true, ctx.axes.subagent === true ? "subagents: the child's token came back through delegation" : "subagents: the child's token was not returned");
+  }
+  rec.observe("CAP-4", (ctx.axes.subagent ?? false) === (capabilities.profile.subagents === true), `subagents flag is ${capabilities.profile.subagents === true}; delegation ${ctx.axes.subagent === true ? "returned the child's token" : "was not probed"}`);
 
   const spread = [mcpOk, hookOk].some(Boolean) ? observed.find((entry) => entry.name === "mcp")?.turn : undefined;
   if (spread !== undefined && spread.events.length >= 3) {
