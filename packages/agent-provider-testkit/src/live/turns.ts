@@ -40,8 +40,7 @@ export async function observeTurn(environment: AgentEnvironment, input: AgentTur
   };
 }
 
-export function terminalStatus(event: AgentEnvironmentEvent | undefined): string | undefined {
-  if (event === undefined) return undefined;
+export function terminalStatus(event: AgentEnvironmentEvent): string {
   const status = event.data.status;
   if (typeof status === "string") return status;
   return event.type.endsWith(".failed") || event.type === "error" ? "failed" : "completed";
@@ -81,10 +80,8 @@ export function eventSchemaIssues(observation: TurnObservation): string[] {
 /** The model the harness reported serving: `data.effectiveBackend.model`, from the first event or the terminal. */
 export function servedModel(observation: TurnObservation): string | undefined {
   for (const { event } of [...observation.events].reverse()) {
-    const backend = event.data.effectiveBackend;
-    if (backend !== null && typeof backend === "object" && typeof (backend as { model?: unknown }).model === "string") {
-      return (backend as { model: string }).model;
-    }
+    const model = (event.data.effectiveBackend as { model?: unknown } | null | undefined)?.model;
+    if (typeof model === "string") return model;
   }
   return undefined;
 }

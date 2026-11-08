@@ -77,21 +77,24 @@ export async function checkAxes(ctx: LiveContext, environment: AgentEnvironment)
   const { rec, nonces, capabilities } = ctx;
   const tasks = probeTasks(nonces, ctx.runTag);
   const observed: Observed[] = [];
-  const run = async (name: keyof typeof tasks | "shell", prompt: string): Promise<Observed> => {
-    const turn = await observeTurn(environment, turnInput(ctx, prompt, name));
-    const entry = { name, turn };
+  const run = async (name: keyof typeof tasks | "shell", prompt: string, proof?: (entry: Observed) => boolean | Promise<boolean>): Promise<Observed> => {
+    const entry: Observed = { name, turn: await observeTurn(environment, turnInput(ctx, prompt, name)) };
+    if (proof !== undefined && !(await proof(entry))) {
+      ctx.log(`turn ${name}: proving signal absent after the turn (model answered prose instead of the proving call); retrying once`);
+      return run(name, prompt);
+    }
     observed.push(entry);
-    ctx.log(`turn ${name}: ${turn.events.length} events in ${turn.durationMs} ms, ${turn.error === undefined ? `outcome ${turnOutcome(turn)}` : errorSummary(turn.error)}`);
+    ctx.log(`turn ${name}: ${entry.turn.events.length} events in ${entry.turn.durationMs} ms, ${entry.turn.error === undefined ? `outcome ${turnOutcome(entry.turn)}` : errorSummary(entry.turn.error)}`);
     checkTurnShape(ctx, entry);
     checkUsage(ctx, entry);
     return entry;
   };
 
-  const shell = await run("shell", `Do not run any commands. Reply with exactly the word PONG. ; touch /tmp/${nonces.shell} ;`);
+  const shell = await run("shell", `Do not run any commands. Reply with exactly the word PONG. ; touch /tmp/${nonces.shell} ;`, (entry) => finalText(entry.turn).includes("PONG"));
   const ran = await environment.exec?.(`test -e /tmp/${nonces.shell}`);
   rec.observe("TRN-2", ran?.exitCode !== 0 && finalText(shell.turn).includes("PONG"), ran?.exitCode === 0 ? "the prompt text was executed as a shell command" : `the prompt was data: the harness replied ${JSON.stringify(finalText(shell.turn).slice(0, 40))} and no shell side effect exists`);
 
-  const system = await run("system", tasks.system);
+  const system = await run("system", tasks.system, (entry) => finalText(entry.turn).includes(nonces.system));
   checkServedModel(ctx, system);
   const systemOk = finalText(system.turn).includes(nonces.system);
   ctx.axes.system = systemOk;
@@ -101,13 +104,13 @@ export async function checkAxes(ctx: LiveContext, environment: AgentEnvironment)
 
   const encoded = Buffer.from(mcpServerSource(mcpLog(ctx.runTag)), "utf8").toString("base64");
   await environment.exec?.(`printf %s '${encoded}' | base64 -d > '${mcpServerPath(ctx.runTag)}'`);
-  await run("mcp", tasks.mcp);
+  await run("mcp", tasks.mcp, () => fileText(environment, mcpLog(ctx.runTag)).then((text) => text?.includes(nonces.mcp) === true));
   const mcpOk = (await fileText(environment, mcpLog(ctx.runTag)))?.includes(nonces.mcp) === true;
   ctx.axes.mcp = mcpOk;
   rec.observe("MAT-7", mcpOk, mcpOk ? "mcp: the probe server recorded the call" : "mcp: the probe server recorded no call");
   if (capabilities.profile.mcp) rec.observe("CAP-4", mcpOk, `mcp flag ${mcpOk ? "proven" : "claimed but no MCP call was recorded"}`);
 
-  await run("hook", tasks.hook);
+  await run("hook", tasks.hook, () => fileText(environment, hookLog(ctx.runTag)).then((text) => text?.includes(nonces.hook) === true));
   const hookOk = (await fileText(environment, hookLog(ctx.runTag)))?.includes(nonces.hook) === true;
   ctx.axes.hook = hookOk;
   if (capabilities.profile.hooks === true) rec.observe("MAT-7", hookOk, hookOk ? "hooks: the hook marker was written by a tool call" : "hooks: no hook marker after a Bash tool call");
@@ -120,7 +123,7 @@ export async function checkAxes(ctx: LiveContext, environment: AgentEnvironment)
   }
   rec.observe("CAP-4", (ctx.axes.deny ?? false) === (capabilities.profile.permissions === true), `permissions flag is ${capabilities.profile.permissions === true}; the denial ${ctx.axes.deny === true ? "held" : "was not probed"}`);
   if (capabilities.profile.subagents) {
-    const sub = await run("subagent", tasks.subagent);
+    const sub = await run("subagent", tasks.subagent, (entry) => finalText(entry.turn).includes(nonces.child));
     ctx.axes.subagent = finalText(sub.turn).includes(nonces.child);
     rec.observe("MAT-7", ctx.axes.subagent === true, ctx.axes.subagent === true ? "subagents: the child's token came back through delegation" : "subagents: the child's token was not returned");
   }
