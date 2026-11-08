@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 2.0.12
+
+### Patch Changes
+
+- 6c2693f: Advertise create.runtimeAttachments.mcp and forward runtime MCP attachments on cli-bridge session create and chat completions.
+
 ## 2.0.11
 
 ### Patch Changes
