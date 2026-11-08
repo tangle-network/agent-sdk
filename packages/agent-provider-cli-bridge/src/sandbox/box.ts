@@ -23,7 +23,7 @@ export const BOX_NODE_IMAGE = "node:24.22.1-trixie-slim";
  */
 export const BOX_PINS = {
   cliBridgeRepository: "drewstone/cli-bridge",
-  cliBridgeCommit: "263f700dc5ca8b7b6e53b986d376102e0d82b42f",
+  cliBridgeCommit: "155d29b1676c5480b4bbf0b0d79332900a08f9c4",
   agentProfileMaterialize: "1.1.4",
 } as const;
 
@@ -73,7 +73,7 @@ const noBridgeBackend: BoxExclusion = { reason: `CLI Bridge ${BOX_PINS.cliBridge
 const BOX_ROWS: { readonly [H in Exclude<CatalogHarness, RouterIneligible>]: Omit<BoxHarness, "harness"> | BoxExclusion } = {
   // The Router authenticates a Bearer token. ANTHROPIC_API_KEY sends x-api-key, which it rejects.
   "claude-code": { bridgeBackend: "claude", npmPackage: "@anthropic-ai/claude-code", routerEnv: (router) => ({ ANTHROPIC_BASE_URL: router.baseUrl, ANTHROPIC_AUTH_TOKEN: router.key }) },
-  codex: { reason: `codex 0.164.0 takes its endpoint only from config (openai_base_url or a model_providers table), which CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} never writes: with OPENAI_BASE_URL set the box turn went to api.openai.com (401 Incorrect API key), and the Bridge splits the Router slug zai/glm-5.3 into -c model_provider="zai" (Model provider \`zai\` not found)`, owner: BOX_PINS.cliBridgeRepository },
+  codex: { bridgeBackend: "codex", npmPackage: "@openai/codex", routerEnv: (router) => ({ CODEX_TANGLE_ROUTER_URL: `${router.baseUrl}/v1`, TANGLE_API_KEY: router.key }) }, // the Bridge turns this env into a codex model_providers entry (wire_api "chat", env_key TANGLE_API_KEY) and passes the Router slug whole; the live suite pins the dial against a key-rejecting listener in the box
   opencode: { bridgeBackend: "opencode", npmPackage: "opencode-ai", routerEnv: (router) => ({ TANGLE_API_KEY: router.key, OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: MANAGED_MODEL_LADDER.reduce<Record<string, { npm: string; options: object; models: Record<string, { id: string }> }>>((providers, { id }) => { const [provider, ...model] = id.split("/"); (providers[provider!] ??= { npm: "@ai-sdk/openai-compatible", options: { baseURL: `${router.baseUrl}/v1`, apiKey: "{env:TANGLE_API_KEY}" }, models: {} }).models[model.join("/")] = { id }; return providers; }, {}) }) }) }, // opencode resolves only configured models; the Bridge merges this config under each profile's, routing every Router-servable `<provider>/<model>` through the Router's chat wire.
   pi: { reason: `CLI Bridge ${BOX_PINS.cliBridgeCommit.slice(0, 12)} runs pi only in a bubblewrap fs-jail, which a Docker box cannot create (no user namespace; unconfined, --proc /proc is denied), and takes its endpoint only from a models.json file`, owner: BOX_PINS.cliBridgeRepository },
   "kimi-code": { reason: "the catalog pins Python kimi-cli 1.49.0, which refuses the Bridge's Kimi Code argv (`--output-format stream-json` without `--print`, exit 2); it joins once the catalog ports to npm @moonshot-ai/kimi-code (ops-board#10682)", owner: "tangle-network/agent-container (cli-agent-registry)" },
