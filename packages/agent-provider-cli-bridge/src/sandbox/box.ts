@@ -23,7 +23,7 @@ export const BOX_NODE_IMAGE = "node:24.22.1-trixie-slim";
  */
 export const BOX_PINS = {
   cliBridgeRepository: "drewstone/cli-bridge",
-  cliBridgeCommit: "57bb8f917931d12b90ebdc77fbf7d9e74c0ed11a",
+  cliBridgeCommit: "de0ca4d7a426d77f8aa8bc373bf98e8fb92e9da2",
   agentProfileMaterialize: "1.1.4",
 } as const;
 
