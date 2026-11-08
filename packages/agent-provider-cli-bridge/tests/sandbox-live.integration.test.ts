@@ -26,6 +26,7 @@ describe("live profile conformance through a vendor sandbox running CLI Bridge",
       secretValues: [routerKey],
       createProvider: () =>
         createBridgeSandboxProvider({
+          harnesses: [harness],
           vendor: dockerBoxVendor(process.env.CLI_BRIDGE_BOX_IMAGE ?? ""),
           router: { key: routerKey },
         }),
