@@ -44,7 +44,7 @@ export async function runLiveProfileConformance(options: LiveProfileConformanceO
   const provider: AgentEnvironmentProvider = await options.createProvider();
   const nonces = freshNonces();
   const capabilities = await provider.capabilities();
-  const profile = probeProfile(options.harness, options.model, nonces, runTag, capabilities.profile.hooks === true);
+  const profile = probeProfile(options.harness, options.model, nonces, runTag, capabilities.profile);
   const environments: AgentEnvironment[] = [];
   const refusals: unknown[] = [];
   const stageErrors: string[] = [];

@@ -45,9 +45,9 @@ export const deniedFile = (runTag: string): string => `/tmp/${runTag}-denied.txt
 /**
  * The axis probe profile: one profile that exercises the system prompt, an MCP
  * server, a hook, a denied tool, a subagent and mounted files, each with a
- * nonce only that axis can reveal.
+ * nonce only that axis can reveal; an unclaimed axis is left undeclared.
  */
-export function probeProfile(harness: HarnessType, model: string, nonces: ProbeNonces, runTag: string, declaredHooks = true): AgentProfile {
+export function probeProfile(harness: HarnessType, model: string, nonces: ProbeNonces, runTag: string, declared: { hooks?: boolean; permissions?: boolean; subagents?: boolean } = {}): AgentProfile {
   const intents = harnessSystemPromptIntents(harness);
   const note = `Conformance nonce ${nonces.system}. When asked for the conformance nonce, reply with exactly that token and nothing else.`;
   return {
@@ -59,19 +59,19 @@ export function probeProfile(harness: HarnessType, model: string, nonces: ProbeN
     harness,
     model: { default: model },
     prompt: intents.append ? { appendSystemPrompt: note } : intents.replace ? { systemPrompt: note } : {},
-    permissions: {
+    ...(declared.permissions ?? true ? { permissions: {
       Write: "deny",
       Task: "allow",
       Bash: { "*": "allow", "echo *": "deny", "tee *": "deny", "touch *": "deny", "printf *": "deny" },
-    },
+    } } : {}),
     mcp: { probe: { command: "node", args: [{ kind: "public", value: mcpServerPath(runTag) }] } },
-    ...(declaredHooks ? { hooks: { PostToolUse: [{ matcher: "Bash", command: `sh -c "printf '%s\\n' ${nonces.hook} >> ${hookLog(runTag)}"`, timeoutMs: 10_000 }] } } : {}),
-    subagents: {
+    ...(declared.hooks ?? true ? { hooks: { PostToolUse: [{ matcher: "Bash", command: `sh -c "printf '%s\\n' ${nonces.hook} >> ${hookLog(runTag)}"`, timeoutMs: 10_000 }] } } : {}),
+    ...(declared.subagents ?? true ? { subagents: {
       "probe-child": {
         description: "Answers with the child code. Use it when asked to delegate to probe-child.",
         prompt: `Reply with exactly this token and nothing else: ${nonces.child}`,
       },
-    },
+    } } : {}),
     resources: {
       files: [
         { path: "probe-tool.sh", executable: true, resource: { kind: "inline", name: "probe-tool.sh", content: `#!/bin/sh\necho ${nonces.shell}\n` } },

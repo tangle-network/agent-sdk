@@ -80,7 +80,7 @@ describe("live profile conformance through a vendor sandbox running CLI Bridge",
         }
         const hits = await environment.exec?.("cat /tmp/router-hits.log");
         expect(hits?.exitCode ?? 1).toBe(0);
-        expect(hits?.stdout ?? "").toContain(`POST /v1/chat/completions auth=Bearer ${key}`);
+        expect(hits?.stdout ?? "").toContain(`POST /v1/responses auth=Bearer ${key}`);
         expect(hits?.stdout ?? "").toContain(`"model":"${model}"`);
         expect(succeeded).toBe(false);
       } finally {
