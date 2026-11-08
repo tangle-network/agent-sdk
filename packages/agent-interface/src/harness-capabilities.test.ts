@@ -110,7 +110,7 @@ describe("measured harness × model exclusions", () => {
     expect(harnessSupportsModel("pi", "anthropic/claude-sonnet-5-5", medium)).toBe(false);
     expect(harnessSupportsModel("pi", "anthropic/claude-opus-5-5", medium)).toBe(false);
     expect(harnessSupportsModel("pi", "openai/gpt-5.6-luna", medium)).toBe(false);
-    expect(harnessSupportsModel("pi", "google/gemini-3.8-flash", medium)).toBe(false);
+    expect(harnessSupportsModel("pi", "google/gemini-3.8-flash", medium)).toBe(true);
     expect(harnessSupportsModel("pi", "openai/gpt-5.5", medium)).toBe(true);
     expect(harnessSupportsModel("pi", "zai/glm-5.3", medium)).toBe(true);
     for (const model of [
@@ -129,12 +129,11 @@ describe("measured harness × model exclusions", () => {
       harnessSupportsModel("pi", "anthropic/claude-sonnet-5-5", { reasoningEffort: "none" }),
     ).toBe(true);
     expect(harnessSupportsModel("pi", "openai/gpt-5.6-luna", { reasoningEffort: null })).toBe(true);
-    expect(harnessSupportsModel("pi", "google/gemini-3.8-flash")).toBe(false);
   });
 
   it("matches bare catalog ids through their provider", () => {
     expect(harnessSupportsModel("pi", "claude-sonnet-5-5", { reasoningEffort: "high" })).toBe(false);
-    expect(harnessSupportsModel("pi", "gemini-3.8-flash")).toBe(false);
+    expect(harnessSupportsModel("pi", "gemini-3.8-flash")).toBe(true);
   });
 
   it("names the measurement in the refusal", () => {
@@ -193,10 +192,6 @@ describe("snapHarnessToModel", () => {
     expect(snapHarnessToModel("claude-code", "moonshot/kimi-k2")).toBe("claude-code");
     expect(snapHarnessToModel("nanoclaw", "openai/gpt-5")).toBe("nanoclaw");
     expect(snapHarnessToModel("kimi-code", "zai/glm-4.7")).toBe("kimi-code");
-  });
-
-  it("falls back to opencode for a measured exclusion whose provider has no native harness", () => {
-    expect(snapHarnessToModel("pi", "google/gemini-3.8-flash")).toBe("opencode");
   });
 });
 

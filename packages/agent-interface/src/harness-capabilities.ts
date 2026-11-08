@@ -136,7 +136,7 @@ const SANDBOX_HARNESS_MATRIX_EVIDENCE =
  *
  * pi's chat-completions client (pi-ai 0.85.1) marks a model as reasoning only when the profile asks
  * for a reasoning effort, and only a reasoning model is sent the `developer` role and
- * `reasoning_effort`; that is why the first two entries need a reasoning effort.
+ * `reasoning_effort`; that is why every entry needs a reasoning effort.
  */
 export const harnessModelExclusions: readonly HarnessModelExclusion[] = [
   {
@@ -156,16 +156,6 @@ export const harnessModelExclusions: readonly HarnessModelExclusion[] = [
     reason:
       "OpenAI does not accept function tools together with reasoning_effort for this model on " +
       "/v1/chat/completions, the only route pi speaks",
-    measuredOn: "2026-10-05",
-    evidence: SANDBOX_HARNESS_MATRIX_EVIDENCE,
-  },
-  {
-    harness: "pi",
-    models: /^google\/gemini-3\.8-flash$/,
-    onlyWithReasoningEffort: false,
-    reason:
-      "the model requires each function call to return its thought_signature, which pi's " +
-      "chat-completions client does not send back (400 Function call is missing a thought_signature)",
     measuredOn: "2026-10-05",
     evidence: SANDBOX_HARNESS_MATRIX_EVIDENCE,
   },
