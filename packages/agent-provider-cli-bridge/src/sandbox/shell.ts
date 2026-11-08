@@ -54,8 +54,8 @@ export function pidListScript(): string {
 /**
  * A harness may put tool children outside its process group (opencode's Bash tool spawns them detached), where
  * neither the harness's exit nor the adapter's group kill reaches them. After every turn the box restores the
- * process set it had before the turn: one pass over /proc/*/status (cat skips the already-dead) TERMs, then
- * KILLs, every pid outside the baseline that is not the sweep shell's own tree — the baseline already covers
+ * process set it had before the turn: one pass over each live pid's /proc status file (cat skips the
+ * already-dead) TERMs, then KILLs, every pid outside the baseline that is not the sweep shell's own tree — the baseline already covers
  * everything older than the turn, including pid 1, so orphans reparented to pid 1 are still caught.
  */
 export function turnSweepScript(baseline: readonly string[]): string {
