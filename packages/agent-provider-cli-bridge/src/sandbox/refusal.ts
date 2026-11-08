@@ -152,8 +152,8 @@ export function declarableHarnesses(): HarnessType[] {
 }
 
 /** Whether the shared planner lowers this profile dimension for the harness. */
-export function plannerLowers(harness: HarnessType, dimension: "hooks"): boolean {
-  const probe: AgentProfile = { hooks: { PostToolUse: [{ command: "true" }] } };
+export function plannerLowers(harness: HarnessType, dimension: "hooks" | "permissions" | "subagents"): boolean {
+  const probe: AgentProfile = dimension === "hooks" ? { hooks: { PostToolUse: [{ command: "true" }] } } : dimension === "permissions" ? { permissions: { Write: "deny" } } : { subagents: { "probe-child": { description: "probe", prompt: "probe" } } };
   try {
     const plan = materializeProfile(probe, harness as Parameters<typeof materializeProfile>[1]);
     return !plan.unsupported.some((entry) => entry.dimension === dimension);

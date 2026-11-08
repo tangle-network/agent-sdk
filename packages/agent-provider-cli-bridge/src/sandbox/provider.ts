@@ -84,7 +84,7 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
   const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
 
   const providerCapabilities = (harness?: HarnessType): AgentEnvironmentCapabilities =>
-    environmentCapabilities(defaultCliBridgeCapabilities(harness), vendor, harness === undefined ? false : plannerLowers(harness, "hooks"));
+    environmentCapabilities(defaultCliBridgeCapabilities(harness), vendor, harness);
 
   async function create(input: CreateAgentEnvironmentInput, restore?: { snapshot: string }): Promise<AgentEnvironment> {
     input.signal?.throwIfAborted();
@@ -160,7 +160,7 @@ export function createBridgeSandboxProvider(options: BridgeSandboxProviderOption
           { ...forkCreateInput(input, request), ...(signal === undefined ? {} : { signal }) },
           { snapshot: checkpoint.id },
         );
-      return wrapEnvironment({ inner, sandbox, vendor, harness, profile, workspaceDir, dispatcher, capabilities: environmentCapabilities(inner.capabilities ?? providerCapabilities(harness), vendor, plannerLowers(harness, "hooks")), input, ...(forkFromCheckpoint === undefined ? {} : { forkFromCheckpoint }) });
+      return wrapEnvironment({ inner, sandbox, vendor, harness, profile, workspaceDir, dispatcher, capabilities: environmentCapabilities(inner.capabilities ?? providerCapabilities(harness), vendor, harness), input, ...(forkFromCheckpoint === undefined ? {} : { forkFromCheckpoint }) });
     } catch (error) {
       await dispatcher?.close().catch(() => undefined);
       throw await failAfterProvision(error, sandbox, vendor.name, secrets);
@@ -356,8 +356,8 @@ function assertGetOptionsSupported(options: unknown): void {
   }
 }
 
-/** The document for one environment: what the Bridge claims, plus the vendor sandbox's workspace and placement. */
-function environmentCapabilities(bridge: AgentEnvironmentCapabilities, vendor: BridgeSandboxVendor, hooks?: boolean): AgentEnvironmentCapabilities {
+/** The document for one environment: what the Bridge claims, plus the vendor sandbox's workspace and placement. The profile's hooks, permissions and subagents axes claim only what the pinned planner lowers for the harness. */
+function environmentCapabilities(bridge: AgentEnvironmentCapabilities, vendor: BridgeSandboxVendor, harness?: HarnessType): AgentEnvironmentCapabilities {
   const {
     retainedControl: _retained,
     nativeContinuation: _native,
@@ -368,7 +368,7 @@ function environmentCapabilities(bridge: AgentEnvironmentCapabilities, vendor: B
   } = bridge;
   return {
     ...base,
-    profile: { ...base.profile, validation: true, hooks: hooks === true },
+    profile: { ...base.profile, validation: true, ...(harness === undefined ? {} : { hooks: plannerLowers(harness, "hooks"), permissions: plannerLowers(harness, "permissions"), subagents: plannerLowers(harness, "subagents") }) },
     workspace: { read: true, write: true, exec: true, git: false, upload: false, download: false, cwdBases: { repository: true, host: false } },
     branching: { checkpoint: vendor.snapshots !== undefined, fork: vendor.snapshots !== undefined },
     placement: true,
