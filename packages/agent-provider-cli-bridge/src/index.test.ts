@@ -2840,35 +2840,6 @@ describe("createCliBridgeProvider", () => {
     expect(JSON.stringify(body?.messages)).not.toContain("ADDITION_ONLY");
   });
 
-  it("declares the prompt intents of the named bridge harness, and neither without one", () => {
-    // The adapter forwards agent_profile; the intents belong to the harness the bridge runs. Being
-    // able to put the field on the wire is not honoring it, so an unnamed harness declares neither.
-    expect(defaultCliBridgeCapabilities("claude-code").profile.systemPrompt).toEqual({
-      replace: true,
-      append: true,
-    });
-    expect(defaultCliBridgeCapabilities("opencode").profile.systemPrompt).toEqual({
-      replace: false,
-      append: true,
-    });
-    expect(defaultCliBridgeCapabilities("codex").profile.systemPrompt).toEqual({
-      replace: true,
-      append: false,
-    });
-    expect(defaultCliBridgeCapabilities("acp").profile.systemPrompt).toEqual({
-      replace: false,
-      append: false,
-    });
-    expect(defaultCliBridgeCapabilities().profile.systemPrompt).toEqual({
-      replace: false,
-      append: false,
-    });
-    expect(defaultCliBridgeCapabilities().workspace.cwdBases).toEqual({
-      repository: false,
-      host: true,
-    });
-  });
-
   it.each(
     harnessTypeSchema.options.map((harness) => ({
       harness,

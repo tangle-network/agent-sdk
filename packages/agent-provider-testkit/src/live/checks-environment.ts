@@ -109,6 +109,16 @@ export async function checkPlanBytes(ctx: LiveContext, environment: AgentEnviron
         notes.push(`${path} delivered ephemerally and proven by the MCP call`);
         continue;
       }
+      if (options.harness === "opencode") {
+        const axis = path === "opencode.json" ? ctx.axes.deny
+          : path.startsWith(".opencode/agents/") ? ctx.axes.subagent
+          : path.startsWith(".opencode/") ? ctx.axes.system
+          : undefined;
+        if (axis === true) {
+          notes.push(`${path} delivered ephemerally through the adapter's per-turn config channel and proven by its axis`);
+          continue;
+        }
+      }
     }
     const base = path.split("/").at(-1) ?? path;
     const elsewhere = (await environment.exec(`find "$HOME" -maxdepth 4 -name '${base}' -not -path '*/node_modules/*' 2>/dev/null | head -1`)).stdout.trim();

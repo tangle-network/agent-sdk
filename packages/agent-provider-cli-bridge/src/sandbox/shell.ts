@@ -45,3 +45,29 @@ export async function untilAborted<T>(pending: Promise<T>, signal: AbortSignal |
     if (signal.aborted && late !== undefined) void pending.then(late).catch(() => undefined);
   }
 }
+
+/** The pids alive in the sandbox, one per line: the baseline a turn's processes are measured against. */
+export function pidListScript(): string {
+  return "for d in /proc/[0-9]*; do echo ${d#/proc/}; done";
+}
+
+/**
+ * A harness may put tool children outside its process group (opencode's Bash tool spawns them detached), where
+ * neither the harness's exit nor the adapter's group kill reaches them. After every turn the box restores the
+ * process set it had before the turn: one pass over /proc/*/status (cat skips the already-dead) TERMs, then
+ * KILLs, every pid outside the baseline that is not the sweep shell's own tree — the baseline already covers
+ * everything older than the turn, including pid 1, so orphans reparented to pid 1 are still caught.
+ */
+export function turnSweepScript(baseline: readonly string[]): string {
+  return [
+    `victims=$(cat /proc/[0-9]*/status 2>/dev/null | awk -v base=${shellQuote(` ${baseline.join(" ")} `)} -v self=$$ '`,
+    `$1 == "Pid:" { p = $2 } $1 == "PPid:" { ppid[p] = $2 }`,
+    `END {`,
+    `  split(base, b, / +/); for (i in b) if (b[i] != "") known[b[i]] = 1`,
+    `  mine[self] = 1; changed = 1`,
+    `  while (changed) { changed = 0; for (p in ppid) if (!(p in mine) && (ppid[p] in mine)) { mine[p] = 1; changed = 1 } }`,
+    `  for (p in ppid) if (!(p in known) && !(p in mine)) printf "%s ", p`,
+    `}')`,
+    `[ -z "$victims" ] && exit 0; kill -TERM $victims 2>/dev/null; sleep 1; kill -KILL $victims 2>/dev/null; true`,
+  ].join("\n");
+}

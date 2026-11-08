@@ -41,6 +41,7 @@ import {
   forkCreateInput,
 } from "./checkpoint.js";
 import type { BridgeSandbox, BridgeSandboxVendor } from "./vendor.js";
+import { pidListScript, turnSweepScript } from "./shell.js";
 
 export const BRIDGE_RUN_TAG = "tangle-bridge-run";
 const DEFAULT_LIFETIME_MS = 2 * 60 * 60 * 1000;
@@ -453,6 +454,9 @@ function wrapEnvironment(args: WrapArgs): AgentEnvironment {
     }
     if (busy) throw new EnvironmentProviderError("conflict", "a turn is already running on this environment", { provider: vendor.name });
     busy = true;
+    const baseline = await sandbox.exec(pidListScript(), { timeoutMs: 15_000 })
+      .then((result) => (result.exitCode === 0 ? result.stdout.split(/\s+/).filter(Boolean) : undefined))
+      .catch(() => undefined);
     try {
       yield* projectTurn(inner, checked, checked.model ?? args.profile.model?.default);
     } catch (error) {
@@ -462,6 +466,7 @@ function wrapEnvironment(args: WrapArgs): AgentEnvironment {
       }
       throw error;
     } finally {
+      if (baseline !== undefined) await sandbox.exec(turnSweepScript(baseline), { timeoutMs: 30_000 }).catch(() => undefined);
       busy = false;
     }
   };
