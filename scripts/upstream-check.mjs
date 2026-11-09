@@ -287,17 +287,14 @@ function runBehavioral(upId) {
         summary: descriptor.summary,
         files: descriptor.files,
         testNamePattern: pattern,
-        numTotalTests,
-        numPassedTests,
-        numFailedTests,
-        numPendingTests,
+        ...counts,
         minTests: descriptor.minTests,
         packedTarballs: cohort.packageVersions,
       },
       generatedAt: new Date().toISOString(),
     });
     console.log(
-      `${upId}: ${numPassedTests} tests passed (>= ${descriptor.minTests}); evidence ${path}`,
+      `${upId}: ${counts.numPassedTests} tests passed (>= ${descriptor.minTests}); evidence ${path}`,
     );
   } finally {
     cohort.cleanup();
