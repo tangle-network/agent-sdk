@@ -175,12 +175,13 @@ function foldSession(db: DatabaseSync, ref: SessionRef, mode: BuildMode, builder
       }
     }
     if (steps === 0) {
-      builder.modelCall({ id: `${row.id}:request`, at, provider: messageError ? null : provider, servedModel: messageError ? null : model, requestedModel: model, usage: usageOf(data.tokens), costUsd: count(data.cost), stopReason: str(data.finish), error: messageError })
+      // Pending requests have zero defaults; a live fork can copy measured counters before its parts.
+      const observed = messageError === null && isoTime(time.completed) !== null && str(data.finish) !== null
+      const usage = usageOf(data.tokens), costUsd = count(data.cost)
+      const accounted = observed || (costUsd ?? 0) > 0 || Object.values(usage ?? {}).some(value => (value ?? 0) > 0)
+      builder.modelCall({ id: `${row.id}:request`, at, provider: observed ? provider : null, servedModel: observed ? model : null, requestedModel: model, usage: accounted ? usage : null, costUsd: accounted ? costUsd : null, stopReason: str(data.finish), error: messageError })
       if (messageError) builder.message({ id: row.id, role: 'assistant', actor: 'injected', at, modelCallId: `${row.id}:request`, parts: [{ type: 'text', text: messageError.message }] })
-    } else if (messageError) {
-      const last = builder.modelCalls[builder.modelCalls.length - 1]!
-      last.error = messageError
-    }
+    } else if (messageError) builder.modelCalls[builder.modelCalls.length - 1]!.error = messageError
     aborted = messageError?.kind === 'MessageAbortedError' ? { at: messageError.at, error: messageError } : null
   }
 
