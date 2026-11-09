@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.12
+
+### Patch Changes
+
+- 0dee898: Keep unfinished OpenCode requests distinct from observed model responses. Preserve requested model identity and positive recorded usage or cost, while leaving unobserved default-zero accounting unknown.
+
 ## 1.0.11
 
 ### Patch Changes
