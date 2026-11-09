@@ -1,5 +1,5 @@
 /**
- * Every fixture here is a session a real harness CLI wrote while it talked to the trace-proof
+ * The trace-proof fixtures are sessions real harness CLIs wrote while talking to the
  * scripted model (beelink1 trace-proof-r2, 2026-10-04): Claude Code 2.1.286, Codex 0.145.0,
  * OpenCode 1.18.25 and Pi 0.85.1. The model's script fixes what each session must hold: two shell
  * tool calls and a final answer, 100 input and 20 output tokens per response. The assertions are
@@ -127,6 +127,18 @@ describe('Codex', () => {
 })
 
 describe('OpenCode', () => {
+  it('keeps the quota-refused native request placeholder unobserved', async () => {
+    const [ref, ...rest] = await opencodeSessionsInStore(fixture('opencode', 'quota-refused.db'), null)
+    expect(rest).toHaveLength(0)
+    const s = await both(opencodeReader, ref!)
+    expect(s.ending.status).toBe('open')
+    expect(s.modelCalls).toHaveLength(1)
+    expect(s.modelCalls[0]).toMatchObject({ requestedModel: 'glm-5.3-flash-free', provider: null, servedModel: null, usage: null, costUsd: null, stopReason: null, error: null })
+    expect(s.servedModels).toEqual({})
+    expect(s.usage).toBeNull()
+    expect(s.toolCalls).toEqual([])
+  })
+
   it('reads the session from the SQLite store', async () => {
     const [ref, ...rest] = await opencodeSessionsInStore(fixture('opencode', 'opencode.db'), null)
     expect(rest).toHaveLength(0)
@@ -136,6 +148,7 @@ describe('OpenCode', () => {
       ['openai-compat', 'openai/gpt-5.5', SCRIPTED, 'tool-calls'],
       ['openai-compat', 'openai/gpt-5.5', SCRIPTED, 'stop'],
     ])
+    expect(s.modelCalls.map((c) => c.costUsd)).toEqual([0, 0, 0])
     expect(s.toolCalls.map((t) => [t.name, t.status])).toEqual([['bash', 'completed'], ['bash', 'completed']])
     expect(s.ending.status).toBe('completed')
   })

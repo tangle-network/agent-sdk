@@ -87,6 +87,25 @@ async function readHome(home: string): Promise<{ located: Array<[string, string 
 }
 
 describe('OpenCode store read in place', () => {
+  it('preserves measured counters in a live-fork prefix before its parts are copied', async () => {
+    const { home: h, dir } = home()
+    const db = new DatabaseSync(join(dir, 'opencode.db'))
+    // Derive a prefix of the real successful capture: the first response's counters have been
+    // written, cleanup has not set completed, and Session.fork has copied its row before its parts.
+    const row = db.prepare("SELECT id, time_created, data FROM message WHERE json_extract(data, '$.role') = 'assistant' ORDER BY time_created LIMIT 1").get() as { id: string; time_created: number; data: string }
+    const data = JSON.parse(row.data)
+    delete data.time.completed
+    db.prepare('DELETE FROM part WHERE message_id IN (SELECT id FROM message WHERE time_created >= ?)').run(row.time_created)
+    db.prepare('DELETE FROM message WHERE time_created > ?').run(row.time_created)
+    db.prepare('UPDATE message SET data = ? WHERE id = ?').run(JSON.stringify(data), row.id)
+    db.close()
+    const { session } = await readHome(h)
+    expect(session.ending.status).toBe('open')
+    expect(session.servedModels).toEqual({})
+    expect(session.modelCalls).toHaveLength(1)
+    expect(session.modelCalls[0]).toMatchObject({ requestedModel: 'openai/gpt-5.5', servedModel: null, costUsd: 0, usage: { input: 100, output: 20, reasoning: 0, cacheRead: 0, cacheWrite: 0 } })
+  })
+
   it('reads a running store: sees its write-ahead log and leaves the store, the log and TMPDIR untouched', async () => {
     const { home: h, dir } = home()
     const writer = await runningOpencode(join(dir, 'opencode.db'))
