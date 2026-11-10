@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.23
+
+### Patch Changes
+
+- 2630c09: `harnessTypeSchema` recognizes `exo`, the Exo CLI (`exo run`) harness.
+
 ## 5.10.22
 
 ### Patch Changes
