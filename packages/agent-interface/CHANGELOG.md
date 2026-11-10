@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.22
+
+### Patch Changes
+
+- 0757faf: `harnessTypeSchema` recognizes `nanocode`, the nanocode CLI (`nc exec`) harness.
+
 ## 5.10.21
 
 ### Patch Changes

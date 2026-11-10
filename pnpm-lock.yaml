@@ -252,7 +252,7 @@ importers:
         specifier: ^1.13.0
         version: 1.13.0
       '@tangle-network/agent-core':
-        specifier: ^1.0.2
+        specifier: ^1.0.4
         version: link:../agent-core
       '@tangle-network/agent-interface':
         specifier: workspace:*
