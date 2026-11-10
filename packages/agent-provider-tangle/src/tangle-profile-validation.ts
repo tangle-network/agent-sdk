@@ -10,8 +10,8 @@ export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: T
     const result = await supplied?.(profile);
     if (result && !result.ok) return result;
     const candidate = result?.normalizedProfile ?? profile;
-    // Without a harness the SDK still runs create's inline-mount and size checks; it skips only materialization.
-    const verdict = typeof candidate !== "string" ? validateProfileForCreate(candidate, candidate.harness!) : undefined;
+    // Without a harness the SDK still runs create's inline-mount and size checks; it skips only materialization. The cast is the boundary to the published SDK's own harness list, which trails agent-interface by one release and refuses at runtime what it does not know.
+    const verdict = typeof candidate !== "string" ? validateProfileForCreate(...([candidate, candidate.harness] as unknown as Parameters<typeof validateProfileForCreate>)) : undefined;
     const issues = verdict && !verdict.ok ? [{level:"error" as const,code:verdict.error.code,message:verdict.error.message}] : [];
     if (issues.length) return {ok:false,issues};
     const route = await resolver?.validate?.(candidate);
