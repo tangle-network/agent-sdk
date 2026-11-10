@@ -1,5 +1,13 @@
 # @tangle-network/agent-core
 
+## 1.0.4
+
+### Patch Changes
+
+- 202291e: `verifyReadToken` requires a numeric `exp`, as `verifySidecarToken` does.
+- Updated dependencies [0757faf]
+  - @tangle-network/agent-interface@5.10.22
+
 ## 1.0.3
 
 ### Patch Changes
