@@ -266,6 +266,39 @@ describe("verifyReadToken", () => {
     expect(result.errorCode).toBe("TOKEN_EXPIRED");
   });
 
+  it("requires a numeric exp on a correctly signed token", () => {
+    const product = createProductAuthInfo(TEST_SIGNING_SECRET);
+    const header = Buffer.from(
+      JSON.stringify({ alg: "HS256", typ: "JWT" }),
+    ).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const verifySigned = (exp: unknown) => {
+      const payload = Buffer.from(
+        JSON.stringify({
+          sub: TEST_USER_ID,
+          sid: TEST_SESSION_ID,
+          pid: TEST_PRODUCT_ID,
+          typ: "read",
+          iat: now,
+          exp,
+        }),
+      ).toString("base64url");
+      const signature = createHmac("sha256", TEST_SIGNING_SECRET)
+        .update(`${header}.${payload}`)
+        .digest("base64url");
+      return verifyReadToken(`${header}.${payload}.${signature}`, product);
+    };
+
+    // The same hand-signed token verifies once exp is a future number, so the
+    // rejections below are caused by the exp claim and nothing else.
+    expect(verifySigned(now + 3600).valid).toBe(true);
+    for (const exp of [undefined, "abc"]) {
+      const result = verifySigned(exp);
+      expect(result.valid).toBe(false);
+      expect(result.errorCode).toBe("TOKEN_EXPIRED");
+    }
+  });
+
   it("rejects token for suspended product", () => {
     const token = issueReadToken(
       TEST_SIGNING_SECRET,
