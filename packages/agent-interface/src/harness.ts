@@ -27,6 +27,7 @@ export const harnessTypeSchema = z.enum([
   "cursor",
   "grok",
   "nanocode",
+  "exo",
   "acp",
   "cli-base",
 ]);
