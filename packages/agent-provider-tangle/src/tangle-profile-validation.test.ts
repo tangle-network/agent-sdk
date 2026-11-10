@@ -42,4 +42,9 @@ describe("Tangle profile validation", () => {
     expect(result.ok).toBe(false);
     expect(result.issues).toEqual([expect.objectContaining({ level: "error", code: "PAYLOAD_TOO_LARGE" })]);
   });
+
+  it("passes a harness the installed Sandbox SDK does not know: the server owns that refusal", async () => {
+    // The SDK's client validator is forward compatible; Sandbox create answers 400 VALIDATION_ERROR for a harness it does not run.
+    expect(await provider.validateProfile!({ name: "newer", harness: "nanocode" } as never)).toEqual({ ok: true, issues: [] });
+  });
 });
