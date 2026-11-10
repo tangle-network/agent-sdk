@@ -810,9 +810,9 @@ export function verifyReadToken(
     };
   }
 
-  // Check expiration
+  // Require a numeric exp, as verifySidecarToken does
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp < now) {
+  if (typeof payload.exp !== "number" || payload.exp < now) {
     return {
       valid: false,
       error: "Token expired",
