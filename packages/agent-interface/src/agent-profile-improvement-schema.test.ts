@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentProfileImprovementExpectedModel, agentProfileImprovementExperimentSchema, agentProfileImprovementRecordedRunReceiptSchema } from "./index.js";
 import type { AgentProfile } from "./agent-profile.js";
 import type { AgentImprovementSurface } from "./agent-candidate.js";
 import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
@@ -877,6 +878,56 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     });
 
     expect(agentImprovementProposalSchema.parse(reordered)).toEqual(reordered);
+  });
+
+  it("binds an explicit profile-model treatment to each exact arm and rejects contradictions", () => {
+    const { comparison } = fixture();
+    const baselineAuthored = { default: model.requested, provider: model.provider, reasoningEffort: model.reasoningEffort };
+    const candidateAuthored = { ...baselineAuthored, default: "anthropic/candidate-model-2026-11-12", reasoningEffort: "high" as const };
+    const candidateResolved = { ...model, requested: candidateAuthored.default, model: "candidate-model-2026-11-12", snapshot: "2026-11-12", reasoningEffort: candidateAuthored.reasoningEffort };
+    const experiment = resign({
+      ...comparison.experiment,
+      change: [{ kind: "agent-profile-diff" as const, set: { model: candidateAuthored } }],
+      modelBinding: { kind: "profile-default" as const, baseline: { authored: baselineAuthored, resolved: model }, candidate: { authored: candidateAuthored, resolved: candidateResolved } },
+    });
+    expect(agentProfileImprovementExperimentSchema.parse(experiment)).toEqual(experiment);
+    const task = experiment.benchmark.tasks[0]!;
+    expect(agentProfileImprovementExpectedModel(experiment, task, "baseline", { model: baselineAuthored })).toEqual(model);
+    expect(agentProfileImprovementExpectedModel(experiment, task, "candidate", { model: candidateAuthored })).toEqual(candidateResolved);
+    const measurements = comparison.measurements.map(({ baseline, candidate }) => {
+      const rebind = (receipt: typeof baseline, arm: "baseline" | "candidate") => resign({ ...receipt, resolvedModel: arm === "baseline" ? model : candidateResolved, runCell: resign({ ...receipt.runCell, experimentDigest: experiment.digest }) });
+      return { baseline: rebind(baseline, "baseline"), candidate: rebind(candidate, "candidate") };
+    });
+    expect(agentProfileImprovementMeasuredComparisonSchema.parse({ ...comparison, experiment, measurements })).toMatchObject({ experiment });
+    const wrongReceipt = resign({ ...measurements[0]!.candidate, resolvedModel: model });
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse({ ...comparison, experiment, measurements: [{ ...measurements[0]!, candidate: wrongReceipt }, ...measurements.slice(1)] }).success).toBe(false);
+    for (const authored of [
+      { ...candidateAuthored, default: "anthropic/unmeasured-model" },
+      { ...candidateAuthored, small: "anthropic/fallback" },
+      { ...candidateAuthored, default: "${params.model}" },
+      { ...candidateAuthored, provider: "another-provider" },
+    ]) {
+      const invalid = resign({ ...experiment, modelBinding: { ...experiment.modelBinding, candidate: { authored, resolved: candidateResolved } } });
+      expect(agentProfileImprovementExperimentSchema.safeParse(invalid).success).toBe(false);
+      expect(agentProfileImprovementMeasuredComparisonSchema.safeParse({ ...comparison, experiment: invalid, measurements }).success).toBe(false);
+    }
+    expect(() => agentProfileImprovementExpectedModel(experiment, { model: candidateResolved }, "candidate")).toThrow("baseline model");
+    expect(() => agentProfileImprovementExpectedModel(experiment, task, "candidate", { model: candidateAuthored, modes: { fallback: { model: "another-model" } } })).toThrow("single-model");
+  });
+
+  it("retains incomplete native facts without admitting them as complete measured receipts", () => {
+    const { comparison } = fixture();
+    const original = comparison.measurements[0]!.candidate;
+    const unavailable = { availability: "unavailable" as const, reason: "Provider did not report cache, reasoning, or billed cost", facts: { inputTokens: 10, outputTokens: 5, cachedInputTokens: null, reasoningTokens: null, modelCalls: 1, costUsdNanos: null, costProvenance: null } };
+    const recorded = resign({ ...original, usage: unavailable });
+    expect(agentProfileImprovementRecordedRunReceiptSchema.parse(recorded)).toEqual(recorded);
+    expect(recorded.usage.facts.cachedInputTokens).toBeNull();
+    expect(recorded.usage.facts.inputTokens).toBe(10);
+    expect(agentProfileImprovementRunReceiptSchema.safeParse(recorded).success).toBe(false);
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse({ ...comparison, measurements: [{ ...comparison.measurements[0]!, candidate: recorded }, ...comparison.measurements.slice(1)] }).success).toBe(false);
+    const contradiction = resign({ ...recorded, usage: { ...unavailable, facts: { ...unavailable.facts, costUsdNanos: 1 } } });
+    expect(agentProfileImprovementRecordedRunReceiptSchema.safeParse(contradiction).success).toBe(false);
+    expect(agentProfileImprovementRecordedRunReceiptSchema.parse(original)).toEqual(original);
   });
 
   it("rejects a run that changes the frozen model snapshot", () => {
