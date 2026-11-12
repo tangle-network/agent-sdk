@@ -909,6 +909,7 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     ]) {
       const invalid = resign({ ...experiment, modelBinding: { ...experiment.modelBinding, candidate: { authored, resolved: candidateResolved } } });
       expect(agentProfileImprovementExperimentSchema.safeParse(invalid).success).toBe(false);
+      expect(agentProfileImprovementMeasuredComparisonSchema.safeParse({ ...comparison, experiment: invalid, measurements }).success).toBe(false);
     }
     expect(() => agentProfileImprovementExpectedModel(experiment, { model: candidateResolved }, "candidate")).toThrow("baseline model");
     expect(() => agentProfileImprovementExpectedModel(experiment, task, "candidate", { model: candidateAuthored, modes: { fallback: { model: "another-model" } } })).toThrow("single-model");

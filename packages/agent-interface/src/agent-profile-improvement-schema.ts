@@ -17,6 +17,7 @@ import type {
 } from "./agent-profile-improvement.js";
 import type {
   AgentCandidateFixedSpend,
+  AgentCandidateResolvedModel,
   AgentImprovementSurface,
 } from "./agent-candidate.js";
 import type { AgentProfile } from "./agent-profile.js";
@@ -404,31 +405,30 @@ const timingSchema = z
   });
 
 const profileGradingShape = {
-    grader: agentCandidateBenchmarkGraderIdentitySchema,
-    evidence: profileImprovementEvidenceSchema,
-    timing: timingSchema,
-    usage: agentCandidateFixedSpendSchema,
-    score: z.number().finite(),
-    passed: z.boolean(),
-    dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
+  grader: agentCandidateBenchmarkGraderIdentitySchema,
+  evidence: profileImprovementEvidenceSchema,
+  timing: timingSchema,
+  usage: agentCandidateFixedSpendSchema,
+  score: z.number().finite(),
+  passed: z.boolean(),
+  dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
 };
 function refineProfileGrading(grading: AgentProfileImprovementRecordedRunReceipt["grading"], ctx: z.RefinementCtx) {
-    const names = grading.dimensions.map((dimension) => dimension.name);
-    if (new Set(names).size !== names.length) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["dimensions"],
-        message: "profile improvement grading dimension names must be unique",
-      });
-    }
-    if (grading.evidence.digest === grading.grader.artifact.sha256) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["evidence"],
-        message: "profile improvement grading evidence must be distinct from its grader",
-      });
-    }
-
+  const names = grading.dimensions.map((dimension) => dimension.name);
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["dimensions"],
+      message: "profile improvement grading dimension names must be unique",
+    });
+  }
+  if (grading.evidence.digest === grading.grader.artifact.sha256) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["evidence"],
+      message: "profile improvement grading evidence must be distinct from its grader",
+    });
+  }
 }
 const agentProfileImprovementGradingSchema = z.strictObject(profileGradingShape).superRefine(refineProfileGrading);
 
@@ -707,6 +707,13 @@ function refineProfileImprovementComparison(
         const cell = receipt.runCell;
         const profile = comparison.experiment[arm];
         const armPath = ["measurements", index, arm] as (string | number)[];
+        let expectedModel: AgentCandidateResolvedModel;
+        try {
+          expectedModel = agentProfileImprovementExpectedModel(comparison.experiment, task, arm);
+        } catch (error) {
+          ctx.addIssue({ code: "custom", path: ["experiment", "modelBinding"], message: error instanceof Error ? error.message : "Invalid profile model binding" });
+          continue;
+        }
         const checks: Array<[boolean, (string | number)[], string]> = [
           [
             cell.experimentDigest === comparison.experiment.digest,
@@ -744,7 +751,7 @@ function refineProfileImprovementComparison(
             "profile run receipt must bind the signed evaluator",
           ],
           [
-            canonicalCandidateDigest(receipt.resolvedModel) === canonicalCandidateDigest(agentProfileImprovementExpectedModel(comparison.experiment, task, arm)),
+            canonicalCandidateDigest(receipt.resolvedModel) === canonicalCandidateDigest(expectedModel),
             [...armPath, "resolvedModel"],
             "profile run receipt must bind the signed model snapshot",
           ],
