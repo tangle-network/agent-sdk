@@ -58,3 +58,4 @@ export {
   type BoundHarnessSession,
   type HarnessFileBinding,
 } from './bounded-family.js'
+export { completeLinePrefix, locateDeclaredSessionFiles, type DeclaredSessionFile, type DeclaredSessionStore } from './declared-files.js'
