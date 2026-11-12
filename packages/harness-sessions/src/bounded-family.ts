@@ -36,7 +36,7 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
   readonly parse: (text: string, file: HarnessFileBinding) => S
   readonly signal?: AbortSignal
   /** Host-owned relative-path policy, applied before any read. */
-  readonly validatePath: (path: string) => void
+  readonly validatePath: (path: string, signal?: AbortSignal) => void | Promise<void>
   /** Compatibility error identity remains with the execution owner. */
   readonly failure?: (message: string) => Error
 }) {
@@ -57,7 +57,8 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
       input.signal?.throwIfAborted()
       if (files.length >= BOUND_HARNESS_SESSION_READ_LIMITS.maxFiles)
         throw invalid('Native file count exceeds the capture bound')
-      input.validatePath(file.path)
+      await input.validatePath(file.path, input.signal)
+      input.signal?.throwIfAborted()
       if (HARNESS_TRANSCRIPT_DENY.test(file.path) || paths.has(file.path))
         throw invalid('Native file path is denied or repeated')
       paths.add(file.path)

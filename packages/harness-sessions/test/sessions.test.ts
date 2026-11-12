@@ -6,7 +6,7 @@
  * that script, read back through each harness's own store.
  */
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { validateTraceSpans } from '@tangle-network/agent-trace-contract'
@@ -64,6 +64,16 @@ describe('Claude Code', () => {
     await expect(readBoundHarnessSessions({ ...input, files: files.map(file => ({ ...file, sha256: '0'.repeat(64) })) })).rejects.toThrow('bytes changed')
     await expect(readBoundHarnessSessions({ ...input, files: [{ path: '../outside.jsonl', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('normalized path')
     await expect(readBoundHarnessSessions({ ...input, files: [{ path: '.env', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('denied')
+    let readsAfterRefusal = 0
+    await expect(readBoundHarnessSessions({
+      ...input,
+      validatePath: async (path) => {
+        const actual = await realpath(fixture(path))
+        if (!actual.startsWith(`${fixture('codex')}/`)) throw new Error('Host root denied')
+      },
+      read: (file, signal) => { readsAfterRefusal++; return input.read(file, signal) },
+    })).rejects.toThrow('Host root denied')
+    expect(readsAfterRefusal).toBe(0)
     // The context Claude Code recorded around each turn is part of the chat, as Codex's developer messages are.
     expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', ...Array(9).fill('system'), 'assistant', 'tool', 'system', 'system', 'assistant', 'tool', 'system', 'assistant'])
     expect(toChatMessages(s, { system: false }).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
