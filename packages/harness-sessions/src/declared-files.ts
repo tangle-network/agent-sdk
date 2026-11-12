@@ -26,7 +26,11 @@ async function openDirectoryPath(parent: FileHandle, relative: string): Promise<
   for (const name of relative.split('/')) {
     let next: FileHandle
     try { next = await open(inDirectory(current, name), DIRECTORY_FLAGS) }
-    catch { if (current !== parent) await current.close(); return undefined }
+    catch (error) {
+      if (current !== parent) await current.close()
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
     if (current !== parent) await current.close()
     current = next
   }
@@ -61,8 +65,11 @@ export async function locateDeclaredSessionFiles<Store>(input: {
     for (const declaration of input.stores) {
       input.signal?.throwIfAborted()
       const { root, store } = declaration
-      const rootHandle = await openDirectoryPath(input.home, root)
-      if (!rootHandle) { rejected.push(`store_directory_unreadable:${root}`); continue }
+      let rootHandle: FileHandle | undefined
+      try { rootHandle = await openDirectoryPath(input.home, root) }
+      catch { rejected.push(`store_directory_unreadable:${root}`); continue }
+      // Declared alternative stores need not exist yet; an absent archive is not a missing session.
+      if (!rootHandle) continue
       const pending: Array<{ handle: FileHandle; relative: string }> = [{ handle: rootHandle, relative: '' }]
       let visited = 0
       let capped = false

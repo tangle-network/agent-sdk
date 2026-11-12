@@ -40,7 +40,9 @@ describe.skipIf(process.platform !== 'linux')('declared native session copy inpu
       expect(foreign.files).toEqual([])
       expect(foreign.rejected.some((reason) => reason.startsWith('store_file_not_owned:'))).toBe(true)
       const missing = await locateDeclaredSessionFiles({ home: handle, stores: [{ ...stores[0]!, root: '.claude/missing' }], uid, maxEntries: 100 })
-      expect(missing).toEqual({ files: [], rejected: ['store_directory_unreadable:.claude/missing'] })
+      expect(missing).toEqual({ files: [], rejected: [] })
+      const linkedRoot = await locateDeclaredSessionFiles({ home: handle, stores: [{ ...stores[0]!, root: '.claude/projects/directory-link' }], uid, maxEntries: 100 })
+      expect(linkedRoot).toEqual({ files: [], rejected: ['store_directory_unreadable:.claude/projects/directory-link'] })
       await expect(locateDeclaredSessionFiles({ home: handle, stores: [{ ...stores[0]!, root: '../outside' }], uid, maxEntries: 100 })).rejects.toThrow('normalized relative POSIX path')
     } finally {
       await Promise.all(files.map((file) => file.handle.close()))
@@ -56,7 +58,8 @@ describe.skipIf(process.platform !== 'linux')('declared native session copy inpu
     const handle = await open(home, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
     try {
       const uid = (await handle.stat()).uid
-      const input = { home: handle, uid, maxEntries: 1, stores: [{ store: 'sessions', root: 'sessions', matches: (path: string) => path.endsWith('.jsonl') }] }
+      // Codex's fresh live store does not imply that its optional archive directory exists.
+      const input = { home: handle, uid, maxEntries: 1, stores: ['sessions', 'archived_sessions'].map((directory) => ({ store: directory, root: directory, matches: (path: string) => path.endsWith('.jsonl') })) }
       const located = await locateDeclaredSessionFiles(input)
       try {
         expect(located.files.map((file) => file.path)).toEqual(['sessions/a.jsonl'])
