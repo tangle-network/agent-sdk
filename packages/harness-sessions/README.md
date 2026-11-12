@@ -51,7 +51,7 @@ Pi's session-header `parentSession` is fork/clone/handoff lineage; it does not p
 
 A bounded local capture inspection on 2026-10-25 found explicit Kimi child events and separate child wires. Its Pi and Factory Droid samples contained no explicit subagent binding: the latest 20 files per harness held 7,724 and 245 records respectively; an additional size-stratified selection read seven Pi files (8,229 records) and 20 Factory files (252 records). These are sample limits, not a claim that every producer version lacks the metadata. The remaining Pi/Factory child coverage is unknown. Closing it requires a retained parent/child capture with an explicit source binding, followed by a reader-to-OTLP integration proof; the graph-corpus integrating owner owns that follow-up.
 
-For a producer or retained reader with an already attested file inventory, `readBoundHarnessSessions` verifies the exact native root and recorded children through caller-supplied bounded `read`, strict `parse` and `validatePath` callbacks. It checks file digests, byte counts, unique paths, parent attribution, parse integrity and the shared `BOUND_HARNESS_SESSION_READ_LIMITS`. It refuses credential-shaped paths before reading. The path validator is awaited before any read, including asynchronous host confinement checks. The host owns filesystem confinement and must honor the supplied abort signal in its validation and read callbacks; this operation does not discover an ambient HOME, attest an inventory or grant access to files. Runtime's existing entrypoint supplies its archive path policy, abortable read and validation error identity.
+For a producer or retained reader with an already attested file inventory, `readBoundHarnessSessions` verifies the exact native root and recorded children through caller-supplied bounded `read`, strict `parse` and `validatePath` callbacks. Optional `nativeSessionIds` binds every observed native conversation across retries; the reader requires all of them and rejects ambiguous roots or cyclic parentage. It checks file digests, byte counts, unique paths, parent attribution, parse integrity and the shared `BOUND_HARNESS_SESSION_READ_LIMITS`. It refuses credential-shaped paths before reading. The path validator is awaited before any read, including asynchronous host confinement checks. The host owns filesystem confinement and must honor the supplied abort signal in its validation and read callbacks; this operation does not discover an ambient HOME, attest an inventory or grant access to files. Runtime's existing entrypoint supplies its archive path policy, abortable read and validation error identity.
 
 `locateDeclaredSessionFiles` reuses the sidecar's Linux descriptor-relative inventory for an opened HOME and caller-selected store declarations. It returns held regular-file handles for the declared writer UID; callers close them and own redaction. `readHeldSessionFile` reads bounded bytes from an already-held regular file, checks cancellation and unchanged identity/size/timestamps, and leaves the handle open. `completeLinePrefix` accepts those bytes or a held handle without modifying the source. The entry bound applies per store. Absent optional stores are skipped; unreadable, linked or capped stores remain explicit gaps. Inventory requires Linux `/proc/self/fd`; it does not attest an ambient HOME or secure a path opened by the caller.
 
@@ -76,6 +76,21 @@ Projections trim; the reader never does:
 - `toChatMessages(session)`: agent-eval's chat-with-tools messages.
 - `toOtlpSpans(session)`: contract spans (`@tangle-network/agent-trace-contract`), one LLM span per model call and one TOOL span per tool call.
 - `toTurns(session)`: the blog's turns, with the model, usage and error of each assistant turn.
+
+### Recorded tool definitions
+
+When Claude Code records `prompt_snapshot.tools[*].schema`, the session retains the actual
+names, descriptions and `input_schema` objects in `toolDefinitionSnapshots`. Each model
+response names the inventory already observed when it first appeared through
+`toolDefinitionSnapshotId`. A later snapshot never supplies definitions to an earlier
+response, and a newer snapshot without definitions clears that binding. Malformed or
+duplicate definitions mark their snapshot incomplete without inventing a schema from a call.
+Inventories are stored once; responses reference them, including when many responses share
+the same definitions. Other formats with no recorded definitions leave these optional fields absent.
+
+These are chronological observations, not a session-wide union of available tools. A trainer
+format that accepts one static tool inventory for a whole conversation must check that every
+response used that same complete inventory; it cannot apply the latest schema to earlier turns.
 
 For callers that are not JavaScript:
 

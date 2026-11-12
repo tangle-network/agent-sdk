@@ -9,6 +9,7 @@ import type {
   SessionMessage,
   SessionSummary,
   SessionToolCall,
+  SessionToolDefinitionSnapshot,
   TokenUsage,
 } from './schema.js'
 import { HARNESS_SESSION_SCHEMA } from './schema.js'
@@ -95,6 +96,7 @@ export class SessionBuilder {
   private replies = 0
   readonly modelCalls: ModelCall[] = []
   private readonly modelCallById = new Map<string, ModelCall>()
+  private readonly toolDefinitionSnapshots: SessionToolDefinitionSnapshot[] = []
   private readonly children: HarnessSession['children'] = []
   private readonly gaps: string[] = []
   private readonly sources: Array<{ path: string; sha256: string; bytes: number }> = []
@@ -196,6 +198,10 @@ export class SessionBuilder {
     return this.modelCallById.get(id)
   }
 
+  toolDefinitionSnapshot(snapshot: SessionToolDefinitionSnapshot): void {
+    if (this.full) this.toolDefinitionSnapshots.push(snapshot)
+  }
+
   child(nativeSessionId: string, toolCallId: string | null): void {
     if (this.children.some((c) => c.nativeSessionId === nativeSessionId)) return
     this.children.push({ nativeSessionId, toolCallId })
@@ -283,6 +289,7 @@ export class SessionBuilder {
       messages: this.messages,
       toolCalls,
       modelCalls: this.modelCalls,
+      ...(this.toolDefinitionSnapshots.length ? { toolDefinitionSnapshots: this.toolDefinitionSnapshots } : {}),
       servedModels: this.servedModels(),
       modelSource: this.modelSource,
       usage: this.usage(),

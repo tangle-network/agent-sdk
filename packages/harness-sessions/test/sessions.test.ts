@@ -61,6 +61,22 @@ describe('Claude Code', () => {
     expect(captured.sessions[0]!.usage).toEqual(s.usage)
     expect(captured.sessions[0]!.toolCalls).toEqual(s.toolCalls)
     expect(captured.files[0]!.sha256).toMatch(/^sha256:[0-9a-f]{64}$/)
+    const next = await claudeCodeReader.read(claudeCodeRefForFile(fixture('claude-code', 'context-records.jsonl')))
+    const multiple = {
+      ...input,
+      nativeSessionIds: [s.nativeSessionId, next.nativeSessionId],
+      files: [...files, { path: 'claude-code/context-records.jsonl', nativeSessionId: next.nativeSessionId }],
+    }
+    expect((await readBoundHarnessSessions(multiple)).sessions.map(session => session.nativeSessionId)).toEqual(multiple.nativeSessionIds)
+    await expect(readBoundHarnessSessions({ ...multiple, files })).rejects.toThrow('not retained')
+    await expect(readBoundHarnessSessions({ ...multiple, nativeSessionIds: [s.nativeSessionId, s.nativeSessionId] })).rejects.toThrow('ambiguous root')
+    await expect(readBoundHarnessSessions({
+      ...multiple,
+      parse: (text, file) => ({
+        ...input.parse(text, file),
+        children: [{ nativeSessionId: file.nativeSessionId === s.nativeSessionId ? next.nativeSessionId : s.nativeSessionId, toolCallId: null }],
+      }),
+    })).rejects.toThrow('cyclic recorded parent')
     await expect(readBoundHarnessSessions({ ...input, files: files.map(file => ({ ...file, sha256: '0'.repeat(64) })) })).rejects.toThrow('bytes changed')
     await expect(readBoundHarnessSessions({ ...input, files: [{ path: '../outside.jsonl', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('normalized path')
     await expect(readBoundHarnessSessions({ ...input, files: [{ path: '.env', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('denied')
@@ -74,10 +90,45 @@ describe('Claude Code', () => {
       read: (file, signal) => { readsAfterRefusal++; return input.read(file, signal) },
     })).rejects.toThrow('Host root denied')
     expect(readsAfterRefusal).toBe(0)
+    const snapshot = s.toolDefinitionSnapshots![0]!
+    expect(snapshot.complete).toBe(true)
+    expect(snapshot.definitions).toHaveLength(21)
+    const recorded = JSON.parse(readFileSync(fixture('claude-code', 'completed.jsonl'), 'utf8').split('\n')[17]!).attachment.tools
+    expect(snapshot.definitions).toEqual(recorded.map((tool: { schema: { name: string; description: string; input_schema: unknown } }) => ({
+      name: tool.schema.name, description: tool.schema.description, inputSchema: tool.schema.input_schema,
+    })))
+    // The real inventory was written after the first response; it cannot condition that response retroactively.
+    expect(s.modelCalls.map((call) => call.toolDefinitionSnapshotId)).toEqual([undefined, snapshot.id, snapshot.id])
     // The context Claude Code recorded around each turn is part of the chat, as Codex's developer messages are.
     expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', ...Array(9).fill('system'), 'assistant', 'tool', 'system', 'system', 'assistant', 'tool', 'system', 'assistant'])
     expect(toChatMessages(s, { system: false }).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
     expect(toTurns(s).filter((t) => t.role === 'assistant').map((t) => t.model)).toEqual(Array(3).fill('traceproof-scripted-model'))
+  })
+
+  it('keeps tool inventory exposure at the response boundary without future backfill', () => {
+    // Perturb only inventory timing/content in the retained real conversation; no harness or model is invoked.
+    const original = readFileSync(fixture('claude-code', 'completed.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    const recorded = original.find((row) => Array.isArray(row.attachment?.tools))!
+    const firstSnapshot = original.find((row) => row.attachment?.type === 'prompt_snapshot')!
+    const initial = { ...recorded, uuid: 'initial-tool-inventory' }
+    const records = original.filter((row) => row !== recorded).map((row) => row === firstSnapshot ? initial : row)
+    const responseIds = [...new Set(records.filter((row) => row.type === 'assistant' && row.message?.id).map((row) => row.message.id))]
+    const second = records.findIndex((row) => row.message?.id === responseIds[1])
+    const changed = structuredClone(initial)
+    changed.uuid = 'changed-tool-inventory'
+    changed.attachment.tools[0].schema.input_schema.description = 'A changed parameter schema'
+    const read = (rows: unknown[]) => readSessionInput('claude-code', { text: rows.map((row) => JSON.stringify(row)).join('\n') + '\n' })
+    const withChange = read([...records.slice(0, second), changed, ...records.slice(second)])
+    expect(withChange.modelCalls.map((call) => call.toolDefinitionSnapshotId)).toEqual([initial.uuid, changed.uuid, changed.uuid])
+    expect(withChange.toolDefinitionSnapshots![0]!.definitions[0]!.inputSchema).toEqual(initial.attachment.tools[0].schema.input_schema)
+    expect(withChange.toolDefinitionSnapshots![1]!.definitions[0]!.inputSchema).toEqual(changed.attachment.tools[0].schema.input_schema)
+    const lateOnly = read([...records.slice(0, second).filter((row) => row !== initial), changed, ...records.slice(second)])
+    expect(lateOnly.modelCalls.map((call) => call.toolDefinitionSnapshotId)).toEqual([undefined, changed.uuid, changed.uuid])
+    const absent = { ...changed, attachment: { type: 'prompt_snapshot' } }
+    const unavailable = read([...records.slice(0, second), absent, ...records.slice(second)])
+    expect(unavailable.modelCalls.map((call) => call.toolDefinitionSnapshotId)).toEqual([initial.uuid, undefined, undefined])
+    const malformed = { ...changed, attachment: { ...changed.attachment, tools: [{ name: 'Bash' }] } }
+    expect(read([...records.slice(0, second), malformed, ...records.slice(second)]).toolDefinitionSnapshots![1]).toMatchObject({ complete: false, definitions: [] })
   })
 
   it('classifies harness-written user records as injected and a typed slash command as human', async () => {
@@ -145,6 +196,8 @@ describe('Codex', () => {
   it('reads a completed scripted turn; the model is the turn context', async () => {
     const s = await both(codexReader, codexRefForFile(fixture('codex', 'rollout-2026-10-04T21-50-21-01a108e5-81d9-71b0-9cec-e5d33586604f.jsonl')))
     expect(s.modelSource).toBe('turn-context')
+    expect(s.toolDefinitionSnapshots).toBeUndefined()
+    expect(s.modelCalls.every((call) => call.toolDefinitionSnapshotId === undefined)).toBe(true)
     expect(s.modelCalls.map((c) => [c.provider, c.servedModel, c.usage])).toEqual(Array(3).fill(['tangle', 'gpt-5.5', SCRIPTED]))
     expect(s.toolCalls.map((t) => [t.name, t.status])).toEqual([['exec_command', 'completed'], ['exec_command', 'completed']])
     expect(s.usage).toEqual({ input: 300, output: 60, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
