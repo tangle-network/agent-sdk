@@ -117,13 +117,34 @@ export async function locateDeclaredSessionFiles<Store>(input: {
   }
 }
 
+/** Bounded stable bytes from an already-held regular file; the caller keeps path/ownership and handle lifetime. */
+export async function readHeldSessionFile(handle: FileHandle, maxBytes: number, signal?: AbortSignal): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('Native-store byte ceiling must be a nonnegative safe integer')
+  signal?.throwIfAborted()
+  const before = await handle.stat()
+  if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size > maxBytes) throw new Error('Native source is not a bounded regular file')
+  const bytes = Buffer.alloc(before.size)
+  for (let offset = 0; offset < bytes.length;) {
+    signal?.throwIfAborted()
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+    if (!bytesRead) throw new Error('Native source ended before its held size')
+    offset += bytesRead
+  }
+  const after = await handle.stat()
+  signal?.throwIfAborted()
+  if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('Native source changed during held read')
+  return bytes
+}
+
 /** Length of the prefix of the first `limit` bytes that ends on a newline. Does not modify the source. */
-export async function completeLinePrefix(handle: FileHandle, limit: number): Promise<number> {
+export async function completeLinePrefix(source: FileHandle | Uint8Array, limit: number): Promise<number> {
   if (!Number.isSafeInteger(limit) || limit < 0) throw new Error('Native-store byte ceiling must be a nonnegative safe integer')
+  if (source instanceof Uint8Array) return Buffer.from(source).subarray(0, limit).lastIndexOf(0x0a) + 1
   const window = Buffer.allocUnsafe(64 * 1024)
   for (let end = limit; end > 0;) {
     const start = Math.max(0, end - window.length)
-    const { bytesRead } = await handle.read(window, 0, end - start, start)
+    const { bytesRead } = await source.read(window, 0, end - start, start)
     const newline = window.subarray(0, bytesRead).lastIndexOf(0x0a)
     if (newline >= 0) return start + newline + 1
     end = start
