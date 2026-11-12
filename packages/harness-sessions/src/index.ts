@@ -50,3 +50,12 @@ export { toChatMessages, type ChatMessage, type ChatProjectionOptions, type Chat
 export { primaryModel, summarizeText, toTurns, type Turn, type TurnOptions, type TurnToolCall } from './projections/turns.js'
 export { toOtlpSpans, type OtlpProjectionOptions } from './projections/otlp.js'
 export { readSessionInput, summarizeSessionInput, type SessionInput, type SessionInputInit } from './input.js'
+
+export {
+  readBoundHarnessSessions,
+  BOUND_HARNESS_SESSION_READ_LIMITS,
+  HARNESS_TRANSCRIPT_DENY,
+  type BoundHarnessSession,
+  type HarnessFileBinding,
+} from './bounded-family.js'
+export { completeLinePrefix, locateDeclaredSessionFiles, readHeldSessionFile, type DeclaredSessionFile, type DeclaredSessionStore } from './declared-files.js'

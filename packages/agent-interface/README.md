@@ -432,3 +432,23 @@ confer access. Hosts unable to resolve the saved pins must fail closed rather th
 inline JSON into instructions, substitute a newer generation or silently omit them.
 
 Profile collection admission uses the shared [contract limits](src/contract-limits.ts) before parsing elements or encoding record keys. Training receipts and knowledge references retain their own typed limits in [the profile schema](src/profile-schema.ts). Opaque metadata is admitted and detached by value as bounded portable data; accessors are refused and cross-key object identity is not preserved. Snapshot validation precedes the final detached copy, preserving explicit undefined fields, canonical hashes and nested isolation. The generic serialized-JSON byte bound is not a whole-profile transport limit.
+
+## Profile experiment model and accounting evidence
+
+Profile experiments keep their legacy fixed task model unless `modelBinding`
+explicitly selects `profile-default`. That policy binds static authored model
+hints and an exact resolved model/snapshot for each arm. The original task model
+must match the baseline. Schema and Eval share
+`agentProfileImprovementExpectedModel()`; the source-owning executor passes its
+actual profile to that helper and independently observes the returned identity
+for each run. Contradictory defaults, routing/fallback hints and unsupported
+dynamic values refuse. A configured model string alone is not served evidence.
+
+Complete profile run receipts and shared `AgentCandidateFixedSpend` remain
+strict. The opt-in `AgentProfileImprovementRecordedRunReceipt` uses the same
+receipt and evidence identities, with a profile-only unavailable accounting
+branch for execution or grading. Every required counter/cost is an explicit
+known value or null, with a reason. `agentProfileImprovementRecordedRunReceiptSchema`
+retains these records; complete comparison/proposal schemas refuse them. An
+unknown amount is neither observed nor estimated zero. Raw native facts outside
+the fixed-spend counters remain in the authoritative evidence references.

@@ -11,6 +11,7 @@ import type {
   Sha256Digest,
 } from "./agent-candidate.js";
 import type { AgentImprovementSource } from "./agent-improvement-source.js";
+import type { AgentProfileModelHints } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 
 /** An access-controlled evidence record emitted by a host-owned profile run. */
@@ -78,6 +79,15 @@ export interface AgentProfileImprovementExecutionRef extends AgentProfileImprove
  */
 export type AgentProfileImprovementChange = [AgentProfileDiff, ...AgentProfileDiff[]];
 
+/** Fixed-task is the historical default. Profile-default explicitly treats model selection. */
+export type AgentProfileImprovementModelBinding =
+  | { kind: "fixed-task" }
+  | {
+      kind: "profile-default";
+      baseline: { authored: AgentProfileModelHints; resolved: AgentCandidateResolvedModel };
+      candidate: { authored: AgentProfileModelHints; resolved: AgentCandidateResolvedModel };
+    };
+
 /** A measured comparison of two states of one host-owned agent profile. */
 export interface AgentProfileImprovementExperimentMaterial {
   kind: "agent-profile-improvement-experiment";
@@ -87,6 +97,7 @@ export interface AgentProfileImprovementExperimentMaterial {
   baseline: AgentProfileImprovementArm;
   candidate: AgentProfileImprovementArm;
   change: AgentProfileImprovementChange;
+  modelBinding?: AgentProfileImprovementModelBinding;
   candidateLineage: AgentCandidateLineage;
   benchmark: AgentProfileImprovementSuiteInputs;
   policy: AgentCandidateEvaluationPolicy;
@@ -116,8 +127,16 @@ export interface AgentProfileImprovementRunCell
   digest: Sha256Digest;
 }
 
+/** Missing profile-run facts remain explicit; this branch cannot support promotion. */
+export interface AgentProfileImprovementUnavailableAccounting {
+  availability: "unavailable";
+  reason: string;
+  facts: { [K in keyof AgentCandidateFixedSpend]: AgentCandidateFixedSpend[K] | null };
+}
+export type AgentProfileImprovementAccounting = AgentCandidateFixedSpend | AgentProfileImprovementUnavailableAccounting;
+
 /** Verifiable output from one profile execution and its frozen evaluator. */
-export interface AgentProfileImprovementRunReceipt {
+export interface AgentProfileImprovementRunReceipt<TAccounting extends AgentProfileImprovementAccounting = AgentCandidateFixedSpend> {
   kind: "agent-profile-improvement-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   executionId: string;
@@ -133,7 +152,7 @@ export interface AgentProfileImprovementRunReceipt {
   steps: number;
   resolvedModel: AgentCandidateResolvedModel;
   limits: AgentCandidateExecutionLimits;
-  usage: AgentCandidateFixedSpend;
+  usage: TAccounting;
   trace: {
     evidence: AgentProfileImprovementEvidence;
     eventCount: number;
@@ -151,7 +170,7 @@ export interface AgentProfileImprovementRunReceipt {
       endedAtMs: number;
       durationMs: number;
     };
-    usage: AgentCandidateFixedSpend;
+    usage: TAccounting;
     score: number;
     passed: boolean;
     dimensions: AgentCandidateBenchmarkDimension[];
@@ -160,10 +179,14 @@ export interface AgentProfileImprovementRunReceipt {
 }
 
 /** One paired result from the exact same task, seed, and evaluator. */
-export interface AgentProfileImprovementMeasurement {
-  baseline: AgentProfileImprovementRunReceipt;
-  candidate: AgentProfileImprovementRunReceipt;
+export interface AgentProfileImprovementMeasurement<TAccounting extends AgentProfileImprovementAccounting = AgentCandidateFixedSpend> {
+  baseline: AgentProfileImprovementRunReceipt<TAccounting>;
+  candidate: AgentProfileImprovementRunReceipt<TAccounting>;
 }
+
+/** Opt-in retained records can include accounting gaps; complete legacy types stay complete. */
+export type AgentProfileImprovementRecordedRunReceipt = AgentProfileImprovementRunReceipt<AgentProfileImprovementAccounting>;
+export type AgentProfileImprovementRecordedMeasurement = AgentProfileImprovementMeasurement<AgentProfileImprovementAccounting>;
 
 /** Portable paired comparison from ordinary profile executions. */
 export interface AgentProfileImprovementMeasuredComparison
