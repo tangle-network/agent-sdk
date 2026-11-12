@@ -72,6 +72,16 @@ describe('Claude Code', () => {
     await expect(readBoundHarnessSessions({ ...multiple, nativeSessionIds: [s.nativeSessionId, s.nativeSessionId] })).rejects.toThrow('ambiguous root')
     await expect(readBoundHarnessSessions({
       ...multiple,
+      nativeSessionIds: [next.nativeSessionId, s.nativeSessionId],
+      parse: (text, file) => ({
+        ...input.parse(text, file),
+        ...(file.nativeSessionId === next.nativeSessionId
+          ? { parentNativeSessionId: 'another-parent' }
+          : { children: [{ nativeSessionId: next.nativeSessionId, toolCallId: null }] }),
+      }),
+    })).rejects.toThrow('different recorded parent')
+    await expect(readBoundHarnessSessions({
+      ...multiple,
       parse: (text, file) => ({
         ...input.parse(text, file),
         children: [{ nativeSessionId: file.nativeSessionId === s.nativeSessionId ? next.nativeSessionId : s.nativeSessionId, toolCallId: null }],

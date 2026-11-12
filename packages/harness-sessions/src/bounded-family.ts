@@ -111,6 +111,9 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
     for (const child of sessions.get(id)!.children) {
       if (parents.has(child.nativeSessionId) && parents.get(child.nativeSessionId) !== id)
         throw invalid('Native child has ambiguous recorded parents')
+      const recordedChild = sessions.get(child.nativeSessionId)
+      if (recordedChild?.parentNativeSessionId && recordedChild.parentNativeSessionId !== id)
+        throw invalid('Native child has a different recorded parent')
       let ancestor: string | undefined = id
       while (ancestor !== undefined) {
         if (ancestor === child.nativeSessionId)
