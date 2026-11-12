@@ -51,6 +51,8 @@ Pi's session-header `parentSession` is fork/clone/handoff lineage; it does not p
 
 A bounded local capture inspection on 2026-10-25 found explicit Kimi child events and separate child wires. Its Pi and Factory Droid samples contained no explicit subagent binding: the latest 20 files per harness held 7,724 and 245 records respectively; an additional size-stratified selection read seven Pi files (8,229 records) and 20 Factory files (252 records). These are sample limits, not a claim that every producer version lacks the metadata. The remaining Pi/Factory child coverage is unknown. Closing it requires a retained parent/child capture with an explicit source binding, followed by a reader-to-OTLP integration proof; the graph-corpus integrating owner owns that follow-up.
 
+For a producer or retained reader with an already attested file inventory, `readBoundHarnessSessions` verifies the exact native root and recorded children through caller-supplied bounded `read`, strict `parse` and `validatePath` callbacks. It checks file digests, byte counts, unique paths, parent attribution, parse integrity and the shared `BOUND_HARNESS_SESSION_READ_LIMITS`. It refuses credential-shaped paths before reading. The host owns filesystem confinement and must honor the supplied abort signal in its read callback; this operation does not discover an ambient HOME, attest an inventory or grant access to files. Runtime's existing entrypoint supplies its archive path policy, abortable read and validation error identity.
+
 ## Use
 
 ```ts

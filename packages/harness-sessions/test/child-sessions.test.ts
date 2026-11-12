@@ -1,10 +1,10 @@
 /** Real retained Kimi parent/child wires; provenance and redaction are beside the fixtures. */
 import { cp, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { validateTraceSpans } from '@tangle-network/agent-trace-contract'
-import { kimiReader, kimiRefForFile, readSessionInput, toOtlpSpans } from '../src/index.js'
+import { assertStoreRoot, kimiReader, kimiRefForFile, readBoundHarnessSessions, readSessionInput, toOtlpSpans } from '../src/index.js'
 
 const fixture = join(import.meta.dirname, 'fixtures', 'kimi', 'parent')
 const childIds = ['id-011afd997439', 'id-4fb3cf18797e']
@@ -34,6 +34,19 @@ describe('recorded Kimi child sessions', () => {
         expect(session.servedModels).toEqual({})
         return session
       }))
+      const files = refs.map(ref => ({ path: relative(home, ref.path), nativeSessionId: ref.nativeSessionId }))
+      const input = {
+        nativeSessionId: 'parent',
+        files,
+        validatePath: assertStoreRoot,
+        read: (file: typeof files[number]) => readFile(join(home, file.path)),
+        parse: (text: string, file: typeof files[number]) => readSessionInput('kimi-code', { text }, {
+          nativeSessionId: file.nativeSessionId,
+          parentNativeSessionId: refs.find(ref => ref.nativeSessionId === file.nativeSessionId)!.parentNativeSessionId,
+        }, { corruption: 'strict' }),
+      }
+      // The ordinary projection retains these known gaps; exact native capture refuses them.
+      await expect(readBoundHarnessSessions(input)).rejects.toThrow('identity or integrity')
       const parent = sessions.find((session) => session.nativeSessionId === 'parent')!
       expect(parent.children.map((child) => child.nativeSessionId).sort()).toEqual(childIds)
       for (const child of parent.children) {

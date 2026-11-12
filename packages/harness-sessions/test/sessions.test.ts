@@ -6,11 +6,12 @@
  * that script, read back through each harness's own store.
  */
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { validateTraceSpans } from '@tangle-network/agent-trace-contract'
 import {
-  claudeCodeReader, claudeCodeRefForFile, codexReader, codexRefForFile, opencodeReader, opencodeSessionsInStore,
+  assertStoreRoot, readBoundHarnessSessions, claudeCodeReader, claudeCodeRefForFile, codexReader, codexRefForFile, opencodeReader, opencodeSessionsInStore,
   claudeRecordIsMachine, claudeTypedPromptText, piReader, piRefForFile, readerFor, readSessionInput, toChatMessages, toOtlpSpans, toTurns,
   type HarnessSession, type HarnessSessionReader, type SessionRef,
 } from '../src/index.js'
@@ -48,6 +49,21 @@ describe('Claude Code', () => {
     expect(s.toolCalls[0]!.result?.text).toContain('TRACEPROOF-WORKER-REAP-TOOL-OUTPUT')
     expect(s.usage).toEqual({ input: 300, output: 60, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
     expect(s.ending.status).toBe('completed')
+    const files = [{ path: 'claude-code/completed.jsonl', nativeSessionId: s.nativeSessionId }]
+    const input = {
+      nativeSessionId: s.nativeSessionId,
+      files,
+      validatePath: assertStoreRoot,
+      read: (file: typeof files[number], signal?: AbortSignal) => readFile(fixture(file.path), { signal }),
+      parse: (text: string, file: typeof files[number]) => readSessionInput('claude-code', { text }, { nativeSessionId: file.nativeSessionId }, { corruption: 'strict' }),
+    }
+    const captured = await readBoundHarnessSessions(input)
+    expect(captured.sessions[0]!.usage).toEqual(s.usage)
+    expect(captured.sessions[0]!.toolCalls).toEqual(s.toolCalls)
+    expect(captured.files[0]!.sha256).toMatch(/^sha256:[0-9a-f]{64}$/)
+    await expect(readBoundHarnessSessions({ ...input, files: files.map(file => ({ ...file, sha256: '0'.repeat(64) })) })).rejects.toThrow('bytes changed')
+    await expect(readBoundHarnessSessions({ ...input, files: [{ path: '../outside.jsonl', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('normalized path')
+    await expect(readBoundHarnessSessions({ ...input, files: [{ path: '.env', nativeSessionId: s.nativeSessionId }] })).rejects.toThrow('denied')
     // The context Claude Code recorded around each turn is part of the chat, as Codex's developer messages are.
     expect(toChatMessages(s).map((m) => m.role)).toEqual(['user', ...Array(9).fill('system'), 'assistant', 'tool', 'system', 'system', 'assistant', 'tool', 'system', 'assistant'])
     expect(toChatMessages(s, { system: false }).map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant'])
