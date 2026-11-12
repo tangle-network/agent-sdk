@@ -887,7 +887,7 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     const candidateResolved = { ...model, requested: candidateAuthored.default, model: "candidate-model-2026-11-12", snapshot: "2026-11-12", reasoningEffort: candidateAuthored.reasoningEffort };
     const experiment = resign({
       ...comparison.experiment,
-      change: [{ kind: "agent-profile-diff" as const, set: { model: candidateAuthored } }],
+      change: profileChange({ model: candidateAuthored }),
       modelBinding: { kind: "profile-default" as const, baseline: { authored: baselineAuthored, resolved: model }, candidate: { authored: candidateAuthored, resolved: candidateResolved } },
     });
     expect(agentProfileImprovementExperimentSchema.parse(experiment)).toEqual(experiment);
