@@ -62,7 +62,6 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
         throw invalid('Native file path is denied or repeated')
       paths.add(file.path)
       const bytes = await input.read(file, input.signal)
-      input.signal?.throwIfAborted()
       total += bytes.byteLength
       if (
         bytes.byteLength > BOUND_HARNESS_SESSION_READ_LIMITS.maxFileBytes ||
