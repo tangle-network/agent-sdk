@@ -403,8 +403,7 @@ const timingSchema = z
     }
   });
 
-const agentProfileImprovementGradingSchema = z
-  .object({
+const profileGradingShape = {
     grader: agentCandidateBenchmarkGraderIdentitySchema,
     evidence: profileImprovementEvidenceSchema,
     timing: timingSchema,
@@ -412,9 +411,8 @@ const agentProfileImprovementGradingSchema = z
     score: z.number().finite(),
     passed: z.boolean(),
     dimensions: z.array(agentCandidateBenchmarkDimensionSchema),
-  })
-  .strict()
-  .superRefine((grading, ctx) => {
+};
+function refineProfileGrading(grading: AgentProfileImprovementRecordedRunReceipt["grading"], ctx: z.RefinementCtx) {
     const names = grading.dimensions.map((dimension) => dimension.name);
     if (new Set(names).size !== names.length) {
       ctx.addIssue({
@@ -430,7 +428,9 @@ const agentProfileImprovementGradingSchema = z
         message: "profile improvement grading evidence must be distinct from its grader",
       });
     }
-  });
+
+}
+const agentProfileImprovementGradingSchema = z.strictObject(profileGradingShape).superRefine(refineProfileGrading);
 
 export const agentProfileImprovementUnavailableAccountingSchema = z.strictObject({
   availability: z.literal("unavailable"),
@@ -552,7 +552,7 @@ export const agentProfileImprovementRunReceiptSchema = z.strictObject(profileRun
 export const agentProfileImprovementRecordedRunReceiptSchema = z.strictObject({
   ...profileRunReceiptShape,
   usage: agentProfileImprovementAccountingSchema,
-  grading: agentProfileImprovementGradingSchema.safeExtend({ usage: agentProfileImprovementAccountingSchema }),
+  grading: z.strictObject({ ...profileGradingShape, usage: agentProfileImprovementAccountingSchema }).superRefine(refineProfileGrading),
 }).superRefine(refineProfileRunReceipt) satisfies z.ZodType<AgentProfileImprovementRecordedRunReceipt>;
 
 function combinedProfileUsage(
