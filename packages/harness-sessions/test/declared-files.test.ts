@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { completeLinePrefix, locateDeclaredSessionFiles } from '../src/index.js'
+import { completeLinePrefix, locateDeclaredSessionFiles, readHeldSessionFile } from '../src/index.js'
 
 describe.skipIf(process.platform !== 'linux')('declared native session copy input', () => {
   it('holds the original files after path replacement, refuses links and foreign writers, and returns only complete bounded lines', async () => {
@@ -35,6 +35,12 @@ describe.skipIf(process.platform !== 'linux')('declared native session copy inpu
       const copied = Buffer.alloc(prefix)
       await files[0]!.handle.read(copied, 0, prefix, 0)
       expect(copied).toEqual(original.subarray(0, original.indexOf(0x0a) + 1))
+      const snapshot = await readHeldSessionFile(files[0]!.handle, original.length)
+      expect(snapshot).toEqual(original)
+      expect(await completeLinePrefix(snapshot, snapshot.length)).toBe(prefix)
+      await expect(readHeldSessionFile(files[0]!.handle, original.length - 1)).rejects.toThrow('bounded regular file')
+      await expect(readHeldSessionFile(files[0]!.handle, original.length, AbortSignal.abort())).rejects.toThrow()
+      expect((await files[0]!.handle.stat()).size).toBe(original.length)
       expect(await readFile(join(`${home}-original`, '.claude/projects/one/native.jsonl'))).toEqual(original)
       const foreign = await locateDeclaredSessionFiles({ home: handle, stores, uid: uid + 1, maxEntries: 100 })
       expect(foreign.files).toEqual([])
