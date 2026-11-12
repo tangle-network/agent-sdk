@@ -6,7 +6,10 @@ import {
   type SandboxClientLike,
 } from "@tangle-network/agent-provider-tangle";
 
-it("adapts the actual public Sandbox instance without inventing branching", async () => {
+const { LIVE_MODEL_POLICY, mapLiveCreateInput, proveLiveModelConfig } =
+  await import(new URL("./tangle-live-control.mjs", import.meta.url).href);
+
+it("adapts the public Sandbox control surface and rejects a paid route before dispatch", async () => {
   const capabilities: SandboxRuntimeCapabilities = {
     schema: 1,
     agentInterface: "0.49.0",
@@ -18,6 +21,7 @@ it("adapts the actual public Sandbox instance without inventing branching", asyn
     interactions: { responseDedupe: false },
   };
   const requests: string[] = [];
+  let effectiveModel = { mode: "cli", provider: "opencode", model: "glm-5.3-flash-free" };
   let baseUrl = "", created: Record<string, unknown> | undefined;
   const sandboxInfo = () => ({
     id: "sandbox-public-surface", status: "running",
@@ -47,6 +51,8 @@ it("adapts the actual public Sandbox instance without inventing branching", asyn
       response.end(JSON.stringify(sandboxInfo()));
     } else if (path === "/v1/sandboxes/sandbox-public-surface") {
       response.end(JSON.stringify(sandboxInfo()));
+    } else if (path === "/v1/sandboxes/sandbox-public-surface/runtime/config/config") {
+      response.end(JSON.stringify({ model: effectiveModel }));
     } else if (path === "/v1/sandboxes/sandbox-public-surface/runtime/capabilities") {
       response.end(JSON.stringify(capabilities));
     } else {
@@ -76,6 +82,36 @@ it("adapts the actual public Sandbox instance without inventing branching", asyn
     expect(requests).toContain("POST /v1/sandboxes");
     expect(requests).toContain("GET /v1/sandboxes/sandbox-public-surface/runtime/capabilities");
     expect(requests.every((request) => !/snapshot|fork|agents\/run/.test(request))).toBe(true);
+
+    const nativeProvider = createTangleProvider({ client, mapCreateInput: mapLiveCreateInput });
+    const nativeInput: Parameters<typeof nativeProvider.create>[0] = {
+      backend: "opencode",
+      profile: { name: "free-public-surface", harness: "opencode", model: {
+        provider: LIVE_MODEL_POLICY.provider, default: LIVE_MODEL_POLICY.id,
+        small: LIVE_MODEL_POLICY.id, metadata: { credentialSource: "api-key" },
+      } },
+      workspace: { environment: "universal", repoUrl: "https://github.com/tangle-network/agent-sdk.git",
+        gitRef: "main", cwd: { base: "repository", path: "packages/agent-interface" } },
+      name: "free-public-surface", idempotencyKey: "free-public-surface",
+      metadata: { owner: "agent-sdk-upstream-evidence" },
+    };
+    const nativeEnvironment = await nativeProvider.create(nativeInput);
+    expect(created).toMatchObject({ secrets: [], cwd: "packages/agent-interface",
+      backend: { type: "opencode", profile: nativeInput.profile,
+        model: { mode: "cli", provider: "opencode", model: "glm-5.3-flash-free" } } });
+    expect(created).not.toHaveProperty("env");
+    expect(created).not.toHaveProperty("proxySecrets");
+    expect(created).toHaveProperty("backend.model", { mode: "cli", provider: "opencode", model: "glm-5.3-flash-free" });
+    expect(await proveLiveModelConfig(client, nativeEnvironment.id)).toMatchObject({ effective: effectiveModel,
+      servedIdentity: "not-proved-by-config" });
+    const createsBeforeRejection = requests.filter((request) => request === "POST /v1/sandboxes").length;
+    await expect(nativeProvider.create({ ...nativeInput, env: { OPENCODE_MODEL_API_KEY: "not-a-secret" } }))
+      .rejects.toThrow("Unsupported live fixture input env");
+    expect(requests.filter((request) => request === "POST /v1/sandboxes")).toHaveLength(createsBeforeRejection);
+    effectiveModel = { mode: "api", provider: "tangle-router", model: "glm-5.3" };
+    await expect(proveLiveModelConfig(client, nativeEnvironment.id))
+      .rejects.toThrow("Effective sandbox model must use the fixed native free lane");
+    expect(requests.every((request) => !/agents\/run/.test(request))).toBe(true);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

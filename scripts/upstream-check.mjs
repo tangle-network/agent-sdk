@@ -681,8 +681,8 @@ function runLiveTangle(upId) {
       evidence: {
         summary: descriptor.summary,
         packedTarballs: cohort.packageVersions,
-        modelProvider: process.env.TANGLE_MODEL_PROVIDER ?? null,
-        model: process.env.TANGLE_MODEL ?? null,
+        modelPolicy: report.modelPolicy,
+        effectiveModels: report.effectiveModels,
         report,
       },
       generatedAt: new Date().toISOString(),
