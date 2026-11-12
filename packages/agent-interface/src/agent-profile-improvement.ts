@@ -11,6 +11,7 @@ import type {
   Sha256Digest,
 } from "./agent-candidate.js";
 import type { AgentImprovementSource } from "./agent-improvement-source.js";
+import type { AgentProfileModelHints } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
 
 /** An access-controlled evidence record emitted by a host-owned profile run. */
@@ -78,6 +79,15 @@ export interface AgentProfileImprovementExecutionRef extends AgentProfileImprove
  */
 export type AgentProfileImprovementChange = [AgentProfileDiff, ...AgentProfileDiff[]];
 
+/** Fixed-task is the historical default. Profile-default explicitly treats model selection. */
+export type AgentProfileImprovementModelBinding =
+  | { kind: "fixed-task" }
+  | {
+      kind: "profile-default";
+      baseline: { authored: AgentProfileModelHints; resolved: AgentCandidateResolvedModel };
+      candidate: { authored: AgentProfileModelHints; resolved: AgentCandidateResolvedModel };
+    };
+
 /** A measured comparison of two states of one host-owned agent profile. */
 export interface AgentProfileImprovementExperimentMaterial {
   kind: "agent-profile-improvement-experiment";
@@ -87,6 +97,7 @@ export interface AgentProfileImprovementExperimentMaterial {
   baseline: AgentProfileImprovementArm;
   candidate: AgentProfileImprovementArm;
   change: AgentProfileImprovementChange;
+  modelBinding?: AgentProfileImprovementModelBinding;
   candidateLineage: AgentCandidateLineage;
   benchmark: AgentProfileImprovementSuiteInputs;
   policy: AgentCandidateEvaluationPolicy;

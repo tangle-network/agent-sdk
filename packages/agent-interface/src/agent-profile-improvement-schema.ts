@@ -5,6 +5,7 @@ import type {
   AgentProfileImprovementExperiment,
   AgentProfileImprovementMeasuredComparison,
   AgentProfileImprovementMeasurement,
+  AgentProfileImprovementModelBinding,
   AgentProfileImprovementRunReceipt,
   AgentProfileImprovementRunCell,
   AgentProfileImprovementSuite,
@@ -15,8 +16,9 @@ import type {
   AgentCandidateFixedSpend,
   AgentImprovementSurface,
 } from "./agent-candidate.js";
+import type { AgentProfile } from "./agent-profile.js";
 import type { AgentProfileDiff } from "./profile-diff.js";
-import { changedAgentProfileAxes } from "./profile-diff.js";
+import { applyAgentProfileDiff, changedAgentProfileAxes } from "./profile-diff.js";
 import {
   agentCandidateLineageSchema,
   isGeneratedCandidateSource,
@@ -45,7 +47,7 @@ import {
 } from "./agent-improvement-measurement-schema.js";
 import { agentImprovementSourceSchema } from "./agent-improvement-source.js";
 import { numbersApproximatelyEqual } from "./number-validation.js";
-import { agentProfileDiffSchema } from "./profile-schema.js";
+import { agentProfileDiffSchema, agentProfileModelHintsSchema } from "./profile-schema.js";
 
 const profileImprovementScenarioSchema = z
   .object({
@@ -213,6 +215,50 @@ export const agentProfileImprovementChangeSchema = z
     }
   }) satisfies z.ZodType<[AgentProfileDiff, ...AgentProfileDiff[]]>;
 
+const profileModelBindingArmSchema = z.strictObject({
+  authored: agentProfileModelHintsSchema,
+  resolved: agentCandidateResolvedModelSchema,
+});
+export const agentProfileImprovementModelBindingSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("fixed-task") }),
+  z.strictObject({
+    kind: z.literal("profile-default"),
+    baseline: profileModelBindingArmSchema,
+    candidate: profileModelBindingArmSchema,
+  }),
+]) satisfies z.ZodType<AgentProfileImprovementModelBinding>;
+
+/** One model-policy interpretation for schema, measurement and the source-owning executor.
+ * Pass the actual profile when sealing/executing to prove its authored default matches the binding.
+ * The host must independently observe the exact returned model and snapshot for each run. */
+export function agentProfileImprovementExpectedModel(
+  experiment: Pick<AgentProfileImprovementExperiment, "modelBinding" | "change">,
+  task: Pick<AgentProfileImprovementTask, "model">,
+  arm: "baseline" | "candidate",
+  profile?: AgentProfile,
+) {
+  const policy = agentProfileImprovementModelBindingSchema.parse(experiment.modelBinding ?? { kind: "fixed-task" });
+  if (policy.kind === "fixed-task") return agentCandidateResolvedModelSchema.parse(task.model);
+  for (const binding of [policy.baseline, policy.candidate]) {
+    const { authored, resolved } = binding;
+    const concrete = (value: string | undefined) => value !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(value);
+    if (!concrete(authored.default) || !concrete(authored.provider) || authored.reasoningEffort === undefined || authored.small !== undefined || authored.metadata !== undefined)
+      throw new Error("profile model binding requires an exact static default/provider/effort without fallback or metadata routing");
+    const model = authored.default!.startsWith(`${authored.provider}/`) ? authored.default!.slice(authored.provider!.length + 1) : authored.default;
+    if (resolved.requested !== authored.default || resolved.provider !== authored.provider || resolved.reasoningEffort !== authored.reasoningEffort || resolved.model !== model || !concrete(resolved.snapshot))
+      throw new Error("profile model binding contradicts its authored default or exact resolved identity");
+  }
+  if (canonicalCandidateDigest(task.model) !== canonicalCandidateDigest(policy.baseline.resolved))
+    throw new Error("profile model treatment task.model must equal the exact baseline model");
+  const changed = experiment.change.reduce((value, diff) => applyAgentProfileDiff(value, diff), { model: policy.baseline.authored } as AgentProfile);
+  if (canonicalCandidateDigest(changed.model) !== canonicalCandidateDigest(policy.candidate.authored))
+    throw new Error("profile model binding contradicts the measured profile changes");
+  const expected = policy[arm];
+  if (profile && (canonicalCandidateDigest(profile.model) !== canonicalCandidateDigest(expected.authored) || profile.seats?.length || Object.values(profile.modes ?? {}).some(value => value.model !== undefined) || Object.values(profile.subagents ?? {}).some(value => value.model !== undefined)))
+    throw new Error("profile model binding does not describe the exact static single-model profile");
+  return expected.resolved;
+}
+
 export const agentProfileImprovementExperimentSchema = z
   .object({
     kind: z.literal("agent-profile-improvement-experiment"),
@@ -222,6 +268,7 @@ export const agentProfileImprovementExperimentSchema = z
     baseline: agentProfileImprovementArmSchema,
     candidate: agentProfileImprovementArmSchema,
     change: agentProfileImprovementChangeSchema,
+    modelBinding: agentProfileImprovementModelBindingSchema.optional(),
     candidateLineage: agentCandidateLineageSchema,
     benchmark: agentProfileImprovementSuiteInputsSchema,
     policy: agentCandidateEvaluationPolicySchema,
@@ -229,6 +276,13 @@ export const agentProfileImprovementExperimentSchema = z
   })
   .strict()
   .superRefine((experiment, ctx) => {
+    try {
+      for (const task of experiment.benchmark.tasks)
+        for (const arm of ["baseline", "candidate"] as const)
+          agentProfileImprovementExpectedModel(experiment, task, arm);
+    } catch (error) {
+      ctx.addIssue({ code: "custom", path: ["modelBinding"], message: error instanceof Error ? error.message : "Invalid profile model binding" });
+    }
     if (experiment.baseline.stateDigest !== experiment.source.sourceDigest) {
       ctx.addIssue({
         code: "custom",
@@ -626,7 +680,7 @@ function refineProfileImprovementComparison(
             "profile run receipt must bind the signed evaluator",
           ],
           [
-            JSON.stringify(receipt.resolvedModel) === JSON.stringify(task.model),
+            canonicalCandidateDigest(receipt.resolvedModel) === canonicalCandidateDigest(agentProfileImprovementExpectedModel(comparison.experiment, task, arm)),
             [...armPath, "resolvedModel"],
             "profile run receipt must bind the signed model snapshot",
           ],
