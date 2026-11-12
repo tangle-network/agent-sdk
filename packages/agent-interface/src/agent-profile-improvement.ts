@@ -127,8 +127,16 @@ export interface AgentProfileImprovementRunCell
   digest: Sha256Digest;
 }
 
+/** Missing profile-run facts remain explicit; this branch cannot support promotion. */
+export interface AgentProfileImprovementUnavailableAccounting {
+  availability: "unavailable";
+  reason: string;
+  facts: { [K in keyof AgentCandidateFixedSpend]: AgentCandidateFixedSpend[K] | null };
+}
+export type AgentProfileImprovementAccounting = AgentCandidateFixedSpend | AgentProfileImprovementUnavailableAccounting;
+
 /** Verifiable output from one profile execution and its frozen evaluator. */
-export interface AgentProfileImprovementRunReceipt {
+export interface AgentProfileImprovementRunReceipt<TAccounting extends AgentProfileImprovementAccounting = AgentCandidateFixedSpend> {
   kind: "agent-profile-improvement-run";
   digestAlgorithm: AgentCandidateDigestAlgorithm;
   executionId: string;
@@ -144,7 +152,7 @@ export interface AgentProfileImprovementRunReceipt {
   steps: number;
   resolvedModel: AgentCandidateResolvedModel;
   limits: AgentCandidateExecutionLimits;
-  usage: AgentCandidateFixedSpend;
+  usage: TAccounting;
   trace: {
     evidence: AgentProfileImprovementEvidence;
     eventCount: number;
@@ -162,7 +170,7 @@ export interface AgentProfileImprovementRunReceipt {
       endedAtMs: number;
       durationMs: number;
     };
-    usage: AgentCandidateFixedSpend;
+    usage: TAccounting;
     score: number;
     passed: boolean;
     dimensions: AgentCandidateBenchmarkDimension[];
@@ -171,10 +179,14 @@ export interface AgentProfileImprovementRunReceipt {
 }
 
 /** One paired result from the exact same task, seed, and evaluator. */
-export interface AgentProfileImprovementMeasurement {
-  baseline: AgentProfileImprovementRunReceipt;
-  candidate: AgentProfileImprovementRunReceipt;
+export interface AgentProfileImprovementMeasurement<TAccounting extends AgentProfileImprovementAccounting = AgentCandidateFixedSpend> {
+  baseline: AgentProfileImprovementRunReceipt<TAccounting>;
+  candidate: AgentProfileImprovementRunReceipt<TAccounting>;
 }
+
+/** Opt-in retained records can include accounting gaps; complete legacy types stay complete. */
+export type AgentProfileImprovementRecordedRunReceipt = AgentProfileImprovementRunReceipt<AgentProfileImprovementAccounting>;
+export type AgentProfileImprovementRecordedMeasurement = AgentProfileImprovementMeasurement<AgentProfileImprovementAccounting>;
 
 /** Portable paired comparison from ordinary profile executions. */
 export interface AgentProfileImprovementMeasuredComparison

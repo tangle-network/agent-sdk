@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentProfileImprovementExpectedModel, agentProfileImprovementExperimentSchema } from "./index.js";
+import { agentProfileImprovementExpectedModel, agentProfileImprovementExperimentSchema, agentProfileImprovementRecordedRunReceiptSchema } from "./index.js";
 import type { AgentProfile } from "./agent-profile.js";
 import type { AgentImprovementSurface } from "./agent-candidate.js";
 import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
@@ -912,6 +912,21 @@ describe("agentProfileImprovementMeasuredComparisonSchema", () => {
     }
     expect(() => agentProfileImprovementExpectedModel(experiment, { model: candidateResolved }, "candidate")).toThrow("baseline model");
     expect(() => agentProfileImprovementExpectedModel(experiment, task, "candidate", { model: candidateAuthored, modes: { fallback: { model: "another-model" } } })).toThrow("single-model");
+  });
+
+  it("retains incomplete native facts without admitting them as complete measured receipts", () => {
+    const { comparison } = fixture();
+    const original = comparison.measurements[0]!.candidate;
+    const unavailable = { availability: "unavailable" as const, reason: "Provider did not report cache, reasoning, or billed cost", facts: { inputTokens: 10, outputTokens: 5, cachedInputTokens: null, reasoningTokens: null, modelCalls: 1, costUsdNanos: null, costProvenance: null } };
+    const recorded = resign({ ...original, usage: unavailable });
+    expect(agentProfileImprovementRecordedRunReceiptSchema.parse(recorded)).toEqual(recorded);
+    expect(recorded.usage.facts.cachedInputTokens).toBeNull();
+    expect(recorded.usage.facts.inputTokens).toBe(10);
+    expect(agentProfileImprovementRunReceiptSchema.safeParse(recorded).success).toBe(false);
+    expect(agentProfileImprovementMeasuredComparisonSchema.safeParse({ ...comparison, measurements: [{ ...comparison.measurements[0]!, candidate: recorded }, ...comparison.measurements.slice(1)] }).success).toBe(false);
+    const contradiction = resign({ ...recorded, usage: { ...unavailable, facts: { ...unavailable.facts, costUsdNanos: 1 } } });
+    expect(agentProfileImprovementRecordedRunReceiptSchema.safeParse(contradiction).success).toBe(false);
+    expect(agentProfileImprovementRecordedRunReceiptSchema.parse(original)).toEqual(original);
   });
 
   it("rejects a run that changes the frozen model snapshot", () => {

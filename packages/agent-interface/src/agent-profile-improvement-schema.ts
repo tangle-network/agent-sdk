@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type {
   AgentProfileImprovementEvidence,
+  AgentProfileImprovementAccounting,
+  AgentProfileImprovementUnavailableAccounting,
+  AgentProfileImprovementRecordedRunReceipt,
   AgentProfileImprovementExecutionRef,
   AgentProfileImprovementExperiment,
   AgentProfileImprovementMeasuredComparison,
@@ -237,24 +240,48 @@ export function agentProfileImprovementExpectedModel(
   arm: "baseline" | "candidate",
   profile?: AgentProfile,
 ) {
-  const policy = agentProfileImprovementModelBindingSchema.parse(experiment.modelBinding ?? { kind: "fixed-task" });
+  const policy = agentProfileImprovementModelBindingSchema.parse(
+    experiment.modelBinding ?? { kind: "fixed-task" },
+  );
   if (policy.kind === "fixed-task") return agentCandidateResolvedModelSchema.parse(task.model);
   for (const binding of [policy.baseline, policy.candidate]) {
     const { authored, resolved } = binding;
-    const concrete = (value: string | undefined) => value !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(value);
-    if (!concrete(authored.default) || !concrete(authored.provider) || authored.reasoningEffort === undefined || authored.small !== undefined || authored.metadata !== undefined)
-      throw new Error("profile model binding requires an exact static default/provider/effort without fallback or metadata routing");
-    const model = authored.default!.startsWith(`${authored.provider}/`) ? authored.default!.slice(authored.provider!.length + 1) : authored.default;
-    if (resolved.requested !== authored.default || resolved.provider !== authored.provider || resolved.reasoningEffort !== authored.reasoningEffort || resolved.model !== model || !concrete(resolved.snapshot))
+    const { default: requested, provider, reasoningEffort } = authored;
+    const concrete = (value: string | undefined): value is string =>
+      value !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(value);
+    if (
+      !concrete(requested) || !concrete(provider) || reasoningEffort === undefined ||
+      authored.small !== undefined || authored.metadata !== undefined
+    )
+      throw new Error(
+        "profile model binding requires an exact static default/provider/effort without fallback or metadata routing",
+      );
+    const model = requested.startsWith(`${provider}/`)
+      ? requested.slice(provider.length + 1) : requested;
+    if (
+      resolved.requested !== requested || resolved.provider !== provider ||
+      resolved.reasoningEffort !== reasoningEffort || resolved.model !== model ||
+      !concrete(resolved.snapshot)
+    )
       throw new Error("profile model binding contradicts its authored default or exact resolved identity");
   }
   if (canonicalCandidateDigest(task.model) !== canonicalCandidateDigest(policy.baseline.resolved))
     throw new Error("profile model treatment task.model must equal the exact baseline model");
-  const changed = experiment.change.reduce((value, diff) => applyAgentProfileDiff(value, diff), { model: policy.baseline.authored } as AgentProfile);
+  const changed = experiment.change.reduce<AgentProfile>(
+    (value, diff) => applyAgentProfileDiff(value, diff),
+    { model: policy.baseline.authored },
+  );
+  if (changed.seats?.length || Object.values(changed.modes ?? {}).some(value => value.model !== undefined) || Object.values(changed.subagents ?? {}).some(value => value.model !== undefined))
+    throw new Error("profile model binding does not permit fallback or alternate model routes");
   if (canonicalCandidateDigest(changed.model) !== canonicalCandidateDigest(policy.candidate.authored))
     throw new Error("profile model binding contradicts the measured profile changes");
   const expected = policy[arm];
-  if (profile && (canonicalCandidateDigest(profile.model) !== canonicalCandidateDigest(expected.authored) || profile.seats?.length || Object.values(profile.modes ?? {}).some(value => value.model !== undefined) || Object.values(profile.subagents ?? {}).some(value => value.model !== undefined)))
+  if (profile && (
+    canonicalCandidateDigest(profile.model) !== canonicalCandidateDigest(expected.authored) ||
+    profile.seats?.length ||
+    Object.values(profile.modes ?? {}).some(value => value.model !== undefined) ||
+    Object.values(profile.subagents ?? {}).some(value => value.model !== undefined)
+  ))
     throw new Error("profile model binding does not describe the exact static single-model profile");
   return expected.resolved;
 }
@@ -405,91 +432,128 @@ const agentProfileImprovementGradingSchema = z
     }
   });
 
-export const agentProfileImprovementRunReceiptSchema = z
-  .object({
-    kind: z.literal("agent-profile-improvement-run"),
-    digestAlgorithm: z.literal("rfc8785-sha256"),
-    executionId: z.string().min(1).max(500),
-    executionRef: agentProfileImprovementExecutionRefSchema,
-    runCell: agentProfileImprovementRunCellSchema,
-    runRecord: profileImprovementEvidenceSchema,
-    billing: z
-      .tuple([profileImprovementEvidenceSchema])
-      .rest(profileImprovementEvidenceSchema),
-    timing: timingSchema,
-    steps: z.number().int().nonnegative().safe(),
-    resolvedModel: agentCandidateResolvedModelSchema,
-    limits: agentCandidateExecutionLimitsSchema,
-    usage: agentCandidateFixedSpendSchema,
-    trace: z
+export const agentProfileImprovementUnavailableAccountingSchema = z.strictObject({
+  availability: z.literal("unavailable"),
+  reason: z.string().min(1).max(4000),
+  facts: z.strictObject({
+    inputTokens: agentCandidateFixedSpendSchema.shape.inputTokens.nullable(),
+    outputTokens: agentCandidateFixedSpendSchema.shape.outputTokens.nullable(),
+    cachedInputTokens: agentCandidateFixedSpendSchema.shape.cachedInputTokens.nullable(),
+    reasoningTokens: agentCandidateFixedSpendSchema.shape.reasoningTokens.nullable(),
+    modelCalls: agentCandidateFixedSpendSchema.shape.modelCalls.nullable(),
+    costUsdNanos: agentCandidateFixedSpendSchema.shape.costUsdNanos.nullable(),
+    costProvenance: agentCandidateFixedSpendSchema.shape.costProvenance.nullable(),
+  }),
+}).superRefine((accounting, ctx) => {
+  if (!Object.values(accounting.facts).includes(null))
+    ctx.addIssue({ code: "custom", path: ["facts"], message: "complete accounting must use the fixed-spend contract" });
+  if ((accounting.facts.costUsdNanos === null) !== (accounting.facts.costProvenance === null))
+    ctx.addIssue({ code: "custom", path: ["facts", "costProvenance"], message: "known cost and provenance must be retained together" });
+}) satisfies z.ZodType<AgentProfileImprovementUnavailableAccounting>;
+export const agentProfileImprovementAccountingSchema = z.union([agentCandidateFixedSpendSchema, agentProfileImprovementUnavailableAccountingSchema]);
+
+export function isAgentProfileImprovementAccountingUnavailable(accounting: AgentProfileImprovementAccounting): accounting is AgentProfileImprovementUnavailableAccounting {
+  return "availability" in accounting;
+}
+
+const profileRunReceiptShape = {
+  kind: z.literal("agent-profile-improvement-run"),
+  digestAlgorithm: z.literal("rfc8785-sha256"),
+  executionId: z.string().min(1).max(500),
+  executionRef: agentProfileImprovementExecutionRefSchema,
+  runCell: agentProfileImprovementRunCellSchema,
+  runRecord: profileImprovementEvidenceSchema,
+  billing: z
+    .tuple([profileImprovementEvidenceSchema])
+    .rest(profileImprovementEvidenceSchema),
+  timing: timingSchema,
+  steps: z.number().int().nonnegative().safe(),
+  resolvedModel: agentCandidateResolvedModelSchema,
+  limits: agentCandidateExecutionLimitsSchema,
+  usage: agentCandidateFixedSpendSchema,
+  trace: z
+    .object({
+      evidence: profileImprovementEvidenceSchema,
+      eventCount: z.number().int().nonnegative(),
+      modelCallCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  output: profileImprovementEvidenceSchema,
+  outcome: z.discriminatedUnion("status", [
+    z.object({ status: z.literal("succeeded") }).strict(),
+    z
       .object({
-        evidence: profileImprovementEvidenceSchema,
-        eventCount: z.number().int().nonnegative(),
-        modelCallCount: z.number().int().nonnegative(),
+        status: z.literal("failed"),
+        code: z.string().min(1).max(200),
+        message: z.string().min(1).max(4_000),
       })
       .strict(),
-    output: profileImprovementEvidenceSchema,
-    outcome: z.discriminatedUnion("status", [
-      z.object({ status: z.literal("succeeded") }).strict(),
-      z
-        .object({
-          status: z.literal("failed"),
-          code: z.string().min(1).max(200),
-          message: z.string().min(1).max(4_000),
-        })
-        .strict(),
-    ]),
-    grading: agentProfileImprovementGradingSchema,
-    digest: sha256DigestSchema,
-  })
-  .strict()
-  .superRefine((receipt, ctx) => {
-    if (evidenceKey(receipt.output) === evidenceKey(receipt.grading.evidence)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["grading", "evidence"],
-        message: "profile improvement grading evidence must be distinct from the agent output",
-      });
-    }
-    if (receipt.trace.modelCallCount !== receipt.usage.modelCalls) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["trace", "modelCallCount"],
-        message: "profile trace model calls must equal settled execution model calls",
-      });
-    }
-    if (receipt.trace.eventCount < receipt.trace.modelCallCount) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["trace", "eventCount"],
-        message: "profile trace must retain at least one event for every model call",
-      });
-    }
-    refineAgentExecutionWithinLimits(
-      receipt.limits,
-      {
-        durationMs: receipt.timing.durationMs,
-        steps: receipt.steps,
-        usage: combinedProfileUsage(receipt.usage, receipt.grading.usage),
-      },
-      ctx,
-    );
-    const billing = receipt.billing.map(evidenceKey);
-    if (new Set(billing).size !== billing.length) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["billing"],
-        message: "profile improvement billing evidence must be unique",
-      });
-    }
-    if (canonicalCandidateDigest(omitTopLevelDigest(receipt)) !== receipt.digest) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["digest"],
-        message: "profile improvement run receipt digest is invalid",
-      });
-    }
-  }) satisfies z.ZodType<AgentProfileImprovementRunReceipt>;
+  ]),
+  grading: agentProfileImprovementGradingSchema,
+  digest: sha256DigestSchema,
+};
+function refineProfileRunReceipt(receipt: AgentProfileImprovementRecordedRunReceipt, ctx: z.RefinementCtx) {
+  if (evidenceKey(receipt.output) === evidenceKey(receipt.grading.evidence)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["grading", "evidence"],
+      message: "profile improvement grading evidence must be distinct from the agent output",
+    });
+  }
+  const executionUsage = isAgentProfileImprovementAccountingUnavailable(receipt.usage) ? receipt.usage.facts : receipt.usage;
+  if (executionUsage.modelCalls !== null && receipt.trace.modelCallCount !== executionUsage.modelCalls) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["trace", "modelCallCount"],
+      message: "profile trace model calls must equal settled execution model calls",
+    });
+  }
+  if (receipt.trace.eventCount < receipt.trace.modelCallCount) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["trace", "eventCount"],
+      message: "profile trace must retain at least one event for every model call",
+    });
+  }
+  // Missing nonnegative counters supply only lower bounds for refusing known limit violations.
+  // These values are never persisted as measured usage or admitted to a comparison.
+  const lowerBound = (usage: AgentProfileImprovementAccounting): AgentCandidateFixedSpend => {
+    if (!isAgentProfileImprovementAccountingUnavailable(usage)) return usage;
+    const { facts } = usage;
+    return { inputTokens: facts.inputTokens ?? 0, outputTokens: facts.outputTokens ?? 0, cachedInputTokens: facts.cachedInputTokens ?? 0, reasoningTokens: facts.reasoningTokens ?? 0, modelCalls: facts.modelCalls ?? 0, costUsdNanos: facts.costUsdNanos ?? 0, costProvenance: facts.costProvenance ?? "estimated" };
+  };
+  refineAgentExecutionWithinLimits(
+    receipt.limits,
+    {
+      durationMs: receipt.timing.durationMs,
+      steps: receipt.steps,
+      usage: combinedProfileUsage(lowerBound(receipt.usage), lowerBound(receipt.grading.usage)),
+    },
+    ctx,
+  );
+  const billing = receipt.billing.map(evidenceKey);
+  if (new Set(billing).size !== billing.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["billing"],
+      message: "profile improvement billing evidence must be unique",
+    });
+  }
+  if (canonicalCandidateDigest(omitTopLevelDigest(receipt)) !== receipt.digest) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["digest"],
+      message: "profile improvement run receipt digest is invalid",
+    });
+  }
+}
+export const agentProfileImprovementRunReceiptSchema = z.strictObject(profileRunReceiptShape).superRefine(refineProfileRunReceipt) satisfies z.ZodType<AgentProfileImprovementRunReceipt>;
+/** Opt-in recording preserves gaps; the publishable comparison still accepts only complete receipts. */
+export const agentProfileImprovementRecordedRunReceiptSchema = z.strictObject({
+  ...profileRunReceiptShape,
+  usage: agentProfileImprovementAccountingSchema,
+  grading: agentProfileImprovementGradingSchema.safeExtend({ usage: agentProfileImprovementAccountingSchema }),
+}).superRefine(refineProfileRunReceipt) satisfies z.ZodType<AgentProfileImprovementRecordedRunReceipt>;
 
 function combinedProfileUsage(
   execution: AgentCandidateFixedSpend,
