@@ -387,7 +387,7 @@ async function captureSandboxEvidence(
     }
     if (item.type === "directory") {
       scannedDirectories++;
-      if (parts.some((part) => blockedNames.has(part))) {
+      if (tangleEvidenceCredentialPath(path)) {
         excludedPaths.push({ ...item, reason: "credential-path" });
         return "blocked";
       }
@@ -497,7 +497,7 @@ async function captureSandboxEvidence(
           // The former walk never listed below a runtime-owned or credential directory; the
           // usage scan counted credential subtrees, so their members are counted, not admitted.
           const ancestors = path.split("/").slice(0, -1);
-          const stop = ancestors.find((part) => blockedNames.has(part));
+          const stop = ancestors.find(tangleEvidenceCredentialPath);
           if (stop === ".sidecar") {
             // Never admitted or counted, but its declared bytes still bound the decompression.
             ignoredBytes += size;
