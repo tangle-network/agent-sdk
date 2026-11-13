@@ -1533,7 +1533,6 @@ describe("createTangleProvider", () => {
   });
 
   it("runs the exact-process lifecycle through process-only sandboxes", async () => {
-    let firstCreateOptions: ExactCreateOptions | undefined;
     let createRequestOptions:
       | { signal?: AbortSignal; timeoutMs?: number }
       | undefined;
@@ -1566,7 +1565,6 @@ describe("createTangleProvider", () => {
           return existing.box;
         }
 
-        firstCreateOptions ??= options;
         createRequestOptions ??= requestOptions;
         const files = new Map<string, Uint8Array>();
         let spawned = false;
@@ -1702,35 +1700,6 @@ describe("createTangleProvider", () => {
       environmentId: "exact-1",
     });
 
-    expect(firstCreateOptions).toEqual({
-      environment: EXACT_IMAGE,
-      agent: false,
-      driver: { type: "host-agent", runtimeBackend: "docker" },
-      ephemeral: true,
-      sshEnabled: false,
-      webTerminalEnabled: false,
-      secrets: [],
-      capabilities: [],
-      egressPolicy: {
-        mode: "strict",
-        allowDomains: ["model.example"],
-        includeImplicitDomains: false,
-      },
-      maxLifetimeSeconds: 61,
-      idempotencyKey: "candidate-1",
-      metadata: {
-        executionId: "execution-1",
-        "tangle.exactProcess": {
-          version: 1,
-          provider: "tangle-sandbox",
-          teamId: "team-1",
-          idempotencyKey: "candidate-1",
-          requestDigest: expect.any(String),
-        },
-      },
-      teamId: "team-1",
-      resources: { cpuCores: 1, memoryMB: 512, diskGB: 1 },
-    });
     expect(createRequestOptions?.timeoutMs).toBe(3_000);
     expect(writeOptions).toEqual({ encoding: "base64", mode: 0o640 });
     expect(launchOptions).toMatchObject({

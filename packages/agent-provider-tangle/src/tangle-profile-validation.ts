@@ -1,4 +1,4 @@
-import { validateProfileForCreate } from "@tangle-network/sandbox";
+import { splitInlineProfileFileMounts, validateDeferredProfileFileMounts, validateProfileForCreate } from "@tangle-network/sandbox";
 import type { AgentEnvironmentProvider } from "@tangle-network/agent-interface/environment-provider";
 import type { TangleModelCredentialResolver } from "./tangle-types.js";
 
@@ -10,12 +10,25 @@ export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: T
     const result = await supplied?.(profile);
     if (result && !result.ok) return result;
     const candidate = result?.normalizedProfile ?? profile;
-    // Without a harness the SDK still runs create's inline-mount and size checks; it skips only materialization. The published Sandbox SDK's types carry a frozen harness union, and its client validator passes an unknown harness unchecked; the Sandbox API refuses it at create (400 VALIDATION_ERROR). The casts retype only the harness argument and the two profile properties that carry that union (harness, seats): delete when @tangle-network/sandbox publishes with agent-interface >= 5.10.22 (https://github.com/tangle-network/agent-container/issues/18386).
-    const verdict = typeof candidate !== "string" ? validateProfileForCreate(candidate as typeof candidate & Pick<Parameters<typeof validateProfileForCreate>[0], "harness" | "seats">, candidate.harness as Parameters<typeof validateProfileForCreate>[1]) : undefined;
+    // Sandbox >= 1.0.393 requires a harness and refuses none; a profile without one gets only create's inline-mount checks, since materialization needs a harness. The profile cast covers the SDK's own bundled harness/seats union (https://github.com/tangle-network/agent-container/issues/18386).
+    const verdict = typeof candidate === "string" ? undefined
+      : candidate.harness ? validateProfileForCreate(candidate as typeof candidate & Pick<Parameters<typeof validateProfileForCreate>[0], "harness" | "seats">, candidate.harness)
+      : mountVerdict(candidate);
     const issues = verdict && !verdict.ok ? [{level:"error" as const,code:verdict.error.code,message:verdict.error.message}] : [];
     if (issues.length) return {ok:false,issues};
     const route = await resolver?.validate?.(candidate);
     return {ok:route?.ok ?? true,issues:[...(route?.issues ?? []),...(result?.issues ?? [])],
       ...(result?.normalizedProfile ? {normalizedProfile:result.normalizedProfile} : {})};
   };
+}
+
+function mountVerdict(profile: object): { ok: true } | { ok: false; error: { code: string; message: string } } {
+  try {
+    const typed = profile as Parameters<typeof splitInlineProfileFileMounts>[0];
+    validateDeferredProfileFileMounts(splitInlineProfileFileMounts(typed).deferredFiles, { failOnError: typed.resources?.failOnError });
+    return { ok: true };
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return { ok: false, error: { code: typeof code === "string" ? code : "VALIDATION_ERROR", message: error instanceof Error ? error.message : String(error) } };
+  }
 }
