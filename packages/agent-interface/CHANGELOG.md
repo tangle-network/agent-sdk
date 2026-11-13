@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.24
+
+### Patch Changes
+
+- f4aed4e: Add opt-in per-arm profile model binding and explicit unavailable accounting for retained profile-improvement measurements. Preserve fixed-task model binding and complete accounting as the defaults; incomplete records cannot support promotion.
+
 ## 5.10.23
 
 ### Patch Changes
