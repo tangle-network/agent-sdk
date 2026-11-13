@@ -1,22 +1,10 @@
+import { AgentFileOutputPolicySchema, type AgentFileOutputPolicy } from "./profile-file-output.js";
+export { AgentFileOutputPolicySchema, type AgentFileOutputPolicy } from "./profile-file-output.js";
 import { z } from "zod";
-import { sha256DigestSchema, relativePathSafetyIssues } from "./agent-candidate-schema-common.js";
+import { sha256DigestSchema } from "./agent-candidate-schema-common.js";
 import type { Sha256Digest } from "./agent-candidate.js";
 import { boundedIdentifierSchema, boundedJsonRecordSchema, boundedStringSchema } from "./contract-limits.js";
 import { AgentExactRunControlRefSchema, type AgentExactRunControlRef } from "./runtime-control.js";
-
-/** One caller-declared output, relative to the managed workspace root, not a process cwd. */
-export interface AgentFileOutputPolicy {
-  name: string;
-  path: string;
-}
-
-export const AgentFileOutputPolicySchema = z.strictObject({
-  name: boundedIdentifierSchema,
-  path: boundedStringSchema.refine((path) =>
-    path.length > 0 && relativePathSafetyIssues(path).length === 0 &&
-    path.split("/").every((part) => part.length > 0 && part !== "."),
-  "File output must name one canonical relative managed-workspace path"),
-}) satisfies z.ZodType<AgentFileOutputPolicy>;
 
 /** Provider evidence for one stopped, immutable, preserved regular-file publication.
  * The provider reference is an address, never authority; only that provider's authorized

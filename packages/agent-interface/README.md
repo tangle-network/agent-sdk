@@ -78,6 +78,8 @@ Use the host base for CLI Bridge native process paths.
 ## Durable runs, interactions, and context
 
 An environment may expose `retainFileOutput` and advertise `workspace.retainFileOutput`.
+An authored `AgentProfile.outputFile` selects that output for one profile; it is part of the strict profile schema and canonical profile digest.
+Runtime resolves the policy before provider materialization; other profiles keep their existing output mode.
 Its request binds one canonical managed-workspace-relative path to the exact admitted control reference.
 A published result identifies the stopped source, immutable preserved regular file, raw byte length and SHA-256,
 with the actual provider-owned publication receipt in `providerReference`.

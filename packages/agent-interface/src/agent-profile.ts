@@ -1,3 +1,4 @@
+import type { AgentFileOutputPolicy } from "./profile-file-output.js";
 /**
  * Provider-neutral agent profile types for public SDK consumers.
  *
@@ -489,6 +490,8 @@ export interface AgentProfileMetadata extends Record<string, unknown> {
  * Public provider-neutral agent profile contract.
  */
 export interface AgentProfile {
+  /** Runtime-owned retained regular-file output for this profile only. */
+  outputFile?: AgentFileOutputPolicy;
   name?: string;
   description?: string;
   version?: string;
