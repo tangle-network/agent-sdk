@@ -77,6 +77,7 @@ function sealedWorkspaceLease(
 }
 
 const fullProfile: AgentProfile = {
+  outputFile: { name: "report", path: "out/report.md" },
   name: "researcher",
   description: "Tests mechanisms",
   version: "1",
@@ -208,7 +209,7 @@ function refusalCodes(build: () => unknown): string[] {
 
 describe("profile materialization leaves", () => {
   it("enumerates canonical leaves, including optional seat policy", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(36);
+    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(37);
     expect(profileMaterializationAxes(fullProfile)).toEqual(
       AGENT_PROFILE_MATERIALIZATION_AXES.filter((axis) => axis !== "seats"),
     );
