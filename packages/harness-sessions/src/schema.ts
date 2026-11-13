@@ -76,6 +76,24 @@ export interface ModelCall {
   costUsd: number | null
   stopReason: string | null
   error: SessionError | null
+  /** Source inventory already observed when this response first appeared; never backfilled. */
+  toolDefinitionSnapshotId?: string
+}
+
+export interface SessionToolDefinition {
+  name: string
+  description?: string
+  inputSchema: Record<string, unknown>
+}
+
+/** A recorded tool inventory, kept once even when many responses use it. */
+export interface SessionToolDefinitionSnapshot {
+  id: string
+  at: string | null
+  source: string
+  definitions: SessionToolDefinition[]
+  /** False when the source declares tools but one or more definitions cannot be read. */
+  complete: boolean
 }
 
 export interface SessionEnding {
@@ -103,6 +121,8 @@ export interface HarnessSession {
   messages: SessionMessage[]
   toolCalls: SessionToolCall[]
   modelCalls: ModelCall[]
+  /** Absent when this native format/capture did not record actual tool definitions. */
+  toolDefinitionSnapshots?: SessionToolDefinitionSnapshot[]
   servedModels: Record<string, number>
   modelSource: SessionEvidenceSources['servedModel']
   usage: TokenUsage | null

@@ -17,6 +17,8 @@ export type {
   SessionRef,
   SessionSummary,
   SessionToolCall,
+  SessionToolDefinition,
+  SessionToolDefinitionSnapshot,
   TokenUsage,
 } from './schema.js'
 export { HARNESS_SESSION_SCHEMA } from './schema.js'

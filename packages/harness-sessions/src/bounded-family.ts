@@ -31,6 +31,8 @@ export interface HarnessFileBinding {
 /** Verify a bound native family without owning a store, filesystem layout or native parser. */
 export async function readBoundHarnessSessions<S extends BoundHarnessSession>(input: {
   readonly nativeSessionId: string
+  /** Every native conversation observed for this execution, in execution order. */
+  readonly nativeSessionIds?: readonly string[]
   readonly files: readonly HarnessFileBinding[]
   readonly read: (file: HarnessFileBinding, signal?: AbortSignal) => Promise<Uint8Array>
   readonly parse: (text: string, file: HarnessFileBinding) => S
@@ -45,7 +47,13 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
   const parents = new Map<string, string>()
   const paths = new Set<string>()
   const invalid = input.failure ?? ((message: string) => new Error(message))
-  const pending = [input.nativeSessionId]
+  const roots = input.nativeSessionIds ?? [input.nativeSessionId]
+  if (
+    !roots.length || roots.length > BOUND_HARNESS_SESSION_READ_LIMITS.maxFiles ||
+    roots.some(id => !id) || new Set(roots).size !== roots.length ||
+    !roots.includes(input.nativeSessionId)
+  ) throw invalid('Native capture has ambiguous root session identities')
+  const pending = [...roots]
   let total = 0
   while (pending.length) {
     const id = pending.shift()!
@@ -103,6 +111,15 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
     for (const child of sessions.get(id)!.children) {
       if (parents.has(child.nativeSessionId) && parents.get(child.nativeSessionId) !== id)
         throw invalid('Native child has ambiguous recorded parents')
+      const recordedChild = sessions.get(child.nativeSessionId)
+      if (recordedChild?.parentNativeSessionId && recordedChild.parentNativeSessionId !== id)
+        throw invalid('Native child has a different recorded parent')
+      let ancestor: string | undefined = id
+      while (ancestor !== undefined) {
+        if (ancestor === child.nativeSessionId)
+          throw invalid('Native child has a cyclic recorded parent')
+        ancestor = parents.get(ancestor)
+      }
       parents.set(child.nativeSessionId, id)
       if (!sessions.has(child.nativeSessionId)) pending.push(child.nativeSessionId)
     }

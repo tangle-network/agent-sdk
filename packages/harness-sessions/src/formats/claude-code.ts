@@ -1,7 +1,7 @@
 import { isRecord } from '@tangle-network/agent-core'
 import { basename, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
+import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, SessionToolDefinition, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { CLAUDE_CODE_STORES, EVIDENCE, LOCATE_READS, mapLimit, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
@@ -38,6 +38,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
   let aborted: { at: string | null } | null = null
   let errors = 0
   let identified = false
+  let toolDefinitionSnapshotId: string | undefined
   const seenUuids = new Set<string>()
 
   const observe = (record: Record<string, unknown>): void => {
@@ -71,6 +72,34 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       // A queued command is a message sent while the turn ran, so it is a prompt.
       const attachment = isRecord(record.attachment) ? record.attachment : {}
       const kind = str(attachment.type) ?? 'attachment'
+      if (kind === 'prompt_snapshot') {
+        // Only this producer-recorded inventory establishes exposure. A newer snapshot
+        // without definitions clears the prior inventory rather than assuming it survived.
+        toolDefinitionSnapshotId = undefined
+        if (Object.hasOwn(attachment, 'tools')) {
+          const definitions: SessionToolDefinition[] = []
+          const names = new Set<string>()
+          let complete = Array.isArray(attachment.tools)
+          for (const tool of Array.isArray(attachment.tools) ? attachment.tools : []) {
+            const schema = isRecord(tool) && isRecord(tool.schema) ? tool.schema : null
+            const name = schema === null ? null : str(schema.name)
+            if (!name || !schema || !isRecord(schema.input_schema) ||
+              (tool.name !== undefined && tool.name !== name) || names.has(name) ||
+              (schema.description !== undefined && typeof schema.description !== 'string')) {
+              complete = false
+              continue
+            }
+            names.add(name)
+            definitions.push({
+              name,
+              ...(typeof schema.description === 'string' ? { description: schema.description } : {}),
+              inputSchema: schema.input_schema,
+            })
+          }
+          toolDefinitionSnapshotId = uuid
+          builder.toolDefinitionSnapshot({ id: uuid, at, source: kind, definitions, complete })
+        }
+      }
       const queued = kind === 'queued_command' ? textOf(attachment.prompt) : null
       if (queued !== null) {
         const typed = attachment.commandMode === 'prompt' && !machine(queued)
@@ -169,7 +198,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       if (builder.hasMessage(apiId)) builder.appendParts(apiId, parts)
       return
     }
-    builder.modelCall({ id: apiId, at, provider: null, servedModel: model, requestedModel: null, usage: usageOf(message.usage), costUsd: null, stopReason: str(message.stop_reason), error: null })
+    builder.modelCall({ id: apiId, at, provider: null, servedModel: model, requestedModel: null, usage: usageOf(message.usage), costUsd: null, stopReason: str(message.stop_reason), error: null, ...(toolDefinitionSnapshotId === undefined ? {} : { toolDefinitionSnapshotId }) })
     builder.message({ id: apiId, role: 'assistant', actor: 'agent', at, modelCallId: apiId, parts })
   }
 
