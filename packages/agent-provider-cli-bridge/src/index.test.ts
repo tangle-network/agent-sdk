@@ -104,6 +104,76 @@ describe("createCliBridgeProvider", () => {
     )).not.toHaveProperty("runtime_attachments");
   });
 
+  it("keeps runtime MCP attachments advertised after Bridge discovery and forwards them on dispatch", async () => {
+    const bridge = createGenericBridgeDouble();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: CLAUDE_CODE_ROUTE,
+      fetch: bridge.fetch,
+    });
+    const runtimeAttachments = {
+      mcp: {
+        "agent-runtime-coordination": {
+          transport: "http" as const,
+          url: "https://coordination.example/mcp",
+        },
+      },
+    };
+
+    expect((await provider.capabilities()).create?.runtimeAttachments?.mcp).toBe(true);
+    const environment = await provider.create({
+      profile: { name: "worker", harness: "claude-code" },
+      runtimeAttachments,
+    });
+    expect(environment.capabilities?.create?.runtimeAttachments?.mcp).toBe(true);
+    await consumeTurn(environment, { prompt: "coordinate", executionId: "attachment-run" });
+
+    expect(bridge.requests).toContain("GET /v1/capabilities");
+    expect(bridge.completionBodies[0]?.runtime_attachments).toEqual(runtimeAttachments);
+  });
+
+  it("accepts a 259-character claude-code environment id end to end", async () => {
+    const bridge = createGenericBridgeDouble();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: CLAUDE_CODE_ROUTE,
+      fetch: bridge.fetch,
+    });
+    await provider.capabilities();
+    const environment = await provider.create({
+      profile: { name: "worker", harness: "claude-code" },
+      idempotencyKey: "claude-code-environment",
+    });
+    expect(environment.id).toHaveLength(259);
+
+    await consumeTurn(environment, { prompt: "long route", executionId: "long-id-run" });
+    expect(bridge.completionBodies.length).toBeGreaterThan(0);
+    for (const body of bridge.completionBodies) expect(body.environment_id).toBe(environment.id);
+    await expect(provider.get!(environment.id)).resolves.toMatchObject({ id: environment.id });
+  });
+
+  it("refuses an environment id over the 512-character Bridge identifier limit", async () => {
+    let calls = 0;
+    const bridgeFetch = async (): Promise<Response> => {
+      calls += 1;
+      throw new Error("unexpected network");
+    };
+    const requested = createCliBridgeProvider({ baseUrl: "http://bridge.local", fetch: bridgeFetch });
+    await expect(requested.create({
+      profile: { name: "worker" },
+      requestedId: "e".repeat(513),
+    })).rejects.toThrow("must be 1-512 URL-safe characters");
+    const minted = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: `claude-code/${"m".repeat(300)}`,
+      fetch: bridgeFetch,
+    });
+    await expect(minted.create({
+      profile: { name: "worker", harness: "claude-code" },
+    })).rejects.toThrow("environment id of at most 512 characters");
+    expect(calls).toBe(0);
+  });
+
   it("rejects a named profile before network use", async () => {
     let called = false;
     const provider = createCliBridgeProvider({
@@ -3557,4 +3627,34 @@ async function closeServer(server: import("node:http").Server): Promise<void> {
 
 function testDigest(value: string): `sha256:${string}` {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+/** A claude-code route whose minted environment id is 259 characters. */
+const CLAUDE_CODE_ROUTE = "claude-code/tangle-router/anthropic/claude-sonnet-4-6";
+
+/** A one-shot Bridge route. Like Bridge's GET /v1/capabilities, discovery reports no create block. */
+function createGenericBridgeDouble(): {
+  readonly fetch: typeof fetch;
+  readonly requests: string[];
+  readonly completionBodies: Record<string, unknown>[];
+} {
+  const requests: string[] = [];
+  const completionBodies: Record<string, unknown>[] = [];
+  const { create: _create, ...reported } = defaultCliBridgeCapabilities("claude-code");
+  const fetcher: typeof fetch = async (url, init) => {
+    const { pathname } = new URL(String(url));
+    const method = init?.method ?? "GET";
+    requests.push(`${method} ${pathname}`);
+    if (method === "GET" && pathname === "/v1/capabilities") return Response.json(reported);
+    if (method === "POST" && pathname === "/v1/chat/completions") {
+      completionBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return terminalResponse(init, "ok");
+    }
+    const runId = /^\/v1\/runs\/([^/]+)$/u.exec(pathname)?.[1];
+    if (method === "GET" && runId !== undefined) {
+      return runResponse(decodeURIComponent(runId), "done", true);
+    }
+    throw new Error(`unexpected Bridge route: ${method} ${pathname}`);
+  };
+  return { fetch: fetcher, requests, completionBodies };
 }
