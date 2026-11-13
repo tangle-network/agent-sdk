@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Sha256Digest } from "@tangle-network/agent-interface";
+import { CONTRACT_MAX_IDENTIFIER_LENGTH, type Sha256Digest } from "@tangle-network/agent-interface";
 
 const CLI_BRIDGE_ENVIRONMENT_ID_PREFIX = "cb1.";
-const MAX_ENVIRONMENT_ID_LENGTH = 512;
 
 export interface CliBridgeEnvironmentRoute {
   readonly backend?: string;
@@ -30,9 +29,9 @@ export function cliBridgeEnvironmentId(
     nonce,
   ]);
   const id = `${CLI_BRIDGE_ENVIRONMENT_ID_PREFIX}${Buffer.from(payload).toString("base64url")}`;
-  if (id.length > MAX_ENVIRONMENT_ID_LENGTH) {
+  if (id.length > CONTRACT_MAX_IDENTIFIER_LENGTH) {
     throw new Error(
-      "cli-bridge route is too long to retain in an environment id",
+      `cli-bridge route is too long to retain in an environment id of at most ${CONTRACT_MAX_IDENTIFIER_LENGTH} characters`,
     );
   }
   return id;
@@ -47,7 +46,7 @@ export function cliBridgeEnvironmentRoute(
       "cli-bridge environment id is not a provider-owned retained identity",
     );
   }
-  if (id.length > MAX_ENVIRONMENT_ID_LENGTH) {
+  if (id.length > CONTRACT_MAX_IDENTIFIER_LENGTH) {
     throw new Error("cli-bridge environment id has invalid retained route data");
   }
   const encoded = id.slice(CLI_BRIDGE_ENVIRONMENT_ID_PREFIX.length);
@@ -97,7 +96,7 @@ function routeValue(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.length > 0 &&
-    value.length <= MAX_ENVIRONMENT_ID_LENGTH &&
+    value.length <= CONTRACT_MAX_IDENTIFIER_LENGTH &&
     value.trim() === value
   );
 }

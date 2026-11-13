@@ -11,6 +11,7 @@ import type {
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import {
+  CONTRACT_MAX_IDENTIFIER_LENGTH,
   type AgentExactRunControlRef,
   type HarnessType,
   harnessTypeSchema,
@@ -302,11 +303,11 @@ function selectedBackendFromRoute(route: string | undefined): HarnessType | unde
 function assertRequestedEnvironmentId(value: string): void {
   if (
     value.length === 0 ||
-    value.length > 256 ||
+    value.length > CONTRACT_MAX_IDENTIFIER_LENGTH ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
   ) {
     throw new Error(
-      "cli-bridge requested environment id must be 1-256 URL-safe characters",
+      `cli-bridge requested environment id must be 1-${CONTRACT_MAX_IDENTIFIER_LENGTH} URL-safe characters`,
     );
   }
 }
