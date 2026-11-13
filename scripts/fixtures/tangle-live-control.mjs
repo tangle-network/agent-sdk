@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
@@ -823,7 +823,16 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ ...result, modelPolicy: LIVE_MODEL_POLICY, effectiveModels })}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((error) => {
+// Node names the entry module by its real path, so a symlinked temp root must compare real paths too.
+function isEntryModule() {
+  try {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryModule()) main().catch((error) => {
   console.error(JSON.stringify({ modelPolicy: LIVE_MODEL_POLICY, effectiveModels }));
   console.error(error?.stack ?? String(error));
   if (error instanceof AggregateError) {

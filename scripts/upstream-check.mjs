@@ -145,10 +145,11 @@ const BEHAVIORAL = {
     ],
     files: ["control-conformance.test.ts", "tangle-control-consumer.test.ts"],
     pattern:
-      "capability denial|adapts the actual public Sandbox instance without inventing branching",
-    minTests: 9,
+      "capability denial|adapts the public Sandbox control surface and rejects a paid route before dispatch",
+    // 11 capability-denial tests plus the one Tangle consumer test: losing either side is vacuous.
+    minTests: 12,
     summary:
-      "Packed capability-denial conformance plus the packed Tangle public-boundary branching-denial proof.",
+      "Packed capability-denial conformance plus the packed Tangle public-boundary branching-denial and free-lane create proof.",
   },
   "UP-13": {
     slug: "agent-interface",
