@@ -3,6 +3,8 @@ import type { AgentEnvironmentProvider } from "@tangle-network/agent-interface/e
 import type { TangleModelCredentialResolver } from "./tangle-types.js";
 
 type ProfileValidator = NonNullable<AgentEnvironmentProvider["validateProfile"]>;
+type SdkHarnessFields = Pick<Parameters<typeof validateProfileForCreate>[0], "harness" | "seats">;
+type MountVerdict = { ok: true } | { ok: false; error: { code: string; message: string } };
 
 /** Validate the normalized profile once through the SDK and account owner's read-only route check. */
 export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: TangleModelCredentialResolver): ProfileValidator {
@@ -10,9 +12,10 @@ export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: T
     const result = await supplied?.(profile);
     if (result && !result.ok) return result;
     const candidate = result?.normalizedProfile ?? profile;
-    // Sandbox >= 1.0.393 requires a harness and refuses none; a profile without one gets only create's inline-mount checks, since materialization needs a harness. The profile cast covers the SDK's own bundled harness/seats union (https://github.com/tangle-network/agent-container/issues/18386).
+    // Sandbox >= 1.0.393 refuses a missing harness; without one only create's inline-mount checks apply.
+    // The profile cast covers the SDK's bundled harness/seats union (https://github.com/tangle-network/agent-container/issues/18386).
     const verdict = typeof candidate === "string" ? undefined
-      : candidate.harness ? validateProfileForCreate(candidate as typeof candidate & Pick<Parameters<typeof validateProfileForCreate>[0], "harness" | "seats">, candidate.harness)
+      : candidate.harness ? validateProfileForCreate(candidate as typeof candidate & SdkHarnessFields, candidate.harness)
       : mountVerdict(candidate);
     const issues = verdict && !verdict.ok ? [{level:"error" as const,code:verdict.error.code,message:verdict.error.message}] : [];
     if (issues.length) return {ok:false,issues};
@@ -22,13 +25,15 @@ export function tangleProfileValidator(supplied?: ProfileValidator, resolver?: T
   };
 }
 
-function mountVerdict(profile: object): { ok: true } | { ok: false; error: { code: string; message: string } } {
+function mountVerdict(profile: object): MountVerdict {
   try {
     const typed = profile as Parameters<typeof splitInlineProfileFileMounts>[0];
-    validateDeferredProfileFileMounts(splitInlineProfileFileMounts(typed).deferredFiles, { failOnError: typed.resources?.failOnError });
+    const { deferredFiles } = splitInlineProfileFileMounts(typed);
+    validateDeferredProfileFileMounts(deferredFiles, { failOnError: typed.resources?.failOnError });
     return { ok: true };
   } catch (error) {
     const code = (error as { code?: unknown }).code;
-    return { ok: false, error: { code: typeof code === "string" ? code : "VALIDATION_ERROR", message: error instanceof Error ? error.message : String(error) } };
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: { code: typeof code === "string" ? code : "VALIDATION_ERROR", message } };
   }
 }
