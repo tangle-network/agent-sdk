@@ -1,5 +1,14 @@
 # @tangle-network/harness-sessions
 
+## 1.0.13
+
+### Patch Changes
+
+- 5ccce63: Preserve Claude Code's actual prompt snapshot tool definitions and bind each model response to the inventory observed before it. Retain schema changes as separate source snapshots; never backfill earlier responses from later definitions. Formats without recorded tool schemas remain explicitly unknown.
+  
+  Verify every explicitly bound native conversation across retries through the shared family reader, and reject cyclic parentage instead of silently ignoring an already visited session.
+- 7ff5981: Share the existing bounded native-session family verifier with execution hosts, preserving native identities, child attribution, integrity and capture bounds. Reuse descriptor-held native-store inventory and complete-line copying from the sidecar capture path, with caller-owned store declarations, writer identity and entry bounds. Share bounded stable reads of caller-held regular files, with cancellation and caller-owned handle lifetime, so producers and retained readers use the same byte snapshot for prefix selection and copying.
+
 ## 1.0.12
 
 ### Patch Changes
