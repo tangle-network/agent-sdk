@@ -105,7 +105,9 @@ it("adapts the public Sandbox control surface and rejects a paid route before di
     expect(await proveLiveModelConfig(client, nativeEnvironment.id)).toMatchObject({ effective: effectiveModel,
       servedIdentity: "not-proved-by-config" });
     const createsBeforeRejection = requests.filter((request) => request === "POST /v1/sandboxes").length;
-    await expect(nativeProvider.create({ ...nativeInput, env: { OPENCODE_MODEL_API_KEY: "not-a-secret" } }))
+    // A fresh key reaches the live mapper; the reused key would stop earlier at the idempotency conflict.
+    await expect(nativeProvider.create({ ...nativeInput, name: "free-public-surface-env",
+      idempotencyKey: "free-public-surface-env", env: { OPENCODE_MODEL_API_KEY: "not-a-secret" } }))
       .rejects.toThrow("Unsupported live fixture input env");
     expect(requests.filter((request) => request === "POST /v1/sandboxes")).toHaveLength(createsBeforeRejection);
     effectiveModel = { mode: "api", provider: "tangle-router", model: "glm-5.3" };
