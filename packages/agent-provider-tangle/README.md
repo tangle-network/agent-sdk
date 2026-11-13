@@ -731,6 +731,17 @@ An incomplete inventory, missing stream, unrelated backend, or mismatched digest
 
 ## Exact retained workspace capture
 
+For a new file-output registration, the original created and dispatched environment can expose
+`retainFileOutput({controlRef, policy})`. `policy.path` is relative to the managed workspace root;
+declare generated output outside its source repository. The adapter uses the Sandbox SDK's
+`stop({retain: {paths, publication: true}, wait: true})` overload, preserving existing retained paths.
+Sandbox owns writer exclusion, stopped-snapshot capture, regular-file kind, immutable storage and custody.
+The adapter retains the actual SDK receipt and verifies raw/stored length and SHA-256 equality.
+It never uploads an archive or substitutes text. A reconstructed environment without the original
+creation/dispatch authority, a lost stop response or a changed source returns unavailable.
+Consumers persist the original positive association before acknowledgment and recover that record;
+they must not retry capture after another invocation or treat unavailable delivery as a failed task.
+
 Pass the admitted `controlRef` to `captureTangleEnvironmentEvidence`.
 Keep `executionId` as the Runtime artifact identity.
 The control reference supplies the exact native environment, session, and execution identifiers.

@@ -1,3 +1,5 @@
+import { tangleEnvironmentHandle, safeNativeCaptureIdentifier as safeIdentifier } from "./tangle-session-control.js";
+export { bindTangleEvidenceEnvironment, noteTangleSession } from "./tangle-session-control.js";
 import { createHash } from "node:crypto";
 import { EvidenceJsonArray, evidenceJsonChunks } from "./tangle-evidence-json.js";
 import { createDirectoryEvidenceWriter, createMemoryEvidenceWriter, type EvidenceWriter } from "./tangle-evidence-writer.js";
@@ -8,10 +10,8 @@ import type { NativeCaptureProofLike, SandboxInstanceLike, TangleEvidenceAttempt
 import { requireNativeCaptureProof } from "./tangle-native-capture-proof.js";
 import { retainedCaptureAttribution } from "./tangle-retained-attribution.js";
 import { readWorkspaceArchive } from "./tangle-evidence-tar.js";
-import { harnessContentOmission, type HarnessContentOmission } from "./tangle-evidence-omission.js";
+import { harnessContentOmission, tangleEvidenceCredentialPath, type HarnessContentOmission } from "./tangle-evidence-omission.js";
 
-const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>> }>();
-const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
 const MAX_ENTRIES = 100_000;
 const MAX_EVENTS = 100_000;
 // How long a replay may go without its start marker once the stream is open. The Sidecar sends
@@ -206,18 +206,6 @@ export interface TangleEnvironmentEvidence {
   };
 }
 
-export function bindTangleEvidenceEnvironment(environment: AgentEnvironment, box: SandboxInstanceLike): void {
-  handles.set(environment, { box, sessions: new Map() });
-}
-
-export function noteTangleSession(environment: AgentEnvironment, sessionId: string, executionId?: string): void {
-  const state = handles.get(environment);
-  if (!state || !executionId || !safeIdentifier(sessionId) || !safeIdentifier(executionId)) return;
-  const executions = state.sessions.get(sessionId) ?? new Set<string>();
-  executions.add(executionId);
-  state.sessions.set(sessionId, executions);
-}
-
 /** Export an environment through its retained Sandbox handle. */
 export async function captureTangleEnvironmentEvidence(
   environment: AgentEnvironment,
@@ -259,7 +247,7 @@ export async function captureTangleSandboxEvidenceToDirectory(
 function evidenceContext(environment: AgentEnvironment, options: TangleEnvironmentEvidenceOptions): {
   box: SandboxInstanceLike; options: TangleSandboxEvidenceOptions;
 } {
-  const state = handles.get(environment);
+  const state = tangleEnvironmentHandle(environment);
   if (!state || state.box.id !== environment.id) throw new Error("Tangle evidence requires a live provider environment handle");
   const controlRef = options.controlRef === undefined ? undefined : AgentExactRunControlRefSchema.parse(options.controlRef);
   if (controlRef && (controlRef.environmentId !== environment.id || controlRef.provider !== environment.provider ||
@@ -412,7 +400,7 @@ async function captureSandboxEvidence(
       excludedPaths.push({ ...item, reason: "symlink" });
       return "omit";
     }
-    if (parts.some((part) => blockedNames.has(part) || /^\.env\./.test(part))) {
+    if (tangleEvidenceCredentialPath(parts.join("/"))) {
       excludedPaths.push({ ...item, reason: "credential-path" });
       return "omit";
     }
@@ -1239,9 +1227,6 @@ function withoutNativeContent(source: object): Record<string, unknown> {
   return metadata;
 }
 
-function safeIdentifier(value: string): boolean {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
-}
 
 function safeReason(value: string): boolean {
   return typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\u0000-\u001f\u007f]/.test(value);

@@ -81,6 +81,20 @@ function ephemeralCapabilityCeiling(capabilities: AgentEnvironmentCapabilities, 
   };
 }
 
+// Provider-boundary document: client-stage facts only, validated before create or get effects.
+function narrowedProviderCapabilities(
+  declared: AgentEnvironmentCapabilities,
+  options: TangleProviderOptions,
+): AgentEnvironmentCapabilities {
+  return AgentEnvironmentCapabilitiesSchema.parse(
+    capabilitiesForClient(
+      declared,
+      options.client,
+      confidentialVerifierOption(options.confidentialAttestationVerifier),
+    ),
+  );
+}
+
 export function createTangleProvider(
   options: TangleProviderOptions,
 ): AgentEnvironmentProvider {
@@ -140,20 +154,8 @@ export function createTangleProvider(
         }
       : narrowed;
   };
-  // Provider-boundary document: client-stage facts only. It also validates
-  // the configured document, so create() and get() call it before any effect.
-  const narrowedProviderCapabilities = (
-    declared: AgentEnvironmentCapabilities,
-  ): AgentEnvironmentCapabilities =>
-    AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForClient(
-        declared,
-        options.client,
-        confidentialVerifierOption(options.confidentialAttestationVerifier),
-      ),
-    );
   const resolveCapabilities = async (): Promise<AgentEnvironmentCapabilities> =>
-    narrowedProviderCapabilities(await resolveDeclaredCapabilities(options.defaultBackend));
+    narrowedProviderCapabilities(await resolveDeclaredCapabilities(options.defaultBackend), options);
   const createRecords = new Map<
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
@@ -290,7 +292,7 @@ export function createTangleProvider(
     // Backend selection belongs to the create projection. The provider-wide
     // default cannot describe a sandbox that this projection routes elsewhere.
     const declaredCapabilities = await resolveDeclaredCapabilities(createOptions.backend?.type);
-    narrowedProviderCapabilities(declaredCapabilities);
+    narrowedProviderCapabilities(declaredCapabilities, options);
     if (checkpoint !== undefined && declaredCapabilities.create?.workspaceCheckpoint !== true) {
       throw new Error("Tangle workspace checkpoint restore is not supported by the declared capabilities");
     }
@@ -356,6 +358,7 @@ export function createTangleProvider(
         declaredCapabilities,
         input.signal ? { signal: input.signal } : undefined,
         {
+          ...(input.retain === undefined ? {} : { retain: input.retain }),
           ...(requestedResources === undefined
             ? {}
             : { resources: requestedResources }),

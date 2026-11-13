@@ -31,3 +31,8 @@ for (const directory of NATIVE_OMIT_CONTENT_DIRECTORIES) {
     throw new Error(`Tangle evidence would omit ${directory} without keeping its files as metadata`);
   }
 }
+
+const blockedNames = new Set([".ssh", ".config", ".claude", ".codex", ".opencode", ".env", ".env.local", ".npmrc", ".sidecar"]);
+
+export const tangleEvidenceCredentialPath = (path: string): boolean =>
+  path.split("/").some((part) => blockedNames.has(part) || /^\.env\./.test(part));

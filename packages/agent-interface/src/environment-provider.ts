@@ -10,6 +10,7 @@ export * from "./environment-command-turn.js";
 export * from "./environment-provider-error.js";
 export * from "./workspace-cwd.js";
 export * from "./workspace-snapshot.js";
+export * from "./environment-retained-file.js";
 
 export * from "./proxy-secrets.js";
 

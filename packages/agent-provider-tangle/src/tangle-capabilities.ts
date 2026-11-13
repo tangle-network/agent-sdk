@@ -113,6 +113,7 @@ export function defaultTangleSandboxCapabilities(
       git: false,
       upload: true,
       download: true,
+      retainFileOutput: true,
       cwdBases: { repository: true, host: false },
     },
     // The complete Sandbox SDK surface backs this contract. Narrowing below
