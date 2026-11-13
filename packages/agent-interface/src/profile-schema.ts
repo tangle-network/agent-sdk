@@ -385,6 +385,7 @@ export const agentProfileResourceRemovalSchema = z.strictObject({
 });
 
 export const agentProfileDiffRemovalSchema = z.strictObject({
+  outputFile: z.literal(true).optional(),
   identity: z.literal(true).optional(),
   tags: removeListSchema.optional(),
   prompt: z

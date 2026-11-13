@@ -11,6 +11,7 @@ import type { AgentProfile, AgentProfileModelHints } from "./agent-profile.js";
  * than acknowledge it.
  */
 export const AGENT_PROFILE_MATERIALIZATION_AXES = [
+  "outputFile",
   "name",
   "description",
   "version",
@@ -67,6 +68,7 @@ type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
 type AgentProfileProperty = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
 
 const profileProperties = [
+  "outputFile",
   "prompt",
   "model",
   "harness",
@@ -112,6 +114,7 @@ const MODEL_AXES = {
 } as const satisfies Record<keyof AgentProfileModelHints, AgentProfileMaterializationAxis>;
 
 const AXIS_DESCRIPTORS = [
+  { axis: "outputFile", rootPath: "/outputFile", value: (profile) => profile.outputFile },
   { axis: "name", rootPath: "/name", value: (profile) => profile.name },
   {
     axis: "description",

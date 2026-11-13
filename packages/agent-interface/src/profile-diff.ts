@@ -11,6 +11,7 @@ type AgentProfileIdentityProperty = "name" | "description" | "version" | "tags";
 type AgentProfileDiffPropertyAxis = Exclude<keyof AgentProfile, AgentProfileIdentityProperty>;
 
 const agentProfileDiffPropertyAxes = [
+  "outputFile",
   "prompt",
   "model",
   "harness",
@@ -62,6 +63,7 @@ export interface AgentProfileResourceRemoval {
 }
 
 export interface AgentProfileDiffRemoval {
+  outputFile?: true;
   identity?: true;
   tags?: AgentProfileRemoveList;
   prompt?: true | AgentProfilePromptRemoval;
@@ -436,6 +438,7 @@ function applyRemoval(profile: AgentProfile, remove?: AgentProfileDiffRemoval): 
   if (remove.model !== undefined) {
     setOrDelete(next, "model", removeKeys(next.model, remove.model));
   }
+  if (remove.outputFile !== undefined) delete next.outputFile;
   if (remove.harness !== undefined) delete next.harness;
   if (remove.seats !== undefined) delete next.seats;
   if (remove.proxySecrets !== undefined) delete next.proxySecrets;
