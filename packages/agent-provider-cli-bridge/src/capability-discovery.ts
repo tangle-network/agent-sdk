@@ -199,6 +199,9 @@ export function narrowCliBridgeCapabilities(
     placement: adapter.placement && reported.placement,
     usage: adapter.usage && reported.usage,
     confidential: adapter.confidential && reported.confidential,
+    // Bridge discovery documents carry no create block, so they cannot deny
+    // the create inputs this adapter forwards (wire.ts runtime_attachments).
+    ...(adapter.create === undefined ? {} : { create: adapter.create }),
     // Observation is measured by this adapter, not by the remote backend document.
     ...(observation === undefined ? {} : { observation }),
   };
