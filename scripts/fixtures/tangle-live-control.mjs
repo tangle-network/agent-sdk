@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   AgentExactRunControlRefSchema,
@@ -10,14 +10,21 @@ import {
   workspaceCheckpointRequestDigest,
   workspaceForkRequestDigest,
 } from "@tangle-network/agent-interface";
+import { workspaceCwdPathForBase } from "@tangle-network/agent-interface/environment-provider";
 import { runSessionReplayConformance, runWorkspaceBranchingConformance } from "@tangle-network/agent-provider-testkit";
 import { createTangleProvider } from "@tangle-network/agent-provider-tangle";
 import { Sandbox } from "@tangle-network/sandbox";
 
 const PROVIDER = "tangle-sandbox";
 const OWNER = "agent-sdk-upstream-evidence";
-const DEFAULT_MODEL_PROVIDER = "tangle-router";
-const DEFAULT_MODEL = "tangle-router/glm-5.3";
+export const LIVE_MODEL_POLICY = Object.freeze({
+  provider: "opencode",
+  id: "glm-5.3-flash-free",
+  mode: "cli",
+  credentialSource: "api-key",
+  ignoredEnvironment: ["TANGLE_MODEL_PROVIDER", "TANGLE_MODEL"],
+});
+const effectiveModels = [];
 const DEFAULT_TIMEOUT_MS = 180_000;
 const POLL_INTERVAL_MS = 500;
 const ABSENCE_ATTEMPTS = 20;
@@ -41,11 +48,24 @@ function sandboxClient() {
 }
 
 function provider(defaultBackend = "opencode") {
-  return createTangleProvider({
-    client: sandboxClient(),
-    defaultBackend,
-    name: PROVIDER,
+  const client = sandboxClient();
+  const base = createTangleProvider({
+    client, defaultBackend, name: PROVIDER, mapCreateInput: mapLiveCreateInput,
   });
+  return {
+    ...base,
+    async create(input) {
+      const environment = await base.create(input);
+      try {
+        effectiveModels.push(await proveLiveModelConfig(client, environment.id));
+        return environment;
+      } catch (error) {
+        try { await destroyAndConfirm(environment); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], "Native model guard and cleanup failed"); }
+        throw error;
+      }
+    },
+  };
 }
 
 function profile(name, harness, permissions) {
@@ -57,25 +77,65 @@ function profile(name, harness, permissions) {
     model: {
       provider: modelConfiguration.provider,
       default: modelConfiguration.id,
+      small: modelConfiguration.id,
+      metadata: { credentialSource: LIVE_MODEL_POLICY.credentialSource },
     },
     ...(permissions === undefined ? {} : { permissions }),
   };
 }
 
 function configuredModel() {
-  const modelProvider =
-    process.env.TANGLE_MODEL_PROVIDER?.trim() || DEFAULT_MODEL_PROVIDER;
-  const requestedModel = process.env.TANGLE_MODEL?.trim() || DEFAULT_MODEL;
-  const qualifiedPrefix = `${modelProvider}/`;
-  const model = requestedModel.startsWith(qualifiedPrefix)
-    ? requestedModel.slice(qualifiedPrefix.length)
-    : requestedModel;
-  if (!model) throw new Error("TANGLE_MODEL cannot be empty");
   return {
-    provider: modelProvider,
-    id: model,
-    requested: `${modelProvider}/${model}`,
+    ...LIVE_MODEL_POLICY,
+    requested: `${LIVE_MODEL_POLICY.provider}/${LIVE_MODEL_POLICY.id}`,
   };
+}
+
+export function mapLiveCreateInput(input) {
+  for (const key of Object.keys(input)) {
+    assert(["profile", "backend", "workspace", "name", "idempotencyKey", "metadata", "signal"].includes(key),
+      `Unsupported live fixture input ${key}`);
+  }
+  assert.equal(input.backend, "opencode");
+  assert.equal(input.profile?.harness, "opencode");
+  assert.deepEqual(input.profile.model, {
+    provider: LIVE_MODEL_POLICY.provider,
+    default: LIVE_MODEL_POLICY.id,
+    small: LIVE_MODEL_POLICY.id,
+    metadata: { credentialSource: LIVE_MODEL_POLICY.credentialSource },
+  });
+  const workspace = input.workspace;
+  for (const key of Object.keys(workspace)) {
+    assert(["environment", "repoUrl", "gitRef", "cwd"].includes(key), `Unsupported live fixture workspace ${key}`);
+  }
+  assert.equal(workspace.environment, "universal");
+  assert.equal(workspace.repoUrl, EVIDENCE_REPOSITORY_URL);
+  assert.equal(workspace.gitRef, EVIDENCE_REPOSITORY_REF);
+  const cwd = workspaceCwdPathForBase(workspace.cwd, "repository", "Tangle evidence");
+  return {
+    environment: workspace.environment,
+    git: { url: workspace.repoUrl, ref: workspace.gitRef },
+    ...(cwd === undefined ? {} : { cwd }),
+    name: input.name,
+    idempotencyKey: input.idempotencyKey,
+    metadata: input.metadata,
+    secrets: [],
+    backend: {
+      type: "opencode",
+      profile: input.profile,
+      model: { mode: LIVE_MODEL_POLICY.mode, provider: LIVE_MODEL_POLICY.provider, model: LIVE_MODEL_POLICY.id },
+    },
+  };
+}
+
+export async function proveLiveModelConfig(client, environmentId) {
+  const response = await client.fetch(`/v1/sandboxes/${encodeURIComponent(environmentId)}/runtime/config/config?backend=opencode`);
+  assert.equal(response.ok, true, `Native model configuration read failed (${response.status})`);
+  const observed = (await response.json()).model;
+  assert.deepEqual(observed, {
+    mode: LIVE_MODEL_POLICY.mode, provider: LIVE_MODEL_POLICY.provider, model: LIVE_MODEL_POLICY.id,
+  }, "Effective sandbox model must use the fixed native free lane before inference");
+  return { environmentId, effective: observed, servedIdentity: "not-proved-by-config" };
 }
 
 function sourceInput(proofId, purpose, options = {}) {
@@ -760,10 +820,20 @@ async function main() {
         ? await runWorkspaceEvidence()
         : undefined;
   if (result === undefined) throw new Error(`Unknown Tangle evidence mode ${mode}`);
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.stdout.write(`${JSON.stringify({ ...result, modelPolicy: LIVE_MODEL_POLICY, effectiveModels })}\n`);
 }
 
-main().catch((error) => {
+// Node names the entry module by its real path, so a symlinked temp root must compare real paths too.
+function isEntryModule() {
+  try {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryModule()) main().catch((error) => {
+  console.error(JSON.stringify({ modelPolicy: LIVE_MODEL_POLICY, effectiveModels }));
   console.error(error?.stack ?? String(error));
   if (error instanceof AggregateError) {
     for (const [index, nested] of error.errors.entries()) {
