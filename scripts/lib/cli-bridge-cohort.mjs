@@ -1,5 +1,5 @@
 import {
-  copyFileSync,
+  cpSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -31,16 +31,11 @@ export function prepareCliBridgeCohort() {
     ],
   });
   const { consumer } = cohort;
-  copyFileSync(
-    join(
-      root,
-      "packages",
-      "agent-provider-cli-bridge",
-      "tests",
-      "cli-bridge.integration.test.ts",
-    ),
-    join(consumer, "cli-bridge.integration.test.ts"),
-  );
+  const tests = join(root, "packages", "agent-provider-cli-bridge", "tests");
+  // The test imports ./actual-bridge.js, which reads ./fixtures/*.py.
+  for (const entry of ["cli-bridge.integration.test.ts", "actual-bridge.ts", "fixtures"]) {
+    cpSync(join(tests, entry), join(consumer, entry), { recursive: true });
+  }
   writeFileSync(
     join(consumer, "vitest.config.mjs"),
     "export default { test: { environment: 'node' } };\n",
