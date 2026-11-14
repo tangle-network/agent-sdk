@@ -14,10 +14,7 @@ import { TokenUsageSchema, type TokenUsage } from "./execution-types.js";
 import { InteractionCapabilitiesSchema, RequestedInteractionsSchema, type InteractionAcknowledgement, type InteractionCapabilities, type InteractionResponseCommand, type InteractionStateReader, type RequestedInteractions } from "./interaction.js";
 import { ContextTransferReceiptSchema, ContextTransferRequestSchema, NativeContextBoundaryProofSchema, NativeContextContinuationAcknowledgementSchema, NativeContextContinuationRequestSchema, nativeContextContinuationAcknowledgementMatches, type ContextTransferReceipt, type ContextTransferRequest, type ContextTransferResult, type NativeContextBoundaryProof, type NativeContextContinuationRequest, type NativeContextContinuationTurn } from "./portable-context.js";
 import { AgentExactRunControlRefSchema, AgentRunControlRefSchema, CanonicalStreamEventSchema, type AgentExactRunControlRef, type AgentRunCancellationAcknowledgement, type AgentRunCancellationRequest, type AgentRunControlRef } from "./runtime-control.js";
-import type {
-  AgentWorkspaceBranching,
-  AgentWorkspaceBranchingProvider,
-} from "./workspace-branching.js";
+import type { AgentWorkspaceBranching, AgentWorkspaceBranchingProvider } from "./workspace-branching.js";
 import { AgentProfileCapabilitiesSchema } from "./environment-profile-capabilities.js";
 import { boundedEventContentJsonSchema, boundedEventContentRecordSchema, boundedEventContentStringSchema, boundedIdentifierSchema, boundedJsonRecordSchema, boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
 import { InputPartSchema } from "./portable-context-shared.js";
@@ -548,6 +545,8 @@ export interface AgentEnvironmentCapabilities {
     resize: boolean;
     stop: boolean;
   };
+  /** True when the stream reports a served-model reroute when it happens, as the CLI Bridge does. */
+  modelReroutes?: boolean;
 }
 
 /** Strict runtime validator for provider capability negotiation. */
@@ -673,6 +672,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
         stop: z.boolean(),
       })
       .optional(),
+    modelReroutes: z.boolean().optional(),
   })
   .superRefine((capabilities, refinement) => {
     if (

@@ -17,6 +17,7 @@ import {
   createCliBridgeProvider,
   defaultCliBridgeCapabilities,
 } from "./index.js";
+import { discoverCliBridgeCapabilities } from "./capability-discovery.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
 
 const baseUrl = "http://bridge.local";
@@ -455,6 +456,42 @@ describe("cli-bridge native retained sessions", () => {
       interactions: { kinds: ["permission"] },
     });
     expect(requests).toBe(2);
+  });
+
+  function bridgeServing(document: unknown) {
+    return { baseUrl, defaultModel: model, fetch: async () => Response.json(document) };
+  }
+
+  it("reads modelReroutes from a Bridge capability document", async () => {
+    const reported = { ...defaultCliBridgeCapabilities("pi"), modelReroutes: true };
+
+    const discovered = await discoverCliBridgeCapabilities(bridgeServing(reported), model);
+    expect(discovered.modelReroutes).toBe(true);
+    expect(discovered).toEqual(reported);
+  });
+
+  it("drops capability keys a newer Bridge adds and still validates known keys", async () => {
+    const reported = defaultCliBridgeCapabilities("pi");
+    const newer = {
+      ...reported,
+      futureCapability: true,
+      streaming: { ...reported.streaming, futureStreamFlag: true },
+    };
+
+    const discovered = await discoverCliBridgeCapabilities(bridgeServing(newer), model);
+    expect(discovered).not.toHaveProperty("futureCapability");
+    expect(discovered).toEqual(reported);
+    await expect(createCliBridgeProvider(bridgeServing(newer)).capabilities()).resolves
+      .toMatchObject({ interactions: { kinds: ["permission"] } });
+
+    const wrongType = discoverCliBridgeCapabilities(
+      bridgeServing({ ...reported, futureCapability: true, placement: "yes" }),
+      model,
+    );
+    await expect(wrongType).rejects.toThrow(/invalid capability document/);
+    await expect(wrongType).rejects.toMatchObject({
+      cause: { issues: [expect.objectContaining({ code: "invalid_type", path: ["placement"] })] },
+    });
   });
 
   it("does not expose native interactions unless Bridge proves the complete contract", async () => {
