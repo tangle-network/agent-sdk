@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-cli-bridge
 
+## 2.0.15
+
+### Patch Changes
+
+- 767fee7: Keep the Bridge's structured subscription remedy (`cause`, `fix`, `harness`, `provider`) on a failed stream's status event as `remediation`, so a consumer can tell the caller which native login or setting to fix. The remedy is read only from the Bridge's structured fields, never from its message text.
+
 ## 2.0.14
 
 ### Patch Changes

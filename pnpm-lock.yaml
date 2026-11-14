@@ -261,7 +261,7 @@ importers:
         specifier: workspace:*
         version: link:../agent-interface
       '@tangle-network/agent-provider-cli-bridge':
-        specifier: ^2.0.14
+        specifier: ^2.0.15
         version: link:../agent-provider-cli-bridge
     devDependencies:
       '@tangle-network/agent-provider-testkit':
