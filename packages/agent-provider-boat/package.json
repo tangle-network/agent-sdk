@@ -50,7 +50,7 @@
     "@boatdev/sdk": "^1.13.0",
     "@tangle-network/agent-core": "^1.0.4",
     "@tangle-network/agent-interface": "^5.10.25",
-    "@tangle-network/agent-provider-cli-bridge": "^2.0.14"
+    "@tangle-network/agent-provider-cli-bridge": "^2.0.15"
   },
   "devDependencies": {
     "@tangle-network/agent-provider-testkit": "workspace:*",
