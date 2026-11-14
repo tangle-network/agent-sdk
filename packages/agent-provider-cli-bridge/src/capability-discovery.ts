@@ -44,7 +44,7 @@ export async function discoverCliBridgeCapabilities(
     } catch (error) {
       throw new Error("cli-bridge capability discovery returned invalid JSON", { cause: error });
     }
-    const parsed = AgentEnvironmentCapabilitiesSchema.safeParse(value);
+    const parsed = parseReportedCapabilities(value);
     if (!parsed.success) {
       throw new Error("cli-bridge capability discovery returned an invalid capability document", {
         cause: parsed.error,
@@ -54,6 +54,23 @@ export async function discoverCliBridgeCapabilities(
   } finally {
     await transport.close();
   }
+}
+
+/**
+ * Validate every known key strictly, and drop keys a newer Bridge added that this reader does
+ * not know. An absent key means unsupported, so a dropped key can only narrow what is reported.
+ */
+function parseReportedCapabilities(value: unknown) {
+  const parsed = AgentEnvironmentCapabilitiesSchema.safeParse(value);
+  let dropped = false;
+  for (const issue of parsed.error?.issues ?? []) {
+    if (issue.code !== "unrecognized_keys") continue;
+    let owner = value as Record<PropertyKey, unknown>;
+    for (const key of issue.path) owner = owner[key] as Record<PropertyKey, unknown>;
+    for (const key of issue.keys) delete owner[key];
+    dropped = true;
+  }
+  return dropped ? AgentEnvironmentCapabilitiesSchema.safeParse(value) : parsed;
 }
 
 /** Share concurrent readiness requests without retaining stale model truth. */
