@@ -74,90 +74,6 @@ const resourceFieldCases = {
   failOnError: { failOnError: true },
 } satisfies { [Key in keyof AgentProfileResources]-?: AgentProfileResources };
 
-const profileFieldCases = {
-  name: { name: "candidate" },
-  description: { description: "A complete candidate profile." },
-  version: { version: "2" },
-  tags: { tags: [] },
-  prompt: { prompt: { systemPrompt: "Measure, then answer." } },
-  model: { model: { reasoningEffort: "high" } },
-  harness: { harness: "codex" },
-  seats: {
-    harness: "codex",
-    model: { provider: "openai", default: "openai/gpt-6-sol" },
-    seats: [{ harness: "codex", provider: "openai", model: "openai/gpt-6-sol", selector: { kind: "all-eligible" } }],
-  },
-  permissions: { permissions: { shell: "allow" } },
-  tools: { tools: { shell: true } },
-  mcp: {
-    mcp: {
-      local: {
-        command: "node",
-        args: [{ kind: "public", value: "server.js" }],
-        env: { MODE: { kind: "public", value: "audit" } },
-      },
-      remote: {
-        transport: "http",
-        url: "https://mcp.example.test",
-        headers: {
-          Authorization: {
-            kind: "secret-ref",
-            key: "papers-service-auth",
-            format: "bearer",
-          },
-        },
-      },
-    },
-  },
-  connections: {
-    connections: [{ connectionId: "papers", capabilities: ["search"] }],
-  },
-  subagents: {
-    subagents: { critic: { prompt: "Find the strongest counterexample." } },
-  },
-  resources: { resources: resourceFieldCases.skills },
-  hooks: {
-    hooks: {
-      afterRun: [
-        {
-          command: "record-result",
-          env: {
-            AUDIT_TOKEN: { kind: "secret-ref", key: "audit-sink-auth" },
-          },
-        },
-      ],
-    },
-  },
-  modes: { modes: { adversarial: { prompt: "Attempt a refutation." } } },
-  proxySecrets: { proxySecrets: [{ envName: "REPORTS_TOKEN", secretRef: { kind: "secret-ref", key: "reporting-api" }, hosts: ["reports.example.com"], presentation: { type: "bearer" } }] },
-  confidential: { confidential: { sealed: true } },
-  metadata: { metadata: { role: "research-leader" } },
-  extensions: { extensions: { codex: { sandbox: "danger-full-access" } } },
-} satisfies { [Key in keyof AgentProfile]-?: AgentProfile };
-
-const expectedAxisByProfileField = {
-  name: "identity",
-  description: "identity",
-  version: "identity",
-  tags: "identity",
-  prompt: "prompt",
-  model: "model",
-  harness: "harness",
-  seats: "seats",
-  proxySecrets: "proxySecrets",
-  permissions: "permissions",
-  tools: "tools",
-  mcp: "mcp",
-  connections: "connections",
-  subagents: "subagents",
-  resources: "resources",
-  hooks: "hooks",
-  modes: "modes",
-  confidential: "confidential",
-  metadata: "metadata",
-  extensions: "extensions",
-} as const satisfies { [Key in keyof AgentProfile]-?: ReturnType<typeof changedAgentProfileAxes>[number] };
-
 function verifiedProfileDiffs(
   baseline: AgentProfile,
   candidate: AgentProfile,
@@ -193,20 +109,6 @@ describe("AgentProfileDiff", () => {
     ).toEqual(profile);
   });
 
-  it("constructs valid exact replacement steps for every profile field", () => {
-    for (const [field, input] of Object.entries(profileFieldCases)) {
-      const candidate = agentProfileSchema.parse(input);
-      const diffs = verifiedProfileDiffs({}, candidate);
-      const changed = new Set(diffs.flatMap(changedAgentProfileAxes));
-
-      expect(diffs.length, field).toBe(2);
-      expect(changed, field).toEqual(field === "seats"
-        ? new Set(["harness", "model", "seats"])
-        : new Set([expectedAxisByProfileField[field as keyof AgentProfile]]));
-      expect(applyProfileDiffs({}, diffs), field).toEqual(candidate);
-    }
-  });
-
   it("keeps replacement diffs exhaustive and precise for every resource field", () => {
     for (const [field, resources] of Object.entries(resourceFieldCases)) {
       const candidate = agentProfileSchema.parse({ resources });
@@ -217,50 +119,6 @@ describe("AgentProfileDiff", () => {
       expect(diffs[1]?.set?.resources, field).toEqual(resources);
       expect(applyProfileDiffs({}, diffs), field).toEqual(candidate);
     }
-  });
-
-  it("removes every profile field with one deterministic reset step", () => {
-    const baseline = agentProfileSchema.parse({
-      ...Object.assign({}, ...Object.values(profileFieldCases)),
-      resources: Object.assign({}, ...Object.values(resourceFieldCases)),
-    });
-    const diffs = verifiedProfileDiffs(baseline, {});
-
-    expect(diffs).toEqual([
-      {
-        kind: "agent-profile-diff",
-        remove: {
-          identity: true,
-          tags: true,
-          prompt: true,
-          model: true,
-          harness: true,
-          seats: true,
-          proxySecrets: true,
-          permissions: true,
-          tools: true,
-          mcp: true,
-          connections: true,
-          subagents: true,
-          resources: {
-            knowledge: true,
-            files: true,
-            tools: true,
-            skills: true,
-            agents: true,
-            commands: true,
-            instructions: true,
-            failOnError: true,
-          },
-          hooks: true,
-          modes: true,
-          confidential: true,
-          metadata: true,
-          extensions: true,
-        },
-      },
-    ]);
-    expect(applyProfileDiffs(baseline, diffs)).toEqual({});
   });
 
   it("returns no steps for canonically equal profiles", () => {

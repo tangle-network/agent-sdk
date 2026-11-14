@@ -1,3 +1,4 @@
+import type { SandboxInstanceLike } from "./tangle-types.js";
 import { createHash } from "node:crypto";
 import {
   AgentExactRunControlRefSchema,
@@ -7,7 +8,7 @@ import type {
   AgentExactRunControlRef,
   AgentRunControlRef,
 } from "@tangle-network/agent-interface";
-import type { AgentSessionRef } from "@tangle-network/agent-interface/environment-provider";
+import type { AgentEnvironment, AgentSessionRef } from "@tangle-network/agent-interface/environment-provider";
 import { nonEmptyString } from "./tangle-environment-values.js";
 import {
   assertBoundedJson,
@@ -223,4 +224,46 @@ export function resolveRetainedSessionControlRef(
     controlRef.requestDigest,
     controlRef.runId,
   );
+}
+
+const handles = new WeakMap<AgentEnvironment, { box: SandboxInstanceLike; sessions: Map<string, Set<string>>; currentControlRef?: AgentExactRunControlRef }>();
+
+export const tangleEnvironmentHandle = (environment: AgentEnvironment) => handles.get(environment);
+
+export function bindTangleEvidenceEnvironment(environment: AgentEnvironment, box: SandboxInstanceLike): void {
+  handles.set(environment, { box, sessions: new Map() });
+}
+
+export function noteTangleSession(environment: AgentEnvironment, sessionId: string, executionId?: string, controlRef?: AgentRunControlRef | null): void {
+  const state = handles.get(environment);
+  if (!state) return;
+  if (executionId && safeNativeCaptureIdentifier(sessionId) && safeNativeCaptureIdentifier(executionId)) {
+    const executions = state.sessions.get(sessionId) ?? new Set<string>();
+    executions.add(executionId);
+    state.sessions.set(sessionId, executions);
+  }
+  if (state.currentControlRef && (state.currentControlRef.sessionId !== sessionId ||
+      state.currentControlRef.executionId !== executionId)) state.currentControlRef = undefined;
+  if (controlRef !== undefined) {
+    state.currentControlRef = undefined;
+    const parsed = AgentExactRunControlRefSchema.safeParse(controlRef);
+    if (parsed.success && parsed.data.provider === environment.provider && parsed.data.environmentId === environment.id &&
+        parsed.data.sessionId === sessionId && parsed.data.executionId === executionId)
+      state.currentControlRef = Object.freeze(parsed.data);
+  }
+}
+
+/** Actual dispatch identity retained by this handle; session hints never populate it. */
+export const currentTangleControlRef = (environment: AgentEnvironment): AgentExactRunControlRef | undefined =>
+  handles.get(environment)?.currentControlRef;
+
+/** A new dispatch invalidates the prior source even while its admission is unresolved. */
+export function clearTangleControlRef(environment: AgentEnvironment): void {
+  const state = handles.get(environment);
+  if (state) state.currentControlRef = undefined;
+}
+
+
+export function safeNativeCaptureIdentifier(value: string): boolean {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
 }

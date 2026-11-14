@@ -81,7 +81,8 @@ import {
   createTangleWorkspaceBranching,
 } from "./tangle-workspace-branching.js";
 import type { TangleConfidentialAttestationVerifier } from "./tangle-types.js";
-import { bindTangleEvidenceEnvironment, noteTangleSession } from "./tangle-evidence.js";
+import { bindTangleEvidenceEnvironment, clearTangleControlRef, noteTangleSession } from "./tangle-session-control.js";
+import { retainTangleFileOutput } from "./tangle-retained-file.js";
 import { assertNativeCaptureHarness } from "./tangle-native-capture-proof.js";
 
 /** Compose measured sandbox operations; metadata records intent, never grant authority. */
@@ -93,6 +94,7 @@ export async function sandboxInstanceAsEnvironment(
   operation?: { signal?: AbortSignal },
   request?: {
     resources?: ResourceProfile;
+    retain?: { paths: readonly string[] };
     proxySecrets?: ProxySecretBinding[];
     confidentialAttestationVerifier?: TangleConfidentialAttestationVerifier;
     requireNativeSessionCapture?: boolean;
@@ -145,14 +147,19 @@ export async function sandboxInstanceAsEnvironment(
   const credentialHarness = request?.nativeAuth?.harness ?? request?.credentialHarness;
   const boundCredentialSource = request?.credentialSource ??
     (recordedCredentials !== undefined ? "subscription" : "router");
+  const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
+  const sourceCreatedAt = box.createdAt instanceof Date ? box.createdAt.toISOString() : box.createdAt;
+  const measuredCapabilities = capabilitiesForSandbox(
+    declaredCapabilities, support, deployment,
+    confidentialVerifierOption(request?.confidentialAttestationVerifier),
+  );
+  measuredCapabilities.workspace.retainFileOutput =
+    measuredCapabilities.workspace.retainFileOutput === true && typeof box.stop === "function" &&
+    creation !== undefined && typeof sourceCreatedAt === "string" && Number.isFinite(Date.parse(sourceCreatedAt)) &&
+    request?.ephemeral !== true && measuredCapabilities.retainedControl !== undefined;
   const capabilities = frozenCapabilityDocument(
     AgentEnvironmentCapabilitiesSchema.parse(
-      capabilitiesForSandbox(
-        declaredCapabilities,
-        support,
-        deployment,
-        confidentialVerifierOption(request?.confidentialAttestationVerifier),
-      ),
+      measuredCapabilities,
     ),
   );
   const workspaceBranching =
@@ -199,7 +206,6 @@ export async function sandboxInstanceAsEnvironment(
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.controlRef ? { runControlRef: options.controlRef } : {}),
     });
-  const creation = creationFromSandboxCreateReceipt(box.createReceipt?.());
   const environment: AgentEnvironment = {
     id: environmentId,
     provider: providerName,
@@ -208,6 +214,11 @@ export async function sandboxInstanceAsEnvironment(
     ...(box.name ? { name: boundedString(box.name, "Tangle environment name") } : {}),
     ...(box.metadata ? { metadata: snapshotMetadata(box.metadata) } : {}),
     capabilities,
+    ...(capabilities.workspace.retainFileOutput === true && typeof sourceCreatedAt === "string" ? {
+      retainFileOutput: (input, operation) => retainTangleFileOutput(
+        environment, box, sourceCreatedAt, request?.retain?.paths ?? [], input, operation,
+      ),
+    } : {}),
     ...(workspaceBranching === undefined
       ? {}
       : { workspaceBranching }),
@@ -219,8 +230,9 @@ export async function sandboxInstanceAsEnvironment(
     stream: environmentTurnStream(box, providerName, environmentId, prepareTurn, prepareOptions,
       (sessionId, executionId) => noteTangleSession(environment, sessionId, executionId), usageLog),
     ...(dispatch ? { async dispatch(input: AgentTurnInput) {
+      clearTangleControlRef(environment);
       const ref = await dispatch(input);
-      noteTangleSession(environment, ref.id, input.executionId ?? input.controlRef?.executionId ?? ref.controlRef?.executionId);
+      noteTangleSession(environment, ref.id, input.executionId ?? input.controlRef?.executionId ?? ref.controlRef?.executionId, ref.controlRef ?? null);
       return ref;
     } } : {}),
     ...((capabilities.sessions.continue || capabilities.streaming.replay || capabilities.streaming.detach) &&

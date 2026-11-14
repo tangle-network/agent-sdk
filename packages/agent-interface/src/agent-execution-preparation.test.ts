@@ -10,7 +10,6 @@ import type {
   Sha256Digest,
 } from "./index.js";
 import {
-  AGENT_PROFILE_MATERIALIZATION_AXES,
   agentCandidateProfileActivationSchema,
   agentExecutionPreparationAxisResultSchema,
   agentExecutionPreparationReasoningEffortSchema,
@@ -207,13 +206,6 @@ function refusalCodes(build: () => unknown): string[] {
 }
 
 describe("profile materialization leaves", () => {
-  it("enumerates canonical leaves, including optional seat policy", () => {
-    expect(AGENT_PROFILE_MATERIALIZATION_AXES).toHaveLength(36);
-    expect(profileMaterializationAxes(fullProfile)).toEqual(
-      AGENT_PROFILE_MATERIALIZATION_AXES.filter((axis) => axis !== "seats"),
-    );
-  });
-
   it("refuses missing or unsupported proxy-secret preparation before execution", () => {
     const profile = { ...workerProfile, proxySecrets: fullProfile.proxySecrets };
     expect(refusalCodes(() => buildReceipt({

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ProxySecretCapabilitiesSchema, ProxySecretParentsSchema, isProxySecretParentsTotal, ProxySecretsSchema, ProxySecretUpdateControlsSchema, type ProxySecretBinding, type ProxySecretCapabilities, type ProxySecretReceipt, type ProxySecretParents } from "./proxy-secrets.js";
 import type { AgentRuntimeAttachments } from "./runtime-attachments.js";
 import type { AgentEnvironmentLifetime } from "./environment-lifetime.js";
+import type { AgentRetainedFileOutputOperation } from "./environment-retained-file.js";
 export { AgentRuntimeAttachmentsSchema, type AgentRuntimeAttachments } from "./runtime-attachments.js";
 import type { AgentCandidateArtifactPort } from "./agent-candidate.js";
 import type { AgentProfile, AgentProfileCapabilities, AgentProfileValidationResult } from "./agent-profile.js";
@@ -359,6 +360,7 @@ export interface AgentEnvironment {
    * reached by one provider can differ in age. Absent when provider capabilities
    * already describe every environment it creates. */
   readonly capabilities?: AgentEnvironmentCapabilities;
+  retainFileOutput?: AgentRetainedFileOutputOperation;
   status(options?: { signal?: AbortSignal }): Promise<AgentEnvironmentStatus>;
   stream(input: AgentTurnInput): AsyncIterable<AgentEnvironmentEvent>;
   dispatch?(input: AgentTurnInput): Promise<AgentSessionRef>;
@@ -454,6 +456,8 @@ export interface AgentEnvironmentCapabilities {
     git: boolean;
     upload: boolean;
     download: boolean;
+    /** The adapter implements exact retained-file publication; absent means unsupported. */
+    retainFileOutput?: boolean;
     /** Path bases accepted by the provider's workspace create contract. */
     cwdBases?: {
       repository: boolean;
@@ -593,6 +597,7 @@ export const AgentEnvironmentCapabilitiesSchema = z
       git: z.boolean(),
       upload: z.boolean(),
       download: z.boolean(),
+      retainFileOutput: z.boolean().optional(),
       cwdBases: z
         .strictObject({
           repository: z.boolean(),

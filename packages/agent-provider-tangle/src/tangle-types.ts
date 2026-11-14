@@ -478,6 +478,8 @@ export interface SandboxInteractiveSessionLike {
 
 export interface SandboxInstanceLike {
   id: string;
+  /** The linked SDK owns retained-stop request and publication response validation. */
+  stop?: SandboxInstance["stop"];
   createSession?: SandboxInstance["createSession"];
   readonly proxySecretReceipt?: SandboxInstance["proxySecretReceipt"];
   preparePublicProfileRevision?: SandboxInstance["preparePublicProfileRevision"];

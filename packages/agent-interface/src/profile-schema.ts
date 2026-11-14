@@ -1,3 +1,4 @@
+import { AgentFileOutputPolicySchema } from "./profile-file-output.js";
 import { agentCandidateSecretRefSchema } from "./agent-candidate-schema-common.js";
 import { z } from "zod";
 import { CONTRACT_MAX_ARRAY_LENGTH, isBoundedJsonMaterial } from "./contract-limits.js";
@@ -384,6 +385,7 @@ export const agentProfileResourceRemovalSchema = z.strictObject({
 });
 
 export const agentProfileDiffRemovalSchema = z.strictObject({
+  outputFile: z.literal(true).optional(),
   identity: z.literal(true).optional(),
   tags: removeListSchema.optional(),
   prompt: z
@@ -517,6 +519,7 @@ export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
  */
 export const agentProfileSchema = z
   .strictObject({
+    outputFile: AgentFileOutputPolicySchema.optional(),
     name: z.string().optional(),
     description: z.string().optional(),
     version: z.string().optional(),

@@ -38,11 +38,11 @@ const IMMUTABLE_TANGLE_IMAGE =
   /^(?:sha256:[a-f0-9]{64}|\S+@sha256:[a-f0-9]{64})$/i;
 type TangleExactSandboxOptions = Omit<
   CreateSandboxOptions,
-  "agent" | "driver" | "egressPolicy" | "environment"
+  "agent" | "driver" | "runtime" | "egressPolicy" | "environment"
 > & {
   environment: string;
   agent: false;
-  driver: { type: "host-agent"; runtimeBackend: "docker" };
+  runtime: "docker";
   egressPolicy:
     | { mode: "blocked" }
     | {
@@ -270,7 +270,7 @@ function exactSandboxOptions(
   return {
     environment: input.image,
     agent: false,
-    driver: { type: "host-agent", runtimeBackend: "docker" },
+    runtime: "docker",
     ephemeral: true,
     sshEnabled: false,
     webTerminalEnabled: false,
