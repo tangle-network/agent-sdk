@@ -458,36 +458,34 @@ describe("cli-bridge native retained sessions", () => {
     expect(requests).toBe(2);
   });
 
-  it("reads modelReroutes and drops capability keys a newer Bridge adds", async () => {
+  function bridgeServing(document: unknown) {
+    return { baseUrl, defaultModel: model, fetch: async () => Response.json(document) };
+  }
+
+  it("reads modelReroutes from a Bridge capability document", async () => {
+    const reported = { ...defaultCliBridgeCapabilities("pi"), modelReroutes: true };
+
+    const discovered = await discoverCliBridgeCapabilities(bridgeServing(reported), model);
+    expect(discovered.modelReroutes).toBe(true);
+    expect(discovered).toEqual(reported);
+  });
+
+  it("drops capability keys a newer Bridge adds and still validates known keys", async () => {
     const reported = defaultCliBridgeCapabilities("pi");
-    const options = (document: unknown) => ({
-      baseUrl,
-      defaultModel: model,
-      fetch: async () => Response.json(document),
-    });
-
-    const reroutes = await discoverCliBridgeCapabilities(
-      options({ ...reported, modelReroutes: true }),
-      model,
-    );
-    expect(reroutes.modelReroutes).toBe(true);
-
     const newer = {
       ...reported,
-      modelReroutes: true,
       futureCapability: true,
       streaming: { ...reported.streaming, futureStreamFlag: true },
     };
-    const discovered = await discoverCliBridgeCapabilities(options(newer), model);
+
+    const discovered = await discoverCliBridgeCapabilities(bridgeServing(newer), model);
     expect(discovered).not.toHaveProperty("futureCapability");
-    expect(discovered.streaming).toEqual(reported.streaming);
-    expect(discovered).toEqual({ ...reported, modelReroutes: true });
-    await expect(createCliBridgeProvider(options(newer)).capabilities()).resolves.toMatchObject({
-      interactions: { kinds: ["permission"] },
-    });
+    expect(discovered).toEqual(reported);
+    await expect(createCliBridgeProvider(bridgeServing(newer)).capabilities()).resolves
+      .toMatchObject({ interactions: { kinds: ["permission"] } });
 
     const wrongType = discoverCliBridgeCapabilities(
-      options({ ...reported, futureCapability: true, placement: "yes" }),
+      bridgeServing({ ...reported, futureCapability: true, placement: "yes" }),
       model,
     );
     await expect(wrongType).rejects.toThrow(/invalid capability document/);
