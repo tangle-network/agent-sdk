@@ -17,6 +17,7 @@ import {
   createCliBridgeProvider,
   defaultCliBridgeCapabilities,
 } from "./index.js";
+import { discoverCliBridgeCapabilities } from "./capability-discovery.js";
 import { cliBridgeEnvironmentId } from "./environment-identity.js";
 
 const baseUrl = "http://bridge.local";
@@ -455,6 +456,44 @@ describe("cli-bridge native retained sessions", () => {
       interactions: { kinds: ["permission"] },
     });
     expect(requests).toBe(2);
+  });
+
+  it("reads modelReroutes and drops capability keys a newer Bridge adds", async () => {
+    const reported = defaultCliBridgeCapabilities("pi");
+    const options = (document: unknown) => ({
+      baseUrl,
+      defaultModel: model,
+      fetch: async () => Response.json(document),
+    });
+
+    const reroutes = await discoverCliBridgeCapabilities(
+      options({ ...reported, modelReroutes: true }),
+      model,
+    );
+    expect(reroutes.modelReroutes).toBe(true);
+
+    const newer = {
+      ...reported,
+      modelReroutes: true,
+      futureCapability: true,
+      streaming: { ...reported.streaming, futureStreamFlag: true },
+    };
+    const discovered = await discoverCliBridgeCapabilities(options(newer), model);
+    expect(discovered).not.toHaveProperty("futureCapability");
+    expect(discovered.streaming).toEqual(reported.streaming);
+    expect(discovered).toEqual({ ...reported, modelReroutes: true });
+    await expect(createCliBridgeProvider(options(newer)).capabilities()).resolves.toMatchObject({
+      interactions: { kinds: ["permission"] },
+    });
+
+    const wrongType = discoverCliBridgeCapabilities(
+      options({ ...reported, futureCapability: true, placement: "yes" }),
+      model,
+    );
+    await expect(wrongType).rejects.toThrow(/invalid capability document/);
+    await expect(wrongType).rejects.toMatchObject({
+      cause: { issues: [expect.objectContaining({ code: "invalid_type", path: ["placement"] })] },
+    });
   });
 
   it("does not expose native interactions unless Bridge proves the complete contract", async () => {

@@ -392,6 +392,16 @@ describe("AgentEnvironmentCapabilitiesSchema", () => {
     ).toThrow();
   });
 
+  it("accepts a boolean modelReroutes flag and nothing else under that key", () => {
+    expect(
+      AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities, modelReroutes: true })
+        .modelReroutes,
+    ).toBe(true);
+    expect(() =>
+      AgentEnvironmentCapabilitiesSchema.parse({ ...capabilities, modelReroutes: "yes" }),
+    ).toThrow();
+  });
+
   it("requires both system-prompt intents to be declared independently", () => {
     for (const systemPrompt of [
       true,
