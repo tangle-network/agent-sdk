@@ -140,7 +140,7 @@ actualBridge("actual OpenCode incremental usage coverage", () => {
 });
 
 actualBridge("actual cli-bridge subscription refusal", () => {
-  it("keeps the Bridge failure code and HTTP status on the failed status event", async () => {
+  it("keeps the Bridge failure code, HTTP status and remediation on the failed status event", async () => {
     const bridge = await startActualBridge("claude", { BRIDGE_SUBSCRIPTIONS_ONLY: "on" });
     try {
       const provider = createCliBridgeProvider({ baseUrl: bridge.baseUrl, defaultModel: "claude-code/requested-model" });
@@ -156,6 +156,8 @@ actualBridge("actual cli-bridge subscription refusal", () => {
       expect(failed?.data, JSON.stringify(result.events)).toMatchObject({
         errorCode: "subscription_required",
         statusCode: 403,
+        // The fixture's auth probe resolves no provider, so the Bridge names that cause and its fix.
+        remediation: { cause: "provider_unresolved", fix: "claude auth login", harness: "claude-code", provider: null },
       });
       expect(result.error).toContain("Subscription authentication is required");
     } finally {

@@ -143,6 +143,10 @@ export async function* streamCliBridgeTurn(
       const code = typeof error.type === "string" && error.type ? error.type : undefined;
       const status = typeof error.status === "number" && Number.isInteger(error.status) &&
         error.status >= 400 && error.status <= 599 ? error.status : undefined;
+      // The subscription remedy comes from the Bridge's structured fields, never its message text.
+      const { cause, fix, harness, provider } = error;
+      const remediation = typeof cause === "string" && typeof fix === "string" && typeof harness === "string" &&
+        (provider === null || typeof provider === "string") ? { cause, fix, harness, provider } : undefined;
       yield* retainedEventsWithIdentity([{
         type: "status",
         data: {
@@ -150,6 +154,7 @@ export async function* streamCliBridgeTurn(
           error: message,
           ...(code === undefined ? {} : { errorCode: code }),
           ...(status === undefined ? {} : { statusCode: status }),
+          ...(remediation === undefined ? {} : { remediation }),
         },
         normalized: {
           type: "status",
