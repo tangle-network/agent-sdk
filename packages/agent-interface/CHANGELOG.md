@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.25
+
+### Patch Changes
+
+- ce06d55: Add authored per-profile outputFile policy and optional exact retained-file publication through the provider environment contract. Tangle delegates stopped capture and immutable regular-file receipts to the Sandbox SDK; missing source authority or a lost acknowledgment returns unavailable without recapturing a later invocation.
+
 ## 5.10.24
 
 ### Patch Changes
