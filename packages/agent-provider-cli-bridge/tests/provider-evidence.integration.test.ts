@@ -58,6 +58,12 @@ actualBridge("actual cli-bridge native response evidence", () => {
         expect(result.usage).toMatchObject({ inputTokens, outputTokens });
         expect(rawUsage.cost).toBeUndefined();
       }
+      // A Bridge estimate is not a measured receipt, so each event that carries one says so.
+      const estimates = result.events?.filter(event =>
+        (event.providerEvent as { usage?: { estimated?: unknown } } | undefined)?.usage?.estimated === true) ?? [];
+      expect(estimates.length > 0).toBe(scenario === "estimated");
+      expect(estimates.every(event => event.data.tokensKnown === false)).toBe(true);
+      expect(result.events?.some(event => event.data.tokensKnown === false)).toBe(scenario === "estimated");
       if (scenario === "ring-conflict") {
         expect(result.events).toHaveLength(1024);
         expect(result.events?.some(event => event.data.provider_models !== undefined)).toBe(false);
@@ -127,6 +133,31 @@ actualBridge("actual OpenCode incremental usage coverage", () => {
         expect(retainedUsage.prompt_tokens).toBe(6);
         expect(replay.usage).toMatchObject({ inputTokens: 6, outputTokens: 5 });
       }
+    } finally {
+      await bridge.stop();
+    }
+  }, 45_000);
+});
+
+actualBridge("actual cli-bridge subscription refusal", () => {
+  it("keeps the Bridge failure code and HTTP status on the failed status event", async () => {
+    const bridge = await startActualBridge("claude", { BRIDGE_SUBSCRIPTIONS_ONLY: "on" });
+    try {
+      const provider = createCliBridgeProvider({ baseUrl: bridge.baseUrl, defaultModel: "claude-code/requested-model" });
+      const environment = await provider.create({
+        idempotencyKey: "sdk-subscription-environment", profile: { name: "subscription", harness: "claude-code" },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
+      });
+      const result = await environment.session!("sdk-subscription-session").prompt({
+        prompt: "evidence-case:unique", turnId: "sdk-subscription-turn", executionId: "sdk-subscription-run",
+      });
+      expect(result.success, bridge.logs()).toBe(false);
+      const failed = result.events?.find(event => event.data.status === "failed");
+      expect(failed?.data, JSON.stringify(result.events)).toMatchObject({
+        errorCode: "subscription_required",
+        statusCode: 403,
+      });
+      expect(result.error).toContain("Subscription authentication is required");
     } finally {
       await bridge.stop();
     }

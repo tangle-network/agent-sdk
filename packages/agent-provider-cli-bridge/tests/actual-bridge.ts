@@ -121,7 +121,10 @@ interface RunningBridge {
   readonly stop: () => Promise<void>;
 }
 
-export async function startActualBridge(harness: "pi" | "claude" | "opencode" = "pi"): Promise<RunningBridge> {
+export async function startActualBridge(
+  harness: "pi" | "claude" | "opencode" = "pi",
+  bridgeEnv: Readonly<Record<string, string>> = {},
+): Promise<RunningBridge> {
   if (!BRIDGE_ROOT) {
     throw new Error("CLI_BRIDGE_INTEGRATION_ROOT must name an installed cli-bridge source checkout");
   }
@@ -172,6 +175,7 @@ export async function startActualBridge(harness: "pi" | "claude" | "opencode" = 
       PI_BIN: fakePiPath,
       PI_CODING_AGENT_DIR: agentDir,
       PI_CODING_AGENT_SESSION_DIR: join(agentDir, "sessions"),
+      ...bridgeEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

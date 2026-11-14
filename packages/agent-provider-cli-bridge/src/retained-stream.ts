@@ -139,9 +139,18 @@ export async function* streamCliBridgeTurn(
       const error = parsed.error as Record<string, unknown>;
       const message = typeof error.message === "string" ? error.message : "cli-bridge error";
       const cancelled = error.type === "run_cancelled";
+      // The Bridge's machine code and HTTP status classify the failure; the message only describes it.
+      const code = typeof error.type === "string" && error.type ? error.type : undefined;
+      const status = typeof error.status === "number" && Number.isInteger(error.status) &&
+        error.status >= 400 && error.status <= 599 ? error.status : undefined;
       yield* retainedEventsWithIdentity([{
         type: "status",
-        data: { status: cancelled ? "cancelled" : "failed", error: message },
+        data: {
+          status: cancelled ? "cancelled" : "failed",
+          error: message,
+          ...(code === undefined ? {} : { errorCode: code }),
+          ...(status === undefined ? {} : { statusCode: status }),
+        },
         normalized: {
           type: "status",
           status: cancelled ? "cancelled" : "failed",
@@ -193,6 +202,8 @@ export async function* streamCliBridgeTurn(
         data: {
           ...identityData,
           ...(nextModelRequests === undefined ? {} : { modelRequests: nextModelRequests }),
+          // The Bridge estimates counters for a CLI that reported none; they are not measured tokens.
+          ...(rawUsage?.estimated === true ? { tokensKnown: false } : {}),
         },
         ...(nextUsage ? { usage: nextUsage } : {}),
         usageMode: "delta",
@@ -481,6 +492,7 @@ async function* finishCliBridgeStream(
           ...(finalModelRequests === undefined
             ? {}
             : { modelRequests: finalModelRequests }),
+          ...(result.providerUsage?.estimated === true ? { tokensKnown: false } : {}),
         },
         ...(result.usage ? { usage: result.usage } : {}),
         ...(result.providerUsage ? { usageMode: "cumulative" as const } : {}),
