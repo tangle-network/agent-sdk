@@ -189,6 +189,9 @@ importers:
       '@changesets/cli':
         specifier: ^3.0.3
         version: 3.0.3
+      '@changesets/get-release-plan':
+        specifier: ^5.0.2
+        version: 5.0.2
       semver:
         specifier: ^7.8.5
         version: 7.8.5
@@ -595,6 +598,10 @@ packages:
 
   '@changesets/get-dependents-graph@3.0.0':
     resolution: {integrity: sha512-ji/t5wFA1zREKXRUePE6Qi+Qu2UgxCeSSGQrphezwvQZrp49B7sJ+8+wvM0tA7zPeSxYKCojDy3WWgrl+s+awg==}
+    engines: {node: ^22.11 || ^24 || >=26}
+
+  '@changesets/get-release-plan@5.0.2':
+    resolution: {integrity: sha512-laSJNxAH1EPiG20Z/Qxt10FnzXA7WarRulQvGHetoFzS2B7YDvkJIyoxDvoVk+M89astTC49ZS4wUrMe7PUD2g==}
     engines: {node: ^22.11 || ^24 || >=26}
 
   '@changesets/git@4.0.1':
@@ -2829,6 +2836,15 @@ snapshots:
     dependencies:
       '@changesets/types': 7.0.0
       semver: 7.8.5
+
+  '@changesets/get-release-plan@5.0.2':
+    dependencies:
+      '@changesets/assemble-release-plan': 7.0.0
+      '@changesets/config': 4.0.1
+      '@changesets/pre': 3.0.0
+      '@changesets/read': 1.0.1
+      '@changesets/types': 7.0.0
+      '@manypkg/get-packages': 3.1.0
 
   '@changesets/git@4.0.1':
     dependencies:

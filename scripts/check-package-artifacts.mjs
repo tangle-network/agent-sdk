@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Range, SemVer, satisfies } from "semver";
+import { getReleasePlan } from "@changesets/get-release-plan";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -503,6 +504,17 @@ function assertInternalDependencyMetadata(source, packed, packagesByName) {
   }
 }
 
+// The manifest still holds the published version until the Version Packages PR, so admission
+// read "already published" on every feature PR. Admit the version the pending changesets plan.
+function restamped(tarball, version, directory) {
+  mkdirSync(directory, { recursive: true });
+  run("tar", ["-xzf", tarball, "-C", directory]);
+  const manifestPath = join(directory, "package", "package.json");
+  writeFileSync(manifestPath, `${JSON.stringify({ ...readJson(manifestPath), version }, null, 2)}\n`);
+  run("tar", ["-czf", `${directory}.tgz`, "-C", directory, "package"]);
+  return `${directory}.tgz`;
+}
+
 const packages = publishablePackages();
 if (packages.length === 0) throw new Error("no publishable packages found");
 const packagesByName = new Map(
@@ -597,7 +609,11 @@ try {
     }
     tarballs.set(entry.manifest.name, packed.filename);
   }
-  console.log(run("bash", ["-c", ADMIT, "admit", ...tarballs.values()], { cwd: admission }));
+  const { releases } = await getReleasePlan(root);
+  const planned = new Map(releases.filter((release) => release.type !== "none").map((release) => [release.name, release.newVersion]));
+  const admitted = [...tarballs].map(([name, tarball]) =>
+    planned.has(name) ? restamped(tarball, planned.get(name), join(temporaryRoot, "planned", name)) : tarball);
+  console.log(run("bash", ["-c", ADMIT, "admit", ...admitted], { cwd: admission }));
 
   const npmEnvironment = {
     npm_config_audit: "false",
