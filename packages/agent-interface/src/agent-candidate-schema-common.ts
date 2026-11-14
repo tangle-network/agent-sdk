@@ -59,17 +59,18 @@ export function sha256Utf8(value: string): Sha256Digest {
 }
 
 export function sha256Bytes(value: Uint8Array): Sha256Digest {
-  const bytes = sha256(value);
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `sha256:${hex}`;
+  return digestHex(sha256(value));
+}
+
+function digestHex(bytes: Uint8Array): Sha256Digest {
+  return `sha256:${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** RFC 8785 serialization used by every candidate-producing package. */
 export function canonicalCandidateJson(value: unknown): string {
-  if (!isCanonicalJsonValue(value)) {
-    throw new Error("candidate document must be finite, acyclic RFC 8785 JSON");
-  }
-  return serializeCanonicalCandidate(value as AgentCandidateJsonValue);
+  const parts: string[] = [];
+  writeCanonicalCandidate(value, (part) => parts.push(part));
+  return parts.join("");
 }
 
 export function canonicalCandidateBytes(
@@ -78,10 +79,21 @@ export function canonicalCandidateBytes(
   return new TextEncoder().encode(canonicalCandidateJson(value));
 }
 
+/** The digest of {@link canonicalCandidateBytes}, hashed piece by piece: memory stays near the value's own size, not several times its encoding. */
 export function canonicalCandidateDigest(
   value: unknown,
 ): Sha256Digest {
-  return sha256Bytes(canonicalCandidateBytes(value));
+  const hash = sha256.create();
+  const encoder = new TextEncoder();
+  let pending = "";
+  writeCanonicalCandidate(value, (part) => {
+    pending += part;
+    if (pending.length >= 65_536) {
+      hash.update(encoder.encode(pending));
+      pending = "";
+    }
+  });
+  return digestHex(hash.update(encoder.encode(pending)).digest());
 }
 
 export function omitTopLevelDigest<T extends { digest: Sha256Digest }>(
@@ -91,21 +103,30 @@ export function omitTopLevelDigest<T extends { digest: Sha256Digest }>(
   return material;
 }
 
-function serializeCanonicalCandidate(value: AgentCandidateJsonValue): string {
-  if (value === null || typeof value === "boolean" || typeof value === "number") {
-    return JSON.stringify(value);
+function writeCanonicalCandidate(value: unknown, write: (part: string) => void): void {
+  if (!isCanonicalJsonValue(value)) {
+    throw new Error("candidate document must be finite, acyclic RFC 8785 JSON");
   }
-  if (typeof value === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return `[${value.map(serializeCanonicalCandidate).join(",")}]`;
-  }
-  return `{${Object.keys(value)
-    .sort()
-    .map(
-      (key) =>
-        `${JSON.stringify(key)}:${serializeCanonicalCandidate(value[key] as AgentCandidateJsonValue)}`,
-    )
-    .join(",")}}`;
+  const walk = (item: AgentCandidateJsonValue): void => {
+    if (item === null || typeof item !== "object") {
+      write(JSON.stringify(item));
+    } else if (Array.isArray(item)) {
+      write("[");
+      item.forEach((member, index) => {
+        if (index > 0) write(",");
+        walk(member);
+      });
+      write("]");
+    } else {
+      write("{");
+      Object.keys(item).sort().forEach((key, index) => {
+        write(`${index > 0 ? "," : ""}${JSON.stringify(key)}:`);
+        walk(item[key] as AgentCandidateJsonValue);
+      });
+      write("}");
+    }
+  };
+  walk(value as AgentCandidateJsonValue);
 }
 
 export function isWellFormedUnicode(value: string): boolean {
