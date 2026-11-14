@@ -85,8 +85,15 @@ export function canonicalCandidateDigest(
 ): Sha256Digest {
   const hash = sha256.create();
   const encoder = new TextEncoder();
-  writeCanonicalCandidate(value, (part) => hash.update(encoder.encode(part)));
-  return digestHex(hash.digest());
+  let pending = "";
+  writeCanonicalCandidate(value, (part) => {
+    pending += part;
+    if (pending.length >= 65_536) {
+      hash.update(encoder.encode(pending));
+      pending = "";
+    }
+  });
+  return digestHex(hash.update(encoder.encode(pending)).digest());
 }
 
 export function omitTopLevelDigest<T extends { digest: Sha256Digest }>(
