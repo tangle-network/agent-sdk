@@ -115,13 +115,6 @@ jobs:
       matrix:
         check: [UP-05, UP-06, UP-07, UP-08]
     steps:
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: ${{ matrix.check }}-failure-diagnostics
-          path: artifacts/${{ matrix.check }}-*-failure.json
-          if-no-files-found: ignore
-          retention-days: 30
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
@@ -173,6 +166,13 @@ jobs:
         env:
           CLI_BRIDGE_INTEGRATION_ROOT: ${{ github.workspace }}/cli-bridge
       - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ${{ matrix.check }}-failure-diagnostics
+          path: artifacts/${{ matrix.check }}-*-failure.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.check }}-evidence
           path: artifacts/${{ matrix.check }}-*.json
@@ -189,11 +189,3 @@ jobs:
       release_sha: ${{ github.sha }}
     secrets:
       TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
-
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: ${{ matrix.check }}-failure-diagnostics
-          path: artifacts/${{ matrix.check }}-*-failure.json
-          if-no-files-found: ignore
-          retention-days: 30
