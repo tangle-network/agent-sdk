@@ -11,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inc, Range, SemVer, satisfies } from "semver";
+import { Range, SemVer, satisfies } from "semver";
+import { getReleasePlan } from "@changesets/get-release-plan";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(root, "packages");
@@ -505,20 +506,6 @@ function assertInternalDependencyMetadata(source, packed, packagesByName) {
 
 // The manifest still holds the published version until the Version Packages PR, so admission
 // read "already published" on every feature PR. Admit the version the pending changesets plan.
-function plannedVersions(packagesByName) {
-  const levels = ["patch", "minor", "major"];
-  const highest = new Map();
-  const directory = join(root, ".changeset");
-  for (const file of existsSync(directory) ? readdirSync(directory) : []) {
-    if (!file.endsWith(".md") || file === "README.md") continue;
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(join(directory, file), "utf8"))?.[1] ?? "";
-    for (const [, name, level] of front.matchAll(/^\s*["']?([^"':\s]+)["']?\s*:\s*(patch|minor|major)\s*$/gm)) {
-      if (packagesByName.has(name) && levels.indexOf(level) > levels.indexOf(highest.get(name))) highest.set(name, level);
-    }
-  }
-  return new Map([...highest].map(([name, level]) => [name, inc(packagesByName.get(name).manifest.version, level)]));
-}
-
 function restamped(tarball, version, directory) {
   mkdirSync(directory, { recursive: true });
   run("tar", ["-xzf", tarball, "-C", directory]);
@@ -622,7 +609,8 @@ try {
     }
     tarballs.set(entry.manifest.name, packed.filename);
   }
-  const planned = plannedVersions(packagesByName);
+  const { releases } = await getReleasePlan(root);
+  const planned = new Map(releases.filter((release) => release.type !== "none").map((release) => [release.name, release.newVersion]));
   const admitted = [...tarballs].map(([name, tarball]) =>
     planned.has(name) ? restamped(tarball, planned.get(name), join(temporaryRoot, "planned", name)) : tarball);
   console.log(run("bash", ["-c", ADMIT, "admit", ...admitted], { cwd: admission }));
