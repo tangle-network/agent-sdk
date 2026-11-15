@@ -471,14 +471,14 @@ export function createTangleWorkspaceBranching(
       undefined,
       operation?.signal
     );
-    if (known === "unknown") {
+    if (known.state === "unknown") {
       return cleanupUnknown(
         request,
-        "Sandbox checkpoint inventory is unavailable; deletion was not attempted",
+        `Sandbox checkpoint lookup answered unknown (${known.reason}); deletion was not attempted`,
         true
       );
     }
-    if (known === false) {
+    if (known.state === "absent") {
       const acknowledgement = cleanupAlreadyAbsent(request);
       cleanup.set(request.operationId, {
         requestDigest: request.requestDigest,
@@ -490,7 +490,7 @@ export function createTangleWorkspaceBranching(
     let result: SandboxSnapshotDeleteAcknowledgementLike;
     try {
       result = await awaitWithSignal(
-        box.deleteSnapshot?.(request.targetId),
+        box.deleteSnapshot?.(known.snapshotId),
         operation?.signal
       );
     } catch (error) {
@@ -503,14 +503,14 @@ export function createTangleWorkspaceBranching(
     }
     const outcome =
       result &&
-      result.snapshotId === request.targetId &&
+      result.snapshotId === known.snapshotId &&
       (result.outcome === "deleted" || result.outcome === "already_absent")
         ? result.outcome
         : "unknown";
     if (outcome !== "deleted" && outcome !== "already_absent") {
       return cleanupUnknown(
         request,
-        "Sandbox did not attest checkpoint deletion",
+        "Sandbox delete answered unknown (deletion not attested)",
         true
       );
     }
@@ -580,7 +580,7 @@ export function createTangleWorkspaceBranching(
         canonicalCandidateDigest(record.checkpoint) ===
         canonicalCandidateDigest(request.checkpoint)
     )
-      ? true
+      ? undefined
       : await findManagedCheckpoint(
           box,
           provider,
@@ -588,12 +588,12 @@ export function createTangleWorkspaceBranching(
           request.checkpoint,
           operation?.signal
         );
-    if (checkpoint !== true) {
+    if (checkpoint !== undefined && checkpoint.state !== "found") {
       return forkUnknown(
         request,
-        checkpoint === false
+        checkpoint.state === "absent"
           ? "Requested checkpoint is absent"
-          : "Sandbox checkpoint inventory is unavailable",
+          : `Sandbox checkpoint lookup answered unknown (${checkpoint.reason})`,
         true
       );
     }

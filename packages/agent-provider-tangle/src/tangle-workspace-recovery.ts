@@ -410,11 +410,34 @@ function snapshotFromOperationResult(
 }
 
 /**
- * Confirm that one snapshot id is a settled checkpoint this provider created.
+ * One checkpoint id resolved against its source's inventory. `snapshotId` is
+ * the physical id Sandbox lists, which is the id a delete must name: a sealed
+ * checkpoint is listed under its physical id with the acknowledged id in its
+ * one `seal.<id>` tag. `unknown` names the step that could not decide.
+ */
+export type ManagedCheckpoint =
+  | { state: "found"; snapshotId: string }
+  | { state: "absent" }
+  | {
+      state: "unknown";
+      reason:
+        | "inventory unavailable"
+        | "ambiguous seal alias"
+        | "invalid snapshot metadata"
+        | "not marked by this source"
+        | "operation not confirmed";
+    };
+
+/**
+ * Confirm that one checkpoint id is a settled checkpoint this provider created.
  *
- * `expected` binds the answer to a specific checkpoint reference. A reference
- * that does not match its marker is absent, not unknown: the caller supplied a
- * checkpoint this source never produced.
+ * Without `expected` (cleanup), a match by id or by its one seal alias is
+ * accepted only when the snapshot carries this source's own marker and the
+ * marker's operation succeeded; a seal alias also needs that operation's
+ * result to name this id with the same marker. Anything less is unknown,
+ * never absent. `expected` binds the answer to a specific checkpoint
+ * reference (fork): a reference that does not match its marker is absent, not
+ * unknown, because the caller supplied a checkpoint this source never produced.
  */
 export async function findManagedCheckpoint(
   box: SandboxInstanceLike,
@@ -422,29 +445,25 @@ export async function findManagedCheckpoint(
   id: string,
   expected?: WorkspaceCheckpointRef,
   signal?: AbortSignal
-): Promise<true | false | "unknown"> {
+): Promise<ManagedCheckpoint> {
+  const unknown = (reason: Extract<ManagedCheckpoint, { state: "unknown" }>["reason"]): ManagedCheckpoint => ({ state: "unknown", reason });
+  const absent: ManagedCheckpoint = { state: "absent" };
   try {
     const snapshots = await awaitWithSignal(box.listSnapshots?.(), signal);
     if (!Array.isArray(snapshots) || snapshots.length > MAX_LIST_RESULTS) {
-      return "unknown";
+      return unknown("inventory unavailable");
     }
     const candidates = snapshots.filter((candidate) => snapshotHasId(candidate, id) !== false);
-    if (candidates.length === 0) return false;
-    if (candidates.length !== 1) return "unknown";
+    if (candidates.length === 0) return absent;
+    if (candidates.length !== 1 || snapshotHasId(candidates[0], id) !== true) return unknown("ambiguous seal alias");
     const snapshot = candidates[0];
-    if (!validSnapshotInfo(snapshot, box.id) || snapshotHasId(snapshot, id) !== true) return "unknown";
-    // An expected reference can prove a fork source; an alias alone never authorizes cleanup.
-    if (snapshot.snapshotId !== id && expected === undefined) return "unknown";
+    if (!validSnapshotInfo(snapshot, box.id)) return unknown("invalid snapshot metadata");
     const marker = checkpointMarkerFromTags(
       snapshot.tags,
       expected?.idempotencyKey
     );
-    if (!marker) return expected ? false : "unknown";
-    if (
-      marker.request.source.provider !== provider ||
-      marker.request.source.environmentId !== box.id
-    ) {
-      return expected ? false : "unknown";
+    if (!marker || !checkpointMarkerBelongsToSource(marker, provider, box.id)) {
+      return expected ? absent : unknown("not marked by this source");
     }
     if (
       expected &&
@@ -452,14 +471,22 @@ export async function findManagedCheckpoint(
         canonicalCandidateDigest(marker.request.source) !==
           canonicalCandidateDigest(expected.source))
     ) {
-      return false;
+      return absent;
     }
-    const lookup = await checkpointOperationLookup(box, marker, signal);
-    if (lookup?.outcome !== "found" || lookup.kind !== "checkpoint" || lookup.state !== "succeeded") return "unknown";
-    return snapshot.snapshotId === id || snapshotFromOperationResult(snapshot, lookup, marker)?.snapshotId === id ? true : "unknown";
+    let lookup: SandboxWorkspaceOperationLookupLike | undefined;
+    try {
+      lookup = await checkpointOperationLookup(box, marker, signal);
+    } catch {
+      signal?.throwIfAborted();
+      return unknown("operation not confirmed");
+    }
+    if (lookup?.outcome !== "found" || lookup.kind !== "checkpoint" || lookup.state !== "succeeded") return unknown("operation not confirmed");
+    return snapshot.snapshotId === id || snapshotFromOperationResult(snapshot, lookup, marker)?.snapshotId === id
+      ? { state: "found", snapshotId: snapshot.snapshotId }
+      : unknown("operation not confirmed");
   } catch {
     signal?.throwIfAborted();
-    return "unknown";
+    return unknown("inventory unavailable");
   }
 }
 
