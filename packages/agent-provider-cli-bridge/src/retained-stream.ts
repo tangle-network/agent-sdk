@@ -207,8 +207,9 @@ export async function* streamCliBridgeTurn(
         data: {
           ...identityData,
           ...(nextModelRequests === undefined ? {} : { modelRequests: nextModelRequests }),
-          // The Bridge estimates counters for a CLI that reported none; they are not measured tokens.
-          ...(rawUsage?.estimated === true ? { tokensKnown: false } : {}),
+          // Estimates and measured receipts missing a required counter cannot establish a total.
+          ...(rawUsage?.estimated === true || (rawUsage?.estimated === false && nextUsage === undefined)
+            ? { tokensKnown: false } : {}),
         },
         ...(nextUsage ? { usage: nextUsage } : {}),
         usageMode: "delta",
@@ -497,7 +498,9 @@ async function* finishCliBridgeStream(
           ...(finalModelRequests === undefined
             ? {}
             : { modelRequests: finalModelRequests }),
-          ...(result.providerUsage?.estimated === true ? { tokensKnown: false } : {}),
+          ...(result.providerUsage?.estimated === true ||
+            (result.providerUsage?.estimated === false && result.usage === undefined)
+            ? { tokensKnown: false } : {}),
         },
         ...(result.usage ? { usage: result.usage } : {}),
         ...(result.providerUsage ? { usageMode: "cumulative" as const } : {}),

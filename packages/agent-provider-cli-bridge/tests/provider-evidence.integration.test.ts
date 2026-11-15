@@ -119,7 +119,7 @@ actualBridge("actual cli-bridge native response evidence", () => {
         (event.providerEvent as { usage?: { estimated?: unknown } } | undefined)?.usage?.estimated === true) ?? [];
       expect(estimates.length > 0).toBe(scenario === "estimated");
       expect(estimates.every(event => event.data.tokensKnown === false)).toBe(true);
-      expect(result.events?.some(event => event.data.tokensKnown === false)).toBe(scenario === "estimated");
+      expect(result.events?.some(event => event.data.tokensKnown === false)).toBe(["estimated", "partial"].includes(scenario));
       if (scenario === "ring-conflict") {
         expect(result.events).toHaveLength(1024);
         expect(result.events?.some(event => event.data.provider_models !== undefined)).toBe(false);

@@ -68,7 +68,8 @@ export function retainedCanonicalEvent(
       ...identity,
       ...(rawUsage === undefined ? {} : { usage: rawUsage }),
       ...(modelRequests === undefined ? {} : { modelRequests }),
-      ...(rawUsage?.estimated === true ? { tokensKnown: false } : {}),
+      ...(rawUsage?.estimated === true || (rawUsage?.estimated === false && usage === undefined)
+        ? { tokensKnown: false } : {}),
       ...(typeof estimate === "number" && Number.isFinite(estimate) && estimate >= 0
         ? { estimatedCostUsd: estimate } : {}),
       eventId: envelope.eventId,

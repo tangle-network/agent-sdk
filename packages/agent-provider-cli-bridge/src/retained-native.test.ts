@@ -219,6 +219,67 @@ function reportedPiCapabilities(): AgentEnvironmentCapabilities {
 }
 
 describe("cli-bridge native retained sessions", () => {
+  it.each(["empty-middle", "complete", "zero", "estimated"])(
+    "preserves %s usage coverage through live observation and cold replay", async scenario => {
+    const measured = { prompt_tokens: 3, completion_tokens: 2, estimated: false, cost_known: false };
+    const middle = scenario === "empty-middle"
+      ? { estimated: false, cost_known: false } : scenario === "estimated" ? { ...measured, estimated: true }
+      : { ...measured, prompt_tokens: 0, completion_tokens: 0 };
+    const receipts = scenario === "complete" ? [measured, measured] : [measured, middle, measured];
+    const events = [
+      ...receipts.map((usage, index) => nativeEnvelope(index + 1, {
+        type: "raw", backend: "pi", event: {
+          type: "usage", data: {}, usageMode: "delta", providerEvent: { usage },
+        },
+      })),
+      nativeEnvelope(receipts.length + 1, { type: "status", status: "completed" }),
+    ];
+    const options = {
+      baseUrl, defaultModel: model, capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch([], events),
+    };
+    const environment = await createCliBridgeProvider(options).create({
+      idempotencyKey: environmentId, profile: { name: "native-pi", harness: "pi" },
+    });
+    const streamed: AgentEnvironmentEvent[] = [];
+    const observations: string[] = [];
+    for await (const event of environment.stream({
+      prompt: "retain incomplete native usage", sessionId, turnId: "native-turn", executionId: nativeRunId,
+    })) {
+      if (event.type !== "usage") continue;
+      streamed.push(event);
+      observations.push((await environment.observe!()).modelUsage!.state);
+    }
+    expect(streamed.map(event => event.data.usage)).toEqual(receipts);
+    expect(streamed.map(event => event.data.tokensKnown)).toEqual(
+      ["empty-middle", "estimated"].includes(scenario) ? [undefined, false, undefined] : receipts.map(() => undefined),
+    );
+    const session = environment.session!(sessionId);
+    const controlRef = session.controlRef;
+    if (!controlRef) throw new Error("native stream omitted its exact control reference");
+    const result = await session.result();
+    const cold = await createCliBridgeProvider(options).get!(environment.id);
+    if (!cold) throw new Error("native environment could not be reconstructed");
+    const replay = await cold.session!(sessionId, { controlRef }).result();
+    expect(replay.metadata).toEqual(result.metadata);
+    expect(replay.usage).toEqual(result.usage);
+    const expectedUsage = scenario === "empty-middle" ? undefined : scenario === "estimated"
+      ? { inputTokens: 9, outputTokens: 6 } : { inputTokens: 6, outputTokens: 4 };
+    expect(result.usage).toEqual(expectedUsage);
+    if (["empty-middle", "estimated"].includes(scenario)) {
+      expect(result.metadata?.provider_usage).toEqual(scenario === "empty-middle"
+        ? { estimated: false, cost_known: false }
+        : { estimated: true, cost_known: false, prompt_tokens: 9, completion_tokens: 6 });
+      expect(observations).toEqual(["known", "unavailable", "unavailable"]);
+    } else {
+      expect(observations.every(state => state === "known")).toBe(true);
+    }
+    for (const handle of [environment, cold]) {
+      expect((await handle.observe!()).modelUsage).toMatchObject(expectedUsage && scenario !== "estimated"
+        ? { state: "known", value: expectedUsage } : { state: "unavailable" });
+    }
+  });
+
   it.each(["observed", "configured-only", "partial", "malformed"])(
     "preserves %s response evidence through the public retained reader", async scenario => {
     const observed = scenario === "malformed" ? ["provider-model@releaseA", ""] : ["provider-model@releaseA"];

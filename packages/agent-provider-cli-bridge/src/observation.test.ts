@@ -7,7 +7,10 @@ import {
 import type { AgentEnvironment } from "@tangle-network/agent-interface/environment-provider";
 import { createCliBridgeProvider, defaultCliBridgeCapabilities } from "./index.js";
 
-function usageStreamProvider(baseUrl: string, bearerToken?: string) {
+function usageStreamProvider(baseUrl: string, bearerToken?: string, measured?: {
+  receipts: Record<string, unknown>[];
+  total: Record<string, unknown>;
+}) {
   return createCliBridgeProvider({
     baseUrl,
     ...(bearerToken === undefined ? {} : { bearerToken }),
@@ -28,7 +31,7 @@ function usageStreamProvider(baseUrl: string, bearerToken?: string) {
             message: { role: "assistant", content: "partial done" },
             finish_reason: "stop",
           }],
-          usage: {
+          usage: measured?.total ?? {
             prompt_tokens: 15,
             completion_tokens: 6,
             total_tokens: 21,
@@ -37,7 +40,10 @@ function usageStreamProvider(baseUrl: string, bearerToken?: string) {
         }, { headers });
       }
       return new Response(
-        [
+        measured ? [...measured.receipts.map((usage, index) => `data: ${JSON.stringify({
+          choices: [{ delta: { content: "response" }, ...(index === measured.receipts.length - 1
+            ? { finish_reason: "stop" } : {}) }], usage,
+        })}\n\n`), "data: [DONE]\n\n"].join("") : [
           'data: {"choices":[{"delta":{"content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cost":0.01}}\n\n',
           'data: {"choices":[{"delta":{"content":" done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7,"cost":0.02}}\n\n',
           "data: [DONE]\n\n",
@@ -143,6 +149,38 @@ describe("cli-bridge environment observation", () => {
     });
     expect(observationContainsCredential(observation)).toBe(false);
     expect(JSON.stringify(observation)).not.toContain("bridge-bearer");
+  });
+
+  it.each(["empty", "cost-only", "cost-status", "estimated"])(
+    "preserves %s receipt coverage through the public SSE stream and cumulative result", async scenario => {
+    const positive = { prompt_tokens: 3, completion_tokens: 2, estimated: false, cost_known: false };
+    const marker = scenario === "empty" ? { estimated: false, cost_known: false }
+      : scenario === "estimated" ? { ...positive, estimated: true }
+      : scenario === "cost-only" ? { cost: 0.01 } : { cost_known: false };
+    const total = scenario === "empty" ? marker : scenario === "estimated"
+      ? { ...marker, prompt_tokens: 9, completion_tokens: 6 }
+      : { ...positive, prompt_tokens: 6, completion_tokens: 4 };
+    const environment = await usageStreamProvider("https://bridge.example/v1", undefined, {
+      receipts: [positive, marker, positive], total,
+    }).create({ profile: { name: "worker" } });
+    const states: string[] = [];
+    const flags: unknown[] = [];
+    for await (const event of environment.stream({
+      prompt: "keep missing counters unknown", model: "glm-5.2", sessionId: "session-usage",
+      turnId: "turn-usage", executionId: "execution-usage",
+    })) {
+      if (event.type !== "usage" && event.type !== "result") continue;
+      flags.push(event.data.tokensKnown);
+      states.push((await environment.observe!()).modelUsage!.state);
+    }
+    const unknown = ["empty", "estimated"].includes(scenario);
+    expect(states).toEqual(unknown
+      ? ["known", "unavailable", "unavailable", "unavailable"]
+      : ["known", "known", "known", "known"]);
+    expect(flags).toEqual(unknown
+      ? [undefined, false, undefined, false] : [undefined, undefined, undefined, undefined]);
+    expect((await environment.observe!()).modelUsage).toMatchObject(unknown
+      ? { state: "unavailable" } : { state: "known", value: { inputTokens: 6, outputTokens: 4 } });
   });
 
   it("reports a stopped lifecycle after the environment is destroyed", async () => {

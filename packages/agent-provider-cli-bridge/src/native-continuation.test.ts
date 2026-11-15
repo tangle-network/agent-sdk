@@ -138,6 +138,7 @@ describe("cli-bridge native continuation", () => {
       releaseTerminal = resolve;
     });
     let admissionReturned = false;
+    let admittedControlRef: AgentExactRunControlRef | undefined;
     const provider = createProvider(async (url, init) => {
       const parsed = new URL(String(url));
       const body = init?.body === undefined
@@ -145,16 +146,27 @@ describe("cli-bridge native continuation", () => {
         : JSON.parse(String(init.body)) as {
             request?: NativeContextContinuationRequest;
           };
-      if (
+      const terminalReplay =
         admissionReturned &&
         parsed.pathname.endsWith("/continue") &&
         parsed.searchParams.get("return") === null &&
-        body?.request?.operationId === "continue-admission"
-      ) {
+        body?.request?.operationId === "continue-admission";
+      if (terminalReplay) {
         await terminalBarrier;
+      }
+      if (admittedControlRef && parsed.pathname === "/v1/runs/continued-run/events") {
+        return nativeEventsResponse(admittedControlRef, {
+          prompt_tokens: 3, completion_tokens: 2, estimated: false, cost_known: false,
+        });
       }
       const response = await fixture.fetch(url, init);
       if (parsed.searchParams.get("return") === "admission") admissionReturned = true;
+      if (terminalReplay) {
+        const outcome = await response.json();
+        delete outcome.result.usage;
+        outcome.result.metadata = { provider_usage: { estimated: false, cost_known: false } };
+        return Response.json(outcome, { status: response.status });
+      }
       return response;
     });
     const environment = await provider.create({
@@ -187,6 +199,7 @@ describe("cli-bridge native continuation", () => {
     const terminal = session.continueNative!(request, {
       turn,
       onAdmission(controlRef) {
+        admittedControlRef = controlRef;
         resolveAdmission(controlRef);
       },
     }).finally(() => {
@@ -198,6 +211,10 @@ describe("cli-bridge native continuation", () => {
       expect(controlRef).toEqual(fixture.continuedControlRef(initialControlRef));
       expect(session.controlRef).toEqual(controlRef);
       expect(terminalSettled).toBe(false);
+      await expect(session.result()).resolves.toMatchObject({ usage: { inputTokens: 3, outputTokens: 2 } });
+      expect((await environment.observe!()).modelUsage).toMatchObject({
+        state: "known", provenance: { source: controlRef.executionId },
+      });
     } finally {
       releaseTerminal();
     }
@@ -205,6 +222,7 @@ describe("cli-bridge native continuation", () => {
       acknowledgement: { status: "replayed" },
       controlRef: fixture.continuedControlRef(initialControlRef),
     });
+    expect((await environment.observe!()).modelUsage).toMatchObject({ state: "unavailable" });
     expect(fixture.continuationBodies).toHaveLength(2);
   });
 
@@ -789,9 +807,18 @@ function validAcceptedOutcome(
   });
 }
 
-function nativeEventsResponse(controlRef: AgentExactRunControlRef): Response {
+function nativeEventsResponse(controlRef: AgentExactRunControlRef, usage?: Record<string, unknown>): Response {
   const text = "continued";
   const events = [
+    ...(usage ? [{
+      runId: controlRef.runId,
+      eventId: `${controlRef.runId}-usage`,
+      occurredAt: "2026-08-19T12:00:00.000Z",
+      receivedAt: "2026-08-19T12:00:00.010Z",
+      event: { type: "raw", backend: "pi", event: {
+        type: "usage", data: {}, usageMode: "delta", providerEvent: { usage },
+      } },
+    }] : []),
     {
       runId: controlRef.runId,
       eventId: `${controlRef.runId}-message`,
@@ -820,7 +847,7 @@ function nativeEventsResponse(controlRef: AgentExactRunControlRef): Response {
       receivedAt: "2026-08-19T12:00:00.010Z",
       event: { type: "status", status: "completed" },
     },
-  ];
+  ].map((event, index) => ({ ...event, sequence: index + 1, cursor: String(index + 1) }));
   const body = events.map((envelope) => {
     const type = (envelope.event as { type: string }).type;
     return `id: ${envelope.sequence}\nevent: ${type}\ndata: ${JSON.stringify(envelope)}\n\n`;
