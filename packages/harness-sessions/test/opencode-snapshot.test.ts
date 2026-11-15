@@ -1,10 +1,12 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, link, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import {
   assertStoreRoot, captureOpenCodeSessionStore, readBoundHarnessSessions,
@@ -15,6 +17,47 @@ import { withSqliteReadSnapshot } from '../src/source.js'
 const ROOT = 'ses_ef7195eb2ffeZVueR3r0KnCUON'
 const CHILD = 'ses_wal_snapshot_child'
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+const run = promisify(execFile)
+
+it('refuses static symlinks and hard links for the original capture path and every SQLite companion', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'opencode-capture-links-'))
+  try {
+    const sentinel = join(dir, 'sentinel')
+    await writeFile(sentinel, 'must-not-be-read-as-a-native-store')
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const source = join(dir, `source${suffix || '-main'}.db`)
+      await copyFile(join(import.meta.dirname, 'fixtures/opencode/opencode.db'), source)
+      const candidate = `${source}${suffix}`
+      if (!suffix) await unlink(candidate)
+      await symlink(sentinel, candidate)
+      await expect(captureOpenCodeSessionStore(source, [ROOT])).rejects.toThrow('Native SQLite')
+      await unlink(candidate)
+      await link(sentinel, candidate)
+      await expect(captureOpenCodeSessionStore(source, [ROOT])).rejects.toThrow('regular single-link')
+      await unlink(candidate)
+    }
+    expect(await readFile(sentinel, 'utf8')).toBe('must-not-be-read-as-a-native-store')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+it.skipIf(process.platform !== 'linux').each(['DELETE', 'WAL'])('refuses a real journal FIFO before SQLite can block in %s mode', async (mode) => {
+  const dir = await mkdtemp(join(tmpdir(), 'opencode-capture-fifo-'))
+  try {
+    const source = join(dir, 'store.db')
+    const db = new DatabaseSync(source)
+    db.exec(`CREATE TABLE observed(value TEXT); PRAGMA journal_mode=${mode}`)
+    db.close()
+    await run('mkfifo', [`${source}-journal`])
+    // Run the actual source owner in a bounded child: without the preflight, SQLite's
+    // synchronous read-only journal open hangs and cannot be interrupted by a JS timer.
+    const owner = pathToFileURL(join(import.meta.dirname, '../src/source.ts')).href
+    const script = `import { withSqliteReadSnapshot } from ${JSON.stringify(owner)};
+try { await withSqliteReadSnapshot(process.argv[1], db => db.prepare('SELECT * FROM observed').all()); process.exitCode = 2; }
+catch (error) { if (!(error instanceof Error) || !error.message.includes('regular single-link')) throw error; console.log('refused journal FIFO'); }`
+    const result = await run(process.execPath, ['--no-warnings', '--experimental-transform-types', '--input-type=module', '-e', script, source], { timeout: 5_000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 })
+    expect(result.stdout.trim()).toBe('refused journal FIFO')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+}, 10_000)
 
 it('holds a consistent read transaction when a live store has no WAL', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'opencode-read-lock-'))

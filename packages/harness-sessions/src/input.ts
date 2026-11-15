@@ -15,6 +15,8 @@ export type SessionInput = { text: string } | { records: readonly unknown[] }
 export interface SessionInputInit {
   nativeSessionId?: string
   parentNativeSessionId?: string | null
+  /** Caller-bound workspace context, including formats that record only its hash. */
+  cwd?: string | null
   label?: string
   firstLine?: number
 }
@@ -43,7 +45,7 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
     path: label,
     files: [],
     home: null,
-    cwd: null,
+    cwd: init.cwd ?? null,
     mtimeMs: 0,
     parentNativeSessionId: init.parentNativeSessionId ?? null,
   }

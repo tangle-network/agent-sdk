@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { constants, rmSync } from 'node:fs'
-import { copyFile, mkdtemp, open, realpath, stat, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdtemp, open, realpath, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -220,9 +220,23 @@ export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T):
 
 /** Read one transaction directly from the native store, including its committed WAL.
  * A filesystem copy is not a consistent snapshot of a concurrent writer, so this path refuses
- * when SQLite cannot open the store in place. The caller owns path confinement. */
+ * when SQLite cannot open the store in place. The caller owns OS path confinement and a deadline:
+ * these preflight checks reject static special files, not replacement races during SQLite's opens. */
 export async function withSqliteReadSnapshot<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
-  // A live store can acquire a WAL after it is opened; absence of a WAL never means immutable.
+  // Check lexical names before realpath. Do not open extra descriptors: closing one can
+  // release POSIX locks owned by another SQLite connection in this process.
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    let info
+    try {
+      info = await lstat(`${path}${suffix}`)
+    } catch (error) {
+      if (suffix && isMissing(error)) continue
+      throw error
+    }
+    if (!info.isFile() || info.nlink !== 1)
+      throw new Error('Native SQLite source and companions must be regular single-link files')
+  }
+  // A live store can acquire a WAL after it is opened; absence never means immutable.
   const db = await openSqlite(await realpath(path), true)
   try {
     db.exec('BEGIN')

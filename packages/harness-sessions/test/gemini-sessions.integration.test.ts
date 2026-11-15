@@ -48,6 +48,14 @@ describe('Gemini native session boundary', () => {
     const captured = await readBoundHarnessSessions({ nativeSessionId: nativeId, files, validatePath: assertStoreRoot, read: async () => bytes,
       parse: (text, file) => readSessionInput('gemini', { text }, { nativeSessionId: file.nativeSessionId, label: path }, { corruption: 'strict' }) })
     expect(captured.sessions[0]).toEqual(session)
+    const boundCwd = '/controlled/native/workspace'
+    const rows = bytes.toString('utf8').trim().split('\n').map(line => JSON.parse(line))
+    rows[0].projectHash = createHash('sha256').update(boundCwd).digest('hex')
+    const boundBytes = Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + '\n')
+    const readAt = (cwd: string) => readBoundHarnessSessions({ nativeSessionId: nativeId, files, validatePath: assertStoreRoot, read: async () => boundBytes,
+      parse: (text, file) => readSessionInput('gemini', { text }, { nativeSessionId: file.nativeSessionId, cwd, label: path }, { corruption: 'strict' }) })
+    expect((await readAt(boundCwd)).sessions[0]).toMatchObject({ cwd: boundCwd, nativeSessionId: nativeId, usage })
+    await expect(readAt('/another/native/workspace')).rejects.toThrow('identity or integrity')
     await expect(readBoundHarnessSessions({ nativeSessionId: 'another-session', files: [{ ...files[0]!, nativeSessionId: 'another-session' }], validatePath: assertStoreRoot, read: async () => bytes,
       parse: (text, file) => readSessionInput('gemini', { text }, { nativeSessionId: file.nativeSessionId }, { corruption: 'strict' }) })).rejects.toThrow('identity or integrity')
   })
