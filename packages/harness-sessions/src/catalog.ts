@@ -8,6 +8,7 @@ export const SESSION_FORMAT_IDS = [
   'kimi.session-dir',
   'factory.session-jsonl',
   'gemini.chat-json',
+  'gemini.chat-jsonl',
   'amp.thread-json',
   'forge.sqlite',
   'hermes.state-sqlite',
@@ -38,7 +39,9 @@ export const STORES = {
   'factory.session-jsonl': store('factory.session-jsonl', '.factory/sessions', [
     '*/{id}.jsonl', '*/{id}.settings.json',
   ]),
-  'gemini.chat-json': store('gemini.chat-json', '.gemini/tmp', ['*/chats/session-*{id}*.json'], 'json-rewrite'),
+  // Gemini filenames contain only a shortened id. Readers bind the full id from the header.
+  'gemini.chat-json': store('gemini.chat-json', '.gemini/tmp', ['*/chats/session-*.json'], 'json-rewrite'),
+  'gemini.chat-jsonl': store('gemini.chat-jsonl', '.gemini/tmp', ['*/chats/session-*.jsonl']),
   'amp.thread-json': store('amp.thread-json', '.local/share/amp/threads', ['{id}.json'], 'json-rewrite'),
   'forge.sqlite': store('forge.sqlite', '.forge', ['.forge.db', '.forge.db-wal', '.forge.db-shm'], 'sqlite-wal'),
   'hermes.state-sqlite': store('hermes.state-sqlite', '.hermes', ['state.db', 'state.db-wal', 'state.db-shm'], 'sqlite-wal'),
@@ -73,7 +76,8 @@ export const EVIDENCE = {
   'pi.session-jsonl': { servedModel: 'session-record', usage: 'per-response', endingError: 'session-record' },
   'kimi.session-dir': { servedModel: 'none', usage: 'per-response', endingError: 'session-record' },
   'factory.session-jsonl': { servedModel: 'turn-context', usage: 'session-total', endingError: 'none' },
-  'gemini.chat-json': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
+  'gemini.chat-json': { servedModel: 'turn-context', usage: 'per-response', endingError: 'session-record' },
+  'gemini.chat-jsonl': { servedModel: 'turn-context', usage: 'per-response', endingError: 'session-record' },
   'amp.thread-json': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
   'forge.sqlite': { servedModel: 'session-record', usage: 'per-response', endingError: 'none' },
   'hermes.state-sqlite': { servedModel: 'session-record', usage: 'session-total', endingError: 'none' },

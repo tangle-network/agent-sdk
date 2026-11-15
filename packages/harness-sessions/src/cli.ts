@@ -8,6 +8,7 @@ import { opencodeSessionsInStore } from './formats/opencode.js'
 import { piRefForFile } from './formats/pi.js'
 import { kimiRefForFile } from './formats/kimi.js'
 import { factoryRefForFile } from './formats/factory.js'
+import { geminiRefForFile } from './formats/gemini.js'
 import { listReaders, readerFor } from './registry.js'
 import type { SessionRef } from './schema.js'
 
@@ -31,6 +32,7 @@ function harnessOfFile(path: string): string | null {
   if (/(^|\/)\.pi\/agent\/sessions\//u.test(path)) return 'pi'
   if (/(^|\/)\.kimi(?:-code)?\/sessions\/.+\/wire\.jsonl$/u.test(path)) return 'kimi-code'
   if (/(^|\/)\.factory\/sessions\//u.test(path)) return 'factory-droids'
+  if (/(^|\/)\.gemini\/tmp\/[^/]+\/chats\/session-[^/]+\.jsonl?$/u.test(path)) return 'gemini'
   return null
 }
 
@@ -39,6 +41,10 @@ async function refsForFile(path: string, harness: string | null, session: string
   if (h === null) throw new Error(`cannot tell which harness wrote ${path}; pass --harness`)
   const reader = readerFor(h)
   if (reader.harness === 'opencode') return opencodeSessionsInStore(path, null, session ? { nativeSessionId: session } : {})
+  if (reader.harness === 'gemini') {
+    const ref = geminiRefForFile(path)
+    return [{ ...ref, nativeSessionId: (await reader.summarize(ref)).nativeSessionId }]
+  }
   const ref = reader.harness === 'claude-code'
     ? claudeCodeRefForFile(path, /\/subagents\//u.test(path) ? 'parent' : null)
     : reader.harness === 'codex' ? codexRefForFile(path) : reader.harness === 'kimi-code' ? kimiRefForFile(path) : reader.harness === 'factory-droids' ? factoryRefForFile(path) : piRefForFile(path)

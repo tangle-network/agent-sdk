@@ -4,6 +4,7 @@ import { createFold as codexFold } from './formats/codex.js'
 import type { SessionFold } from './formats/fold.js'
 import { createFold as kimiFold } from './formats/kimi.js'
 import { createFold as factoryFold } from './formats/factory.js'
+import { createFold as geminiFold, geminiInputFormat, geminiRecords } from './formats/gemini.js'
 import { createFold as piFold } from './formats/pi.js'
 import { readerFor } from './registry.js'
 import type { HarnessSession, ReadOptions, SessionRef, SessionSummary } from './schema.js'
@@ -25,6 +26,7 @@ const FOLDS: Record<string, CreateFold> = {
   codex: codexFold,
   pi: piFold,
   'kimi-code': kimiFold,
+  gemini: geminiFold,
   'factory-droids': (ref, mode, stats) => factoryFold(ref, mode, stats),
 }
 
@@ -36,8 +38,8 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
   const stats = memoryStats(label, 'text' in input ? input.text : undefined)
   const ref: SessionRef = {
     harness: reader.harness,
-    format: reader.formats[0]!,
-    nativeSessionId: init.nativeSessionId ?? label,
+    format: reader.harness === 'gemini' ? geminiInputFormat('text' in input ? input.text : input.records) : reader.formats[0]!,
+    nativeSessionId: init.nativeSessionId ?? (reader.harness === 'gemini' ? '' : label),
     path: label,
     files: [],
     home: null,
@@ -48,7 +50,7 @@ function foldInput(harness: string, input: SessionInput, init: SessionInputInit,
   const fold = create(ref, mode, stats)
   const firstLine = init.firstLine ?? 1
   const records = 'text' in input
-    ? textRecordsSync(input.text, stats, { strict: options.corruption === 'strict', firstLine })
+    ? (reader.harness === 'gemini' ? geminiRecords : textRecordsSync)(input.text, stats, { strict: options.corruption === 'strict', firstLine })
     : arrayRecordsSync(input.records, stats, firstLine)
   for (const record of records) fold.observe(record)
   return fold.finish()

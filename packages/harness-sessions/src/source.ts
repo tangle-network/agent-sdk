@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { constants, rmSync } from 'node:fs'
-import { copyFile, mkdtemp, open, realpath, stat } from 'node:fs/promises'
+import { copyFile, mkdtemp, open, realpath, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -185,10 +185,10 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function openSqlite(path: string): Promise<DatabaseSync> {
-  const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
+async function openSqlite(path: string, forceLocking = false): Promise<DatabaseSync> {
+  const mode = forceLocking || (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
   const { DatabaseSync } = loadSqlite()
-  const db = new DatabaseSync(`${pathToFileURL(path).href}?${mode}`, { readOnly: true })
+  const db = new DatabaseSync(forceLocking ? path : `${pathToFileURL(path).href}?${mode}`, { readOnly: true })
   try {
     db.exec('PRAGMA busy_timeout = 5000')
     db.prepare('PRAGMA schema_version').get()
@@ -215,6 +215,46 @@ export async function withSqlite<T>(path: string, use: (db: DatabaseSync) => T):
     return use(db)
   } finally {
     db.close()
+  }
+}
+
+/** Read one transaction directly from the native store, including its committed WAL.
+ * A filesystem copy is not a consistent snapshot of a concurrent writer, so this path refuses
+ * when SQLite cannot open the store in place. The caller owns path confinement. */
+export async function withSqliteReadSnapshot<T>(path: string, use: (db: DatabaseSync) => T): Promise<T> {
+  // A live store can acquire a WAL after it is opened; absence of a WAL never means immutable.
+  const db = await openSqlite(await realpath(path), true)
+  try {
+    db.exec('BEGIN')
+    return use(db)
+  } finally {
+    db.close()
+  }
+}
+
+/** Read a self-contained SQLite capture, never an orphaned WAL-mode database file. */
+export async function withSqliteBytes<T>(bytes: Uint8Array, use: (db: DatabaseSync) => T, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted()
+  const owned = Uint8Array.from(bytes)
+  if (
+    owned.length < 100 || Buffer.from(owned.subarray(0, 16)).toString('ascii') !== 'SQLite format 3\0' ||
+    owned[18] !== 1 || owned[19] !== 1
+  ) throw new Error('Native SQLite capture must be a complete snapshot without a WAL dependency')
+  const dir = await mkdtemp(join(tmpdir(), 'harness-sessions-snapshot-'))
+  let db: DatabaseSync | undefined
+  try {
+    const path = join(dir, 'session.db')
+    await writeFile(path, owned, { mode: 0o600, flag: 'wx', signal })
+    signal?.throwIfAborted()
+    db = new (loadSqlite().DatabaseSync)(path, { readOnly: true })
+    db.exec('PRAGMA query_only = 1')
+    const checked = db.prepare('PRAGMA quick_check').all()
+    if (checked.length !== 1 || Object.values(checked[0]!)[0] !== 'ok')
+      throw new Error('Native SQLite capture failed its integrity check')
+    return use(db)
+  } finally {
+    db?.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 

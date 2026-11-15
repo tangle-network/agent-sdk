@@ -35,18 +35,22 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
   readonly nativeSessionIds?: readonly string[]
   readonly files: readonly HarnessFileBinding[]
   readonly read: (file: HarnessFileBinding, signal?: AbortSignal) => Promise<Uint8Array>
-  readonly parse: (text: string, file: HarnessFileBinding) => S
   readonly signal?: AbortSignal
   /** Host-owned relative-path policy, applied before any read. */
   readonly validatePath: (path: string, signal?: AbortSignal) => void | Promise<void>
   /** Compatibility error identity remains with the execution owner. */
   readonly failure?: (message: string) => Error
-}) {
+} & (
+  | { readonly parse: (text: string, file: HarnessFileBinding) => S | Promise<S>; readonly parseBytes?: never }
+  | { readonly parse?: never; readonly parseBytes: (bytes: Uint8Array, file: HarnessFileBinding, signal?: AbortSignal) => S | Promise<S> }
+)) {
   const files: { path: string; nativeSessionId: string; sha256: string; byteLength: number }[] = []
   const sessions = new Map<string, S>()
   const parents = new Map<string, string>()
-  const paths = new Set<string>()
+  const paths = new Map<string, { bytes: Uint8Array; ids: Set<string> }>()
   const invalid = input.failure ?? ((message: string) => new Error(message))
+  if ((typeof input.parse === 'function') === (typeof input.parseBytes === 'function'))
+    throw invalid('Native capture requires exactly one parser')
   const roots = input.nativeSessionIds ?? [input.nativeSessionId]
   if (
     !roots.length || roots.length > BOUND_HARNESS_SESSION_READ_LIMITS.maxFiles ||
@@ -67,11 +71,14 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
         throw invalid('Native file count exceeds the capture bound')
       await input.validatePath(file.path, input.signal)
       input.signal?.throwIfAborted()
-      if (HARNESS_TRANSCRIPT_DENY.test(file.path) || paths.has(file.path))
+      const held = paths.get(file.path)
+      if (HARNESS_TRANSCRIPT_DENY.test(file.path) || (held && (!input.parseBytes || held.ids.has(id))))
         throw invalid('Native file path is denied or repeated')
-      paths.add(file.path)
-      const bytes = await input.read(file, input.signal)
-      total += bytes.byteLength
+      // A binary store can bind several sessions to the same immutable bytes. Read it once;
+      // each session still has its own digest, identity and parentage checks below.
+      const bytes = held?.bytes ?? Uint8Array.from(await input.read(file, input.signal))
+      input.signal?.throwIfAborted()
+      if (!held) total += bytes.byteLength
       if (
         bytes.byteLength > BOUND_HARNESS_SESSION_READ_LIMITS.maxFileBytes ||
         total > BOUND_HARNESS_SESSION_READ_LIMITS.maxTotalBytes
@@ -83,7 +90,12 @@ export async function readBoundHarnessSessions<S extends BoundHarnessSession>(in
         (file.byteLength !== undefined && file.byteLength !== bytes.byteLength)
       )
         throw invalid('Captured native session bytes changed')
-      const session = input.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes), file)
+      const session = input.parseBytes
+        ? await input.parseBytes(Uint8Array.from(bytes), file, input.signal)
+        : await input.parse!(new TextDecoder('utf-8', { fatal: true }).decode(bytes), file)
+      input.signal?.throwIfAborted()
+      if (held) held.ids.add(id)
+      else paths.set(file.path, { bytes, ids: new Set([id]) })
       if (
         session.nativeSessionId !== id ||
         session.integrity.truncated ||

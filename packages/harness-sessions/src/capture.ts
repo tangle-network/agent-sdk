@@ -149,7 +149,18 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
     const globs = store.globs ?? reader.globs
     const main = storeGlob(globs.session, copy.nativeSessionId)
     const nested = globs.children ? [storeGlob(globs.children, copy.nativeSessionId)] : []
-    const mainFile = copy.files.find((f) => { const rel = inStore(storePathOf(f)); return rel !== null && main.test(rel) })
+    let mainFile = copy.files.find((f) => { const rel = inStore(storePathOf(f)); return rel !== null && main.test(rel) })
+    // Gemini's filename contains only a shortened id; bind the recorded full id.
+    if (reader.harness === 'gemini') {
+      mainFile = undefined
+      for (const file of copy.files) {
+        const rel = inStore(storePathOf(file))
+        if (rel === null || !main.test(rel)) continue
+        const path = join(archiveDir, file.path)
+        const session = await reader.read({ harness: reader.harness, format: copy.format, nativeSessionId: copy.nativeSessionId, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null })
+        if (session.nativeSessionId === copy.nativeSessionId) { mainFile = file; break }
+      }
+    }
     if (!mainFile) {
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'native_session_file_missing', nativeSessionId: copy.nativeSessionId })
       continue
@@ -157,7 +168,7 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
     const mainPath = join(archiveDir, mainFile.path)
     const nestedFiles = copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && nested.some((n) => n.test(rel)) }).map((f) => join(archiveDir, f.path))
     const declared = store.files.map((pattern) => storeGlob(pattern, copy.nativeSessionId))
-    const files = [...new Set([mainPath, ...nestedFiles, ...copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && declared.some((pattern) => pattern.test(rel)) }).map((f) => join(archiveDir, f.path))])]
+    const files = reader.harness === 'gemini' ? [mainPath] : [...new Set([mainPath, ...nestedFiles, ...copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && declared.some((pattern) => pattern.test(rel)) }).map((f) => join(archiveDir, f.path))])]
     listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files, home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }, copy, true, archiveDir, mainPath))
     for (const file of nestedFiles) {
       const child = file.split('/').pop()!.replace(/\.jsonl$/u, '').replace(/^agent-/u, '')

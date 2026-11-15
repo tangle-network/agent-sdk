@@ -1,0 +1,62 @@
+{
+  "nativeCliVersion": "2.3.0",
+  "sourceRepository": "https://github.com/anomalyco/opencode",
+  "sourceTag": "v2.3.0",
+  "sourceCommit": "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7",
+  "sourceFiles": [
+    "packages/core/src/session/sql.ts",
+    "packages/core/src/session/history.ts",
+    "packages/core/src/session/message-updater.ts",
+    "packages/schema/src/session-message.ts",
+    "packages/schema/src/token-usage.ts",
+    "packages/core/src/session/projector.ts",
+    "packages/core/src/session/usage.ts",
+    "packages/core/src/session/runner/step.ts"
+  ],
+  "capture": "Read transaction over only selected session_v2, session_message and session_part rows; fresh SQLite database, never a copy or backup of the original account-bearing store.",
+  "minimization": [
+    "Only the selected native session and the reader-used native columns are retained.",
+    "User/assistant/tool text payloads replaced with [REDACTED:fixture-content]; absolute workspace paths normalized.",
+    "Native ids, ordering, tool names/inputs/status, response tokens, timestamps, selected model, failure and idle outcomes remain unchanged."
+  ],
+  "claims": {
+    "positiveNativeExecution": true,
+    "positiveProvider": "scripted localhost HTTP, not an external-provider quality or billing test",
+    "servedModel": "unknown: native Model.Ref records the selected provider/model route",
+    "billedCost": "unknown: native cost mixes provider reports with catalog fallback without retaining which source supplied it"
+  },
+  "fixtures": [
+    {
+      "fixture": "native-success.db",
+      "fixtureSha256": "8ff858b47559589215d883865d7133e582cb1a8025ac23342f49a28678fc6c14",
+      "nativeSessionId": "ses_e23464143ffe9edyHNWQGSpDEB",
+      "origin": "official OpenCode 2.3.0 CLI with scripted localhost provider; 4 actual responses and 3 actual skill calls",
+      "sourceReceipt": "disco-native-packed-proof/call/data/opencode/opencode.db",
+      "selectedSourceRowsSha256": "b4c519d74f5675e8d875f8dcb8ab9ceee7ab9d8260805f7484e7eed6f3f1a4e7",
+      "rowCounts": {
+        "session_v2": 1,
+        "session_message": 7,
+        "session_part": 0
+      }
+    },
+    {
+      "fixture": "native-quota.db",
+      "fixtureSha256": "10fab3d877c7dadb1876e6b185bcafc443ed8fe15cca1c6e7da5eb64e7e093af",
+      "nativeSessionId": "ses_e236cd911ffetQ4ijsIlCfaHp2",
+      "origin": "official OpenCode 2.3.0 CLI; actual OpenCode free-provider HTTP429 refusal",
+      "sourceReceipt": "opencode-native-probe/data/opencode/opencode.db",
+      "selectedSourceRowsSha256": "b5ca4a2490aea496f5a8a8496e7dbe6563351e35521deeabb4bef851d48e3b6d",
+      "rowCounts": {
+        "session_v2": 1,
+        "session_message": 4,
+        "session_part": 0
+      }
+    }
+  ],
+  "producerSemantics": {
+    "parts": "projector.ts writes call_id=part.id and the complete encoded part (including id) into data; history.withParts prepends data rows in ordinal order to inline content.",
+    "usage": "step.started on a reused assistant clears finish/completed but keeps old tokens. step.failed sets completed/error yet replaces tokens only when fresh cost and tokens are both supplied; the stored projection cannot distinguish inherited counters from fresh failed-response usage. Assistant usage therefore requires completed+non-error finish with no error. Compaction terminal rows replace their usage directly.",
+    "zero": "session/usage.ts normalizes every absent usage channel to zero; runner/step.ts records those defaults even on a finished step. Every zero channel is ambiguous and remains null, even when other channels are positive. Positive counters remain measured only when the native response state establishes fresh usage.",
+    "cost": "session/usage.ts uses provider-reported cost when present and otherwise catalog pricing; the projected cost carries no provenance discriminator."
+  }
+}
