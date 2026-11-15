@@ -123,7 +123,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_REPOSITORY: drewstone/cli-bridge
-          EXPECTED_COMMIT: e94e87ba55dcc5a57f07b0f3ca2540fa382350f3
+          EXPECTED_COMMIT: a11bba93155ca9088b65bdcd7b1e20c3fce19365
         run: |
           repository="$(jq -er '.cliBridge.repository' scripts/upstream-sources.json)"
           commit="$(jq -er '.cliBridge.commit' scripts/upstream-sources.json)"

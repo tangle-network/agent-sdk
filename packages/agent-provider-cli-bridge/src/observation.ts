@@ -9,6 +9,7 @@ import type {
   TokenUsage,
 } from "@tangle-network/agent-interface";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
+import { providerUsageFromOpenAi } from "./wire.js";
 
 /** One execution's accumulated token usage and cost. */
 interface ExecutionUsageRecord {
@@ -27,18 +28,23 @@ interface ExecutionUsageRecord {
  * unavailable rather than as a measured zero.
  */
 export interface ExecutionUsageLog {
-  record(executionId: string | undefined, usage: TokenUsage | undefined): void;
+  record(executionId: string | undefined, usage: TokenUsage | undefined, providerUsage?: unknown): void;
   latest(): ExecutionUsageRecord | undefined;
 }
 
 export function createExecutionUsageLog(): ExecutionUsageLog {
   let latest: ExecutionUsageRecord | undefined;
   return {
-    record(executionId, usage) {
-      // Usage without the execution it belongs to cannot be attributed, and an
-      // execution without usage measured nothing. Neither is recorded.
+    record(executionId, usage, providerUsage) {
+      // Usage without its execution cannot be attributed. An incomplete update
+      // for the same execution invalidates its earlier partial measurement.
       if (executionId === undefined || executionId.length === 0) return;
-      if (usage === undefined) return;
+      // Numeric compatibility counters can be estimates; they are not measurements.
+      if (providerUsageFromOpenAi(providerUsage)?.estimated === true) usage = undefined;
+      if (usage === undefined) {
+        if (latest?.executionId === executionId) latest = undefined;
+        return;
+      }
       latest = {
         executionId,
         usage,
@@ -164,7 +170,7 @@ export function observeCliBridgeEnvironment(
     resourceUse: { current: absent(noCompute), peak: absent(noCompute) },
     modelUsage:
       latest === undefined
-        ? absent("no execution measured token usage through this environment handle")
+        ? absent("no complete execution token measurement is available through this environment handle")
         : {
             state: "known",
             value: latest.usage,

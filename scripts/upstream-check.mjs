@@ -39,8 +39,6 @@ const PACKAGE_DIRECTORIES = {
 };
 
 const ALLOWED_CLI_BRIDGE_REPOSITORY = "drewstone/cli-bridge";
-const ALLOWED_CLI_BRIDGE_COMMIT =
-  "e94e87ba55dcc5a57f07b0f3ca2540fa382350f3";
 
 function packageVersion(name) {
   const directory = PACKAGE_DIRECTORIES[name];
@@ -340,13 +338,14 @@ function cliBridgePin() {
   );
   const repository = sources.cliBridge?.repository;
   const commit = sources.cliBridge?.commit;
+  // The immutable upstream-trusted workflow authorizes the producer pin before
+  // checkout. This runner verifies the declared cohort and actual checkout agree.
   if (
     repository !== ALLOWED_CLI_BRIDGE_REPOSITORY ||
-    commit !== ALLOWED_CLI_BRIDGE_COMMIT ||
     !/^[a-f0-9]{40}$/u.test(commit)
   ) {
     throw new Error(
-      "scripts/upstream-sources.json does not match the allowlisted CLI Bridge source",
+      "scripts/upstream-sources.json must declare the CLI Bridge repository and an immutable commit",
     );
   }
   return { repository, commit };

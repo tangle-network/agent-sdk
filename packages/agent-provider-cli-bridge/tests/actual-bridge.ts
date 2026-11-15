@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const BRIDGE_ROOT = process.env.CLI_BRIDGE_INTEGRATION_ROOT?.trim();
 
@@ -45,6 +46,33 @@ if "--version" in args:
     print("pi integration fixture", flush=True)
     raise SystemExit(0)
 
+def send(value):
+    print(json.dumps(value), flush=True)
+
+def evidence(prompt):
+    if not prompt.startswith("pi-evidence:"):
+        return False
+    scenario = prompt.split(":", 1)[1]
+    usage = {"input": 4, "cacheRead": 7, "cacheWrite": 11, "output": 2, "reasoning": 1, "cost": {"total": 0.04}}
+    if scenario == "partial":
+        usage = {"output": 2}
+    observed = {"model": "sdk-integration-model"}
+    if scenario not in ("missing", "configured-only"):
+        observed["responseModel"] = "provider-observed@releaseA"
+    if scenario == "configured-only":
+        observed["system_fingerprint"] = "configured-fingerprint"
+    send({"type": "message_start", "message": observed})
+    send({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "observed response", "partial": observed}})
+    if scenario == "conflict":
+        observed = {"responseModel": "provider-observed@releaseB"}
+    send({"type": "turn_end", "message": {**observed, "usage": usage}})
+    send({"type": "agent_end"})
+    send({"type": "agent_settled"})
+    return True
+
+if ("json" in args or "--mode=json" in args) and evidence(args[-1]):
+    raise SystemExit(0)
+
 extension_path = args[args.index("--extension") + 1]
 extension = open(extension_path, encoding="utf-8").read()
 nonce_match = re.search(r"""const bridgeNonce = ["']([^"']+)["']""", extension)
@@ -52,9 +80,6 @@ if nonce_match is None:
     raise RuntimeError("the actual Bridge did not expose its native interaction extension")
 permission_token = nonce_match.group(1) + "-1"
 permission_title = "Permission: bash [cli-bridge-marker:" + permission_token + "]"
-
-def send(value):
-    print(json.dumps(value), flush=True)
 
 turns = 0
 for line in sys.stdin:
@@ -68,6 +93,8 @@ for line in sys.stdin:
         send({"type": "session", "id": "actual-bridge-pi-session"})
         send({"type": "agent_start"})
         send({"type": "turn_start"})
+        if evidence(prompt_message):
+            continue
         identity_marker = None
         if "identity-a" in prompt_message:
             identity_marker = "identity-a"
@@ -128,7 +155,7 @@ export async function startActualBridge(
   if (!BRIDGE_ROOT) {
     throw new Error("CLI_BRIDGE_INTEGRATION_ROOT must name an installed cli-bridge source checkout");
   }
-  const bridgeTsx = join(BRIDGE_ROOT, "node_modules", ".bin", "tsx");
+  const bridgeEntry = pathToFileURL(join(BRIDGE_ROOT, "index.mjs")).href;
   const fixtureRoot = mkdtempSync(join(homedir(), ".cache", "agent-sdk-cli-bridge-"));
   const dataDir = join(fixtureRoot, "data");
   const agentDir = join(fixtureRoot, "pi-agent");
@@ -158,7 +185,9 @@ export async function startActualBridge(
     { encoding: "utf8", mode: 0o600 },
   );
   const port = await freePort();
-  const spawnBridge = (): ReturnType<typeof spawn> => spawn(bridgeTsx, ["src/server.ts"], {
+  const spawnBridge = (): ReturnType<typeof spawn> => spawn(process.execPath, ["--input-type=module", "--eval",
+    `const { startServer } = await import(${JSON.stringify(bridgeEntry)}); await startServer({ handleSignals: true });`,
+  ], {
     cwd: BRIDGE_ROOT,
     env: {
       ...process.env,

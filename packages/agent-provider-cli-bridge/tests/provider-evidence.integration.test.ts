@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface";
+import { RuntimeEventEnvelopeSchema, type AgentEnvironmentEvent } from "@tangle-network/agent-interface";
 const { createCliBridgeProvider } = await import(
   process.env.CLI_BRIDGE_PROVIDER_MODULE ?? "@tangle-network/agent-provider-cli-bridge"
 ) as typeof import("@tangle-network/agent-provider-cli-bridge");
@@ -9,6 +9,62 @@ if (process.env.CLI_BRIDGE_PROVIDER_MODULE && !process.env.CLI_BRIDGE_RUNTIME_MO
   throw new Error("packed provider evidence requires the installed Runtime consumer module");
 }
 const actualBridge = process.env.CLI_BRIDGE_INTEGRATION_ROOT?.trim() ? describe : describe.skip;
+actualBridge("actual Pi response evidence", () => {
+  it.each(["unique", "missing", "configured-only", "conflict", "partial"])(
+    "retains %s evidence through native RPC, HTTP and replay", async scenario => {
+    const bridge = await startActualBridge("pi");
+    try {
+      const options = { baseUrl: bridge.baseUrl, defaultModel: "pi/tangle-router/sdk-integration-model" };
+      const provider = createCliBridgeProvider(options);
+      const environment = await provider.create({
+        idempotencyKey: `sdk-pi-${scenario}`,
+        profile: { name: "pi-evidence", harness: "pi" },
+        workspace: { cwd: { base: "host", path: bridge.projectDir } },
+      });
+      const reference = await environment.dispatch!({
+        prompt: `pi-evidence:${scenario}`, sessionId: `sdk-pi-${scenario}-session`,
+        turnId: `sdk-pi-${scenario}-turn`, executionId: `sdk-pi-${scenario}-run`,
+      });
+      const ref = reference.controlRef;
+      if (!ref) throw new Error("Pi evidence run has no exact control reference");
+      const result = await environment.session!(ref.sessionId, { controlRef: ref }).result();
+      expect(result.success, bridge.logs()).toBe(scenario !== "conflict");
+      const models = result.metadata?.provider_models;
+      expect(models).toEqual(["missing", "configured-only"].includes(scenario)
+        ? undefined : ["provider-observed@releaseA"]);
+      expect(result.metadata?.provider_model).toBe(
+        ["missing", "configured-only", "conflict"].includes(scenario) ? undefined : "provider-observed@releaseA",
+      );
+      if (scenario !== "conflict") {
+        const usage = result.metadata?.provider_usage as Record<string, unknown>;
+        expect(usage).toMatchObject({ completion_tokens: 2, estimated: false });
+        expect(usage.cost).toBeUndefined();
+        if (scenario === "partial") {
+          expect(usage.prompt_tokens).toBeUndefined();
+          expect(result.usage).toBeUndefined();
+        } else {
+          expect(usage).toMatchObject({ prompt_tokens: 22, fresh_input_tokens: 4,
+            cache_read_input_tokens: 7, cache_write_input_tokens: 11 });
+          expect(result.usage).toMatchObject({ inputTokens: 22, outputTokens: 2,
+            reasoningTokens: 1, cacheReadInputTokens: 7, cacheCreationInputTokens: 11 });
+          expect(result.usage?.cost).toBeUndefined();
+          expect(result.events?.find(event => event.type === "usage")?.data.estimatedCostUsd).toBe(0.04);
+        }
+      }
+      for (const event of result.events ?? []) {
+        expect(() => RuntimeEventEnvelopeSchema.parse(event.providerEvent)).not.toThrow();
+      }
+      const reconstructed = await createCliBridgeProvider(options).get(environment.id);
+      const replay = await reconstructed.session!(ref.sessionId, { controlRef: ref }).result();
+      expect(replay.metadata).toEqual(result.metadata);
+      expect(replay.usage).toEqual(result.usage);
+      expect(evidenceEvents(replay.events)).toEqual(evidenceEvents(result.events));
+    } finally {
+      await bridge.stop();
+    }
+  }, 45_000);
+});
+
 actualBridge("actual cli-bridge native response evidence", () => {
   it.each(["unique", "missing", "synthetic", "application-json", "conflict", "ring-conflict", "duplicate", "partial", "estimated", "zero"])(
     "retains %s evidence through the actual child, HTTP and replay", async (scenario) => {
@@ -63,7 +119,7 @@ actualBridge("actual cli-bridge native response evidence", () => {
         (event.providerEvent as { usage?: { estimated?: unknown } } | undefined)?.usage?.estimated === true) ?? [];
       expect(estimates.length > 0).toBe(scenario === "estimated");
       expect(estimates.every(event => event.data.tokensKnown === false)).toBe(true);
-      expect(result.events?.some(event => event.data.tokensKnown === false)).toBe(scenario === "estimated");
+      expect(result.events?.some(event => event.data.tokensKnown === false)).toBe(["estimated", "partial"].includes(scenario));
       if (scenario === "ring-conflict") {
         expect(result.events).toHaveLength(1024);
         expect(result.events?.some(event => event.data.provider_models !== undefined)).toBe(false);

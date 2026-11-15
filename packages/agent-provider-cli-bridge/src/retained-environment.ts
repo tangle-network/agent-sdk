@@ -13,7 +13,6 @@ import type {
 import type {
   AgentRunCancellationAcknowledgement,
   AgentRunControlRef,
-  TokenUsage,
   ContextTransferRequest,
   ContextTransferReceipt,
 } from "@tangle-network/agent-interface";
@@ -29,7 +28,7 @@ import {
   getCliBridgeRun,
 } from "./retained-control.js";
 import {
-  addTokenUsage,
+  createCliBridgeUsageAccumulator,
   collectCliBridgeTurnResult,
   dispatchCliBridgeTurn,
   streamCliBridgeSessionEvents,
@@ -154,7 +153,7 @@ export function createCliBridgeEnvironment(
       args.acceptedContextTransfer,
     );
     // Delta receipts add; cumulative receipts replace this execution's measurement.
-    let streamedUsage: TokenUsage | undefined;
+    const streamedUsage = createCliBridgeUsageAccumulator();
     for await (const event of streamTrackedCliBridgeTurn(
       options,
       environmentInput,
@@ -167,8 +166,8 @@ export function createCliBridgeEnvironment(
       nativeSessions,
       useNativeInteractions,
     )) {
-      streamedUsage = addTokenUsage(streamedUsage, event.usage, event.usageMode);
-      usageLog.record(prepared.run.executionId, streamedUsage);
+      streamedUsage.add(event);
+      usageLog.record(prepared.run.executionId, streamedUsage.usage, streamedUsage.providerUsage);
       yield event;
     }
   };
@@ -434,7 +433,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.transport,
         resultOptions?.signal,
       );
-      args.usageLog.record(run.executionId, result.usage);
+      args.usageLog.record(run.executionId, result.usage, result.metadata?.provider_usage);
       return result;
     },
     async prompt(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -486,7 +485,7 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
         args.transport,
         input.signal,
       );
-      args.usageLog.record(prepared.run.executionId, result.usage);
+      args.usageLog.record(prepared.run.executionId, result.usage, result.metadata?.provider_usage);
       return { ...result, sessionId: args.id };
     },
     async cancel(cancelOptions): Promise<void> {
@@ -533,8 +532,8 @@ function createCliBridgeSession(args: CreateCliBridgeSessionArgs): AgentSession 
               args.runs,
               supportsCliBridgeNativeAdmissionControl(args.capabilities),
             );
-            if ("result" in result && result.result.usage !== undefined) {
-              args.usageLog.record(result.controlRef.executionId, result.result.usage);
+            if ("result" in result) {
+              args.usageLog.record(result.controlRef.executionId, result.result.usage, result.result.metadata?.provider_usage);
             }
             return result;
           },

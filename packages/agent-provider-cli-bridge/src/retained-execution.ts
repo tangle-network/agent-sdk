@@ -394,9 +394,7 @@ export async function collectCliBridgeTurnResult(
   const events: AgentEnvironmentEvent[] = [];
   let eventCount = 0;
   let text = "";
-  let usage: TokenUsage | undefined;
-  let providerUsage: Record<string, unknown> | undefined;
-  let providerTokensSeen = false;
+  const usage = createCliBridgeUsageAccumulator();
   const providerModels = new Set<string>();
   let observedModelRequests = 0;
   let modelRequestsKnown = false;
@@ -416,15 +414,7 @@ export async function collectCliBridgeTurnResult(
         const delta = visibleTextDelta(event);
         if (delta !== undefined) text += delta;
       }
-      const observedUsage = providerUsageFromOpenAi(providerUsageFromOpenAi(event.providerEvent)?.usage);
-      const rawUsage = observedUsage ??
-        (event.usage ? { prompt_tokens: event.usage.inputTokens, completion_tokens: event.usage.outputTokens } : undefined);
-      if (rawUsage) {
-        providerUsage = foldProviderUsage(providerUsage, rawUsage, event.usageMode, providerTokensSeen);
-        providerTokensSeen = event.usageMode === "cumulative"
-          ? hasTokenReceipt(rawUsage) : providerTokensSeen || hasTokenReceipt(rawUsage);
-      }
-      usage = observedUsage ? usageFromOpenAi(providerUsage) : addTokenUsage(usage, event.usage, event.usageMode);
+      usage.add(event);
       for (const model of responseIdentityFromOpenAi(event.data)?.provider_models ?? []) {
         providerModels.add(model);
         if (providerModels.size > CONTRACT_MAX_ARRAY_LENGTH) throw new Error("cli-bridge provider model observations exceed contract bounds");
@@ -479,7 +469,7 @@ export async function collectCliBridgeTurnResult(
     ...(run.contextTransferReceipt === undefined
       ? {}
       : { contextTransferReceipt: run.contextTransferReceipt }),
-    ...(usage ? { usage } : {}),
+    ...(usage.usage ? { usage: usage.usage } : {}),
     metadata: {
       runId: run.id,
       executionId: run.executionId,
@@ -493,7 +483,7 @@ export async function collectCliBridgeTurnResult(
       ...(servedModel === undefined ? {} : { model: servedModel }),
       ...(providerModels.size ? { provider_models: [...providerModels] } : {}),
       ...(success && providerModels.size === 1 ? { provider_model: [...providerModels][0] } : {}),
-      ...(providerUsage === undefined ? {} : { provider_usage: providerUsage }),
+      ...(usage.providerUsage === undefined ? {} : { provider_usage: usage.providerUsage }),
       ...(systemFingerprint === undefined ? {} : { system_fingerprint: systemFingerprint }),
     },
     events: resultEvents,
@@ -535,6 +525,29 @@ export function addTokenUsage(
     const prior = current[key as keyof TokenUsage];
     return prior === undefined ? [] : [[key, prior + count]];
   })) as unknown as TokenUsage;
+}
+
+/** Share receipt coverage between streamed observations and retained results. */
+export function createCliBridgeUsageAccumulator() {
+  let usage: TokenUsage | undefined;
+  let providerUsage: Record<string, unknown> | undefined;
+  let providerTokensSeen = false;
+  return {
+    get usage() { return usage; },
+    get providerUsage() { return providerUsage; },
+    add(event: AgentEnvironmentEvent): void {
+      const observedUsage = providerUsageFromOpenAi(providerUsageFromOpenAi(event.providerEvent)?.usage) ??
+        (event.type === "usage" ? providerUsageFromOpenAi(event.data.usage) : undefined);
+      const rawUsage = observedUsage ??
+        (event.usage ? { prompt_tokens: event.usage.inputTokens, completion_tokens: event.usage.outputTokens } : undefined);
+      if (rawUsage) {
+        providerUsage = foldProviderUsage(providerUsage, rawUsage, event.usageMode, providerTokensSeen);
+        providerTokensSeen = event.usageMode === "cumulative"
+          ? hasTokenReceipt(rawUsage) : providerTokensSeen || hasTokenReceipt(rawUsage);
+      }
+      usage = observedUsage ? usageFromOpenAi(providerUsage) : addTokenUsage(usage, event.usage, event.usageMode);
+    },
+  };
 }
 
 const TOKEN_FIELDS = ["prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
