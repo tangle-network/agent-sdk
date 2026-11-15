@@ -33,11 +33,12 @@ it.skipIf(!source)("recovers an existing sealed checkpoint through live Sandbox 
   expect(operation).toMatchObject({ outcome: "found", kind: "checkpoint", state: "succeeded", result: { snapshotId: answer.checkpoint.checkpointId, createdAt: answer.checkpoint.createdAt } });
   const restarted = await open();
   expect(await restarted!.lookupCheckpoint(request)).toEqual(answer);
-  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, answer.checkpoint)).toBe(true);
-  // Cleanup has no expected checkpoint binding: reading a seal alias must not authorize its delete or claim it absent.
-  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId)).toBe("unknown");
+  const physical = { state: "found", snapshotId: witnesses[0].snapshotId };
+  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, answer.checkpoint)).toEqual(physical);
+  // Cleanup has no expected binding: the one marked seal alias resolves to the physical id a delete must name.
+  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId)).toEqual(physical);
   const wrongDigest = canonicalCandidateDigest({ mismatched: request.requestDigest });
   expect(await (await open())!.lookupCheckpoint({ ...request, requestDigest: wrongDigest })).toMatchObject({ status: "conflict", existingRequestDigest: request.requestDigest });
-  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, { ...answer.checkpoint, requestDigest: wrongDigest })).toBe(false);
-  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, { ...answer.checkpoint, idempotencyKey: `${key}:mismatched-marker` })).toBe(false);
+  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, { ...answer.checkpoint, requestDigest: wrongDigest })).toEqual({ state: "absent" });
+  expect(await findManagedCheckpoint(box, provider.name, answer.checkpoint.checkpointId, { ...answer.checkpoint, idempotencyKey: `${key}:mismatched-marker` })).toEqual({ state: "absent" });
 });
