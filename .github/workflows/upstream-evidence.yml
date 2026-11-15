@@ -34,7 +34,7 @@ concurrency:
 jobs:
   evidence:
     # Immutable reviewed body; a same-name tag cannot replace this implementation.
-    uses: tangle-network/agent-sdk/.github/workflows/upstream-trusted.yml@8fe41bb588016b91461dd7ac8eb891a3038050c3
+    uses: tangle-network/agent-sdk/.github/workflows/upstream-trusted.yml@7c613fbc40d0ec0ae8ea1b2598964c016fe2c4fb
     with:
       release_sha: ${{ inputs.release_sha }}
     secrets:
