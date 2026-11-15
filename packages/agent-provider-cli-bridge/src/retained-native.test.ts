@@ -219,6 +219,57 @@ function reportedPiCapabilities(): AgentEnvironmentCapabilities {
 }
 
 describe("cli-bridge native retained sessions", () => {
+  it.each(["observed", "configured-only", "partial", "malformed"])(
+    "preserves %s response evidence through the public retained reader", async scenario => {
+    const observed = scenario === "malformed" ? ["provider-model@releaseA", ""] : ["provider-model@releaseA"];
+    const usage = scenario === "partial"
+      ? { completion_tokens: 2, estimated: false, cost_known: false, model_requests: 1 }
+      : { prompt_tokens: 22, completion_tokens: 2, fresh_input_tokens: 4,
+        cache_read_input_tokens: 7, cache_write_input_tokens: 11,
+        estimated: false, cost_known: false, model_requests: 1 };
+    const events = [
+      nativeEnvelope(1, { type: "raw", backend: "pi", event: scenario === "configured-only"
+        ? { type: "message_start", message: { model: "configured-model", system_fingerprint: "fingerprint" } }
+        : { type: "raw", data: { provider_models: observed } } }),
+      nativeEnvelope(2, { type: "raw", backend: "pi", event: {
+        type: "usage", data: { estimatedCostUsd: 0.04 }, usageMode: "delta", providerEvent: { usage },
+      } }),
+      nativeEnvelope(3, { type: "status", status: "completed" }),
+    ];
+    const provider = createCliBridgeProvider({
+      baseUrl, defaultModel: model, capabilities: defaultCliBridgeCapabilities("pi"),
+      fetch: createNativeFetch([], events),
+    });
+    const environment = await provider.create({
+      idempotencyKey: environmentId, profile: { name: "native-pi", harness: "pi" },
+    });
+    const ref = await environment.dispatch!({
+      prompt: "observe the actual response", sessionId, turnId: "native-turn", executionId: nativeRunId,
+    });
+    const session = environment.session!(ref.id);
+    const result = await session.result();
+    expect(result.success).toBe(scenario !== "malformed");
+    if (scenario === "malformed") {
+      expect(result.error).toContain("invalid provider model observations");
+      return;
+    }
+    expect(result.metadata?.provider_models).toEqual(scenario === "configured-only" ? undefined : observed);
+    expect(result.metadata?.provider_model).toBe(scenario === "configured-only" ? undefined : observed[0]);
+    expect(result.metadata?.provider_usage).toMatchObject(usage);
+    expect(result.metadata?.modelRequests).toBe(1);
+    expect(result.usage?.cost).toBeUndefined();
+    if (scenario === "partial") expect(result.usage).toBeUndefined();
+    else expect(result.usage).toMatchObject({ inputTokens: 22, outputTokens: 2,
+      cacheReadInputTokens: 7, cacheCreationInputTokens: 11 });
+    expect(result.events?.find(event => event.type === "usage")?.data.estimatedCostUsd).toBe(0.04);
+    for (const event of result.events ?? []) {
+      expect(() => RuntimeEventEnvelopeSchema.parse(event.providerEvent)).not.toThrow();
+    }
+    const replay = await session.result();
+    expect(replay.metadata).toEqual(result.metadata);
+    expect(replay.usage).toEqual(result.usage);
+  });
+
   it("recovers Pi capabilities and native replay from the configured route", async () => {
     const events = [
       nativeEnvelope(1, { type: "status", status: "completed" }),

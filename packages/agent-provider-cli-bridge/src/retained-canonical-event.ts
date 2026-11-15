@@ -5,7 +5,13 @@ import {
   type TokenUsage,
 } from "@tangle-network/agent-interface";
 import type { AgentEnvironmentEvent } from "@tangle-network/agent-interface/environment-provider";
-import { providerUsageFromOpenAi as recordValue, usageFromOpenAi, type CliBridgeSseFrame } from "./wire.js";
+import {
+  modelRequestsFromOpenAi,
+  providerUsageFromOpenAi as recordValue,
+  responseIdentityFromOpenAi,
+  usageFromOpenAi,
+  type CliBridgeSseFrame,
+} from "./wire.js";
 
 interface CanonicalEventContext {
   readonly runId: string;
@@ -40,15 +46,31 @@ export function retainedCanonicalEvent(
   }
 
   const event = envelope.event;
-  const usage = usageFromCanonicalEvent(event);
+  // Bridge embeds its observed response/usage projection as an environment event.
+  // Native raw model fields and the requested route remain opaque.
+  const providerEvent = event.type === "raw" ? recordValue(event.event) : undefined;
+  const projected = providerEvent?.type === "raw" || providerEvent?.type === "usage" ? providerEvent : undefined;
+  const data = recordValue(projected?.data);
+  const identity = responseIdentityFromOpenAi(data);
+  const rawUsage = projected?.type === "usage"
+    ? recordValue(recordValue(projected.providerEvent)?.usage) : undefined;
+  const usage = rawUsage ? usageFromOpenAi(rawUsage) : usageFromCanonicalEvent(event);
+  const modelRequests = modelRequestsFromOpenAi(rawUsage);
+  const estimate = data?.estimatedCostUsd;
   return {
-    type: event.type,
+    type: rawUsage === undefined ? event.type : "usage",
     // AgentSession.events({ since }) accepts a previously emitted event id.
     // The bridge replays by its numeric SSE cursor, while eventId identifies
     // the canonical envelope and is not a replay cursor.
     id: frame.id,
     data: {
       ...eventPayload(event),
+      ...identity,
+      ...(rawUsage === undefined ? {} : { usage: rawUsage }),
+      ...(modelRequests === undefined ? {} : { modelRequests }),
+      ...(rawUsage?.estimated === true ? { tokensKnown: false } : {}),
+      ...(typeof estimate === "number" && Number.isFinite(estimate) && estimate >= 0
+        ? { estimatedCostUsd: estimate } : {}),
       eventId: envelope.eventId,
       sequence: envelope.sequence,
       cursor: frame.id,
@@ -62,8 +84,9 @@ export function retainedCanonicalEvent(
         : { occurredAt: envelope.occurredAt }),
       receivedAt: envelope.receivedAt,
     },
-    normalized: event,
+    ...(rawUsage === undefined ? { normalized: event } : {}),
     ...(usage === undefined ? {} : { usage }),
+    ...(rawUsage === undefined ? {} : { usageMode: "delta" as const }),
     providerEvent: envelope,
   };
 }

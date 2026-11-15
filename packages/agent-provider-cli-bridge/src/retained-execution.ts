@@ -416,7 +416,8 @@ export async function collectCliBridgeTurnResult(
         const delta = visibleTextDelta(event);
         if (delta !== undefined) text += delta;
       }
-      const observedUsage = providerUsageFromOpenAi(providerUsageFromOpenAi(event.providerEvent)?.usage);
+      const observedUsage = providerUsageFromOpenAi(providerUsageFromOpenAi(event.providerEvent)?.usage) ??
+        (event.type === "usage" ? providerUsageFromOpenAi(event.data.usage) : undefined);
       const rawUsage = observedUsage ??
         (event.usage ? { prompt_tokens: event.usage.inputTokens, completion_tokens: event.usage.outputTokens } : undefined);
       if (rawUsage) {
