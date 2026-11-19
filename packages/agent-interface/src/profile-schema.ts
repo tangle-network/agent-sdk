@@ -619,6 +619,8 @@ export const recordedAgentProfileSchema = z
     }
   });
 
+export type RecordedAgentProfile = z.infer<typeof recordedAgentProfileSchema>;
+
 /** Intake for new profiles excludes retired identities, including alternate seats. */
 export const agentProfileSchema = recordedAgentProfileSchema.safeExtend({
   harness: harnessTypeSchema.optional(),

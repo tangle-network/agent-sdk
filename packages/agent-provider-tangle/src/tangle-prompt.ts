@@ -509,7 +509,7 @@ function plainRecord(value: unknown, label: string): Record<string, unknown> {
 
 /** Request identity excludes bearer bytes; auth files contribute only paths and modes. */
 export function backendRequestIdentity(
-  backend: SandboxPromptBackend | undefined,
+  backend: PromptOptions["backend"],
 ): Record<string, unknown> | undefined {
   if (backend === undefined) return undefined;
   const normalized = (normalizeRuntimeBackendConfig(backend, { allowRuntimeSecrets: true }) ?? {}) as SandboxPromptBackend;
