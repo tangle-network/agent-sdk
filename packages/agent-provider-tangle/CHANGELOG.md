@@ -1,5 +1,13 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.18
+
+### Patch Changes
+
+- 4849694: Retire Forge from new profiles, seats and execution requests. Historical profile and execution evidence retains its original harness identity.
+- Updated dependencies [4849694]
+  - @tangle-network/agent-interface@5.10.28
+
 ## 5.0.17
 
 ### Patch Changes
