@@ -15,6 +15,7 @@ import type {
   AgentTurnResult,
 } from "@tangle-network/agent-interface/environment-provider";
 import type {
+  AgentProfile,
   AgentExactRunControlRef,
   InputPart,
 } from "@tangle-network/agent-interface";
@@ -60,7 +61,7 @@ export function promptOptionsFromTurnInput(
     environmentId: string;
     sessionId?: string;
   },
-): PromptOptions {
+): Omit<PromptOptions, "backend"> & { backend?: SandboxPromptBackend } {
   if (input.contextTransfer !== undefined) {
     throw new Error(
       "Tangle provider does not yet support portable context transfer",
@@ -250,7 +251,7 @@ export type SandboxBackendFieldCoverage = Exhaustive<
   | FieldDifference<SandboxAuthFile, typeof SANDBOX_AUTH_FILE_FIELD_LIST>
 >;
 
-type SandboxPromptBackend = NonNullable<PromptOptions["backend"]>;
+type SandboxPromptBackend = Omit<NonNullable<PromptOptions["backend"]>, "profile"> & { profile?: AgentProfile };
 
 /** Validate the exact per-turn backend projection. */
 export function backendFromTurnProviderOptions(

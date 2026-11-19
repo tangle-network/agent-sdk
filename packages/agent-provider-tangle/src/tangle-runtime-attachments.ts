@@ -7,7 +7,7 @@ import {
 /** Runtime bindings retain their own identity and cannot replace profile tools. */
 export function tangleRuntimeAttachments(
   value: unknown,
-  profile?: AgentProfile,
+  profile?: Pick<AgentProfile, "mcp">,
 ): AgentRuntimeAttachments {
   const attachments = AgentRuntimeAttachmentsSchema.parse(value);
   for (const [alias, server] of Object.entries(attachments.mcp)) {
