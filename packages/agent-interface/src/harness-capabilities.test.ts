@@ -62,15 +62,12 @@ describe("harness ↔ model compatibility", () => {
     expect(harnessSupportsModel("nanoclaw", "anthropic/claude-sonnet-4-6")).toBe(true);
   });
 
-  it("forge and cursor are router-backed multi-provider CLIs", () => {
-    for (const harness of ["forge", "cursor"] as const) {
-      expect(harnessProviders(harness)).toBeNull();
-      expect(harnessSupportsModel(harness, "openai/gpt-5")).toBe(true);
-      expect(harnessSupportsModel(harness, "anthropic/claude-sonnet-4-6")).toBe(true);
-      // No provider lock means no snapping away from the caller's model.
-      expect(snapHarnessToModel(harness, "zai/glm-4.7")).toBe(harness);
-      expect(harnessHonorsSelectors(harness)).toBe(true);
-    }
+  it("cursor accepts router models without changing the harness", () => {
+    expect(harnessProviders("cursor")).toBeNull();
+    expect(harnessSupportsModel("cursor", "openai/gpt-5")).toBe(true);
+    expect(harnessSupportsModel("cursor", "anthropic/claude-sonnet-4-6")).toBe(true);
+    expect(snapHarnessToModel("cursor", "zai/glm-4.7")).toBe("cursor");
+    expect(harnessHonorsSelectors("cursor")).toBe(true);
   });
 
   it("prime is router-backed and expresses the pi line's full thinking set", () => {
@@ -320,7 +317,6 @@ describe("system-prompt intents", () => {
       "openclaw",
       "amp",
       "factory-droids",
-      "forge",
       "cursor",
       "acp",
       "cli-base",

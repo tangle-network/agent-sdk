@@ -35,7 +35,7 @@ import {
   isWellFormedUnicode,
   looksLikeCredential,
 } from "./agent-candidate-schema-common.js";
-import { harnessTypeSchema } from "./harness.js";
+import { harnessTypeSchema, recordedHarnessTypeSchema } from "./harness.js";
 import { AgentProfileValueError, assertAgentProfileValue, canonicalAgentProfileJson } from "./agent-profile-canonical.js";
 import {
   harnessHonorsEffort,
@@ -517,7 +517,7 @@ export const agentProfileMetadataSchema: z.ZodType<AgentProfileMetadata> =
  * the canonical {@link AgentProfile} TS contract. Kept structurally in lock-step
  * with that interface by the compile-time guard at the bottom of this file.
  */
-export const agentProfileSchema = z
+export const recordedAgentProfileSchema = z
   .strictObject({
     outputFile: AgentFileOutputPolicySchema.optional(),
     name: z.string().optional(),
@@ -526,8 +526,8 @@ export const agentProfileSchema = z
     tags: z.array(z.string()).max(CONTRACT_MAX_ARRAY_LENGTH).optional(),
     prompt: agentProfilePromptSchema.optional(),
     model: agentProfileModelHintsSchema.optional(),
-    harness: harnessTypeSchema.optional(),
-    seats: z.array(agentProfileSeatSchema).max(CONTRACT_MAX_ARRAY_LENGTH).nonempty().optional(),
+    harness: recordedHarnessTypeSchema.optional(),
+    seats: z.array(agentProfileSeatSchema.extend({ harness: recordedHarnessTypeSchema })).max(CONTRACT_MAX_ARRAY_LENGTH).nonempty().optional(),
     proxySecrets: ProxySecretsSchema.optional(),
     permissions: ownPropertyRecordSchema(agentProfilePermissionSchema).optional(),
     tools: ownPropertyRecordSchema(z.boolean()).optional(),
@@ -577,19 +577,22 @@ export const agentProfileSchema = z
         if (owner !== null && owner !== seat.provider && !profileKbNamesModel(`${seat.provider}/${seat.model}`)) {
           context.addIssue({ code: "custom", path: ["seats", index, "provider"], message: "seat provider must match the model provider" });
         }
-        if (!harnessHonorsModel(seat.harness)) {
+        // Retired seats keep their authored identity. Only live harnesses have current model capabilities.
+        const live = harnessTypeSchema.safeParse(seat.harness);
+        if (!live.success) continue;
+        if (!harnessHonorsModel(live.data)) {
           context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness does not honor an exact model choice" });
         }
         const effort = seat.reasoningEffort ?? profile.model?.reasoningEffort;
-        const support = harnessModelSupport(seat.harness, seat.model, { reasoningEffort: effort });
+        const support = harnessModelSupport(live.data, seat.model, { reasoningEffort: effort });
         if (!support.supported) {
           context.addIssue({ code: "custom", path: ["seats", index, "model"], message: support.message });
         }
-        if (effort !== undefined && (!harnessHonorsEffort(seat.harness) ||
-            !harnessReasoningEfforts(seat.harness).includes(effort))) {
+        if (effort !== undefined && (!harnessHonorsEffort(live.data) ||
+            !harnessReasoningEfforts(live.data).includes(effort))) {
           context.addIssue({ code: "custom", path: ["seats", index, "reasoningEffort"], message: "seat harness cannot honor the stage reasoning effort" });
         }
-        const prompt = harnessSystemPromptIntents(seat.harness);
+        const prompt = harnessSystemPromptIntents(live.data);
         if (profile.prompt?.systemPrompt !== undefined && !prompt.replace) {
           context.addIssue({ code: "custom", path: ["seats", index, "harness"], message: "seat harness cannot replace the system prompt" });
         }
@@ -615,6 +618,12 @@ export const agentProfileSchema = z
       context.addIssue({ code: "custom", path: ["model", "default"], message: "trained profile model must equal the receipt's Router model" });
     }
   });
+
+/** Intake for new profiles excludes retired identities, including alternate seats. */
+export const agentProfileSchema = recordedAgentProfileSchema.safeExtend({
+  harness: harnessTypeSchema.optional(),
+  seats: z.array(agentProfileSeatSchema).max(CONTRACT_MAX_ARRAY_LENGTH).nonempty().optional(),
+});
 
 const encodedRecordKeyPattern = "^u(?:[0-9a-f]{4})*$";
 

@@ -28,7 +28,7 @@ import {
   isSafeRelativePath,
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
-import { harnessTypeSchema } from "./harness.js";
+import { recordedHarnessTypeSchema } from "./harness.js";
 
 const entrypointReceiptSchema = z
   .object({
@@ -147,7 +147,7 @@ export const agentCandidateMaterializationReceiptSchema = z
     candidateWorkspace: agentCandidateWorkspaceSnapshotEvidenceSchema.optional(),
     codeKind: z.enum(["disabled", "no-op", "git-patch"]),
     materializedTree: gitObjectSchema.optional(),
-    harness: harnessTypeSchema,
+    harness: recordedHarnessTypeSchema,
     harnessVersion: z.string().min(1),
     container: z
       .object({
