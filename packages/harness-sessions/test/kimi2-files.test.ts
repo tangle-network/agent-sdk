@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -25,6 +25,56 @@ const run = promisify(execFile)
 const cli = join(import.meta.dirname, '..', 'dist', 'cli.js')
 
 describe('retained Kimi flat session files', () => {
+  it('recovers a helper and its measured work from the home and from renamed archive members', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-retained-family-'))
+    const family: { parent: unknown[]; helper: unknown[] } = JSON.parse(await readFile(join(fixtures, 'kimi2', 'family.json'), 'utf8'))
+    const copies: NativeSessionCopy[] = []
+    const helperIds = new Set<string>()
+    try {
+      for (const root of ['session_one', 'session_two']) {
+        const files: NativeSessionCopy['files'] = []
+        for (const [agent, events] of [['main', family.parent], ['agent-0', family.helper]] as const) {
+          const store = '.kimi-code/sessions'
+          const storePath = `${store}/wd_fixture/${root}/agents/${agent}/wire.jsonl`
+          const path = join(home, storePath)
+          const bytes = Buffer.from(events.map(event => JSON.stringify(event)).join('\n') + '\n')
+          await mkdir(dirname(path), { recursive: true })
+          await writeFile(path, bytes)
+          const member = `payload-${copies.length}-${files.length}`
+          await link(path, join(home, member))
+          files.push({ path: member, store, storePath, sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), method: 'byte-prefix', truncated: false })
+        }
+        copies.push({ harness: 'kimi-code', format: 'kimi.session-dir', executionId: root, attempt: 1, nativeSessionId: root,
+          copy: 'settled', capturedAt: '2026-11-19T12:00:00Z', process: { pid: null, exitedAt: null, exitCode: null, signal: null },
+          complete: true, missingReasons: [], files })
+        const refs = await kimiReader.locate(home, { nativeSessionId: root })
+        expect(refs).toHaveLength(2)
+        const child = refs.find(ref => ref.parentNativeSessionId === root)!
+        const parent = await kimiReader.read(refs.find(ref => ref.nativeSessionId === root)!)
+        expect(parent.children).toEqual([{ nativeSessionId: child.nativeSessionId, toolCallId: 'call-1' }])
+        const direct = await kimiReader.read(kimiRefForFile(child.path))
+        expect(direct.nativeSessionId).toBe(child.nativeSessionId)
+        expect(direct.parentNativeSessionId).toBe(root)
+        helperIds.add(child.nativeSessionId)
+      }
+      expect(helperIds.size).toBe(2)
+      const archive = { schema: 'tangle.raw-evidence-archive.v2', nativeSessions: copies } as const
+      const recovered = []
+      for await (const session of readCapture(home, archive)) recovered.push(session)
+      expect(recovered).toHaveLength(4)
+      for (const { nativeSessionId } of copies) {
+        const root = recovered.find(s => s.nativeSessionId === nativeSessionId)!
+        const child = recovered.find(s => s.parentNativeSessionId === nativeSessionId)!
+        expect(helperIds.has(child.nativeSessionId)).toBe(true)
+        expect(root.children).toEqual([{ nativeSessionId: child.nativeSessionId, toolCallId: 'call-1' }])
+        expect(root.usage).toMatchObject({ input: 2571, output: 275 })
+        expect(child.usage).toMatchObject({ input: 590, output: 368 })
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   it('discovers both layouts and reads each native step once through file, summary, input and projections', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi2-home-'))
     try {

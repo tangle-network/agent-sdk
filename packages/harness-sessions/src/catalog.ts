@@ -50,7 +50,7 @@ export const STORES = {
 } as const satisfies Record<SessionFormatId, NativeSessionStore>
 
 export const KIMI_STORES = [
-  { ...STORES['kimi.session-dir'], root: '.kimi-code/sessions', files: ['wd_*/{id}/**'], globs: { session: 'wd_*/{id}/agents/main/wire.jsonl' } },
+  { ...STORES['kimi.session-dir'], root: '.kimi-code/sessions', files: ['wd_*/{id}/**'], globs: { session: 'wd_*/{id}/agents/main/wire.jsonl', children: 'wd_*/{id}/agents/*/wire.jsonl' } },
   STORES['kimi.session-dir'],
 ] as const satisfies readonly NativeSessionStore[]
 

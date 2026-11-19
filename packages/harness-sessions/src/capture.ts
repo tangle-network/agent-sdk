@@ -6,6 +6,7 @@ import { str } from './builder.js'
 import { opencodeSessionsInStore } from './formats/opencode.js'
 import { hermesSessionsInStore } from './formats/hermes.js'
 import { openclawSessionsInStore } from './formats/openclaw.js'
+import { kimiRefForFile, linkKimiFamily } from './formats/kimi.js'
 import { maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 import type { HarnessSession, HarnessSessionReader, NativeSessionCopy, RawEvidenceArchiveManifestV2, SessionRef } from './schema.js'
 import { isMissing } from './source.js'
@@ -155,13 +156,29 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       continue
     }
     const mainPath = join(archiveDir, mainFile.path)
-    const nestedFiles = copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && nested.some((n) => n.test(rel)) }).map((f) => join(archiveDir, f.path))
+    const nestedCopies = [...new Map(copy.files.filter((f) => {
+      const rel = inStore(storePathOf(f))
+      return rel !== null && !main.test(rel) && nested.some((n) => n.test(rel))
+    }).map((f) => [storePathOf(f), f])).values()]
+    const nestedFiles = nestedCopies.map((f) => join(archiveDir, f.path))
     const declared = store.files.map((pattern) => storeGlob(pattern, copy.nativeSessionId))
     const files = [...new Set([mainPath, ...nestedFiles, ...copy.files.filter((f) => { const rel = inStore(storePathOf(f)); return rel !== null && declared.some((pattern) => pattern.test(rel)) }).map((f) => join(archiveDir, f.path))])]
-    listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files, home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }, copy, true, archiveDir, mainPath))
-    for (const file of nestedFiles) {
-      const child = file.split('/').pop()!.replace(/\.jsonl$/u, '').replace(/^agent-/u, '')
-      listing.sessions.push(captured({ harness: reader.harness, format: store.format, nativeSessionId: child, path: file, files: [file], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: copy.nativeSessionId, truncated }, copy, false, archiveDir, file))
+    const family: SessionRef[] = [{ harness: reader.harness, format: store.format, nativeSessionId: copy.nativeSessionId, path: mainPath, files, home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, parentNativeSessionId: null, truncated: mainFile.truncated }]
+    for (const file of nestedCopies) {
+      const path = join(archiveDir, file.path)
+      const child = path.split('/').pop()!.replace(/\.jsonl$/u, '').replace(/^agent-/u, '')
+      const identity = reader.harness === 'kimi-code'
+        ? kimiRefForFile(path, storePathOf(file))
+        : { harness: reader.harness, format: store.format, nativeSessionId: child, parentNativeSessionId: copy.nativeSessionId }
+      family.push({ ...identity, path, files: [path], home: null, cwd: null, mtimeMs: Date.parse(copy.capturedAt) || 0, truncated: reader.harness === 'kimi-code' ? file.truncated : truncated })
+    }
+    if (reader.harness === 'kimi-code' && nestedFiles.length) {
+      const state = storeGlob('wd_*/{id}/state.json', copy.nativeSessionId)
+      const index = copy.files.find(file => state.test(inStore(storePathOf(file)) ?? ''))
+      await linkKimiFamily(family, index && !index.truncated ? join(archiveDir, index.path) : undefined)
+    }
+    for (const ref of family) {
+      listing.sessions.push(captured(ref, copy, ref.path === mainPath, archiveDir, ref.path))
     }
   }
 }

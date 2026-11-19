@@ -1,0 +1,75 @@
+{
+  "source": "Selected native events from the fixed-rule Kimi Code physics researcher in tangle-network/disco#4018. Only record types, agent roles and numeric usage were retained. Tool-call IDs are consistently replaced in event order.",
+  "nativeWireSha256": {
+    "parent": "fc351a0265ff8f17b40b2549ff063526d0fe30eb1379c99a62a59003c5700d2c",
+    "helper": "be7220588aade54483ac5b95dd54d57bb8393c1ada80c0e50aa93b01c166d9ad"
+  },
+  "parent": [
+    {
+      "type": "turn.prompt",
+      "agentId": "main"
+    },
+    {
+      "type": "context.append_loop_event",
+      "agentId": "main",
+      "event": {
+        "type": "step.begin"
+      }
+    },
+    {
+      "type": "context.append_loop_event",
+      "agentId": "main",
+      "event": {
+        "type": "step.end",
+        "finishReason": "tool_use",
+        "usage": {
+          "inputOther": 2571,
+          "output": 275,
+          "inputCacheRead": 12032,
+          "inputCacheCreation": 0
+        }
+      }
+    },
+    {
+      "type": "subagent.spawned",
+      "subagentId": "agent-0",
+      "parentAgentId": "main",
+      "callerAgentId": "main",
+      "parentToolCallId": "call-1"
+    },
+    {
+      "type": "subagent.spawned",
+      "subagentId": "agent-0",
+      "parentAgentId": "main",
+      "callerAgentId": "main",
+      "parentToolCallId": "call-2"
+    }
+  ],
+  "helper": [
+    {
+      "type": "turn.prompt",
+      "agentId": "agent-0"
+    },
+    {
+      "type": "context.append_loop_event",
+      "agentId": "agent-0",
+      "event": {
+        "type": "step.begin"
+      }
+    },
+    {
+      "type": "context.append_loop_event",
+      "agentId": "agent-0",
+      "event": {
+        "type": "step.end",
+        "finishReason": "tool_use",
+        "usage": {
+          "inputOther": 590,
+          "output": 368,
+          "inputCacheRead": 8960,
+          "inputCacheCreation": 0
+        }
+      }
+    }
+  ]
+}
