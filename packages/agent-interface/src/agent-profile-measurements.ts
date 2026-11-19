@@ -1,8 +1,8 @@
 import type { Sha256Digest } from "./agent-candidate.js";
-import type { AgentProfile, AgentProfileResourceRef } from "./agent-profile.js";
+import type { AgentProfileResourceRef } from "./agent-profile.js";
 import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
 import { canonicalAgentProfileJson } from "./agent-profile-canonical.js";
-import { agentProfileSchema } from "./profile-schema.js";
+import { recordedAgentProfileSchema, type RecordedAgentProfile } from "./profile-schema.js";
 
 /** UTF-8 source bytes and logical lines, without normalizing the supplied text. */
 export interface AgentProfileTextMeasurement {
@@ -92,8 +92,8 @@ function capabilityCounts(enabled: readonly boolean[]): AgentProfileCapabilityCo
  * Results preserve declaration order and contain no prompt/resource content,
  * server configuration, permission values, or secret references.
  */
-export function measureAgentProfile(profile: AgentProfile): AgentProfileMeasurements {
-  const value = agentProfileSchema.parse(profile);
+export function measureAgentProfile(profile: RecordedAgentProfile): AgentProfileMeasurements {
+  const value = recordedAgentProfileSchema.parse(profile);
   const profileDigest = canonicalAgentProfileDigest(value);
   const canonical = canonicalAgentProfileJson(value)!;
   const prompt: AgentProfileTextMeasurement[] = [];

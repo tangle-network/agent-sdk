@@ -2,6 +2,8 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 import { harnessTypeSchema, recordedHarnessTypeSchema, resolveHarnessType, type HarnessType } from "./harness.js";
 
+import { canonicalAgentProfileDigest } from "./agent-execution-preparation.js";
+import { measureAgentProfile } from "./agent-profile-measurements.js";
 import { agentProfileSchema, recordedAgentProfileSchema, agentProfileJsonSchema } from "./profile-schema.js";
 
 describe("stable harness identity", () => {
@@ -23,6 +25,9 @@ describe("stable harness identity", () => {
       seats: [{ harness: "forge", provider: "openai", model: "openai/gpt-5", selector: { kind: "all-eligible" } }],
     };
     expect(recordedHarnessTypeSchema.parse("forge")).toBe("forge");
+    const archived = { harness: "forge" } as const;
+    expect(canonicalAgentProfileDigest(archived)).toBe("sha256:f52c40515f7f92a7fe4446c31f8c2542f4ce3b95756d232340b7013ed01b0aa0");
+    expect(measureAgentProfile(archived).profileDigest).toBe(canonicalAgentProfileDigest(archived));
     expect(recordedAgentProfileSchema.parse(profile)).toEqual(profile);
     expect(agentProfileSchema.safeParse(profile).success).toBe(false);
     expect(agentProfileJsonSchema.properties?.harness).not.toHaveProperty("enum", expect.arrayContaining(["forge"]));

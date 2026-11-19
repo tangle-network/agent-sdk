@@ -22,7 +22,7 @@ import {
   type AgentExecutionPreparationResolvedModel,
 } from "./agent-execution-preparation-receipt.js";
 import type { HarnessType } from "./harness.js";
-import { agentProfileSchema } from "./profile-schema.js";
+import { agentProfileSchema, recordedAgentProfileSchema, type RecordedAgentProfile } from "./profile-schema.js";
 import {
   agentWorkspaceLeaseRecordSchema,
   type AgentWorkspaceSealedLeaseRecord,
@@ -122,8 +122,8 @@ export type AgentExecutionPreparationValidationResult =
  * pattern matching cannot decide whether it is secret. Resolve opaque secret
  * references only after this public identity is fixed.
  */
-export function canonicalAgentProfileDigest(profile: AgentProfile): Sha256Digest {
-  const parsed = agentProfileSchema.parse(profile);
+export function canonicalAgentProfileDigest(profile: RecordedAgentProfile): Sha256Digest {
+  const parsed = recordedAgentProfileSchema.parse(profile);
   const material = canonicalAgentProfileValue(parsed);
   if (material === undefined || !isCanonicalJsonValue(material)) {
     throw new Error("AgentProfile must contain finite, acyclic RFC 8785 JSON values");
