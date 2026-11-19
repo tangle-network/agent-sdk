@@ -1,8 +1,10 @@
 import { isRecord } from '@tangle-network/agent-core'
-import { basename, dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionEnding, SessionRef, TokenUsage } from '../schema.js'
-import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
+import { fileRecords, isMissing, type RecordSource, type SourceStats } from '../source.js'
 import { KIMI_STORES } from '../catalog.js'
 import { EVIDENCE, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { foldedReader, runFold, type SessionFold } from './fold.js'
@@ -10,13 +12,47 @@ import { foldedReader, runFold, type SessionFold } from './fold.js'
 const FORMAT = 'kimi.session-dir' as const
 const HARNESS = 'kimi-code'
 const WIRE = '*/{id}/wire.jsonl'
-const CHILD_WIRE = '*/*/subagents/{id}/wire.jsonl'
+const CHILD_WIRE = '*/{id}/subagents/*/wire.jsonl'
 
-function sessionIdentity(path: string): { id: string; parent: string | null } {
+function scopedAgent(root: string, agent: string): string {
+  return agent === 'main' ? root : `${root}/${agent}`
+}
+
+function sessionIdentity(path: string): { id: string; parent: string | null; root: string | null } {
   const directory = dirname(path)
   const container = dirname(directory)
-  if (basename(container) === 'agents' && basename(directory) === 'main') return { id: basename(dirname(container)), parent: null }
-  return { id: basename(directory), parent: basename(container) === 'subagents' ? basename(dirname(container)) : null }
+  const agent = basename(directory)
+  if (basename(container) === 'agents') {
+    const root = basename(dirname(container))
+    return { id: scopedAgent(root, agent), parent: null, root }
+  }
+  return { id: agent, parent: basename(container) === 'subagents' ? basename(dirname(container)) : null, root: null }
+}
+
+/** In 2.x every agent has a sibling directory. The small native index names its actual parent. */
+function stateParents(path: string): Map<string, string> {
+  let state: unknown
+  try {
+    state = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    if (isMissing(error) || error instanceof SyntaxError) return new Map()
+    throw error
+  }
+  const parents = new Map<string, string>()
+  if (isRecord(state) && typeof state.id === 'string' && isRecord(state.agents)) {
+    for (const [agent, row] of Object.entries(state.agents)) {
+      if (isRecord(row) && typeof row.parentAgentId === 'string')
+        parents.set(scopedAgent(state.id, agent), scopedAgent(state.id, row.parentAgentId))
+    }
+  }
+  return parents
+}
+
+function spawnEdge(ref: SessionRef, payload: Record<string, unknown>): { id: string; tool: string | null } | null {
+  const [root, agent = 'main'] = ref.nativeSessionId.split('/')
+  const child = str(payload.subagentId)
+  if (!root || !child || child === 'main' || payload.parentAgentId !== agent || payload.callerAgentId !== agent) return null
+  return { id: scopedAgent(root, child), tool: str(payload.parentToolCallId) }
 }
 
 function usageOf(value: unknown): TokenUsage | null {
@@ -169,6 +205,11 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       case 'CompactionBegin':
         compactions += 1
         break
+      case 'subagent.spawned': {
+        const child = spawnEdge(ref, payload)
+        if (child) builder.child(child.id, child.tool)
+        break
+      }
       case 'SubagentEvent': {
         subagentEvents += 1
         const agent = str(payload.agent_id)
@@ -194,39 +235,112 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
 }
 
 export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions, source: RecordSource = fileRecords(ref.path, { strict: options.corruption === 'strict', signal: options.signal })): Promise<SessionBuilder> {
+  const { root } = sessionIdentity(ref.path)
+  if (ref.parentNativeSessionId === null && root && ref.nativeSessionId !== root) {
+    // A direct file read may have only the retained wires, without the session index.
+    const agents = dirname(dirname(ref.path))
+    ref = { ...ref }
+    const family = [ref]
+    for (const entry of await readdir(agents, { withFileTypes: true })) {
+      const path = join(agents, entry.name, 'wire.jsonl')
+      if (entry.isDirectory() && path !== ref.path && await mtimeMs(path)) family.push(refForWire(path, path))
+    }
+    await linkKimiFamily(family, undefined, options)
+  }
   return runFold(createFold(ref, mode, source.stats), source)
 }
 
+/** Recover the originating call's owner only for a requested family missing its native index. */
+export async function linkKimiFamily(refs: SessionRef[], statePath?: string, options: ReadOptions = {}): Promise<void> {
+  const indexed = statePath ? stateParents(statePath) : new Map<string, string>()
+  const missing = new Map<string, SessionRef>()
+  for (const ref of refs) {
+    ref.parentNativeSessionId ??= indexed.get(ref.nativeSessionId) ?? null
+    if (ref.parentNativeSessionId === null && ref.nativeSessionId.includes('/')) missing.set(ref.nativeSessionId, ref)
+  }
+  if (!missing.size) return
+
+  // A root normally records the first spawn long before it finishes. Stop at that record.
+  const parents = [...refs].sort((a, b) => Number(a.nativeSessionId.includes('/')) - Number(b.nativeSessionId.includes('/')))
+  for (const parent of parents) {
+    if (missing.size === 1 && missing.has(parent.nativeSessionId)) continue
+    for await (const row of fileRecords(parent.path, { signal: options.signal, strict: options.corruption === 'strict' }).records) {
+      if (row.type !== 'subagent.spawned') continue
+      const edge = spawnEdge(parent, row)
+      const child = edge && missing.get(edge.id)
+      if (child) {
+        child.parentNativeSessionId = parent.nativeSessionId
+        missing.delete(child.nativeSessionId)
+        if (!missing.size) return
+      }
+    }
+  }
+}
+
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
-  const refs: SessionRef[] = []
+  const found: SessionRef[] = []
+  const indices = new Map<string, Map<string, string>>()
   for (const store of KIMI_STORES) {
     const root = join(home, store.root)
     const pattern = storeGlob('globs' in store ? store.globs.session : WIRE)
-    const children = storeGlob(CHILD_WIRE)
+    const children = storeGlob('globs' in store && store.globs.children ? store.globs.children : CHILD_WIRE)
     const matches = (rel: string): boolean => {
-      const { id, parent } = sessionIdentity(rel)
-      return (pattern.test(rel) || children.test(rel)) && (!opts.nativeSessionId || id === opts.nativeSessionId || parent === opts.nativeSessionId)
+      if (!pattern.test(rel) && !children.test(rel)) return false
+      if (!opts.nativeSessionId) return true
+      const { id, parent, root: sessionRoot } = sessionIdentity(rel)
+      return sessionRoot !== null
+        ? sessionRoot === opts.nativeSessionId.split('/')[0]
+        : id === opts.nativeSessionId || parent === opts.nativeSessionId
     }
     for (const rel of await walkFiles(root, undefined, matches)) {
       const path = join(root, rel)
-      const mtime = await mtimeMs(path)
-      if (opts.sinceMs && mtime < opts.sinceMs) continue
       const context = join(dirname(path), 'context.jsonl')
       const files = (await mtimeMs(context)) > 0 ? [path, context] : [path]
-      const ref: SessionRef = { ...kimiRefForFile(path), files, home, mtimeMs: mtime }
-      if (opts.cwd) {
-        ref.cwd = (await fold(ref, 'summary', {})).cwd
-        if (ref.cwd === null || !withinPath(ref.cwd, opts.cwd)) continue
-      }
-      refs.push(ref)
+      found.push({ ...refForWire(path, path, indices), files, home, mtimeMs: await mtimeMs(path) })
     }
   }
-  return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const refs = found.filter(ref => !opts.sinceMs || ref.mtimeMs >= opts.sinceMs)
+  // Inventory stays a metadata operation. An explicit family read can recover a missing parent from its own wires.
+  if (opts.nativeSessionId && refs.some(ref => ref.nativeSessionId.includes('/') && ref.parentNativeSessionId === null))
+    await linkKimiFamily(found)
+  const byId = new Map(found.map((ref) => [ref.nativeSessionId, ref]))
+  const selected = (ref: SessionRef): boolean => {
+    if (!opts.nativeSessionId || ref.nativeSessionId.split('/')[0] === opts.nativeSessionId) return true
+    let id: string | null = ref.nativeSessionId
+    const seen = new Set<string>()
+    while (id !== null && !seen.has(id)) {
+      if (id === opts.nativeSessionId) return true
+      seen.add(id)
+      id = byId.get(id)?.parentNativeSessionId ?? null
+    }
+    return false
+  }
+  const selectedRefs: SessionRef[] = []
+  for (const ref of refs) {
+    if (!selected(ref)) continue
+    if (opts.cwd) {
+      ref.cwd = (await fold(ref, 'summary', {})).cwd
+      if (ref.cwd === null || !withinPath(ref.cwd, opts.cwd)) continue
+    }
+    selectedRefs.push(ref)
+  }
+  return selectedRefs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
 export const kimiReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['kimi', 'kimi-cli'], format: FORMAT, globs: { session: WIRE, children: CHILD_WIRE }, stores: KIMI_STORES }, locate, fold)
 
-export function kimiRefForFile(path: string): SessionRef {
-  const { id, parent } = sessionIdentity(path)
-  return { harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: parent }
+function refForWire(path: string, storePath: string, indices?: Map<string, Map<string, string>>): SessionRef {
+  const { id, parent, root } = sessionIdentity(storePath)
+  let owner = parent
+  if (root && id !== root && path === storePath && isAbsolute(path)) {
+    const state = join(dirname(dirname(dirname(path))), 'state.json')
+    const parents = indices?.get(state) ?? stateParents(state)
+    indices?.set(state, parents)
+    owner = parents.get(id) ?? null
+  }
+  return { harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: owner }
+}
+
+export function kimiRefForFile(path: string, storePath = path): SessionRef {
+  return refForWire(path, storePath)
 }
