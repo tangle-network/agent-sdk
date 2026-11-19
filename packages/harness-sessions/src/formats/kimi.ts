@@ -245,33 +245,36 @@ export async function fold(ref: SessionRef, mode: BuildMode, options: ReadOption
       const path = join(agents, entry.name, 'wire.jsonl')
       if (entry.isDirectory() && path !== ref.path && await mtimeMs(path)) family.push(refForWire(path, path))
     }
-    await linkKimiFamily(family)
+    await linkKimiFamily(family, undefined, options)
   }
   return runFold(createFold(ref, mode, source.stats), source)
 }
 
-/** A wire-only capture lacks state.json. Only then read the recorded spawn edges for unresolved families. */
-export async function linkKimiFamily(refs: SessionRef[], statePath?: string): Promise<SessionRef[]> {
+/** Recover the originating call's owner only for a requested family missing its native index. */
+export async function linkKimiFamily(refs: SessionRef[], statePath?: string, options: ReadOptions = {}): Promise<void> {
   const indexed = statePath ? stateParents(statePath) : new Map<string, string>()
-  const unresolved = new Set<string>()
+  const missing = new Map<string, SessionRef>()
   for (const ref of refs) {
     ref.parentNativeSessionId ??= indexed.get(ref.nativeSessionId) ?? null
-    if (!ref.parentNativeSessionId && ref.nativeSessionId.includes('/')) unresolved.add(ref.nativeSessionId.split('/')[0]!)
+    if (ref.parentNativeSessionId === null && ref.nativeSessionId.includes('/')) missing.set(ref.nativeSessionId, ref)
   }
-  if (unresolved.size === 0) return refs
-  const owners = new Map<string, string | null>()
-  for (const ref of refs) {
-    if (!unresolved.has(ref.nativeSessionId.split('/')[0]!)) continue
-    for await (const row of fileRecords(ref.path).records) {
+  if (!missing.size) return
+
+  // A root normally records the first spawn long before it finishes. Stop at that record.
+  const parents = [...refs].sort((a, b) => Number(a.nativeSessionId.includes('/')) - Number(b.nativeSessionId.includes('/')))
+  for (const parent of parents) {
+    if (missing.size === 1 && missing.has(parent.nativeSessionId)) continue
+    for await (const row of fileRecords(parent.path, { signal: options.signal, strict: options.corruption === 'strict' }).records) {
       if (row.type !== 'subagent.spawned') continue
-      const child = spawnEdge(ref, row)
-      if (!child) continue
-      const prior = owners.get(child.id)
-      owners.set(child.id, prior === undefined || prior === ref.nativeSessionId ? ref.nativeSessionId : null)
+      const edge = spawnEdge(parent, row)
+      const child = edge && missing.get(edge.id)
+      if (child) {
+        child.parentNativeSessionId = parent.nativeSessionId
+        missing.delete(child.nativeSessionId)
+        if (!missing.size) return
+      }
     }
   }
-  for (const ref of refs) ref.parentNativeSessionId ??= owners.get(ref.nativeSessionId) ?? null
-  return refs
 }
 
 async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> {
@@ -296,8 +299,11 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
       found.push({ ...refForWire(path, path, indices), files, home, mtimeMs: await mtimeMs(path) })
     }
   }
-  const refs = await linkKimiFamily(found)
-  const byId = new Map(refs.map((ref) => [ref.nativeSessionId, ref]))
+  const refs = found.filter(ref => !opts.sinceMs || ref.mtimeMs >= opts.sinceMs)
+  // Inventory stays a metadata operation. An explicit family read can recover a missing parent from its own wires.
+  if (opts.nativeSessionId && refs.some(ref => ref.nativeSessionId.includes('/') && ref.parentNativeSessionId === null))
+    await linkKimiFamily(found)
+  const byId = new Map(found.map((ref) => [ref.nativeSessionId, ref]))
   const selected = (ref: SessionRef): boolean => {
     if (!opts.nativeSessionId || ref.nativeSessionId.split('/')[0] === opts.nativeSessionId) return true
     let id: string | null = ref.nativeSessionId
@@ -311,7 +317,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   }
   const selectedRefs: SessionRef[] = []
   for (const ref of refs) {
-    if ((opts.sinceMs && ref.mtimeMs < opts.sinceMs) || !selected(ref)) continue
+    if (!selected(ref)) continue
     if (opts.cwd) {
       ref.cwd = (await fold(ref, 'summary', {})).cwd
       if (ref.cwd === null || !withinPath(ref.cwd, opts.cwd)) continue
