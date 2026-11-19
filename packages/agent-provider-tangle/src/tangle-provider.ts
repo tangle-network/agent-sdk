@@ -3,7 +3,7 @@ import {
   AgentEnvironmentGetOptionsSchema,
   createAgentEnvironmentWithIdempotency,
 } from "@tangle-network/agent-interface/environment-provider";
-import { canonicalCandidateDigest, deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
+import { agentProfileSchema, canonicalCandidateDigest, deepFreeze, harnessTypeSchema } from "@tangle-network/agent-interface";
 import type {
   AgentEnvironment,
   AgentEnvironmentCapabilities,
@@ -214,7 +214,7 @@ export function createTangleProvider(
       ) : defaultOptions!);
     const selectedProxySecrets = mergeProxySecrets(requestedProxySecrets,
       selectedCredentials?.proxySecrets);
-    const mappedProxySecrets = mergeProxySecrets(selectedProxySecrets, proxySecretsFromInput({ profile: mappedInput.backend?.profile ?? {}, proxySecrets: mappedInput.proxySecrets }));
+    const mappedProxySecrets = mergeProxySecrets(selectedProxySecrets, proxySecretsFromInput({ profile: agentProfileSchema.parse(mappedInput.backend?.profile ?? {}), proxySecrets: mappedInput.proxySecrets }));
     if (canonicalCandidateDigest(mappedProxySecrets ?? []) !== canonicalCandidateDigest(selectedProxySecrets ?? [])) throw new Error("Tangle mapped proxy-secret declarations differ from the requested bindings");
     const mappedOptions = { ...mappedInput, backend: normalizeTangleBackend(mappedInput.backend, true), ...(selectedProxySecrets === undefined ? {} : { proxySecrets: selectedProxySecrets }) };
     assertProxySecretAliases(selectedProxySecrets, mappedOptions.env, mappedOptions.secrets);

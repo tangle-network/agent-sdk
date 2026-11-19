@@ -14,7 +14,7 @@ import {
   AGENT_PROFILE_MATERIALIZATION_AXES,
   type AgentProfileMaterializationAxis,
 } from "./agent-profile-materialization.js";
-import { harnessTypeSchema, type HarnessType } from "./harness.js";
+import { recordedHarnessTypeSchema, type RecordedHarnessType } from "./harness.js";
 import {
   agentWorkspaceSourceSnapshotPolicySchema,
   type AgentWorkspaceSourceSnapshotPolicy,
@@ -112,7 +112,7 @@ export interface AgentExecutionPreparationReceipt {
   /** Canonical identity after executor overrides. */
   effectiveProfileDigest: Sha256Digest;
   backend: string;
-  harness: HarnessType;
+  harness: RecordedHarnessType;
   harnessVersion: string;
   resolvedModel: AgentExecutionPreparationResolvedModel;
   workspace: AgentExecutionPreparationWorkspace;
@@ -255,7 +255,7 @@ export const agentExecutionPreparationReceiptSchema = z
     authoredProfileDigest: sha256DigestSchema,
     effectiveProfileDigest: sha256DigestSchema,
     backend: nonBlankStringSchema.max(200),
-    harness: harnessTypeSchema,
+    harness: recordedHarnessTypeSchema,
     harnessVersion: nonBlankStringSchema.max(200),
     resolvedModel: z.strictObject({
       requested: z.string().max(500),

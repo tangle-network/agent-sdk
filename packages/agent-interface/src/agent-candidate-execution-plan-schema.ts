@@ -47,7 +47,7 @@ import {
   sha256DigestSchema,
 } from "./agent-candidate-schema-common.js";
 import { ProxySecretsSchema } from "./proxy-secrets.js";
-import { harnessTypeSchema } from "./harness.js";
+import { recordedHarnessTypeSchema } from "./harness.js";
 import { createAgentProfileActivationEvidenceSchema } from "./agent-profile-activation.js";
 
 function isCanonicalAbsolutePath(value: string): boolean {
@@ -181,7 +181,7 @@ export const agentCandidateProfilePlanMaterialSchema = z
   .object({
     proxySecrets: ProxySecretsSchema.optional(),
     sourceProfileDigest: sha256DigestSchema,
-    harness: harnessTypeSchema,
+    harness: recordedHarnessTypeSchema,
     files: z.array(
       z
         .object({
@@ -375,7 +375,7 @@ export const agentCandidateExecutionPlanMaterialSchema = z
         ),
       })
       .strict(),
-    harness: harnessTypeSchema,
+    harness: recordedHarnessTypeSchema,
     harnessVersion: z.string().min(1),
     instructionDelivery:
       agentCandidateInstructionDeliverySchema satisfies z.ZodType<AgentCandidateInstructionDelivery>,

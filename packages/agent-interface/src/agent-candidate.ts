@@ -12,7 +12,7 @@ import type {
 } from "./agent-profile.js";
 import type { ProxySecretBinding } from "./proxy-secrets.js";
 import type { AgentProfileActivationEvidence } from "./agent-profile-activation.js";
-import type { HarnessType } from "./harness.js";
+import type { HarnessType, RecordedHarnessType } from "./harness.js";
 import type {
   AgentProfileImprovementExecutionRef,
   AgentProfileImprovementMeasuredComparison,
@@ -491,7 +491,7 @@ export interface AgentCandidateProfilePlanMaterial {
   proxySecrets?: ProxySecretBinding[];
   /** Canonical digest of the complete frozen profile that produced this plan. */
   sourceProfileDigest: Sha256Digest;
-  harness: HarnessType;
+  harness: RecordedHarnessType;
   files: Array<{
     relPath: string;
     mode: number;
@@ -738,7 +738,7 @@ export interface AgentCandidateExecutionPlanMaterial {
   codeKind: AgentCandidateCode["kind"];
   candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
   profile: AgentCandidateProfileApplication;
-  harness: HarnessType;
+  harness: RecordedHarnessType;
   harnessVersion: string;
   instructionDelivery: AgentCandidateInstructionDelivery;
   limits: AgentCandidateExecutionLimits;
@@ -835,7 +835,7 @@ export interface AgentCandidateMaterializationReceipt {
   candidateWorkspace?: AgentCandidateWorkspaceSnapshotEvidence;
   codeKind: AgentCandidateCode["kind"];
   materializedTree?: string;
-  harness: HarnessType;
+  harness: RecordedHarnessType;
   harnessVersion: string;
   container: {
     source: AgentCandidateExecutionEnvironment["kind"];

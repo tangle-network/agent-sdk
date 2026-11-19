@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { Sha256Digest } from "./agent-candidate.js";
 import { canonicalCandidateDigest, isWellFormedUnicode, sha256DigestSchema } from "./agent-candidate-schema-common.js";
-import { harnessTypeSchema } from "./harness.js";
+import { harnessTypeSchema, recordedHarnessTypeSchema } from "./harness.js";
 import { deepFreeze } from "./deep-freeze.js";
 
 const id = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
@@ -45,7 +45,7 @@ export const AgentLearningFileSchema = z.strictObject({
   /** Null is an explicit tombstone. Omission from an export never deletes a file. */
   content: z.string().max(131_072).refine(isWellFormedUnicode).nullable(),
   source: z.strictObject({
-    harness: harnessTypeSchema,
+    harness: recordedHarnessTypeSchema,
     revision,
     /** Origin metadata is evidence of provenance, not truth or trusted instructions. */
     trust: z.literal("untrusted"),
@@ -62,7 +62,7 @@ export const AgentLearningFileSchema = z.strictObject({
 
 /** A host-resolved reference to exact native state, never a path or credential value. */
 export const AgentLearningNativeRefSchema = z.strictObject({
-  harness: harnessTypeSchema,
+  harness: recordedHarnessTypeSchema,
   format: id,
   revision,
   reference: id,
@@ -119,7 +119,7 @@ const exportMaterialSchema = z.strictObject({
   operationId: id,
   identity: AgentLearningIdentitySchema,
   baseDigest: sha256DigestSchema,
-  harness: harnessTypeSchema,
+  harness: recordedHarnessTypeSchema,
   adapter,
   /** Explicit deltas only. Never infer deletion from absence or a partial native listing. */
   files,
