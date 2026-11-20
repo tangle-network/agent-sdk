@@ -64,6 +64,7 @@ import {
   validSnapshotResult,
   reconcileCheckpoint,
   findManagedCheckpoint,
+  inspectCheckpointResource,
   findForkByKey,
   findForkChildById,
   completeForkChild,
@@ -581,13 +582,7 @@ export function createTangleWorkspaceBranching(
         canonicalCandidateDigest(request.checkpoint)
     )
       ? undefined
-      : await findManagedCheckpoint(
-          box,
-          provider,
-          request.checkpoint.checkpointId,
-          request.checkpoint,
-          operation?.signal
-        );
+      : await inspectCheckpointResource(box, provider, request.checkpoint, operation?.signal);
     if (checkpoint !== undefined && checkpoint.state !== "found") {
       return forkUnknown(
         request,
@@ -899,6 +894,8 @@ export function createTangleWorkspaceBranching(
   return {
     checkpoint,
     lookupCheckpoint,
+    inspectCheckpoint: async (reference, operation) =>
+      (await inspectCheckpointResource(box, provider, reference, operation?.signal)).state,
     deleteCheckpoint,
     fork,
     lookupFork,
