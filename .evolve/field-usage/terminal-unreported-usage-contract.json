@@ -1,0 +1,45 @@
+{
+  "package": "@tangle-network/agent-provider-tangle",
+  "version": "5.0.17",
+  "deployedFile": "./node_modules/@tangle-network/agent-provider-tangle/dist/tangle-events.js",
+  "sha256": "9f95fafa36ece6524ab789f9bf5dc4cd298d08657755b11d21f08bb792f24e04",
+  "actualNativeRef": "sha256:24505a8db423c4251eaf8fd2a7b9e18451c6cf895f830b28cf7c6866ac2d787b",
+  "actualError": "Tangle Sandbox event contained invalid or conflicting usage modes",
+  "originalWireMode": "The native Runtime retained result does not contain the rejected input frame. The ledger confirms the error; the following separate compatibility check reproduces the sidecar no-total output against the deployed adapter.",
+  "readerResults": [
+    {
+      "input": {
+        "success": true,
+        "tokensKnown": false,
+        "usageMode": "unreported"
+      },
+      "error": "Tangle Sandbox event contained invalid or conflicting usage modes"
+    },
+    {
+      "input": {
+        "success": true,
+        "tokensKnown": false,
+        "usageMode": "delta"
+      },
+      "recognized": "result",
+      "usageMode": "delta"
+    },
+    {
+      "input": {
+        "success": true,
+        "tokensKnown": false,
+        "usageMode": "cumulative"
+      },
+      "recognized": "result",
+      "usageMode": "cumulative"
+    },
+    {
+      "input": {
+        "success": true,
+        "tokensKnown": false
+      },
+      "recognized": "result",
+      "usageMode": "cumulative"
+    }
+  ]
+}
