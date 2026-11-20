@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.30
+
+### Patch Changes
+
+- 901ff0c: Recognize Pi's enrolled `zai-coding-paas/glm-5.3` provider name when validating a GLM-5.3 seat chain.
+
 ## 5.10.29
 
 ### Patch Changes
