@@ -433,7 +433,7 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     name: "GLM-5.3",
     vendor: "Z.ai",
     surfaces: ["api", "router"],
-    aliases: ["z-ai/glm-5.3", "zai-coding-plan/glm-5.3"],
+    aliases: ["z-ai/glm-5.3", "zai-coding-plan/glm-5.3", "zai-coding-paas/glm-5.3"],
     defaultEffort: "ultracode",
     claims: [
       claim(
