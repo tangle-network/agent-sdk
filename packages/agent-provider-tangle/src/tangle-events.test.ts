@@ -64,6 +64,102 @@ describe("Sandbox stream event content", () => {
     expect(() => AgentTurnResultSchema.parse({ text: "done", success: true, events })).not.toThrow();
   });
 
+  it("delivers an unreported terminal without inventing usage or losing output", async () => {
+    const response = "remaining output";
+    const terminal = {
+      success: true,
+      status: "success",
+      durationMs: 1,
+      outcome: { type: "completed" },
+      response,
+      usageMode: "unreported",
+      tokensKnown: false,
+    };
+    const provider = createTangleProvider({
+      client: {
+        async create() {
+          return {
+            id: "sandbox-unreported", status: "running",
+            async *streamPrompt() {
+              yield {
+                type: "message.part.updated",
+                id: "event-output",
+                data: {
+                  part: { id: "text-1", sessionID: "session-1", messageID: "message-1", type: "text", text: response },
+                  delta: response,
+                },
+              };
+              yield { type: "result", id: "event-result", data: terminal };
+              yield { type: "done", id: "event-done", data: terminal };
+            },
+          };
+        },
+      },
+    });
+    const environment = await provider.create({ profile: { name: "unreported" } });
+    const events: AgentEnvironmentEvent[] = [];
+    for await (const event of environment.stream({ prompt: "finish the turn" })) events.push(event);
+
+    expect(events).toHaveLength(3);
+    expect(events[0]?.normalized).toMatchObject({ type: "message.part.updated", delta: response });
+    for (const event of events.slice(1)) {
+      expect(event.data).toMatchObject(terminal);
+      expect(event).not.toHaveProperty("usage");
+      expect(event).not.toHaveProperty("usageMode");
+    }
+    expect(deriveAgentRunOutcome(events as SandboxEvent[])).toMatchObject({ success: true, status: "success" });
+    const { sumSandboxUsage } = await import("@tangle-network/agent-runtime/kernel");
+    expect(sumSandboxUsage(events as SandboxEvent[])).toEqual({
+      input: 0,
+      output: 0,
+      costUsd: 0,
+      tokensKnown: false,
+      usdKnown: false,
+    });
+    expect(() => AgentTurnResultSchema.parse({ text: response, success: true, events })).not.toThrow();
+  });
+
+  it("admits only consistent no-usage declarations on terminal events", () => {
+    const terminal = { success: true, usageMode: "unreported", tokensKnown: false };
+    for (const type of ["result", "done"]) {
+      const event = environmentEventFromSandboxEvent({ type, data: terminal } as SandboxEvent);
+      expect(event.data).toEqual(terminal);
+      expect(event.usage).toBeUndefined();
+      expect(event.usageMode).toBeUndefined();
+    }
+    expect(environmentEventFromSandboxEvent({
+      type: "result", usageMode: "unreported", data: terminal,
+    } as SandboxEvent)).not.toHaveProperty("usageMode");
+
+    for (const mode of ["delta", "cumulative"]) {
+      expect(environmentEventFromSandboxEvent({
+        type: "result", data: { success: true, usageMode: mode, tokensKnown: false },
+      } as SandboxEvent)).toMatchObject({ usageMode: mode });
+    }
+    expect(environmentEventFromSandboxEvent({
+      type: "result", data: { success: true, usage: { inputTokens: 0, outputTokens: 0 } },
+    } as SandboxEvent)).toMatchObject({
+      usage: { inputTokens: 0, outputTokens: 0 }, usageMode: "cumulative",
+    });
+
+    const invalid: SandboxEvent[] = [
+      { type: "usage", data: { usageMode: "unreported", tokensKnown: false } },
+      { type: "result", data: { ...terminal, tokensKnown: true } },
+      { type: "result", data: { success: true, usageMode: "unreported" } },
+      { type: "result", data: { ...terminal, usage: { inputTokens: 0, outputTokens: 0 } } },
+      { type: "result", data: { ...terminal, usage: { inputTokens: 2, outputTokens: 3 } } },
+      { type: "result", data: { ...terminal, tokenUsage: { inputTokens: 2 } } },
+      { type: "result", data: { ...terminal, costUsd: 0 } },
+      { type: "result", data: { ...terminal, totalCostUsd: 1 } },
+      { type: "result", usageMode: "cumulative", data: terminal } as never,
+      { type: "result", data: { ...terminal, usageMode: "unknown" } },
+      { type: "result", data: { ...terminal, usageMode: null } },
+    ];
+    for (const event of invalid) {
+      expect(() => environmentEventFromSandboxEvent(event)).toThrow(/invalid or conflicting usage modes/);
+    }
+  });
+
   it("preserves cumulative assistant text and terminal content", () => {
     const part = { id: "text-1", sessionID: "session-1", messageID: "message-1", type: "text", text: recordedOutput };
     const textEvent = environmentEventFromSandboxEvent({ type: "message.part.updated", data: { part } });
