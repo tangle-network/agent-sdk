@@ -277,14 +277,27 @@ export function environmentEventFromSandboxEvent(
   }
   const usage = tokenUsageFromData(data);
   const declaredModes = [record.usageMode, data.usageMode].filter((mode) => mode !== undefined);
-  if (declaredModes.some((mode) => mode !== "delta" && mode !== "cumulative") ||
-      (declaredModes.length === 2 && declaredModes[0] !== declaredModes[1])) {
+  const unreported = declaredModes[0] === "unreported";
+  const validUsageModes = unreported
+    ? terminal &&
+      data.tokensKnown === false &&
+      usage === undefined &&
+      data.usage === undefined &&
+      data.tokenUsage === undefined &&
+      data.costUsd === undefined &&
+      data.totalCostUsd === undefined &&
+      declaredModes.every((mode) => mode === "unreported")
+    : declaredModes.every((mode) => mode === "delta" || mode === "cumulative") &&
+      (declaredModes.length !== 2 || declaredModes[0] === declaredModes[1]);
+  if (!validUsageModes) {
     throw new Error("Tangle Sandbox event contained invalid or conflicting usage modes");
   }
-  // Only terminal turn receipts have established aggregate semantics.
-  // Other event names do not prove whether their usage is incremental.
-  const usageMode = declaredModes[0] as AgentEnvironmentEvent["usageMode"] ??
-    (record.type === "result" || record.type === "done" ? "cumulative" : undefined);
+  // Agent Container's unreported terminal carries no measured usage and has no
+  // delta/cumulative semantics. Other terminal receipts default to cumulative.
+  const usageMode = unreported
+    ? undefined
+    : declaredModes[0] as AgentEnvironmentEvent["usageMode"] ??
+      (terminal ? "cumulative" : undefined);
   // Preserve the public resume key without promoting it to native attribution.
   const normalized = normalizeSandboxEvent(record.type, data, identity);
   return {
