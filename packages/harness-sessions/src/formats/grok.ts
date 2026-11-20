@@ -102,7 +102,7 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
   return runFold(createFold(ref, mode, records.stats, model, usageOf(await markedJson(ref, 'signals.json', 'primaryModelId'))), records)
 }
 
-export const grokReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['grok-build'], format: FORMAT }, async (home, opts) => {
+export const grokReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: grokRefForFile, aliases: ['grok-build'], format: FORMAT }, async (home, opts) => {
   const root = join(home, STORE.root)
   const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
   const refs: SessionRef[] = []

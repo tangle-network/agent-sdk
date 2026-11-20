@@ -58,7 +58,7 @@ For a producer or retained reader with an already attested file inventory, `read
 ## Use
 
 ```ts
-import { readerFor, listCapture, toChatMessages, toOtlpSpans, toTurns } from '@tangle-network/harness-sessions'
+import { readerFor, listCapture, nativeStoreSessions, toChatMessages, toOtlpSpans, toTurns } from '@tangle-network/harness-sessions'
 
 // Sessions in a HOME, through the harness's declared store
 const reader = readerFor('pi')
@@ -67,9 +67,15 @@ for (const ref of await reader.locate('/home/agent')) {
   const session = await reader.read(ref)      // full fidelity: nothing is truncated
 }
 
+// A copied or live SQLite store, optionally restricted to a recorded session
+const refs = await nativeStoreSessions(storePath, { nativeSessionId })
+for (const ref of refs) await readerFor(ref.harness).read(ref)
+
 // Sessions in a capture (provider retention layout today, raw-evidence archive v2 when given)
 const { sessions, missing } = await listCapture(captureDir)
 ```
+
+The SDK and `harness-sessions read <file>` select OpenCode, Hermes and OpenClaw by database schema. NanoClaw uses the inbound and outbound databases in its session directory. A session reference lists its database files and any existing SQLite sidecars. A foreign schema or an absent session ID returns an empty list. Pass `harness` to resolve a database with more than one native schema.
 
 Projections trim; the reader never does:
 

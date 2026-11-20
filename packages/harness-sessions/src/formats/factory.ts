@@ -133,7 +133,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return filtered.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const factoryReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['factory', 'droid'], format: FORMAT }, locate, fold)
+export const factoryReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: factoryRefForFile, aliases: ['factory', 'droid'], format: FORMAT }, locate, fold)
 
 export function factoryRefForFile(path: string): SessionRef {
   return { harness: HARNESS, format: FORMAT, nativeSessionId: basename(path, '.jsonl'), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }

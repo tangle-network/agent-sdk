@@ -16,7 +16,7 @@ export async function runFold(fold: SessionFold, source: RecordSource): Promise<
 
 /** A reader: what differs between harnesses is how a session is found and folded. */
 export function foldedReader(
-  reader: Pick<HarnessSessionReader, 'harness' | 'aliases'> & Partial<Pick<HarnessSessionReader, 'stores' | 'globs'>> & { format: SessionFormatId },
+  reader: Pick<HarnessSessionReader, 'harness' | 'aliases'> & Partial<Pick<HarnessSessionReader, 'stores' | 'globs' | 'refForFile' | 'sqlite'>> & { format: SessionFormatId },
   locate: (home: string, opts: LocateOptions) => Promise<SessionRef[]>,
   fold: (ref: SessionRef, mode: BuildMode, opts: ReadOptions) => Promise<SessionBuilder>,
 ): HarnessSessionReader {
@@ -28,6 +28,8 @@ export function foldedReader(
     stores: reader.stores ?? [store],
     globs: reader.globs ?? { session: store.files[0] },
     evidence: EVIDENCE[reader.format],
+    ...(reader.refForFile && { refForFile: reader.refForFile }),
+    ...(reader.sqlite && { sqlite: reader.sqlite }),
     locate: (home, opts = {}) => locate(home, opts),
     read: async (ref, opts = {}) => (await fold(ref, 'full', opts)).build(),
     summarize: async (ref, opts = {}) => (await fold(ref, 'summary', opts)).summary(),

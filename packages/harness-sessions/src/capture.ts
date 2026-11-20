@@ -3,9 +3,7 @@ import { readJsonValues } from './manifest-scan.js'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { str } from './builder.js'
-import { opencodeSessionsInStore } from './formats/opencode.js'
-import { hermesSessionsInStore } from './formats/hermes.js'
-import { openclawSessionsInStore } from './formats/openclaw.js'
+import { nativeStoreSessions } from './native-store.js'
 import { kimiRefForFile, linkKimiFamily } from './formats/kimi.js'
 import { maybeReaderFor, readerFor, readerForFormat } from './registry.js'
 import type { HarnessSession, HarnessSessionReader, NativeSessionCopy, RawEvidenceArchiveManifestV2, SessionRef } from './schema.js'
@@ -131,7 +129,7 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
         continue
       }
       const path = join(archiveDir, db.path)
-      const refs = store.format === 'hermes.state-sqlite' ? await hermesSessionsInStore(path) : store.format === 'openclaw.session-jsonl' ? await openclawSessionsInStore(path) : await opencodeSessionsInStore(path, null, {})
+      const refs = await nativeStoreSessions(path, { harness: reader.harness })
       const children = new Map<string, string[]>()
       for (const ref of refs) if (ref.parentNativeSessionId) {
         const group = children.get(ref.parentNativeSessionId) ?? []

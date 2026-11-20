@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { SessionBuilder, count, str, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, SessionRef, TokenUsage } from '../schema.js'
-import { withSqlite } from '../source.js'
+import { sqliteStoreFiles, withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, walkFiles } from '../stores.js'
 
 const FORMAT = 'hermes.state-sqlite' as const
@@ -57,27 +57,30 @@ async function fold(ref: SessionRef, mode: BuildMode): Promise<SessionBuilder> {
   return builder
 }
 
-export async function hermesSessionsInStore(path: string): Promise<SessionRef[]> {
-  const refs: SessionRef[] = []
-  await withSqlite(path, (db) => {
-    for (const row of db.prepare('SELECT id FROM sessions').all() as { id: string }[]) {
-      refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: row.id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null })
-    }
-  }).catch(() => undefined)
-  return refs
+async function sessionRefs(path: string, nativeSessionId?: string): Promise<SessionRef[]> {
+  const [mtime, files] = await Promise.all([mtimeMs(path), sqliteStoreFiles(path)])
+  return withSqlite(path, db => {
+    const rows = nativeSessionId === undefined ? db.prepare('SELECT id FROM sessions').all() : db.prepare('SELECT id FROM sessions WHERE id = ?').all(nativeSessionId)
+    return rows.map(row => ({ harness: HARNESS, format: FORMAT, nativeSessionId: String(row.id), path, files, home: null, cwd: null, mtimeMs: mtime, parentNativeSessionId: null }))
+  })
 }
 
-export const hermesReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT }, async (home, opts) => {
+export function hermesSessionsInStore(path: string, nativeSessionId?: string): Promise<SessionRef[]> {
+  return sessionRefs(path, nativeSessionId).catch(() => [])
+}
+
+export const hermesReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT,
+  sqlite: {
+    matches: has => has('sessions', 'input_tokens') && has('sessions', 'started_at') && has('messages', 'tool_calls') && has('messages', 'session_id'),
+    sessions: (path, opts) => sessionRefs(path, opts.nativeSessionId),
+  },
+}, async (home, opts) => {
   const root = join(home, STORE.root)
   const refs: SessionRef[] = []
   for (const rel of await walkFiles(root)) {
     if (basename(rel) !== 'state.db') continue
     const path = join(root, rel)
-    const mtime = await mtimeMs(path)
-    for (const ref of await hermesSessionsInStore(path)) {
-      if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
-      refs.push({ ...ref, home, mtimeMs: mtime })
-    }
+    for (const ref of await hermesSessionsInStore(path, opts.nativeSessionId)) refs.push({ ...ref, home })
   }
   return refs
 }, fold)

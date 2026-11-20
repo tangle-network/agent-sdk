@@ -1,13 +1,8 @@
 #!/usr/bin/env node
 import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { listCapture, RETENTION_SESSIONS } from './capture.js'
-import { claudeCodeRefForFile } from './formats/claude-code.js'
-import { codexRefForFile } from './formats/codex.js'
-import { opencodeSessionsInStore } from './formats/opencode.js'
-import { piRefForFile } from './formats/pi.js'
-import { kimiRefForFile } from './formats/kimi.js'
-import { factoryRefForFile } from './formats/factory.js'
+import { isNativeStoreDatabase, nativeStoreSessions } from './native-store.js'
 import { listReaders, readerFor } from './registry.js'
 import type { SessionRef } from './schema.js'
 
@@ -25,24 +20,20 @@ async function isDir(path: string): Promise<boolean> {
 }
 
 function harnessOfFile(path: string): string | null {
-  if (/\.db$/u.test(path)) return 'opencode'
-  if (/(^|\/)\.claude\/projects\//u.test(path)) return 'claude-code'
-  if (/(^|\/)\.codex\/sessions\//u.test(path) || /rollout-[^/]*\.jsonl$/u.test(path)) return 'codex'
-  if (/(^|\/)\.pi\/agent\/sessions\//u.test(path)) return 'pi'
-  if (/(^|\/)\.kimi(?:-code)?\/sessions\/.+\/wire\.jsonl$/u.test(path)) return 'kimi-code'
-  if (/(^|\/)\.factory\/sessions\//u.test(path)) return 'factory-droids'
-  return null
+  const absolute = resolve(path).split(sep).join('/')
+  const known = listReaders().find(reader => reader.stores.some(store => absolute.includes('/' + store.root + '/')))
+  return known?.harness ?? (/rollout-[^/]*\.jsonl$/u.test(path) ? 'codex' : null)
 }
 
 async function refsForFile(path: string, harness: string | null, session: string | null): Promise<SessionRef[]> {
+  if (await isNativeStoreDatabase(path)) {
+    return nativeStoreSessions(path, { ...(harness && { harness }), ...(session && { nativeSessionId: session }) })
+  }
   const h = harness ?? harnessOfFile(path)
   if (h === null) throw new Error(`cannot tell which harness wrote ${path}; pass --harness`)
   const reader = readerFor(h)
-  if (reader.harness === 'opencode') return opencodeSessionsInStore(path, null, session ? { nativeSessionId: session } : {})
-  const ref = reader.harness === 'claude-code'
-    ? claudeCodeRefForFile(path, /\/subagents\//u.test(path) ? 'parent' : null)
-    : reader.harness === 'codex' ? codexRefForFile(path) : reader.harness === 'kimi-code' ? kimiRefForFile(path) : reader.harness === 'factory-droids' ? factoryRefForFile(path) : piRefForFile(path)
-  return [ref]
+  if (!reader.refForFile) throw new Error(`The ${reader.harness} reader requires its native store`)
+  return [reader.refForFile(path)]
 }
 
 async function main(argv: string[]): Promise<void> {

@@ -163,7 +163,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const piReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['pi-coding-agent', 'pi-agent'], format: FORMAT }, locate, fold)
+export const piReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: piRefForFile, aliases: ['pi-coding-agent', 'pi-agent'], format: FORMAT }, locate, fold)
 
 export function piRefForFile(path: string): SessionRef {
   return { harness: HARNESS, format: FORMAT, nativeSessionId: idFromName(path), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }
