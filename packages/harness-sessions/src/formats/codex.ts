@@ -393,7 +393,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return [...largest.values()].map((c) => c.ref).sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const codexReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['codex-acp', 'codex-cli'], format: FORMAT, stores: CODEX_STORES }, locate, fold)
+export const codexReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: codexRefForFile, aliases: ['codex-acp', 'codex-cli'], format: FORMAT, stores: CODEX_STORES }, locate, fold)
 
 export function codexRefForFile(path: string): SessionRef {
   return {

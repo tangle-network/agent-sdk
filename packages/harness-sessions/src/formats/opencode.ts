@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { SessionBuilder, count, isoTime, sessionError, str, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, LocateOptions, ModelCall, Part, ReadOptions, SessionError, SessionRef, TokenUsage } from '../schema.js'
-import { isMissing, withSqlite } from '../source.js'
+import { isMissing, sqliteStoreFiles, withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, withinPath } from '../stores.js'
 
 const FORMAT = 'opencode.sqlite' as const
@@ -205,20 +205,25 @@ async function fold(ref: SessionRef, mode: BuildMode, options: ReadOptions): Pro
 }
 
 export async function opencodeSessionsInStore(path: string, home: string | null, opts: LocateOptions = {}): Promise<SessionRef[]> {
-  const mtime = await mtimeMs(path)
-  const files = [path]
-  for (const suffix of ['-wal', '-shm']) if ((await mtimeMs(`${path}${suffix}`)) > 0) files.push(`${path}${suffix}`)
+  const [mtime, files] = await Promise.all([mtimeMs(path), sqliteStoreFiles(path)])
   return withSqlite(path, (db) => {
-    const rows = db.prepare('SELECT id, parent_id, directory, time_updated FROM session ORDER BY time_updated DESC').all() as Array<{ id: string; parent_id: string | null; directory: string; time_updated: number }>
+    const query = 'SELECT id, parent_id, directory, time_updated FROM session'
+    const rows = (opts.nativeSessionId === undefined
+      ? db.prepare(query + ' ORDER BY time_updated DESC').all()
+      : db.prepare(query + ' WHERE id = ?').all(opts.nativeSessionId)) as Array<{ id: string; parent_id: string | null; directory: string; time_updated: number }>
     return rows
-      .filter((row) => (!opts.nativeSessionId || row.id === opts.nativeSessionId)
-        && (!opts.cwd || withinPath(row.directory, opts.cwd))
+      .filter((row) => (!opts.cwd || withinPath(row.directory, opts.cwd))
         && (!opts.sinceMs || row.time_updated >= opts.sinceMs))
       .map((row) => ({ harness: HARNESS, format: FORMAT, nativeSessionId: row.id, path, files, home, cwd: row.directory, mtimeMs: row.time_updated || mtime, parentNativeSessionId: row.parent_id }))
   })
 }
 
-export const opencodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['opencode-acp', 'opencode-cli'], format: FORMAT }, async (home, opts) => {
+export const opencodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['opencode-acp', 'opencode-cli'], format: FORMAT,
+  sqlite: {
+    matches: has => has('session', 'parent_id') && has('message', 'session_id') && has('part', 'message_id'),
+    sessions: (path, opts) => opencodeSessionsInStore(path, null, opts),
+  },
+}, async (home, opts) => {
   const path = join(home, STORE.root, STORE.files[0])
   try {
     return await opencodeSessionsInStore(path, home, opts)

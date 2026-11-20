@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { isRecord } from '@tangle-network/agent-core'
 import { SessionBuilder, count, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
 import type { HarnessSessionReader, Part, SessionRef, TokenUsage } from '../schema.js'
-import { withSqlite } from '../source.js'
+import { sqliteStoreFiles, withSqlite } from '../source.js'
 import { EVIDENCE, STORES, mtimeMs, walkFiles } from '../stores.js'
 const FORMAT = 'openclaw.session-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -54,13 +54,15 @@ function readDb(db: DatabaseSync, sessionId: string, builder: SessionBuilder): v
     builder.message({ id, role: 'assistant', actor: 'agent', at, modelCallId, parts })
   }
 }
-export async function openclawSessionsInStore(path: string): Promise<SessionRef[]> {
-  const refs: SessionRef[] = []
-  await withSqlite(path, (db) => {
-    for (const row of db.prepare('SELECT session_id FROM session_windows').all() as { session_id: string }[])
-      refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: row.session_id, path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null })
-  }).catch(() => undefined)
-  return refs
+async function sessionRefs(path: string, nativeSessionId?: string): Promise<SessionRef[]> {
+  const [mtime, files] = await Promise.all([mtimeMs(path), sqliteStoreFiles(path)])
+  return withSqlite(path, db => {
+    const rows = nativeSessionId === undefined ? db.prepare('SELECT session_id FROM session_windows').all() : db.prepare('SELECT session_id FROM session_windows WHERE session_id = ?').all(nativeSessionId)
+    return rows.map(row => ({ harness: HARNESS, format: FORMAT, nativeSessionId: String(row.session_id), path, files, home: null, cwd: null, mtimeMs: mtime, parentNativeSessionId: null }))
+  })
+}
+export function openclawSessionsInStore(path: string, nativeSessionId?: string): Promise<SessionRef[]> {
+  return sessionRefs(path, nativeSessionId).catch(() => [])
 }
 async function fold(ref: SessionRef, mode: BuildMode): Promise<SessionBuilder> {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
@@ -68,16 +70,17 @@ async function fold(ref: SessionRef, mode: BuildMode): Promise<SessionBuilder> {
   builder.inferEnding()
   return builder
 }
-export const openclawReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT }, async (home, opts) => {
+export const openclawReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT,
+  sqlite: {
+    matches: has => has('session_windows', 'session_id') && has('transcript_events', 'event_zstd') && has('transcript_events', 'seq'),
+    sessions: (path, opts) => sessionRefs(path, opts.nativeSessionId),
+  },
+}, async (home, opts) => {
   const refs: SessionRef[] = []
   for (const rel of await walkFiles(join(home, STORE.root))) {
     if (!rel.endsWith('openclaw-agent.sqlite')) continue
     const path = join(home, STORE.root, rel)
-    const mtime = await mtimeMs(path)
-    for (const ref of await openclawSessionsInStore(path)) {
-      if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
-      refs.push({ ...ref, home, mtimeMs: mtime })
-    }
+    for (const ref of await openclawSessionsInStore(path, opts.nativeSessionId)) refs.push({ ...ref, home })
   }
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }, fold)

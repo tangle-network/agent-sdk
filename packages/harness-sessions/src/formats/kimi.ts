@@ -335,7 +335,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return selectedRefs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const kimiReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['kimi', 'kimi-cli'], format: FORMAT, globs: { session: WIRE, children: CHILD_WIRE }, stores: KIMI_STORES }, locate, fold)
+export const kimiReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: kimiRefForFile, aliases: ['kimi', 'kimi-cli'], format: FORMAT, globs: { session: WIRE, children: CHILD_WIRE }, stores: KIMI_STORES }, locate, fold)
 
 function refForWire(path: string, storePath: string, indices?: Map<string, Map<string, string>>): SessionRef {
   const { id, parent, root } = sessionIdentity(storePath)

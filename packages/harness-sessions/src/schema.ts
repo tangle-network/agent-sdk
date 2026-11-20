@@ -194,6 +194,13 @@ export interface HarnessSessionReader {
   stores: readonly NativeSessionStore[]
   globs: { session: string; children?: string }
   evidence: SessionEvidenceSources
+  /** Resolve a single native transcript file without enumerating a home directory. */
+  refForFile?(path: string): SessionRef
+  /** Recognize and enumerate this harness's native SQLite store. */
+  sqlite?: {
+    matches(hasColumn: (table: string, column: string) => boolean, path: string): boolean
+    sessions(path: string, options: LocateOptions): Promise<SessionRef[]>
+  }
   locate(home: string, opts?: LocateOptions): Promise<SessionRef[]>
   read(ref: SessionRef, opts?: ReadOptions): Promise<HarnessSession>
   summarize(ref: SessionRef, opts?: Pick<ReadOptions, 'signal'>): Promise<SessionSummary>

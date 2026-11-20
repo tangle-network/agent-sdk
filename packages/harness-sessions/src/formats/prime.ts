@@ -14,21 +14,25 @@ function idFromName(path: string): string {
   return basename(path, '.jsonl').replace(/^[\dTZ.:-]+_/u, '')
 }
 
+export function primeRefForFile(path: string): SessionRef {
+  return { harness: HARNESS, format: FORMAT, nativeSessionId: idFromName(path), path, files: [path], home: null, cwd: null, mtimeMs: 0, parentNativeSessionId: null }
+}
+
 async function fold(ref: SessionRef, mode: BuildMode, opts: ReadOptions) {
   const records = fileRecords(ref.path, { strict: opts.corruption === 'strict', signal: opts.signal })
   return runFold(createFold(ref, mode, records.stats, HARNESS, FORMAT), records)
 }
 
-export const primeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: [], format: FORMAT }, async (home, opts) => {
+export const primeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: primeRefForFile, aliases: [], format: FORMAT }, async (home, opts) => {
   const root = join(home, STORE.root)
   const pattern = storeGlob(STORE.files[0], opts.nativeSessionId)
   const refs: SessionRef[] = []
   for (const rel of await walkFiles(root)) {
     if (!pattern.test(rel)) continue
     const path = join(root, rel)
-    const id = idFromName(rel)
-    if (opts.nativeSessionId && id !== opts.nativeSessionId) continue
-    refs.push({ harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home, cwd: null, mtimeMs: await mtimeMs(path), parentNativeSessionId: null })
+    const ref = primeRefForFile(path)
+    if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
+    refs.push({ ...ref, home, mtimeMs: await mtimeMs(path) })
   }
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }, fold)

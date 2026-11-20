@@ -251,9 +251,15 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
-export const claudeCodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, aliases: ['claude', 'claude-code-acp', 'claudish'], format: FORMAT, globs: { session: STORE.files[0], children: STORE.files[1] }, stores: CLAUDE_CODE_STORES }, locate, fold)
+export const claudeCodeReader: HarnessSessionReader = foldedReader({ harness: HARNESS, refForFile: claudeCodeRefForFile, aliases: ['claude', 'claude-code-acp', 'claudish'], format: FORMAT, globs: { session: STORE.files[0], children: STORE.files[1] }, stores: CLAUDE_CODE_STORES }, locate, fold)
 
-export function claudeCodeRefForFile(path: string, parentNativeSessionId: string | null = null): SessionRef {
+function parentForFile(path: string): string | null {
+  const parts = path.split(/[/\\]/u)
+  const index = parts.lastIndexOf('subagents')
+  return index > 0 && /^agent-.*\.jsonl$/u.test(parts.at(-1) ?? '') ? parts[index - 1]! : null
+}
+
+export function claudeCodeRefForFile(path: string, parentNativeSessionId: string | null = parentForFile(path)): SessionRef {
   const name = basename(path, '.jsonl')
   return {
     harness: HARNESS,

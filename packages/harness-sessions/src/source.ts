@@ -185,6 +185,15 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/** Files needed to move a live SQLite store, including the write-ahead log when present. */
+export async function sqliteStoreFiles(path: string): Promise<string[]> {
+  const files = [path]
+  for (const suffix of ['-wal', '-shm']) {
+    if (await exists(path + suffix)) files.push(path + suffix)
+  }
+  return files
+}
+
 async function openSqlite(path: string): Promise<DatabaseSync> {
   const mode = (await exists(`${path}-wal`)) ? 'mode=ro' : 'immutable=1'
   const { DatabaseSync } = loadSqlite()
