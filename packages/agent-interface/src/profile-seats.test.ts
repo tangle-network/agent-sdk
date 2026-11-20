@@ -53,6 +53,11 @@ describe("AgentProfile.seats", () => {
       seats: [{ harness: "opencode", provider: "zai-coding-plan", model: "glm-5.3", selector: { kind: "all-eligible" } }],
     } as const;
     expect(agentProfileSchema.safeParse(plan).success).toBe(true);
+    const pi = {
+      ...plan, harness: "pi", model: { ...plan.model, provider: "zai-coding-paas", reasoningEffort: "high" },
+      seats: [{ ...plan.seats[0], harness: "pi", provider: "zai-coding-paas" }],
+    } as const;
+    expect(agentProfileSchema.safeParse(pi).success).toBe(true);
     const unknown = { ...plan, model: { ...plan.model, provider: "zai-coding" }, seats: [{ ...plan.seats[0], provider: "zai-coding" }] };
     expect(agentProfileSchema.safeParse(unknown).error?.issues.map((issue) => issue.path.join("."))).toEqual(["seats.0.provider"]);
   });
