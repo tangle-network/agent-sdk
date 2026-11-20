@@ -145,6 +145,23 @@ describe('retained Kimi flat session files', () => {
     expect(partial.ending).toEqual({ status: 'open', error: null, at: null })
   })
 
+  it('retains the closed turn when a queued prompt opens and never reports usage', async () => {
+    // Numerical fields from one retained Kimi 1.5 native wire. Original SHA-256
+    // c2056fbc8a7a3656510bc4ec5ba18c9c675de19fab5055a71e131fd39d846a1f.
+    const raw = await readFile(join(fixtures, 'kimi2', 'queued-turn-accounting.jsonl'), 'utf8')
+    const rows = raw.trimEnd().split('\n').map(line => JSON.parse(line))
+    const resume = rows.findIndex(row => row.type === 'turn.prompt' && row.turnId === 2)
+    const first = { id: '0', firstModelCall: 0, endModelCall: 11, ending: expect.objectContaining({ status: 'completed' }),
+      usage: { input: 66200, output: 5650, reasoning: null, cacheRead: 427008, cacheWrite: 0 } }
+    const pending = summarizeSessionInput('kimi-code', { records: rows.slice(0, resume) }, { nativeSessionId: id })
+    expect(pending).toMatchObject({ modelCalls: 12, ending: { status: 'open' }, turnReceipts: [first] })
+    const settled = readSessionInput('kimi-code', { records: rows }, { nativeSessionId: id })
+    expect(settled.turnReceipts).toEqual([first, {
+      id: '2', firstModelCall: 12, endModelCall: 13, ending: expect.objectContaining({ status: 'completed' }),
+      usage: { input: 53888, output: 303, reasoning: null, cacheRead: 27904, cacheWrite: 0 },
+    }])
+  })
+
   it('joins real v2 capture payloads to both layouts and infers current direct-file CLI identity', async () => {
     const archive = await mkdtemp(join(tmpdir(), 'kimi2-archive-'))
     try {

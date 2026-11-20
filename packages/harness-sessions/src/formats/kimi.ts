@@ -69,6 +69,7 @@ function usageOf(value: unknown): TokenUsage | null {
 export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats): SessionFold {
   const builder = new SessionBuilder(HARNESS, FORMAT, EVIDENCE[FORMAT].servedModel, mode, ref.nativeSessionId, ref.parentNativeSessionId)
   let turn = 0
+  let openTurn: { id: string; firstModelCall: number } | null = null
   let step: { call: ModelCall; messageId: string } | null = null
   let lastToolCall: { id: string; text: string } | null = null
   let aborted: { at: string | null } | null = null
@@ -107,6 +108,9 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
       case 'turn.prompt':
       case 'TurnBegin': {
         turn += 1
+        openTurn = type === 'turn.prompt' && (typeof payload.turnId === 'string' || Number.isSafeInteger(payload.turnId))
+          ? { id: String(payload.turnId), firstModelCall: builder.modelCalls.length }
+          : null
         step = null
         aborted = null
         promptId = str(payload.promptId)
@@ -199,6 +203,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats)
         const error = isRecord(payload.error) && typeof payload.error.code === 'string' && typeof payload.error.message === 'string' ? { kind: payload.error.code, message: payload.error.message, httpStatus: null, at: endedAt } : reason === nativeReason ? nativeEnding.error : null
         nativeEnding = { status, error, at: status === 'open' ? null : endedAt }
         nativeReason = reason
+        if (type === 'turn.ended' && status !== 'open' && openTurn?.id === String(payload.turnId)) {
+          builder.closeNativeTurn(openTurn.id, openTurn.firstModelCall, nativeEnding)
+          openTurn = null
+        }
         if (status === 'open') builder.gap('Native ending reason is unknown')
         break
       }

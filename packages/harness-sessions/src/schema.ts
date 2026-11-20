@@ -109,6 +109,16 @@ export interface SessionIntegrity {
   gaps: string[]
 }
 
+/** One explicitly closed native turn. The model-call interval is half-open. */
+export interface NativeTurnReceipt {
+  id: string
+  firstModelCall: number
+  endModelCall: number
+  ending: SessionEnding
+  /** Totals over this closed turn. Each incomplete token class stays null. */
+  usage: TokenUsage | null
+}
+
 export interface HarnessSession {
   schema: 'tangle.harness-session.v1'
   harness: string
@@ -127,6 +137,7 @@ export interface HarnessSession {
   modelSource: SessionEvidenceSources['servedModel']
   usage: TokenUsage | null
   ending: SessionEnding
+  turnReceipts?: NativeTurnReceipt[]
   children: Array<{ nativeSessionId: string; toolCallId: string | null }>
   integrity: SessionIntegrity
 }
@@ -144,6 +155,7 @@ export interface SessionSummary {
   modelSource: HarnessSession['modelSource']
   usage: TokenUsage | null
   ending: SessionEnding
+  turnReceipts?: NativeTurnReceipt[]
   unparsedRecords: number
   bytes: number
   truncated: boolean

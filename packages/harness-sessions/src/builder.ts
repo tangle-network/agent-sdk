@@ -2,6 +2,7 @@ import { isRecord } from '@tangle-network/agent-core'
 import type {
   HarnessSession,
   ModelCall,
+  NativeTurnReceipt,
   Part,
   SessionEnding,
   SessionError,
@@ -59,8 +60,10 @@ export function httpStatusIn(text: string | null | undefined): number | null {
   return match ? Number(match[1]) : null
 }
 
+const usageKeys = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite'] as const
+
 function addUsage(total: TokenUsage, usage: TokenUsage): void {
-  for (const key of ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite'] as const) {
+  for (const key of usageKeys) {
     const value = usage[key]
     if (value !== null) total[key] = (total[key] ?? 0) + value
   }
@@ -95,6 +98,7 @@ export class SessionBuilder {
   private toolCallCount = 0
   private replies = 0
   readonly modelCalls: ModelCall[] = []
+  private readonly turnReceipts: NativeTurnReceipt[] = []
   private readonly modelCallById = new Map<string, ModelCall>()
   private readonly toolDefinitionSnapshots: SessionToolDefinitionSnapshot[] = []
   private readonly children: HarnessSession['children'] = []
@@ -226,6 +230,26 @@ export class SessionBuilder {
     this.gap(reason)
   }
 
+  closeNativeTurn(id: string, firstModelCall: number, ending: SessionEnding): void {
+    const calls = this.modelCalls.slice(firstModelCall)
+    const total: TokenUsage = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null }
+    // A missing step counter stays unknown even if another step reported that class.
+    for (const key of usageKeys) {
+      if (!calls.length) continue
+      let sum: number | null = 0
+      for (const call of calls) {
+        const value = call.usage?.[key]
+        if (value == null) {
+          sum = null
+          break
+        }
+        sum += value
+      }
+      total[key] = sum
+    }
+    this.turnReceipts.push({ id, firstModelCall, endModelCall: this.modelCalls.length, ending, usage: usageOrNull(total) })
+  }
+
   setSessionUsage(usage: TokenUsage | null): void {
     this.sessionUsage = usage
   }
@@ -294,6 +318,7 @@ export class SessionBuilder {
       modelSource: this.modelSource,
       usage: this.usage(),
       ending: this.ending,
+      ...(this.turnReceipts.length ? { turnReceipts: this.turnReceipts } : {}),
       children: this.children,
       integrity: {
         sourceFiles: this.sources,
@@ -318,6 +343,7 @@ export class SessionBuilder {
       modelSource: this.modelSource,
       usage: this.usage(),
       ending: this.ending,
+      ...(this.turnReceipts.length ? { turnReceipts: this.turnReceipts } : {}),
       unparsedRecords: this.unparsed,
       bytes: this.sources.reduce((sum, s) => sum + s.bytes, 0),
       truncated: this.truncated,
