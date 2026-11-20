@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.14
+
+### Patch Changes
+
+- 0ba4bbe: Include Kimi Code helpers and their own model calls when reading a native session or its archived copy. Preserve the link to the tool call that started each helper.
+
 ## 1.0.13
 
 ### Patch Changes
