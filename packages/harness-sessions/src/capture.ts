@@ -114,6 +114,10 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
       listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'no_reader_for_harness', nativeSessionId: copy.nativeSessionId })
       continue
     }
+    if (!reader.formats.includes(copy.format)) {
+      listing.missing.push({ sandboxSessionId: null, harness: copy.harness, reason: 'harness_format_mismatch', nativeSessionId: copy.nativeSessionId })
+      continue
+    }
     const stores = reader.stores.filter((s) => s.format === copy.format)
     const store = stores.find((s) => copy.files.some((f) => storePathOf(f).includes(`${s.root}/`))) ?? stores[0] ?? reader.stores[0]!
     const inStore = (path: string): string | null => {
@@ -129,7 +133,17 @@ async function fromV2(archiveDir: string, manifest: RawEvidenceArchiveManifestV2
         continue
       }
       const path = join(archiveDir, db.path)
-      const refs = await nativeStoreSessions(path, { harness: reader.harness })
+      let refs: SessionRef[]
+      try {
+        refs = await nativeStoreSessions(path, { harness: reader.harness })
+      } catch (error) {
+        listing.missing.push({
+          sandboxSessionId: null, harness: copy.harness, nativeSessionId: copy.nativeSessionId, path: db.path,
+          reason: isMissing(error) ? 'store_file_missing' : 'store_unreadable',
+          detail: error instanceof Error ? error.message : String(error),
+        })
+        continue
+      }
       const children = new Map<string, string[]>()
       for (const ref of refs) if (ref.parentNativeSessionId) {
         const group = children.get(ref.parentNativeSessionId) ?? []

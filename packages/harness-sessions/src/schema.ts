@@ -194,8 +194,9 @@ export interface HarnessSessionReader {
   stores: readonly NativeSessionStore[]
   globs: { session: string; children?: string }
   evidence: SessionEvidenceSources
-  /** Resolve sessions in an individual SQLite file, including a relocated store. */
+  /** Resolve a single native transcript file without enumerating a home directory. */
   refForFile?(path: string): SessionRef
+  /** Recognize and enumerate this harness's native SQLite store. */
   sqlite?: {
     matches(hasColumn: (table: string, column: string) => boolean, path: string): boolean
     sessions(path: string, options: LocateOptions): Promise<SessionRef[]>

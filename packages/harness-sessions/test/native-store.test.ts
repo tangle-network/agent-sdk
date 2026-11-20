@@ -1,9 +1,10 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it } from 'vitest'
-import { isNativeStoreDatabase, nativeStoreSessions, readerFor } from '../src/index.js'
+import { isNativeStoreDatabase, listCapture, nativeStoreSessions, readerFor, type NativeSessionCopy } from '../src/index.js'
 
 const scratch: string[] = []
 const writers: DatabaseSync[] = []
@@ -98,4 +99,25 @@ it('binds a directly opened Claude child to the recorded parent directory throug
   const ref = reader.refForFile!(path)
   expect(ref).toMatchObject({ nativeSessionId: 'child', parentNativeSessionId: 'actual-parent' })
   expect((await reader.read(ref)).messages.length).toBeGreaterThan(0)
+})
+
+it('reports an absent or mislabeled archive copy while returning the independently readable session', async () => {
+  const dir = directory()
+  const store = '.local/share/opencode/opencode.db'
+  copyFileSync(join(import.meta.dirname, 'fixtures/opencode/opencode.db'), join(dir, 'recording'))
+  const bytes = readFileSync(join(dir, 'recording'))
+  const copy: NativeSessionCopy = {
+    harness: 'opencode', format: 'opencode.sqlite', executionId: 'run', attempt: 1,
+    nativeSessionId: 'ses_ef7195eb2ffeZVueR3r0KnCUON', copy: 'settled', capturedAt: new Date(0).toISOString(),
+    process: { pid: null, exitedAt: null, exitCode: null, signal: null }, complete: true, missingReasons: [],
+    files: [{ path: 'recording', store: '.local/share/opencode', storePath: store, method: 'sqlite-backup',
+      sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), truncated: false }],
+  }
+  const result = await listCapture(dir, { schema: 'tangle.raw-evidence-archive.v2', nativeSessions: [
+    { ...copy, files: [{ ...copy.files[0]!, path: 'absent' }] },
+    { ...copy, harness: 'hermes' },
+    copy,
+  ] })
+  expect(result.missing.map(row => row.reason)).toEqual(['store_file_missing', 'harness_format_mismatch'])
+  expect(result.sessions.map(row => row.ref.nativeSessionId)).toEqual([copy.nativeSessionId])
 })
