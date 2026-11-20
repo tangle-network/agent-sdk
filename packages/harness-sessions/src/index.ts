@@ -5,6 +5,7 @@ export type {
   ModelCall,
   NativeSessionCopy,
   NativeSessionStore,
+  NativeTurnReceipt,
   Part,
   RawEvidenceArchiveManifestV2,
   ReadOptions,
