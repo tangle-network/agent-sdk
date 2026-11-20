@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.16
+
+### Patch Changes
+
+- ea2b004: Detect relocated native SQLite databases by their schema and select exact sessions through the SDK and CLI. Read OpenCode, Hermes, OpenClaw and NanoClaw from their own stores, including active WAL files. Direct Prime and Grok files retain their harness identity.
+
 ## 1.0.15
 
 ### Patch Changes
