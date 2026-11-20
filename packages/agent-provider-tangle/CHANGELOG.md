@@ -1,5 +1,11 @@
 # @tangle-network/agent-provider-tangle
 
+## 5.0.19
+
+### Patch Changes
+
+- 42a1d52: Accept Agent Container terminal results that explicitly declare `unreported` usage with `tokensKnown: false`. Preserve their output and unknown token and cost semantics without emitting measured usage; contradictory, nonterminal, and invalid declarations remain refused.
+
 ## 5.0.18
 
 ### Patch Changes
