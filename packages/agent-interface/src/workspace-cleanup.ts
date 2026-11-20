@@ -3,7 +3,7 @@ import type { Sha256Digest } from "./agent-candidate.js";
 import { canonicalCandidateDigest } from "./agent-candidate-schema-common.js";
 import { idSchema, sha256DigestSchema } from "./workspace-branching-shared.js";
 import { boundedStringSchema, CONTRACT_MAX_ARRAY_LENGTH } from "./contract-limits.js";
-import type { WorkspaceCheckpointRequest } from "./workspace-checkpoint.js";
+import type { WorkspaceCheckpointRef, WorkspaceCheckpointRequest } from "./workspace-checkpoint.js";
 import type { WorkspaceCheckpointLookupResult, WorkspaceCheckpointResult, WorkspaceOperationLookupRequest } from "./workspace-checkpoint.js";
 import type { WorkspaceForkRequest } from "./workspace-fork.js";
 import type { WorkspaceForkLookupResult, WorkspaceForkResult } from "./workspace-fork.js";
@@ -196,6 +196,11 @@ export interface AgentWorkspaceBranching {
     request: WorkspaceOperationLookupRequest,
     options?: { signal?: AbortSignal },
   ): Promise<WorkspaceCheckpointLookupResult>;
+  /** Inspect a previously issued, immutable checkpoint for a fork. Operation replay and cleanup have their own evidence. */
+  inspectCheckpoint?(
+    checkpoint: WorkspaceCheckpointRef,
+    options?: { signal?: AbortSignal },
+  ): Promise<"found" | "absent" | "unknown">;
   deleteCheckpoint(
     request: WorkspaceCleanupRequest & { kind: "checkpoint" },
     options?: { signal?: AbortSignal },

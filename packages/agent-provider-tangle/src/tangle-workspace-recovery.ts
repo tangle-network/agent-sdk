@@ -428,6 +428,17 @@ export type ManagedCheckpoint =
         | "operation not confirmed";
     };
 
+/** The public preflight and a fresh fork verify the same original reference. */
+export function inspectCheckpointResource(
+  box: SandboxInstanceLike,
+  provider: string,
+  input: WorkspaceCheckpointRef,
+  signal?: AbortSignal
+): Promise<ManagedCheckpoint> {
+  const reference = WorkspaceCheckpointRefSchema.parse(input);
+  return findManagedCheckpoint(box, provider, reference.checkpointId, reference, signal);
+}
+
 /**
  * Confirm that one checkpoint id is a settled checkpoint this provider created.
  *
@@ -438,6 +449,9 @@ export type ManagedCheckpoint =
  * never absent. `expected` binds the answer to a specific checkpoint
  * reference (fork): a reference that does not match its marker is absent, not
  * unknown, because the caller supplied a checkpoint this source never produced.
+ * The retained reference can address a live physical capture after the operation
+ * expires: Sandbox reserves seal tags for storage, and the physical id commits to
+ * the native snapshot. This proof grants a read of those exact bytes only.
  */
 export async function findManagedCheckpoint(
   box: SandboxInstanceLike,
@@ -467,7 +481,10 @@ export async function findManagedCheckpoint(
     }
     if (
       expected &&
-      (marker.requestDigest !== expected.requestDigest ||
+      (expected.checkpointId !== id || expected.provider !== provider ||
+        marker.requestDigest !== expected.requestDigest ||
+        canonicalCandidateDigest(marker.request.metadata ?? null) !==
+          canonicalCandidateDigest(expected.metadata ?? null) ||
         canonicalCandidateDigest(marker.request.source) !==
           canonicalCandidateDigest(expected.source))
     ) {
@@ -480,8 +497,18 @@ export async function findManagedCheckpoint(
       signal?.throwIfAborted();
       return unknown("operation not confirmed");
     }
+    if (expected && lookup?.kind === "checkpoint" && lookup.outcome === "not_found") {
+      const seals = snapshot.tags.filter((tag) => tag.startsWith("seal."));
+      if (snapshot.snapshotId !== id || !/^[a-f0-9]{64}$/u.test(id) || seals.length !== 1 || seals[0] !== `seal.${id}`) {
+        return unknown("operation not confirmed");
+      }
+      const byKey = await checkpointOperationLookupByKey(box, marker.idempotencyKey, signal);
+      return byKey?.kind === "checkpoint" && byKey.outcome === "not_found"
+        ? { state: "found", snapshotId: id }
+        : unknown("operation not confirmed");
+    }
     if (lookup?.outcome !== "found" || lookup.kind !== "checkpoint" || lookup.state !== "succeeded") return unknown("operation not confirmed");
-    return snapshot.snapshotId === id || snapshotFromOperationResult(snapshot, lookup, marker)?.snapshotId === id
+    return snapshotFromOperationResult(snapshot, lookup, marker)?.snapshotId === id
       ? { state: "found", snapshotId: snapshot.snapshotId }
       : unknown("operation not confirmed");
   } catch {
