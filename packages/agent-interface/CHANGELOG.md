@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.29
+
+### Patch Changes
+
+- a227481: Inspect an issued workspace checkpoint by its exact reference. Tangle can restore an original physical capture after its operation record expires when the native seal, source and request still match.
+
 ## 5.10.28
 
 ### Patch Changes
