@@ -1,0 +1,36 @@
+[
+  {
+    "actor": "stellar receiver",
+    "source": "/mnt/traces/discovery-runs/collective-research-cohort-06-slot-3-20261119a/blobs/sha256-24505a8db423c4251eaf8fd2a7b9e18451c6cf895f830b28cf7c6866ac2d787b.json",
+    "nativeRef": "sha256:24505a8db423c4251eaf8fd2a7b9e18451c6cf895f830b28cf7c6866ac2d787b",
+    "sourceSha256": "cdfd38a3724b554160fec7007288e9dd36b694e05a6795db7394767860acd3fd",
+    "result": {
+      "success": true,
+      "usageMode": "cumulative",
+      "eventStreamComplete": false,
+      "tokensKnown": false,
+      "usdKnown": false,
+      "eventStreamError": "Tangle Sandbox event contained invalid or conflicting usage modes"
+    },
+    "endStatus": [
+      "started",
+      "completed",
+      "complete"
+    ]
+  },
+  {
+    "actor": "diffraction donor",
+    "source": "/mnt/traces/discovery-runs/collective-research-cohort-06-slot-3-20261119a/blobs/sha256-c50b53839d25e4ba630ddd1619ed48ce9766bd55f30e57d3878f785175517cac.json",
+    "nativeRef": "sha256:c50b53839d25e4ba630ddd1619ed48ce9766bd55f30e57d3878f785175517cac",
+    "sourceSha256": "e5f636e1e1fe1189d742a2a840189aabdb4719e26fe6f1ee6e976eae5f5991c5",
+    "result": {
+      "success": true,
+      "usageMode": "cumulative"
+    },
+    "endStatus": [
+      "started",
+      "completed",
+      "complete"
+    ]
+  }
+]
