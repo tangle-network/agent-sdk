@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.15
+
+### Patch Changes
+
+- 1bd0e21: Retain Kimi’s closed native turns and their usage when another prompt opens in the same session.
+
 ## 1.0.14
 
 ### Patch Changes
