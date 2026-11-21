@@ -4,7 +4,8 @@
 
 ### Patch Changes
 
-- 129f0a5: Keep a marked Prime session's recorded identity everywhere it is found: `isPrimeSessionHeader` recognizes Prime's `rlmDepth` header marker (zero depth included, ordinary Pi headers excluded), locate and read carry the recorded session ID, cwd and `parentSession`-proven parent instead of the store filename, and `readSessionInput`/`summarizeSessionInput` accept `prime` input through the same fold. A session whose header records a fork exposes `fork` provenance (parent ID, verbatim reference, `rlmDepth`, `userFork`, creation time) and marks replayed prehistory per message (`inherited`), so a forked tool call stays attributable to its root session. Unmarked historical recordings keep their established store-filename identity.
+- A marked Prime recording keeps its native session ID and parent when copied or renamed. The file, catalog and in-memory readers use the recorded header. Older unmarked recordings retain their established identity.
+- Prime fork summaries and OTLP distinguish the fork’s own execution from its parent’s replayed history. Original calls and results remain available with their native IDs. The OTLP root records whether the fork continued at the operator level or spawned a child.
 
 ## 1.0.16
 
