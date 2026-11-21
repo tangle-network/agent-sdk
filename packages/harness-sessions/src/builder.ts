@@ -127,15 +127,17 @@ export class SessionBuilder {
   seen(value: unknown): string | null {
     const at = isoTime(value)
     if (at === null) return null
-    if (this.startedAt === null || at < this.startedAt) this.startedAt = at
+    if (!this.forkProvenance?.createdAt && (this.startedAt === null || at < this.startedAt)) this.startedAt = at
     if (this.endedAt === null || at > this.endedAt) this.endedAt = at
     return at
   }
 
   message(message: SessionMessage): SessionMessage {
-    if (message.role === 'assistant' && message.actor === 'agent') this.replies += 1
-    if (message.role === 'user' && (message.actor === 'human' || message.actor === 'subagent-spawn')) this.inputsSinceLastCall += 1
-    this.lastRole = message.role
+    if (!message.inherited) {
+      if (message.role === 'assistant' && message.actor === 'agent') this.replies += 1
+      if (message.role === 'user' && (message.actor === 'human' || message.actor === 'subagent-spawn')) this.inputsSinceLastCall += 1
+      this.lastRole = message.role
+    }
     if (this.full) {
       this.messages.push(message)
       this.messageById.set(message.id, message)
@@ -160,14 +162,17 @@ export class SessionBuilder {
     return this.messageById.has(messageId)
   }
 
-  toolCall(call: { id: string; name: string; input: unknown; inputText: string | null; at: string | null; messageId: string }): void {
+  toolCall(call: { id: string; name: string; input: unknown; inputText: string | null; at: string | null; messageId: string; inherited?: boolean }): void {
     if (this.toolCallIds.has(call.id)) return
     this.toolCallIds.add(call.id)
-    this.openToolCalls.add(call.id)
-    this.toolCallCount += 1
+    if (!call.inherited) {
+      this.openToolCalls.add(call.id)
+      this.toolCallCount += 1
+    }
     if (!this.full) return
     this.toolCalls.set(call.id, {
       id: call.id,
+      ...(call.inherited ? { inherited: true } : {}),
       name: call.name,
       input: call.input,
       inputText: call.inputText,
@@ -179,9 +184,9 @@ export class SessionBuilder {
     })
   }
 
-  toolResult(id: string, result: { output: unknown; text: string | null; isError: boolean; at: string | null; name?: string; messageId: string; details?: unknown }): void {
+  toolResult(id: string, result: { output: unknown; text: string | null; isError: boolean; at: string | null; name?: string; messageId: string; details?: unknown; inherited?: boolean }): void {
     if (!this.toolCallIds.has(id)) {
-      this.toolCall({ id, name: result.name ?? 'unknown', input: null, inputText: null, at: result.at, messageId: result.messageId })
+      this.toolCall({ id, name: result.name ?? 'unknown', input: null, inputText: null, at: result.at, messageId: result.messageId, inherited: result.inherited })
       this.gap(`tool result ${id} has no recorded call`)
     }
     this.openToolCalls.delete(id)
@@ -194,7 +199,7 @@ export class SessionBuilder {
   }
 
   modelCall(call: ModelCall): ModelCall {
-    this.inputsSinceLastCall = 0
+    if (!call.inherited) this.inputsSinceLastCall = 0
     this.modelCalls.push(call)
     this.modelCallById.set(call.id, call)
     return call
@@ -259,6 +264,7 @@ export class SessionBuilder {
   /** Recorded by the fold when the session header proves a parent session; mutations before finish() are kept. */
   fork(fork: SessionForkProvenance): void {
     this.forkProvenance = fork
+    if (fork.createdAt) this.startedAt = fork.createdAt
   }
 
   end(ending: SessionEnding): void {
@@ -271,7 +277,7 @@ export class SessionBuilder {
       this.ending = { status: error ? 'error' : 'aborted', error, at: aborted.at ?? error?.at ?? null }
       return
     }
-    const last = this.modelCalls[this.modelCalls.length - 1]
+    const last = this.ownedModelCalls().at(-1)
     if (last?.error && this.inputsSinceLastCall === 0) {
       this.ending = { status: 'error', error: last.error, at: last.error.at ?? last.at }
       return
@@ -287,16 +293,22 @@ export class SessionBuilder {
     return this.ending.status
   }
 
+  /** Keep replay visible in full conversations and out of the fork's execution totals. */
+  private ownedModelCalls(): ModelCall[] {
+    return this.forkProvenance ? this.modelCalls.filter((call) => !call.inherited) : this.modelCalls
+  }
+
   private usage(): TokenUsage | null {
     if (this.sessionUsage !== undefined) return this.sessionUsage
     const total: TokenUsage = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null }
-    for (const call of this.modelCalls) if (call.usage) addUsage(total, call.usage)
+    for (const call of this.modelCalls) if (!call.inherited && call.usage) addUsage(total, call.usage)
     return usageOrNull(total)
   }
 
   private servedModels(): Record<string, number> {
     const models: Record<string, number> = {}
     for (const call of this.modelCalls) {
+      if (call.inherited) continue
       const key = servedModelKey(call)
       if (key !== null) models[key] = (models[key] ?? 0) + 1
     }
@@ -338,16 +350,17 @@ export class SessionBuilder {
   }
 
   summary(): SessionSummary {
+    const owned = this.ownedModelCalls()
     return {
       harness: this.harness,
       format: this.format,
       nativeSessionId: this.nativeSessionId,
       parentNativeSessionId: this.parentNativeSessionId,
-      modelCalls: this.modelCalls.length,
+      modelCalls: owned.length,
       replies: this.replies,
       toolCalls: this.toolCallCount,
       servedModels: this.servedModels(),
-      lastServedModel: [...this.modelCalls].reverse().map(servedModelKey).find((key) => key !== null) ?? null,
+      lastServedModel: [...owned].reverse().map(servedModelKey).find((key) => key !== null) ?? null,
       modelSource: this.modelSource,
       usage: this.usage(),
       ending: this.ending,

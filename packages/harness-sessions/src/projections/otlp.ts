@@ -62,6 +62,7 @@ export function toOtlpSpans(session: HarnessSession, options: OtlpProjectionOpti
       ...(call.usage?.output != null ? { outputTokens: call.usage.output } : {}),
       ...(call.costUsd != null ? { costUsd: call.costUsd } : {}),
       attributes: {
+        ...(call.inherited ? { 'tangle.harness_session.inherited': true } : {}),
         ...(call.usage?.cacheRead != null ? { 'gen_ai.usage.cache_read.input_tokens': call.usage.cacheRead } : {}),
         ...(call.usage?.cacheWrite != null ? { 'gen_ai.usage.cache_creation.input_tokens': call.usage.cacheWrite } : {}),
         ...(call.usage?.reasoning != null ? { 'gen_ai.usage.reasoning_tokens': call.usage.reasoning } : {}),
@@ -86,6 +87,7 @@ export function toOtlpSpans(session: HarnessSession, options: OtlpProjectionOpti
         : call.status === 'completed' ? { code: 'STATUS_CODE_OK' } : { code: 'STATUS_CODE_UNSET' },
       attributes: {
         'gen_ai.tool.call.id': call.id,
+        ...(call.inherited ? { 'tangle.harness_session.inherited': true } : {}),
         'tangle.tool.status': call.status,
         ...(chars > 0 ? { 'input.value': cap(call.inputText ?? JSON.stringify(call.input ?? null), chars) } : {}),
         ...(chars > 0 && call.result?.text ? { 'output.value': cap(call.result.text, chars) } : {}),

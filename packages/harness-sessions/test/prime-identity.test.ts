@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { isPrimeSessionHeader, piReader, piRefForFile, primeParentNativeSessionId, primeReader, primeRefForFile, readSessionInput, summarizeSessionInput } from '../src/index.js'
+import { isPrimeSessionHeader, piReader, piRefForFile, primeParentNativeSessionId, primeReader, primeRefForFile, readSessionInput, summarizeSessionInput, toOtlpSpans } from '../src/index.js'
 
 const scratch: string[] = []
 
@@ -38,21 +38,19 @@ const FORK = {
   inheritedEntries: 6,
 }
 
-it('recognizes the Prime marker exactly: a session header with a nonnegative integer rlmDepth', () => {
-  expect(isPrimeSessionHeader(JSON.parse(readFileSync(fixture('root.jsonl'), 'utf8').split('\n')[0]!))).toBe(true)
-  expect(isPrimeSessionHeader(JSON.parse(readFileSync(fixture('fork.jsonl'), 'utf8').split('\n')[0]!))).toBe(true)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: 'x', timestamp: '2026-11-20T10:00:00.000Z', cwd: '/w', rlmDepth: 0 })).toBe(true)
-  // The Pi family writes version without ever writing rlmDepth: an ordinary Pi header is not Prime.
-  expect(isPrimeSessionHeader(JSON.parse(readFileSync(fixture('legacy-unmarked.jsonl'), 'utf8').split('\n')[0]!))).toBe(false)
-  expect(isPrimeSessionHeader(JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'pi', '2026-10-05T00-42-50-830Z_7b2f3c4e-1d2a-4b5c-8e9f-0a1b2c3d4e5f.jsonl'), 'utf8').split('\n')[0]!))).toBe(false)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: 'x', timestamp: 't', cwd: '/w', rlmDepth: 1 })).toBe(true)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: 'x', timestamp: 't', cwd: '/w', rlmDepth: -1 })).toBe(false)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: 'x', timestamp: 't', cwd: '/w', rlmDepth: 1.5 })).toBe(false)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: 'x', timestamp: 't', cwd: '/w', rlmDepth: '0' })).toBe(false)
-  expect(isPrimeSessionHeader({ type: 'session', version: 3, id: '', timestamp: 't', cwd: '/w', rlmDepth: 0 })).toBe(false)
-  expect(isPrimeSessionHeader({ type: 'message', id: 'x', rlmDepth: 0 })).toBe(false)
-  expect(isPrimeSessionHeader(null)).toBe(false)
-  expect(isPrimeSessionHeader('session')).toBe(false)
+it('rejects a marked Prime recording in the Pi catalog, file and in-memory readers', async () => {
+  const home = join(directory(), 'home')
+  const dir = join(home, '.pi', 'agent', 'sessions', 'work')
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, 'received_12345.jsonl')
+  copyFileSync(fixture('root.jsonl'), path)
+  const text = readFileSync(path, 'utf8')
+  expect(isPrimeSessionHeader(JSON.parse(text.split('\n')[0]!))).toBe(true)
+  expect(await piReader.locate(home)).toEqual([])
+  await expect(piReader.read(piRefForFile(path))).rejects.toThrow('expected pi, found prime')
+  await expect(piReader.summarize(piRefForFile(path))).rejects.toThrow('expected pi, found prime')
+  expect(() => readSessionInput('pi', { text })).toThrow('expected pi, found prime')
+  expect(() => summarizeSessionInput('pi', { text })).toThrow('expected pi, found prime')
 })
 
 it('derives the parent native ID from a recorded parentSession reference without touching the filesystem', () => {
@@ -102,7 +100,15 @@ it('represents the recorded fork edge: parent ID, verbatim reference, user fork 
   expect(fork.toolCalls.map((call) => call.id)).toEqual(['call_native_1'])
   expect(fork.toolCalls[0]!.messageId).toBe('e2')
   expect(fork.messages.find((message) => message.id === 'e2')!.inherited).toBe(true)
-  expect((await primeReader.summarize(forkRef!)).fork).toEqual(FORK)
+  expect(fork.startedAt).toBe(FORK.createdAt)
+  expect(await primeReader.summarize(forkRef!)).toMatchObject({
+    fork: FORK, startedAt: FORK.createdAt, modelCalls: 1, replies: 1, toolCalls: 0, usage: { input: 5, output: 6 },
+  })
+  const spans = toOtlpSpans(fork)
+  expect(spans[0]!.start_time).toBe(FORK.createdAt)
+  expect(spans.filter(s => s.attributes['tangle.harness_session.inherited'] === true).map(s => s.name).sort())
+    .toEqual(['llm.call', 'llm.call', 'tool.python_repl'])
+  expect(spans.filter(s => s.name === 'llm.call' && !s.attributes['tangle.harness_session.inherited'])).toHaveLength(1)
 
   const root = await primeReader.read(byParentStem!)
   expect(root.parentNativeSessionId).toBeNull()
@@ -110,6 +116,20 @@ it('represents the recorded fork edge: parent ID, verbatim reference, user fork 
   // Exclusive ownership across the family: only the root's copy of the tool call is not inherited.
   const family = [root, fork]
   expect(family.filter((session) => session.toolCalls.some((call) => call.messageId === 'e2' && session.messages.find((m) => m.id === call.messageId)?.inherited !== true)).length).toBe(1)
+})
+
+it('closes the replay prefix at the first ambiguous entry even when later clocks move backwards', () => {
+  const input = readFileSync(fixture('fork.jsonl'), 'utf8').trimEnd().split('\n').map(line => JSON.parse(line))
+  const [header, first, second, third] = input
+  for (const change of [
+    { timestamp: header.timestamp }, { parentId: 'unrelated' }, { timestamp: undefined }, { id: undefined },
+  ]) {
+    const records = [header, first, { ...second, ...change }, third]
+    const full = readSessionInput('prime', { records })
+    expect(full.fork?.inheritedEntries).toBe(1)
+    expect(full.messages.map(m => m.inherited === true)).toEqual([false, false])
+    expect(summarizeSessionInput('prime', { records })).toMatchObject({ modelCalls: 1, toolCalls: 1, startedAt: header.timestamp })
+  }
 })
 
 it('keeps the established store filename identity for unmarked historical Prime recordings', async () => {

@@ -6,7 +6,7 @@ import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../
 import { foldedReader, runFold } from './fold.js'
 import { headRecord } from './head.js'
 import { createFold } from './pi.js'
-import { primeHeaderFacts, primeParentNativeSessionId } from './prime-header.js'
+import { isPrimeSessionHeader, primeParentNativeSessionId } from './prime-header.js'
 
 export { isPrimeSessionHeader, primeParentNativeSessionId } from './prime-header.js'
 
@@ -36,7 +36,8 @@ export const primeReader: HarnessSessionReader = foldedReader({ harness: HARNESS
     const path = join(root, rel)
     const mtime = await mtimeMs(path)
     if (opts.sinceMs && mtime < opts.sinceMs) continue
-    const header = primeHeaderFacts(await headRecord(path, (r) => r.type === 'session', 1))
+    const first = await headRecord(path, (r) => r.type === 'session', 1)
+    const header = isPrimeSessionHeader(first) ? first : null
     // An unmarked header is Pi-family ambiguous: keep the store filename identity it always had.
     const id = header ? header.id : idFromName(rel)
     const cwd = header && typeof header.cwd === 'string' ? header.cwd : null
