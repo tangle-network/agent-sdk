@@ -6,7 +6,7 @@ import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
-import { primeHeaderFacts, primeParentNativeSessionId } from './prime-header.js'
+import { isPrimeSessionHeader, primeParentNativeSessionId } from './prime-header.js'
 
 const FORMAT = 'pi.session-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -51,26 +51,28 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
   let compactions = 0
   let aborted: { at: string | null; message: string | null } | null = null
   let fork: SessionForkProvenance | null = null
+  let readingForkPrefix = false
 
   const observe = (entry: Record<string, unknown>): void => {
     const entryAt = builder.seen(entry.timestamp)
     const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
     if (entry.type === 'session') {
-      const facts = harness === 'prime' ? primeHeaderFacts(entry) : null
-      if (facts !== null) {
-        builder.nativeSessionId = facts.id
-        if (typeof facts.parentSession === 'string') {
+      if (isPrimeSessionHeader(entry)) {
+        if (harness !== 'prime') throw new Error('expected pi, found prime session header')
+        builder.nativeSessionId = entry.id
+        if (typeof entry.parentSession === 'string' && entry.parentSession.trim()) {
           fork = {
-            parentNativeSessionId: primeParentNativeSessionId(facts.parentSession),
-            parentSession: facts.parentSession,
-            rlmDepth: facts.rlmDepth,
-            userFork: facts.rlmDepth === 0,
-            createdAt: isoTime(facts.timestamp),
+            parentNativeSessionId: primeParentNativeSessionId(entry.parentSession),
+            parentSession: entry.parentSession,
+            rlmDepth: entry.rlmDepth,
+            userFork: entry.rlmDepth === 0,
+            createdAt: isoTime(entry.timestamp),
             inheritedEntries: 0,
           }
           builder.parentNativeSessionId = fork.parentNativeSessionId
           builder.fork(fork)
+          readingForkPrefix = true
         }
       } else if (typeof entry.id === 'string' && harness !== 'prime') {
         builder.nativeSessionId = entry.id
@@ -79,10 +81,14 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
       previousId = null
       return
     }
-    // Prehistory a fork replays from its parent carries the parent's earlier timestamps; the
-    // session header's own creation time separates it from this session's own entries.
-    const inherited = fork !== null && fork.createdAt !== null && entryAt !== null && entryAt <= fork.createdAt
-    if (inherited) fork!.inheritedEntries += 1
+    // Prime copies its parent's linked path, in order, before appending new work. A later
+    // event with an old clock cannot reopen that path. Equal timestamps establish no ordering.
+    const inherited = readingForkPrefix && fork?.createdAt != null && entryAt !== null
+      && entryAt < fork.createdAt && typeof entry.id === 'string' && entry.id.length > 0
+      && entry.parentId === previousId
+    if (inherited && fork) fork.inheritedEntries += 1
+    else readingForkPrefix = false
+    const provenance = inherited ? { inherited: true } : {}
     const emit = (value: SessionMessage): void => { builder.message(inherited ? { ...value, inherited: true } : value) }
     if (parentId !== null && previousId !== null && parentId !== previousId) branches += 1
     previousId = id
@@ -110,6 +116,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
       const content = message.content
       const single = Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0].type === 'text'
       builder.toolResult(callId, {
+        ...provenance,
         output: single ? (content as Array<Record<string, unknown>>)[0]!.text : (content ?? null),
         text: textOf(content),
         isError: message.isError === true,
@@ -126,6 +133,7 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
       const failed = stopReason === 'error'
       const { usage, cost } = usageOf(message.usage)
       builder.modelCall({
+        ...provenance,
         id,
         at,
         provider: failed ? null : str(message.provider),
@@ -143,10 +151,10 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
         const callId = str(block.id) ?? `${id}:call:${parts.length}`
         parts.push({ type: 'tool-call', toolCallId: callId })
         const input = block.arguments ?? block.input ?? null
-        builder.toolCall({ id: callId, name: str(block.name) ?? 'tool', input, inputText: typeof input === 'string' ? input : null, at, messageId: id })
+        builder.toolCall({ ...provenance, id: callId, name: str(block.name) ?? 'tool', input, inputText: typeof input === 'string' ? input : null, at, messageId: id })
       }
       emit({ id, role: 'assistant', actor: failed ? 'injected' : 'agent', at, modelCallId: id, parts: failed && parts.length === 0 && errorText ? [{ type: 'text', text: errorText }] : parts })
-      aborted = stopReason === 'aborted' ? { at, message: errorText } : null
+      if (!inherited) aborted = stopReason === 'aborted' ? { at, message: errorText } : null
       return
     }
     if (role === 'system' || role === 'custom' || role === 'bashExecution') {
@@ -155,7 +163,6 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
   }
 
   const finish = (): SessionBuilder => {
-
     builder.source(stats)
     if (branches > 0) builder.gap(`${branches} entries continue an earlier entry rather than the previous one (the session branched); all branches are read in file order`)
     if (compactions > 0) builder.gap(`${compactions} compaction entries replaced earlier context`)
@@ -179,6 +186,7 @@ async function locate(home: string, opts: LocateOptions): Promise<SessionRef[]> 
     const mtime = await mtimeMs(path)
     if (opts.sinceMs && mtime < opts.sinceMs) continue
     const header = await headRecord(path, (r) => r.type === 'session', 1)
+    if (isPrimeSessionHeader(header)) continue
     const cwd = header ? str(header.cwd) : null
     if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
     const id = (header && str(header.id)) ?? idFromName(rel)

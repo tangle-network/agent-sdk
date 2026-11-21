@@ -11,6 +11,7 @@ export interface TurnToolCall {
 
 export interface Turn {
   role: 'user' | 'assistant' | 'system' | 'tool'
+  is_copied_context?: boolean
   seq?: number
   text?: string
   text_summary?: string
@@ -101,10 +102,11 @@ export function toTurns(session: HarnessSession, options: TurnOptions = {}): Tur
   let seq = 0
   for (const message of session.messages) {
     const ts = message.at ?? ''
+    const provenance = message.inherited ? { is_copied_context: true } : {}
     if (message.role === 'user') {
       const body = text(message, 'text')
       if (!body) continue
-      turns.push({ role: 'user', seq: seq++, text: body.length > textChars ? summarizeText(body, textChars) : body, ts })
+      turns.push({ ...provenance, role: 'user', seq: seq++, text: body.length > textChars ? summarizeText(body, textChars) : body, ts })
       continue
     }
     if (message.role !== 'assistant') continue
@@ -128,6 +130,7 @@ export function toTurns(session: HarnessSession, options: TurnOptions = {}): Tur
     })
     const model = call?.servedModel ?? undefined
     turns.push({
+      ...provenance,
       seq: seq++,
       role: 'assistant',
       ...(body ? { text: body.length > textChars ? summarizeText(body, textChars) : body, text_summary: summarizeText(body, summaryChars) } : {}),
@@ -145,7 +148,9 @@ export function toTurns(session: HarnessSession, options: TurnOptions = {}): Tur
 
 export function primaryModel(session: Pick<HarnessSession, 'modelCalls'>): string | null {
   const counts = new Map<string, number>()
-  for (const call of session.modelCalls) if (call.servedModel) counts.set(call.servedModel, (counts.get(call.servedModel) ?? 0) + 1)
+  for (const call of session.modelCalls) {
+    if (!call.inherited && call.servedModel) counts.set(call.servedModel, (counts.get(call.servedModel) ?? 0) + 1)
+  }
   let best: string | null = null
   let bestCount = 0
   for (const [model, n] of counts) if (n > bestCount) [best, bestCount] = [model, n]

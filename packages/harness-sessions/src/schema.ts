@@ -52,6 +52,8 @@ export interface SessionMessage {
 
 export interface SessionToolCall {
   id: string
+  /** The native fork copied this call from its parent. */
+  inherited?: boolean
   name: string
   input: unknown
   inputText: string | null
@@ -70,6 +72,8 @@ export interface SessionToolCall {
 
 export interface ModelCall {
   id: string
+  /** The native fork copied this completion from its parent. */
+  inherited?: boolean
   at: string | null
   provider: string | null
   servedModel: string | null
@@ -137,7 +141,7 @@ export interface SessionForkProvenance {
   userFork: boolean
   /** The forked session header's own creation timestamp; inherited prehistory carries earlier timestamps. */
   createdAt: string | null
-  /** Session entries (any type) recorded at or before `createdAt`: parent prehistory replayed into this file. */
+  /** Length of the linked native prefix recorded strictly before the fork's creation. */
   inheritedEntries: number
 }
 

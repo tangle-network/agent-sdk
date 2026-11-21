@@ -43,14 +43,15 @@ export function toChatMessages(session: HarnessSession, options: ChatProjectionO
   const out: ChatMessage[] = []
   for (const message of session.messages) {
     if (message.actor === 'injected' && !keepInjected) continue
+    const provenance = message.inherited ? { is_copied_context: true } : {}
     if (message.role === 'system') {
-      if (keepSystem) out.push({ role: 'system', content: texts(message, 'text') })
+      if (keepSystem) out.push({ ...provenance, role: 'system', content: texts(message, 'text') })
       continue
     }
     if (message.role === 'user') {
       const content = texts(message, 'text')
       if (content.length === 0 && !message.parts.some((p) => p.type === 'attachment')) continue
-      out.push({ role: 'user', content })
+      out.push({ ...provenance, role: 'user', content })
       continue
     }
     if (message.role === 'tool') {
@@ -58,6 +59,7 @@ export function toChatMessages(session: HarnessSession, options: ChatProjectionO
         if (part.type !== 'tool-result') continue
         const call = calls.get(part.toolCallId)
         out.push({
+          ...provenance,
           role: 'tool',
           tool_call_id: part.toolCallId,
           ...(call ? { name: call.name } : {}),
@@ -80,6 +82,7 @@ export function toChatMessages(session: HarnessSession, options: ChatProjectionO
     }
     if (text.length === 0 && reasoning.length === 0 && toolCalls.length === 0) continue
     out.push({
+      ...provenance,
       role: 'assistant',
       content: text.length > 0 ? text : null,
       ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
