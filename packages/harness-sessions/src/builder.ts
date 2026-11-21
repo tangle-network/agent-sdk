@@ -6,6 +6,7 @@ import type {
   Part,
   SessionEnding,
   SessionError,
+  SessionForkProvenance,
   SessionFormatId,
   SessionMessage,
   SessionSummary,
@@ -108,6 +109,7 @@ export class SessionBuilder {
   private truncated = false
   private sessionUsage: TokenUsage | null | undefined
   private ending: SessionEnding = { status: 'open', error: null, at: null }
+  private forkProvenance: SessionForkProvenance | null = null
 
   constructor(
     readonly harness: string,
@@ -254,6 +256,11 @@ export class SessionBuilder {
     this.sessionUsage = usage
   }
 
+  /** Recorded by the fold when the session header proves a parent session; mutations before finish() are kept. */
+  fork(fork: SessionForkProvenance): void {
+    this.forkProvenance = fork
+  }
+
   end(ending: SessionEnding): void {
     this.ending = ending
   }
@@ -319,6 +326,7 @@ export class SessionBuilder {
       usage: this.usage(),
       ending: this.ending,
       ...(this.turnReceipts.length ? { turnReceipts: this.turnReceipts } : {}),
+      ...(this.forkProvenance ? { fork: this.forkProvenance } : {}),
       children: this.children,
       integrity: {
         sourceFiles: this.sources,
@@ -344,6 +352,7 @@ export class SessionBuilder {
       usage: this.usage(),
       ending: this.ending,
       ...(this.turnReceipts.length ? { turnReceipts: this.turnReceipts } : {}),
+      ...(this.forkProvenance ? { fork: this.forkProvenance } : {}),
       unparsedRecords: this.unparsed,
       bytes: this.sources.reduce((sum, s) => sum + s.bytes, 0),
       truncated: this.truncated,

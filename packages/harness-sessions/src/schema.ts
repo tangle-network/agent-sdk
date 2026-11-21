@@ -46,6 +46,8 @@ export interface SessionMessage {
   parts: Part[]
   /** What a harness-injected system message is, in the harness's words: Claude Code's attachment type, such as `instructions`. */
   source?: string
+  /** True when the session header proves this message replays parent prehistory, not this session's own work. */
+  inherited?: boolean
 }
 
 export interface SessionToolCall {
@@ -119,6 +121,26 @@ export interface NativeTurnReceipt {
   usage: TokenUsage | null
 }
 
+/**
+ * Fork provenance a session's own header records (Prime `parentSession`): the session continues
+ * another recorded session file. The reference is read as identity evidence only; this reader
+ * never dereferences the path.
+ */
+export interface SessionForkProvenance {
+  /** The parent's native session ID, derived from the recorded `parentSession` reference (its file stem or plain ID). */
+  parentNativeSessionId: string
+  /** The verbatim `parentSession` value from the header. */
+  parentSession: string
+  /** The recursion depth recorded on this session's header; 0 is the top conversation level. */
+  rlmDepth: number
+  /** True when the fork stayed at the conversation level (`rlmDepth` 0): a user fork, not a delegated child. */
+  userFork: boolean
+  /** The forked session header's own creation timestamp; inherited prehistory carries earlier timestamps. */
+  createdAt: string | null
+  /** Session entries (any type) recorded at or before `createdAt`: parent prehistory replayed into this file. */
+  inheritedEntries: number
+}
+
 export interface HarnessSession {
   schema: 'tangle.harness-session.v1'
   harness: string
@@ -138,6 +160,8 @@ export interface HarnessSession {
   usage: TokenUsage | null
   ending: SessionEnding
   turnReceipts?: NativeTurnReceipt[]
+  /** Present when the session header itself proves this session continues another recorded session. */
+  fork?: SessionForkProvenance
   children: Array<{ nativeSessionId: string; toolCallId: string | null }>
   integrity: SessionIntegrity
 }
@@ -156,6 +180,7 @@ export interface SessionSummary {
   usage: TokenUsage | null
   ending: SessionEnding
   turnReceipts?: NativeTurnReceipt[]
+  fork?: SessionForkProvenance
   unparsedRecords: number
   bytes: number
   truncated: boolean

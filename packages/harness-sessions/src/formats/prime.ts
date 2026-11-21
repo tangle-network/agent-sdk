@@ -2,9 +2,13 @@ import { basename, join } from 'node:path'
 import type { BuildMode } from '../builder.js'
 import type { HarnessSessionReader, ReadOptions, SessionRef } from '../schema.js'
 import { fileRecords } from '../source.js'
-import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles } from '../stores.js'
+import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { foldedReader, runFold } from './fold.js'
+import { headRecord } from './head.js'
 import { createFold } from './pi.js'
+import { primeHeaderFacts, primeParentNativeSessionId } from './prime-header.js'
+
+export { isPrimeSessionHeader, primeParentNativeSessionId } from './prime-header.js'
 
 const FORMAT = 'prime.session-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -30,9 +34,19 @@ export const primeReader: HarnessSessionReader = foldedReader({ harness: HARNESS
   for (const rel of await walkFiles(root)) {
     if (!pattern.test(rel)) continue
     const path = join(root, rel)
-    const ref = primeRefForFile(path)
-    if (opts.nativeSessionId && ref.nativeSessionId !== opts.nativeSessionId) continue
-    refs.push({ ...ref, home, mtimeMs: await mtimeMs(path) })
+    const mtime = await mtimeMs(path)
+    if (opts.sinceMs && mtime < opts.sinceMs) continue
+    const header = primeHeaderFacts(await headRecord(path, (r) => r.type === 'session', 1))
+    // An unmarked header is Pi-family ambiguous: keep the store filename identity it always had.
+    const id = header ? header.id : idFromName(rel)
+    const cwd = header && typeof header.cwd === 'string' ? header.cwd : null
+    const parentSession = header && typeof header.parentSession === 'string' ? header.parentSession : null
+    if (opts.nativeSessionId && id !== opts.nativeSessionId && idFromName(rel) !== opts.nativeSessionId) continue
+    if (opts.cwd && (cwd === null || !withinPath(cwd, opts.cwd))) continue
+    refs.push({
+      harness: HARNESS, format: FORMAT, nativeSessionId: id, path, files: [path], home, cwd, mtimeMs: mtime,
+      parentNativeSessionId: parentSession === null ? null : primeParentNativeSessionId(parentSession),
+    })
   }
   return refs.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }, fold)

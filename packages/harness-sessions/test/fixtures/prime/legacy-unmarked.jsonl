@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"header-recorded-legacy-id","timestamp":"2026-11-20T09:00:00.000Z","cwd":"/work/legacy"}
+{"type":"message","message":{"role":"user","content":[{"text":"Historical unmarked session.","type":"text"}],"timestamp":1770000000000},"id":"h1","parentId":null,"timestamp":"2026-11-20T09:00:01.000Z"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"historical reply"}],"api":"openai-completions","provider":"localproof","model":"generic-model","stopReason":"stop","timestamp":1770000001000},"id":"h2","parentId":"h1","timestamp":"2026-11-20T09:00:02.000Z"}
