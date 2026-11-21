@@ -1,11 +1,12 @@
 import { isRecord } from '@tangle-network/agent-core'
 import { basename, join } from 'node:path'
-import { SessionBuilder, count, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
-import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionRef, TokenUsage } from '../schema.js'
+import { SessionBuilder, count, isoTime, sessionError, str, textOf, usageOrNull, type BuildMode } from '../builder.js'
+import type { HarnessSessionReader, LocateOptions, Part, ReadOptions, SessionForkProvenance, SessionMessage, SessionRef, TokenUsage } from '../schema.js'
 import { fileRecords, type RecordSource, type SourceStats } from '../source.js'
 import { foldedReader, runFold, type SessionFold } from './fold.js'
 import { EVIDENCE, STORES, mtimeMs, storeGlob, walkFiles, withinPath } from '../stores.js'
 import { headRecord } from './head.js'
+import { primeHeaderFacts, primeParentNativeSessionId } from './prime-header.js'
 
 const FORMAT = 'pi.session-jsonl' as const
 const STORE = STORES[FORMAT]
@@ -49,23 +50,46 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
   let branches = 0
   let compactions = 0
   let aborted: { at: string | null; message: string | null } | null = null
+  let fork: SessionForkProvenance | null = null
 
   const observe = (entry: Record<string, unknown>): void => {
     const entryAt = builder.seen(entry.timestamp)
     const id = str(entry.id) ?? `${builder.nativeSessionId}:${stats.line}`
     const parentId = str(entry.parentId)
     if (entry.type === 'session') {
-      if (typeof entry.id === 'string' && harness !== 'prime') builder.nativeSessionId = entry.id
+      const facts = harness === 'prime' ? primeHeaderFacts(entry) : null
+      if (facts !== null) {
+        builder.nativeSessionId = facts.id
+        if (typeof facts.parentSession === 'string') {
+          fork = {
+            parentNativeSessionId: primeParentNativeSessionId(facts.parentSession),
+            parentSession: facts.parentSession,
+            rlmDepth: facts.rlmDepth,
+            userFork: facts.rlmDepth === 0,
+            createdAt: isoTime(facts.timestamp),
+            inheritedEntries: 0,
+          }
+          builder.parentNativeSessionId = fork.parentNativeSessionId
+          builder.fork(fork)
+        }
+      } else if (typeof entry.id === 'string' && harness !== 'prime') {
+        builder.nativeSessionId = entry.id
+      }
       builder.cwd = str(entry.cwd)
       previousId = null
       return
     }
+    // Prehistory a fork replays from its parent carries the parent's earlier timestamps; the
+    // session header's own creation time separates it from this session's own entries.
+    const inherited = fork !== null && fork.createdAt !== null && entryAt !== null && entryAt <= fork.createdAt
+    if (inherited) fork!.inheritedEntries += 1
+    const emit = (value: SessionMessage): void => { builder.message(inherited ? { ...value, inherited: true } : value) }
     if (parentId !== null && previousId !== null && parentId !== previousId) branches += 1
     previousId = id
     if (entry.type === 'compaction') {
       compactions += 1
       if (typeof entry.summary === 'string') {
-        builder.message({ id, role: 'user', actor: 'injected', at: entryAt, modelCallId: null, parts: [{ type: 'text', text: entry.summary }] })
+        emit({ id, role: 'user', actor: 'injected', at: entryAt, modelCallId: null, parts: [{ type: 'text', text: entry.summary }] })
       }
       return
     }
@@ -76,12 +100,13 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
 
     if (role === 'user') {
       aborted = null
-      builder.message({ id, role: 'user', actor: ref.parentNativeSessionId ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: contentParts(message.content, id) })
+      // A Prime session that kept the conversation level (userFork) is a user fork, not a delegated child.
+      emit({ id, role: 'user', actor: builder.parentNativeSessionId && fork?.userFork !== true ? 'subagent-spawn' : 'human', at, modelCallId: null, parts: contentParts(message.content, id) })
       return
     }
     if (role === 'toolResult') {
       const callId = str(message.toolCallId) ?? `${id}:result`
-      builder.message({ id, role: 'tool', actor: 'tool-result', at, modelCallId: null, parts: [{ type: 'tool-result', toolCallId: callId }] })
+      emit({ id, role: 'tool', actor: 'tool-result', at, modelCallId: null, parts: [{ type: 'tool-result', toolCallId: callId }] })
       const content = message.content
       const single = Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0].type === 'text'
       builder.toolResult(callId, {
@@ -120,12 +145,12 @@ export function createFold(ref: SessionRef, mode: BuildMode, stats: SourceStats,
         const input = block.arguments ?? block.input ?? null
         builder.toolCall({ id: callId, name: str(block.name) ?? 'tool', input, inputText: typeof input === 'string' ? input : null, at, messageId: id })
       }
-      builder.message({ id, role: 'assistant', actor: failed ? 'injected' : 'agent', at, modelCallId: id, parts: failed && parts.length === 0 && errorText ? [{ type: 'text', text: errorText }] : parts })
+      emit({ id, role: 'assistant', actor: failed ? 'injected' : 'agent', at, modelCallId: id, parts: failed && parts.length === 0 && errorText ? [{ type: 'text', text: errorText }] : parts })
       aborted = stopReason === 'aborted' ? { at, message: errorText } : null
       return
     }
     if (role === 'system' || role === 'custom' || role === 'bashExecution') {
-      builder.message({ id, role: role === 'system' ? 'system' : 'user', actor: 'injected', at, modelCallId: null, parts: contentParts(message.content ?? message.output, id) })
+      emit({ id, role: role === 'system' ? 'system' : 'user', actor: 'injected', at, modelCallId: null, parts: contentParts(message.content ?? message.output, id) })
     }
   }
 

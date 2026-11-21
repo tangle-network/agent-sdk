@@ -25,6 +25,7 @@ npm install @tangle-network/harness-sessions
 | `codex` | `codex.rollout-jsonl` | `rollout-*-{id}.jsonl` under `sessions/` and `archived_sessions/` of every Codex home (below) | turn context (the configured model) | per response (`last_token_usage`); session total from `total_token_usage` |
 | `opencode` | `opencode.sqlite` | `.local/share/opencode/opencode.db` (shared by every session) | session record (`providerID/modelID`) | per step (`step-finish`) |
 | `pi` | `pi.session-jsonl` | `.pi/agent/sessions/**/*_{id}.jsonl` | session record (`provider/model`) | per assistant message |
+| `prime` | `prime.session-jsonl` | `.prime-provider/prime-agent-dirs/**/sessions/*.jsonl` | session record (`provider/model`) | per assistant message |
 | `kimi-code` | `kimi.session-dir` | `.kimi-code/sessions/wd_<hash>/{id}/agents/main/wire.jsonl`; retained `.kimi/sessions/*/{id}/wire.jsonl` and child wires | requested model recorded separately; served identity unknown | per step, excluding mirrored and wrapped child events |
 | `factory-droids` | `factory.session-jsonl` | `.factory/sessions/*/{id}.jsonl` plus settings | configured model in settings (`turn-context`) | session total in settings |
 
@@ -38,6 +39,8 @@ A HOME can hold several Codex homes, and `codexReader.locate` reads all of them 
 Homes that resolve to one directory count once. A session copied into several homes (`acct move`) is one ref, its largest copy. A lookup by id takes the rollout whose name ends in the id; when no name does, it reads the `session_meta` of each rollout modified since the id's UUIDv7 time.
 
 `listReaders()` and the exported catalog own the complete installed format inventory.
+
+Prime marks its session headers with `rlmDepth` (`isPrimeSessionHeader`); a marked session keeps its recorded ID, cwd and `parentSession`-proven parent wherever its file is copied or renamed, while an unmarked recording keeps its store-filename identity. A header that records a `parentSession` fork also surfaces `fork` provenance on the session and summary, and marks the prehistory it replayed from its parent per message (`inherited`); the reference itself is never dereferenced.
 
 Kimi uses the full `session_<uuid>` directory as its native ID, not the agent directory `main`. `kimiReader.stores` (also `KIMI_STORES` from the catalog entry) declares both layouts; the existing `STORES['kimi.session-dir']` remains the legacy declaration for consumers that still run that producer. A store's optional `globs` overrides the reader's default file globs, including when reading a v2 capture whose payload names are flat. No state or configuration sidecar is needed to read the current wire.
 

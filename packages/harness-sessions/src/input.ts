@@ -26,6 +26,7 @@ const FOLDS: Record<string, CreateFold> = {
   pi: piFold,
   'kimi-code': kimiFold,
   'factory-droids': (ref, mode, stats) => factoryFold(ref, mode, stats),
+  prime: (ref, mode, stats) => piFold(ref, mode, stats, 'prime', 'prime.session-jsonl'),
 }
 
 function foldInput(harness: string, input: SessionInput, init: SessionInputInit, mode: BuildMode, options: Pick<ReadOptions, 'corruption'>): SessionBuilder {

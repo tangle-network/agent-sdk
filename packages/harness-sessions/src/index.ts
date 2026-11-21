@@ -13,6 +13,7 @@ export type {
   SessionError,
   SessionEvidenceSources,
   SessionFormatId,
+  SessionForkProvenance,
   SessionIntegrity,
   SessionMessage,
   SessionRef,
@@ -37,7 +38,7 @@ export { factoryReader, factoryRefForFile } from './formats/factory.js'
 export { grokReader, grokRefForFile } from './formats/grok.js'
 export { nanoclawReader, nanoclawRefForFile } from './formats/nanoclaw.js'
 export { hermesReader, hermesSessionsInStore } from './formats/hermes.js'
-export { primeReader, primeRefForFile } from './formats/prime.js'
+export { primeReader, primeRefForFile, isPrimeSessionHeader, primeParentNativeSessionId } from './formats/prime.js'
 export { sandboxEventsSession, type SandboxEventsRun } from './formats/sandbox-events.js'
 export { openclawReader } from './formats/openclaw.js'
 export {
