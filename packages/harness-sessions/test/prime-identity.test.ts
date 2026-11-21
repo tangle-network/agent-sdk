@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { isPrimeSessionHeader, piReader, piRefForFile, primeParentNativeSessionId, primeReader, primeRefForFile, readSessionInput, summarizeSessionInput, toOtlpSpans } from '../src/index.js'
+import { isPrimeSessionHeader, piReader, piRefForFile, primeParentNativeSessionId, primeReader, primeRefForFile, readSessionInput, summarizeSessionInput, primaryModel, toChatMessages, toOtlpSpans, toTurns } from '../src/index.js'
 
 const scratch: string[] = []
 
@@ -101,6 +101,9 @@ it('represents the recorded fork edge: parent ID, verbatim reference, user fork 
   expect(fork.toolCalls[0]!.messageId).toBe('e2')
   expect(fork.messages.find((message) => message.id === 'e2')!.inherited).toBe(true)
   expect(fork.startedAt).toBe(FORK.createdAt)
+  expect(toChatMessages(fork).map(m => m.is_copied_context === true)).toEqual([true, true, true, true, false, false])
+  expect(toTurns(fork).map(t => t.is_copied_context === true)).toEqual([true, true, true, false, false])
+  expect(primaryModel(fork)).toBe('continued-model')
   expect(await primeReader.summarize(forkRef!)).toMatchObject({
     fork: FORK, startedAt: FORK.createdAt, modelCalls: 1, replies: 1, toolCalls: 0, usage: { input: 5, output: 6 },
   })
