@@ -106,6 +106,7 @@ it('represents the recorded fork edge: parent ID, verbatim reference, user fork 
   })
   const spans = toOtlpSpans(fork)
   expect(spans[0]!.start_time).toBe(FORK.createdAt)
+  expect(spans[0]!.attributes['tangle.harness_session.role']).toBe('operator')
   expect(spans.filter(s => s.attributes['tangle.harness_session.inherited'] === true).map(s => s.name).sort())
     .toEqual(['llm.call', 'llm.call', 'tool.python_repl'])
   expect(spans.filter(s => s.name === 'llm.call' && !s.attributes['tangle.harness_session.inherited'])).toHaveLength(1)

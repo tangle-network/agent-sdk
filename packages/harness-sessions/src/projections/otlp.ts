@@ -38,6 +38,7 @@ export function toOtlpSpans(session: HarnessSession, options: OtlpProjectionOpti
         'tangle.harness_session.format': session.format,
         'tangle.harness_session.ending': session.ending.status,
         ...(session.parentNativeSessionId ? { 'tangle.harness_session.parent': session.parentNativeSessionId } : {}),
+        ...(session.fork ? { 'tangle.harness_session.role': session.fork.userFork ? 'operator' : 'child' } : {}),
       },
     }),
   ]
