@@ -260,7 +260,10 @@ export function createCliBridgeProvider(
           environmentId: id,
           ...record,
           allowDispatch: true,
-          cancelRunsOnDestroy: false,
+          // The same destroy contract as the environment `create` returned: runs this handle
+          // dispatched are cancelled. Runtime keeps a pending execution's environment between
+          // attempts and stops a live turn by exact cancellation before it destroys anything.
+          cancelRunsOnDestroy: true,
           onDestroyed: forgetCreated(id, record),
         });
       }
