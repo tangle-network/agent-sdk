@@ -46,6 +46,13 @@ export interface CliBridgeProviderOptions {
   bodyTimeoutMs?: number;
   /** Maximum wait for cli-bridge to confirm cancellation. Defaults to 30 seconds. */
   cancelWaitMs?: number;
+  /**
+   * Who answers a retained harness's permission prompts. `unattended-allow` makes cli-bridge
+   * answer each one with allow, which is what a one-shot unattended turn already runs with;
+   * `unattended-deny` refuses each. Default `interactive`: prompts go to the caller, so a consumer
+   * that never answers interactions (graph runs, lanes, boxes) should set `unattended-allow`.
+   */
+  interactionPolicy?: "interactive" | "unattended-allow" | "unattended-deny";
   fetch?: typeof fetch;
   name?: string;
   capabilities?: AgentEnvironmentCapabilities;

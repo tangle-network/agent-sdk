@@ -243,6 +243,28 @@ describe("createCliBridgeProvider", () => {
     expect(second.id).not.toBe(first.id);
   });
 
+  it("asks cli-bridge to answer permission prompts when the consumer runs unattended", async () => {
+    const fixture = createNativePiFixture();
+    const provider = createCliBridgeProvider({
+      baseUrl: "http://bridge.local",
+      defaultModel: "pi/tangle-router/glm-5.2",
+      interactionPolicy: "unattended-allow",
+      fetch: fixture.fetch,
+    });
+    const environment = await provider.create({ profile: { name: "graph-node", harness: "pi" } });
+
+    await consumeTurn(environment, {
+      prompt: "run the task",
+      sessionId: "unattended-session",
+      turnId: "unattended-turn",
+      executionId: "unattended-run",
+    });
+
+    expect(fixture.sessionBodies).toEqual([
+      expect.objectContaining({ id: "unattended-session", interaction_policy: "unattended-allow" }),
+    ]);
+  });
+
   it("keeps profile authority separate from the task and forwards it unchanged through retained Pi", async () => {
     const profile: AgentProfile = {
       name: "scientist",
