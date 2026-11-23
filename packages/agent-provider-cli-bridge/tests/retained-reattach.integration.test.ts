@@ -9,7 +9,10 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { AgentExactRunControlRef } from "@tangle-network/agent-interface";
+import {
+  agentRunCancellationRequestDigest,
+  type AgentExactRunControlRef,
+} from "@tangle-network/agent-interface";
 import {
   createCliBridgeProvider,
   defaultCliBridgeCapabilities,
@@ -40,7 +43,8 @@ interface BridgeRun {
   readonly headers: Record<string, string>;
   readonly snapshot: Record<string, string>;
   readonly frames: string[];
-  status: "running" | "done";
+  status: "running" | "done" | "cancelled";
+  timer?: NodeJS.Timeout;
   readonly waiters: Set<() => void>;
 }
 
@@ -55,12 +59,14 @@ function chunk(delta: Record<string, unknown>, finishReason: string | null): str
 
 /**
  * A new run id starts one native turn that settles `turnMs` later whether or not anyone reads
- * it, as a detached Bridge run does. The same run id with the same request replays that run.
+ * it, as a detached Bridge run does. The same run id with the same request replays that run,
+ * and an exact cancellation stops a live one.
  */
 async function startRetainedBridge(turnMs: number) {
   const runs = new Map<string, BridgeRun>();
   const nativeTurns: string[] = [];
   const replays: string[] = [];
+  const cancels: Array<{ runId: string; operationId: string; effect: string }> = [];
   const timers = new Set<NodeJS.Timeout>();
   const notify = (run: BridgeRun) => {
     for (const waiter of [...run.waiters]) waiter();
@@ -122,10 +128,38 @@ async function startRetainedBridge(turnMs: number) {
         run.status = "done";
         notify(run);
       }, turnMs);
+      run.timer = timer;
       timers.add(timer);
       res.writeHead(200, { ...run.headers, "content-type": "text/event-stream" });
       res.flushHeaders();
       return;
+    }
+    const cancel = url.pathname.match(/^\/v1\/runs\/([^/]+)\/cancel$/u)?.[1];
+    if (req.method === "POST" && cancel !== undefined) {
+      const run = runs.get(decodeURIComponent(cancel));
+      if (!run) return json(res, 404, { error: { message: "run not found" } });
+      const chunks: Buffer[] = [];
+      for await (const part of req) chunks.push(Buffer.from(part));
+      const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        operationId: string;
+        requestDigest: string;
+        run: Record<string, string>;
+      };
+      const effect = run.status === "running" ? "cancelled" : "not_live";
+      cancels.push({ runId: run.snapshot.id!, operationId: request.operationId, effect });
+      if (run.status === "running") {
+        clearTimeout(run.timer);
+        run.frames.push(JSON.stringify({ error: { type: "run_cancelled", message: "run cancelled" } }));
+        run.status = "cancelled";
+        notify(run);
+      }
+      return json(res, 200, {
+        operationId: request.operationId,
+        requestDigest: request.requestDigest,
+        run: request.run,
+        status: "accepted",
+        effect,
+      });
     }
     const events = url.pathname.match(/^\/v1\/runs\/([^/]+)\/events$/u)?.[1];
     if (req.method === "GET" && events !== undefined) {
@@ -184,6 +218,8 @@ async function startRetainedBridge(turnMs: number) {
     url: `http://127.0.0.1:${port}`,
     nativeTurns,
     replays,
+    cancels,
+    status: (runId: string) => runs.get(runId)?.status,
     async close() {
       for (const timer of timers) clearTimeout(timer);
       server.closeAllConnections();
@@ -192,37 +228,48 @@ async function startRetainedBridge(turnMs: number) {
   };
 }
 
+/**
+ * Attempt 1 of a retained turn and the start of attempt 2. Runtime 10.0.12 gave create a 120 s
+ * timer that this provider folds into every later read (tangle-network/agent-runtime#2756). One
+ * second stands in for it, so the first observation is aborted mid-turn the way it was in
+ * production. The next attempt then reads the environment by id, binds it to its retained key
+ * and dispatches the same turn identity, as Runtime's replacement attempt does.
+ */
+async function reattachAfterAbortedObservation(
+  bridge: Awaited<ReturnType<typeof startRetainedBridge>>,
+  name: string,
+) {
+  const key = `runtime:${name}`;
+  const turn = retainedTurn(name);
+  const provider = createCliBridgeProvider({ baseUrl: bridge.url, defaultModel: MODEL });
+  await provider.capabilities();
+  const first = await provider.create({
+    profile,
+    idempotencyKey: key,
+    metadata: { retainedIdempotencyKey: key },
+    signal: AbortSignal.timeout(1_000),
+  });
+  const dispatched = await first.dispatch!(turn);
+  const controlRef = dispatched.controlRef as AgentExactRunControlRef;
+  await expect(
+    first.session!(turn.sessionId, { controlRef }).result(),
+  ).rejects.toThrow(/aborted due to timeout/u);
+
+  const again = await provider.get!(first.id);
+  expect(again?.id).toBe(first.id);
+  expect(again?.creation).toBeUndefined();
+  expect(again?.metadata?.retainedIdempotencyKey).toBe(key);
+  const replayed = await again!.dispatch!(turn);
+  expect(replayed.controlRef).toEqual(controlRef);
+  return { provider, first, again: again!, controlRef, turn };
+}
+
 describe("retained CLI Bridge reattachment", () => {
   it("reattaches a turn whose first observation was aborted and settles its exact result once", async () => {
     const bridge = await startRetainedBridge(3_000);
     try {
-      const key = "runtime:retained-reattach";
-      const turn = retainedTurn("reattach");
-      const provider = createCliBridgeProvider({ baseUrl: bridge.url, defaultModel: MODEL });
-      await provider.capabilities();
-      // Runtime 10.0.12 gave create a 120 s timer that this provider folds into every later read
-      // (tangle-network/agent-runtime#2756). One second stands in for it, so the first
-      // observation is aborted mid-turn the way it was in production.
-      const first = await provider.create({
-        profile,
-        idempotencyKey: key,
-        metadata: { retainedIdempotencyKey: key },
-        signal: AbortSignal.timeout(1_000),
-      });
-      const dispatched = await first.dispatch!(turn);
-      const controlRef = dispatched.controlRef as AgentExactRunControlRef;
-      await expect(
-        first.session!(turn.sessionId, { controlRef }).result(),
-      ).rejects.toThrow(/aborted due to timeout/u);
-
-      // The next attempt: the environment by id, bound to its retained key, the same turn again.
-      const again = await provider.get!(first.id);
-      expect(again?.id).toBe(first.id);
-      expect(again?.creation).toBeUndefined();
-      expect(again?.metadata?.retainedIdempotencyKey).toBe(key);
-      const replayed = await again!.dispatch!(turn);
-      expect(replayed.controlRef).toEqual(controlRef);
-      const result = await again!.session!(turn.sessionId, { controlRef }).result();
+      const { again, controlRef, turn } = await reattachAfterAbortedObservation(bridge, "reattach");
+      const result = await again.session!(turn.sessionId, { controlRef }).result();
 
       expect(result).toMatchObject({
         success: true,
@@ -237,6 +284,64 @@ describe("retained CLI Bridge reattachment", () => {
       });
       expect(bridge.nativeTurns).toEqual([controlRef.runId]);
       expect(bridge.replays).toEqual([controlRef.runId]);
+      expect(bridge.cancels).toEqual([]);
+    } finally {
+      await bridge.close();
+    }
+  }, 30_000);
+
+  it("stops a reattached turn with the exact cancellation Runtime sends at run end", async () => {
+    const bridge = await startRetainedBridge(60_000);
+    try {
+      const { again, controlRef, turn } = await reattachAfterAbortedObservation(bridge, "stopped");
+      // Runtime keeps a pending execution's environment between attempts. At run end, or on
+      // cancel, `stopRetainedNativeExecution` cancels the exact run through the handle it holds,
+      // and only then does the release destroy the environment.
+      const material = {
+        operationId: "runtime-native-stop-reattached",
+        run: controlRef,
+        reason: "Runtime stopped the native harness: its execution is no longer observed",
+      };
+      const session = again.session!(turn.sessionId, { controlRef });
+      const acknowledgement = await session.cancelRun!({
+        ...material,
+        requestDigest: agentRunCancellationRequestDigest(material),
+      });
+      expect(acknowledgement).toMatchObject({
+        operationId: material.operationId,
+        status: "accepted",
+        effect: "cancelled",
+      });
+      expect(await session.status()).toBe("cancelled");
+      await again.destroy!();
+
+      expect(bridge.cancels[0]).toEqual({
+        runId: controlRef.runId,
+        operationId: material.operationId,
+        effect: "cancelled",
+      });
+      expect(bridge.cancels.slice(1).every((cancel) => cancel.effect === "not_live")).toBe(true);
+      expect(bridge.status(controlRef.runId)).toBe("cancelled");
+      expect(bridge.nativeTurns).toEqual([controlRef.runId]);
+    } finally {
+      await bridge.close();
+    }
+  }, 30_000);
+
+  it("cancels a live reattached turn when that environment is destroyed, as create's does", async () => {
+    const bridge = await startRetainedBridge(60_000);
+    try {
+      const { provider, again, controlRef } = await reattachAfterAbortedObservation(
+        bridge,
+        "destroyed-live",
+      );
+      await again.destroy!();
+
+      expect(bridge.cancels).toEqual([
+        { runId: controlRef.runId, operationId: expect.any(String), effect: "cancelled" },
+      ]);
+      expect(bridge.status(controlRef.runId)).toBe("cancelled");
+      expect((await provider.get!(controlRef.environmentId))?.metadata).toBeUndefined();
     } finally {
       await bridge.close();
     }
