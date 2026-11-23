@@ -106,7 +106,7 @@ export function toRetainedSessionBody(
   return {
     id: sessionId,
     model,
-    interaction_policy: "interactive",
+    interaction_policy: options.interactionPolicy ?? "interactive",
     ...(options.defaultMode ? { mode: options.defaultMode } : {}),
     ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(execution !== undefined ? { execution } : {}),
