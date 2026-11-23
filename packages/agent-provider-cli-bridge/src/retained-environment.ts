@@ -87,12 +87,15 @@ export interface CreateCliBridgeEnvironmentArgs {
   readonly capabilities: AgentEnvironmentCapabilities;
   readonly selectedBackend?: string;
   readonly selectedModel?: string;
+  /** Called once this environment is retired, so the provider forgets its create request. */
+  readonly onDestroyed?: () => void;
 }
 
 /**
  * One refusal for every call that would add a turn to a reconstructed
- * environment. `provider.get()` rebuilds control of existing runs from the
- * opaque environment id alone, so it holds no create request that a new native
+ * environment. Unless this provider created the environment and still holds
+ * its create request, `provider.get()` rebuilds control of existing runs from
+ * the opaque environment id alone, with no create request that a new native
  * session could reuse. Only `session.continueNative` advances a retained run
  * after reconstruction, and only where the Bridge proves `nativeContinuation`.
  */
@@ -176,6 +179,7 @@ export function createCliBridgeEnvironment(
     id: environmentId,
     provider: providerName,
     ...(args.creation === undefined ? {} : { creation: args.creation }),
+    ...(environmentInput.metadata === undefined ? {} : { metadata: environmentInput.metadata }),
     capabilities: args.capabilities,
     ...(args.contextTransferReceipt === undefined ? {} : { contextTransferReceipt: args.contextTransferReceipt }),
     ...(environmentInput.name ? { name: environmentInput.name } : {}),
@@ -294,6 +298,7 @@ export function createCliBridgeEnvironment(
           }
         }
         cleanupConfirmed = true;
+        args.onDestroyed?.();
         for (const reader of readers) {
           reader.abort(
             new DOMException("cli-bridge environment was destroyed", "AbortError"),

@@ -75,6 +75,14 @@ export function createCliBridgeProvider(
     string,
     AgentEnvironmentCreateIdempotencyRecord<AgentEnvironment>
   >();
+  // What each environment this provider created was created from. `get` rebuilds that
+  // environment from it, so a later attempt in this process can prove ownership through the
+  // recorded metadata and re-dispatch the same turn identity. The create input's signal belongs
+  // to that create call, so it is not kept.
+  const created = new Map<string, CreatedCliBridgeEnvironment>();
+  const forgetCreated = (id: string, record: CreatedCliBridgeEnvironment) => () => {
+    if (created.get(id) === record) created.delete(id);
+  };
   const configuredBackend = selectedBackendFromRoute(options.defaultModel);
   const discoverCapabilities = cachedCliBridgeCapabilityDiscovery(options);
   const remotelyVerifiedRoutes = new Set<string>();
@@ -160,14 +168,9 @@ export function createCliBridgeProvider(
       input.idempotencyKey,
     );
     assertRequestedEnvironmentId(environmentId);
-    return createCliBridgeEnvironment({
-      options,
-      providerName: name,
-      environmentInput,
-      environmentId,
-      allowDispatch: true,
-      cancelRunsOnDestroy: true,
-      creation: "created",
+    const { signal: _signal, ...recordedInput } = environmentInput;
+    const record: CreatedCliBridgeEnvironment = {
+      environmentInput: recordedInput,
       capabilities: await resolveCapabilities(
         selectedBackend,
         model,
@@ -177,7 +180,22 @@ export function createCliBridgeProvider(
       ),
       selectedBackend,
       selectedModel: model,
+    };
+    const environment = createCliBridgeEnvironment({
+      options,
+      providerName: name,
+      environmentInput,
+      environmentId,
+      allowDispatch: true,
+      cancelRunsOnDestroy: true,
+      creation: "created",
+      capabilities: record.capabilities,
+      selectedBackend,
+      selectedModel: model,
+      onDestroyed: forgetCreated(environmentId, record),
     });
+    created.set(environmentId, record);
+    return environment;
   };
   return {
     name,
@@ -234,6 +252,21 @@ export function createCliBridgeProvider(
           contextTransferReceipt: deepFreeze(ContextTransferReceiptSchema.parse(transfer)),
         });
       }
+      const record = created.get(id);
+      if (record !== undefined) {
+        return createCliBridgeEnvironment({
+          options,
+          providerName: name,
+          environmentId: id,
+          ...record,
+          allowDispatch: true,
+          // The same destroy contract as the environment `create` returned: runs this handle
+          // dispatched are cancelled. Runtime keeps a pending execution's environment between
+          // attempts and stops a live turn by exact cancellation before it destroys anything.
+          cancelRunsOnDestroy: true,
+          onDestroyed: forgetCreated(id, record),
+        });
+      }
       const ownedRoute = optionalCliBridgeEnvironmentRoute(id);
       const transfer = ownedRoute === undefined
         ? await lookupCliBridgeContextByEnvironment(options, id, operation.signal)
@@ -268,6 +301,13 @@ export function createCliBridgeProvider(
       });
     },
   };
+}
+
+interface CreatedCliBridgeEnvironment {
+  readonly environmentInput: CreateAgentEnvironmentInput;
+  readonly capabilities: AgentEnvironmentCapabilities;
+  readonly selectedBackend?: string;
+  readonly selectedModel?: string;
 }
 
 function withoutRemoteRetainedCapabilities(
