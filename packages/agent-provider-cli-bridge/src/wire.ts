@@ -13,15 +13,62 @@ import {
   workspaceCwdPathForBase,
 } from "@tangle-network/agent-interface";
 import type {
+  AgentRuntimeAttachments,
   AgentTurnInput,
   CreateAgentEnvironmentInput,
 } from "@tangle-network/agent-interface/environment-provider";
 import type { CliBridgeProviderOptions } from "./provider-options.js";
 import type { CliBridgeRun, CliBridgeRunSnapshot } from "./retained-run-state.js";
 
-function runtimeAttachmentsField(input: CreateAgentEnvironmentInput) {
-  if (input.runtimeAttachments === undefined) return {};
-  return { runtime_attachments: AgentRuntimeAttachmentsSchema.parse(input.runtimeAttachments) };
+/**
+ * The Bridge's `runtime_attachments` field: the environment's attachments, with a turn's own
+ * attachments mounted over them by alias, as Agent Runtime merges its defaults under a turn's.
+ */
+function runtimeAttachmentsField(
+  environment: AgentRuntimeAttachments | undefined,
+  turn?: AgentRuntimeAttachments,
+) {
+  const created = environment === undefined
+    ? undefined
+    : AgentRuntimeAttachmentsSchema.parse(environment);
+  if (turn === undefined) return created === undefined ? {} : { runtime_attachments: created };
+  const mcp = { ...created?.mcp, ...turn.mcp };
+  return { runtime_attachments: AgentRuntimeAttachmentsSchema.parse({ mcp }) };
+}
+
+/**
+ * Split a turn's runtime attachments off its provider options.
+ *
+ * Agent Runtime names a turn's attachments in `providerOptions.backend.runtimeAttachments`, the
+ * prompt-backend field it also sends to a sandbox. It does so when it dispatches into an
+ * environment it reloaded by id, which no longer carries the create input that mounted its
+ * coordination tools. Those attachments name secret-refs under credential-bearing keys such as
+ * `headers.Authorization`. The Bridge validates those only in its `runtime_attachments` field and
+ * refuses a request whose metadata or `provider_options` contains such a key. The rest of the
+ * provider options travel as before.
+ */
+function splitTurnRuntimeAttachments(turn: AgentTurnInput): {
+  readonly providerOptions?: Record<string, unknown>;
+  readonly runtimeAttachments?: AgentRuntimeAttachments;
+} {
+  const providerOptions = turn.providerOptions;
+  const backend = providerOptions?.backend;
+  if (
+    providerOptions === undefined ||
+    !backend || typeof backend !== "object" || Array.isArray(backend) ||
+    (backend as Record<string, unknown>).runtimeAttachments === undefined
+  ) {
+    return providerOptions === undefined ? {} : { providerOptions };
+  }
+  const { runtimeAttachments, ...backendOptions } = backend as Record<string, unknown>;
+  const { backend: _backend, ...otherOptions } = providerOptions;
+  const remaining = Object.keys(backendOptions).length > 0
+    ? { ...otherOptions, backend: backendOptions }
+    : otherOptions;
+  return {
+    ...(Object.keys(remaining).length > 0 ? { providerOptions: remaining } : {}),
+    runtimeAttachments: AgentRuntimeAttachmentsSchema.parse(runtimeAttachments),
+  };
 }
 
 export function toChatCompletionsBody(
@@ -42,6 +89,7 @@ export function toChatCompletionsBody(
   const interactions = turn.interactions === undefined
     ? undefined
     : RequestedInteractionsSchema.parse(turn.interactions);
+  const { providerOptions, runtimeAttachments } = splitTurnRuntimeAttachments(turn);
   return {
     model: resolveBridgeModel(options, environmentInput, turn, profile),
     messages: messagesFromTurn(turn),
@@ -60,14 +108,14 @@ export function toChatCompletionsBody(
     ...(workspaceCwd === undefined ? {} : { cwd: workspaceCwd }),
     ...(execution ? { execution } : {}),
     ...(interactions === undefined ? {} : { interactions }),
-    ...runtimeAttachmentsField(environmentInput),
+    ...runtimeAttachmentsField(environmentInput.runtimeAttachments, runtimeAttachments),
     ...(turn.contextTransfer === undefined
       ? {}
       : { context_transfer: turn.contextTransfer }),
     metadata: {
       ...(environmentInput.metadata ?? {}),
       ...(turn.context ?? {}),
-      ...(turn.providerOptions ?? {}),
+      ...(providerOptions ?? {}),
     },
   };
 }
@@ -118,17 +166,24 @@ export function toRetainedSessionBody(
     ...(environmentInput.providerOptions !== undefined
       ? { provider_options: environmentInput.providerOptions }
       : {}),
-    ...runtimeAttachmentsField(environmentInput),
+    ...runtimeAttachmentsField(environmentInput.runtimeAttachments),
   };
 }
 
-/** Encode the exact retained turn contract without moving posture into metadata. */
+/**
+ * Encode the exact retained turn contract without moving posture into metadata.
+ *
+ * A turn's runtime attachments replace the session's create-time attachments for the native
+ * process the turn starts, so they are sent over the environment's own attachments.
+ */
 export function toRetainedTurnBody(
   turn: AgentTurnInput,
   run: CliBridgeRun,
   providerName: string,
+  environmentAttachments?: AgentRuntimeAttachments,
 ): Record<string, unknown> {
   assertRetainedTurnInputSupported(turn);
+  const { providerOptions, runtimeAttachments } = splitTurnRuntimeAttachments(turn);
   const interactions = RequestedInteractionsSchema.parse(turn.interactions ?? {});
   const content: Record<string, unknown> = {};
   if (turn.prompt !== undefined) {
@@ -158,9 +213,10 @@ export function toRetainedTurnBody(
       ? {}
       : { context_transfer: turn.contextTransfer }),
     ...(turn.context !== undefined ? { context: turn.context } : {}),
-    ...(turn.providerOptions !== undefined
-      ? { provider_options: turn.providerOptions }
-      : {}),
+    ...(providerOptions !== undefined ? { provider_options: providerOptions } : {}),
+    ...(runtimeAttachments === undefined
+      ? {}
+      : runtimeAttachmentsField(environmentAttachments, runtimeAttachments)),
   };
 }
 

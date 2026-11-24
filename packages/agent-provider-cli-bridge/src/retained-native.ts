@@ -691,7 +691,7 @@ export async function beginCliBridgeNativeTurn(
   if (!run.sessionId) {
     throw new Error("cli-bridge native retained turns require a session id");
   }
-  const body = toRetainedTurnBody(turn, run, providerName);
+  const body = toRetainedTurnBody(turn, run, providerName, environmentInput.runtimeAttachments);
   const nativeSession = await ensureCliBridgeNativeSession(
     options,
     environmentInput,

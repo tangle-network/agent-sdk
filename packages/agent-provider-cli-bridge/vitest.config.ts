@@ -8,6 +8,7 @@ const requires: Record<string, string> = {
   // Starts the real Bridge server from a built cli-bridge checkout.
   "tests/cli-bridge.integration.test.ts": "CLI_BRIDGE_INTEGRATION_ROOT",
   "tests/provider-evidence.integration.test.ts": "CLI_BRIDGE_INTEGRATION_ROOT",
+  "tests/retained-replacement.integration.test.ts": "CLI_BRIDGE_INTEGRATION_ROOT",
   // Boots the sandbox box image on a Docker daemon.
   "tests/sandbox-checkpoint-live.integration.test.ts": "CLI_BRIDGE_BOX_IMAGE",
   // Boots the same image and runs live model turns, which also need TANGLE_API_KEY.
