@@ -1,5 +1,11 @@
 # @tangle-network/agent-interface
 
+## 5.10.31
+
+### Patch Changes
+
+- bf9baf1: Admit the GLM-5.4 Coding Plan seat and map the Kimi Code membership model k3.1-pro to its native OpenCode reasoning efforts.
+
 ## 5.10.30
 
 ### Patch Changes
