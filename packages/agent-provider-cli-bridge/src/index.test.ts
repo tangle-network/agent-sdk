@@ -988,22 +988,28 @@ describe("createCliBridgeProvider", () => {
     "publishes on a reconstructed $harness environment exactly which call can add a turn",
     async ({ harness, addsTurn }) => {
       const model = `${harness}/reconstruction-model`;
-      const provider = createCliBridgeProvider({
-        baseUrl: "http://bridge.local",
-        defaultModel: model,
-        fetch: async (url) => {
-          if (new URL(String(url)).pathname === "/v1/capabilities") {
-            return Response.json(defaultCliBridgeCapabilities(harness));
-          }
-          throw new Error(`unexpected request to ${String(url)}`);
-        },
-      });
+      const bridge: typeof fetch = async (url) => {
+        if (new URL(String(url)).pathname === "/v1/capabilities") {
+          return Response.json(defaultCliBridgeCapabilities(harness));
+        }
+        throw new Error(`unexpected request to ${String(url)}`);
+      };
+      const options = { baseUrl: "http://bridge.local", defaultModel: model, fetch: bridge };
+      const provider = createCliBridgeProvider(options);
       const created = await provider.create({
         idempotencyKey: "reconstruction-environment",
         profile: { name: "worker", harness },
       });
 
-      const reconstructed = await provider.get!(created.id);
+      // The provider that created the environment rebuilds it from its create record and can
+      // add a turn through it. Its document states the retained control the Bridge proves,
+      // also for a route that create did not ask the Bridge about.
+      const rebuilt = await provider.get!(created.id);
+      expect(rebuilt?.capabilities?.retainedControl).toBeDefined();
+
+      // Any other provider instance holds no create record, as after a process restart, so it
+      // reconstructs control of the existing runs from the environment id alone.
+      const reconstructed = await createCliBridgeProvider(options).get!(created.id);
       if (!reconstructed) throw new Error("the provider did not reconstruct the environment");
       const capabilities = reconstructed.capabilities;
       if (!capabilities) throw new Error("the reconstructed environment published no capabilities");

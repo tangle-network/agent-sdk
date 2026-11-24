@@ -49,14 +49,17 @@ The lookup returns the server-issued digest only when all five planned coordinat
 
 ## Which call adds a turn
 
-Creation, ordinary reconstruction and accepted transfer attachment have different admission authority.
+Creation, a rebuild by the creating provider, ordinary reconstruction and accepted transfer attachment have different admission authority.
 
 In the process that created the environment, `environment.dispatch()`, `environment.stream()`, and `session.prompt()` all add a turn.
 Passing the same `sessionId` continues the same CLI conversation.
 
-After `provider.get(environmentId)` reconstructs the environment, only `session.continueNative(request, { turn })` can add a turn.
+While the environment is not destroyed, `provider.get(environmentId)` on the provider instance that created it rebuilds the environment from the recorded create input.
+The rebuilt environment carries the create `metadata` and adds a turn through the same three calls, so dispatching a turn identity the Bridge already holds reattaches to that run.
+
+On any other provider instance, and after the environment is destroyed, `provider.get(environmentId)` reconstructs the environment from its identifier alone, and only `session.continueNative(request, { turn })` can add a turn.
 It requires the `nativeContinuation` capability, which the provider publishes only for the Pi harness today, and only when the running Bridge proves the same contract.
-The reconstructed environment deliberately refuses every other way to start work: `environment.stream()` and `environment.dispatch()` throw "a reconstructed cli-bridge environment can only control an existing run", and `session.prompt()` throws "a reconstructed cli-bridge session cannot start another turn".
+The reconstructed environment deliberately refuses every other way to start work: `environment.stream()`, `environment.dispatch()` and `session.prompt()` throw "a reconstructed cli-bridge environment cannot start a turn through" followed by the name of the call.
 A reconstructed environment for any other harness therefore controls its existing runs (status, cursor replay, result, cancellation, and interaction responses) but adds no turn.
 
 When the exact deployed route confirms `contextTransfer.attach`, `provider.get(environmentId, { contextTransfer: request })` instead attaches the accepted transfer's first turn. The request must carry its exact profile. The adapter looks up the canonical operation, requires an available matching receipt for that environment, and returns it as `environment.contextTransferReceipt`. The resulting `dispatch`, `stream` and `session.prompt` accept only that request and its destination identities. They do not allocate another environment or replace a missing one. Changed context or profile fails before dispatch; a missing or uncertain receipt refuses attachment. Destroying this reconstructed handle closes its readers without canceling the accepted destination's runs.
@@ -65,7 +68,7 @@ The capability document keeps `sessions.continue: true` on a reconstructed envir
 `nativeContinuation` states whether an ordinary reconstructed environment supports `continueNative`. It does not authorize the first turn of a separate transfer.
 
 A runtime caller continues a retained run with `RetainedRunHandle.continueNative`, not with `startRetainedRunInEnvironment`.
-`startRetainedRunInEnvironment` requires `provider.list` for its ownership proof, and this provider exposes no `list`; it then calls `environment.dispatch()`, which a reconstructed environment refuses.
+`startRetainedRunInEnvironment` proves ownership through the `metadata` on the environment `provider.get()` returns and then calls `environment.dispatch()`, so it needs the provider instance that created the environment; a reconstructed environment carries no metadata and refuses that dispatch.
 
 The bridge model is selected from run data in this order: the turn, the provider default, or the profile's `harness` plus `model.default`.
 Execution fails before network use when none is present.
@@ -136,8 +139,9 @@ The create digest prevents an altered profile or workspace from reusing the prev
 An accepted portable-context destination can supply its exact environment identifier through `requestedId`.
 The provider recovers that caller-owned route from cli-bridge's durable transfer receipt.
 An unknown caller-owned identifier returns `null`.
-The provider queries `/v1/capabilities` for each retained route restored through `provider.get()`.
-`provider.capabilities()` queries the configured default route before the Runtime selects retained execution.
+`provider.capabilities()` queries `/v1/capabilities` for the configured default route before the Runtime selects retained execution.
+`provider.create()` queries a Pi route and a route `provider.capabilities()` already queried; any other create sends no query and, without an explicit capability document, publishes no retained control.
+`provider.get()` queries the route of each environment it restores, except that an environment rebuilt by the provider that created it keeps the document create resolved from the Bridge.
 The provider shares concurrent discovery requests and refreshes every later query.
 It enables retained control only when the running Bridge proves the complete contract.
 It enables native interactions only when the running Bridge proves the Pi contract.
