@@ -10,7 +10,7 @@ Capture the intended head before invoking the command. Drafts, explicit holds, c
 
 Before merging, run the local Beelink gate. Repositories carry no PR or push CI; release PRs and external contributions retain their qualification. A skipped job is not a test pass. No additional merge wrapper or host installation is required.
 
-Local Beelink gate (set `PACKAGE` and `TOUCHED_INTEGRATION_TEST` to the affected workspace package and its integration test; the gate installs from the frozen pnpm lockfile): `beelink-gate auto https://github.com/tangle-network/agent-sdk.git "$(git rev-parse HEAD)" -- sh -c 'pnpm -r build && pnpm -r check-types && pnpm --filter "$1" exec vitest run "$2"' _ "${PACKAGE:?set affected workspace package}" "${TOUCHED_INTEGRATION_TEST:?set touched integration test path}"`.
+Local Beelink gate (set `PACKAGE` to the affected workspace package; the gate installs from the frozen pnpm lockfile and runs that package's whole `test` script, because a change can pass its own test file and break another in the same package): `beelink-gate auto https://github.com/tangle-network/agent-sdk.git "$(git rev-parse HEAD)" -- sh -c 'pnpm -r build && pnpm -r check-types && pnpm --filter "$1" test' _ "${PACKAGE:?set affected workspace package}"`.
 
 Package publication is separate: the existing release workflow owns version, artifact, provenance and publishing-identity checks. A merged change is not a published package or a consumer adoption.
 
