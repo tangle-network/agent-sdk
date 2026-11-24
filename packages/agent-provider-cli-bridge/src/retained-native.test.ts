@@ -224,18 +224,23 @@ describe("cli-bridge native retained sessions", () => {
       nativeEnvelope(1, { type: "status", status: "completed" }),
     ].map((event) => RuntimeEventEnvelopeSchema.parse(event));
     const requests: Array<{ url: string; method: string; since?: string }> = [];
-    const provider = createCliBridgeProvider({
-      baseUrl,
-      defaultModel: model,
-      fetch: createNativeFetch(requests, events),
-    });
+    const paths = () => requests.map((request) => new URL(request.url).pathname);
+    const options = { baseUrl, defaultModel: model, fetch: createNativeFetch(requests, events) };
+    const provider = createCliBridgeProvider(options);
 
     expect((await provider.capabilities()).interactions?.responseIdempotency).toBe(true);
     const created = await provider.create({
       idempotencyKey: environmentId,
       profile: { name: "native-pi", harness: "pi" },
     });
-    const environment = await provider.get!(created.id);
+    // The provider that created the environment rebuilds it with the document create resolved
+    // from the Bridge, so a re-dispatched turn keeps its native transport and no request is sent.
+    const rebuilt = await provider.get!(created.id);
+    expect(rebuilt?.capabilities).toEqual(created.capabilities);
+    expect(paths()).toEqual(["/v1/capabilities", "/v1/capabilities"]);
+
+    // A provider that holds no create record, as after a process restart, asks the route again.
+    const environment = await createCliBridgeProvider(options).get!(created.id);
     expect(environment?.capabilities?.interactions?.responseIdempotency).toBe(true);
     const session = environment!.session!(sessionId, {
       controlRef: {
@@ -251,7 +256,7 @@ describe("cli-bridge native retained sessions", () => {
     for await (const event of session.events({ since: "0" })) replayed.push(event);
 
     expect(replayed.map((event) => event.id)).toEqual(["1"]);
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+    expect(paths()).toEqual([
       "/v1/capabilities",
       "/v1/capabilities",
       "/v1/capabilities",

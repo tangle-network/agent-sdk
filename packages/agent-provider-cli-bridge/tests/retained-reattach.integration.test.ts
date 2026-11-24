@@ -64,6 +64,7 @@ function chunk(delta: Record<string, unknown>, finishReason: string | null): str
  */
 async function startRetainedBridge(turnMs: number) {
   const runs = new Map<string, BridgeRun>();
+  const discoveries: string[] = [];
   const nativeTurns: string[] = [];
   const replays: string[] = [];
   const cancels: Array<{ runId: string; operationId: string; effect: string }> = [];
@@ -79,6 +80,7 @@ async function startRetainedBridge(turnMs: number) {
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://bridge.local");
     if (req.method === "GET" && url.pathname === "/v1/capabilities") {
+      discoveries.push(url.searchParams.get("model") ?? "");
       return json(res, 200, defaultCliBridgeCapabilities("claude-code"));
     }
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
@@ -216,6 +218,7 @@ async function startRetainedBridge(turnMs: number) {
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}`,
+    discoveries,
     nativeTurns,
     replays,
     cancels,
@@ -255,10 +258,15 @@ async function reattachAfterAbortedObservation(
     first.session!(turn.sessionId, { controlRef }).result(),
   ).rejects.toThrow(/aborted due to timeout/u);
 
+  const discoveries = bridge.discoveries.length;
   const again = await provider.get!(first.id);
   expect(again?.id).toBe(first.id);
   expect(again?.creation).toBeUndefined();
   expect(again?.metadata?.retainedIdempotencyKey).toBe(key);
+  // Create asked the Bridge about this route, so the rebuilt environment keeps that document
+  // and the reattachment waits on no further readiness answer.
+  expect(again?.capabilities).toEqual(first.capabilities);
+  expect(bridge.discoveries).toHaveLength(discoveries);
   const replayed = await again!.dispatch!(turn);
   expect(replayed.controlRef).toEqual(controlRef);
   return { provider, first, again: again!, controlRef, turn };
@@ -342,6 +350,49 @@ describe("retained CLI Bridge reattachment", () => {
       ]);
       expect(bridge.status(controlRef.runId)).toBe("cancelled");
       expect((await provider.get!(controlRef.environmentId))?.metadata).toBeUndefined();
+    } finally {
+      await bridge.close();
+    }
+  }, 30_000);
+
+  it("asks the Bridge for retained control when it rebuilds an environment whose create did not", async () => {
+    const bridge = await startRetainedBridge(500);
+    try {
+      const key = "runtime:retained-unverified";
+      const turn = retainedTurn("unverified");
+      // No `provider.capabilities()` call precedes this create, so it sends no discovery request
+      // and its document cannot state retained control.
+      const provider = createCliBridgeProvider({ baseUrl: bridge.url, defaultModel: MODEL });
+      const created = await provider.create({
+        profile,
+        idempotencyKey: key,
+        metadata: { retainedIdempotencyKey: key },
+      });
+      expect(bridge.discoveries).toEqual([]);
+      expect(created.capabilities?.retainedControl).toBeUndefined();
+      const dispatched = await created.dispatch!(turn);
+      const controlRef = dispatched.controlRef as AgentExactRunControlRef;
+
+      // Runtime refuses to control a run through an environment whose own document carries no
+      // retained control, so the rebuilt environment states what the Bridge proves for its route.
+      const again = await provider.get!(created.id);
+      expect(bridge.discoveries).toEqual([MODEL]);
+      expect(again?.capabilities?.retainedControl).toEqual(
+        defaultCliBridgeCapabilities("claude-code").retainedControl,
+      );
+      expect(again?.metadata?.retainedIdempotencyKey).toBe(key);
+      const replayed = await again!.dispatch!(turn);
+      expect(replayed.controlRef).toEqual(controlRef);
+      const result = await again!.session!(turn.sessionId, { controlRef }).result();
+
+      expect(result).toMatchObject({
+        success: true,
+        text: "native turn settled after a reattach",
+        metadata: { runId: controlRef.runId, status: "done" },
+      });
+      expect(bridge.nativeTurns).toEqual([controlRef.runId]);
+      expect(bridge.replays).toEqual([controlRef.runId]);
+      expect(bridge.cancels).toEqual([]);
     } finally {
       await bridge.close();
     }
