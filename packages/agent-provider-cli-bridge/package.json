@@ -52,7 +52,7 @@
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run build",
-    "test": "vitest run src",
+    "test": "pnpm run build && vitest run",
     "test:integration": "test -n \"$CLI_BRIDGE_INTEGRATION_ROOT\" || { echo 'CLI_BRIDGE_INTEGRATION_ROOT is required; see README' >&2; exit 1; }; pnpm run build && vitest run tests"
   },
   "dependencies": {

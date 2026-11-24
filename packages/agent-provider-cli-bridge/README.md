@@ -170,7 +170,8 @@ CLI_BRIDGE_INTEGRATION_ROOT=/path/to/cli-bridge pnpm test -- tests/cli-bridge.in
 
 Use `pnpm test:integration` for the fail-closed form of this command.
 It exits before Vitest when `CLI_BRIDGE_INTEGRATION_ROOT` is missing.
-The regular `pnpm test` command remains portable and skips this cross-repository test when no checkout is configured.
+The regular `pnpm test` command builds the package and runs every test that needs nothing beyond this checkout, including the integration tests under `tests/` that talk to a loopback Bridge peer.
+`vitest.config.ts` names each test that needs a Bridge checkout or a sandbox box image and leaves it out until the variable that supplies it is set, so a run never reports one of them as skipped.
 
 The test launches the actual Bridge server and a jailed Pi RPC process.
 It proves dispatch, permission response, completion, reconnect, replay, and idempotent response retry.
