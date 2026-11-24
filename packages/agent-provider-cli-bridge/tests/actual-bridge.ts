@@ -45,11 +45,16 @@ if "--version" in args:
     print("pi integration fixture", flush=True)
     raise SystemExit(0)
 
-extension_path = args[args.index("--extension") + 1]
-extension = open(extension_path, encoding="utf-8").read()
-nonce_match = re.search(r"""const bridgeNonce = ["']([^"']+)["']""", extension)
+# The Bridge loads the installed MCP adapter package before its interaction extension file.
+nonce_match = None
+for index, value in enumerate(args[:-1]):
+    if value == "--extension" and os.path.isfile(args[index + 1]):
+        nonce_match = nonce_match or re.search(r"""const bridgeNonce = ["']([^"']+)["']""", open(args[index + 1], encoding="utf-8").read())
 if nonce_match is None:
     raise RuntimeError("the actual Bridge did not expose its native interaction extension")
+if "--mcp-config" in args:
+    with open(args[args.index("--mcp-config") + 1], encoding="utf-8") as mcp_config:
+        record({"kind": "mcp", "pid": os.getpid(), "servers": sorted(json.load(mcp_config).get("mcpServers", {}))})
 permission_token = nonce_match.group(1) + "-1"
 permission_title = "Permission: bash [cli-bridge-marker:" + permission_token + "]"
 
@@ -107,6 +112,8 @@ interface FakePiTraceEntry {
   readonly kind?: string;
   readonly pid?: number;
   readonly args?: string[];
+  /** MCP server names in the `--mcp-config` the Bridge started this process with. */
+  readonly servers?: string[];
   readonly type?: string;
   readonly turn?: number;
   readonly message?: string;
@@ -136,6 +143,11 @@ export async function startActualBridge(
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   mkdirSync(agentDir, { recursive: true, mode: 0o700 });
   mkdirSync(projectDir, { recursive: true, mode: 0o700 });
+  // The Bridge mounts MCP servers for Pi only when the pi-mcp-adapter package is installed in
+  // the agent directory; the fake Pi records the `--mcp-config` it receives instead of loading it.
+  const piMcpAdapterDir = join(agentDir, "npm", "node_modules", "pi-mcp-adapter");
+  mkdirSync(piMcpAdapterDir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(piMcpAdapterDir, "package.json"), JSON.stringify({ name: "pi-mcp-adapter", version: "0.0.0" }), { mode: 0o600 });
   const fakePiPath = join(projectDir, "fake-pi");
   const fakeClaudePath = join(projectDir, "fake-claude");
   writeFileSync(fakeClaudePath, readFileSync(new URL("./fixtures/claude-evidence.py", import.meta.url)), { mode: 0o700 });

@@ -82,6 +82,15 @@ Retained native sessions currently require `kind: 'host'`.
 The provider rejects a sandbox default before it creates the retained session; use one-shot execution for `kind: 'sandbox'`.
 The Bridge currently refuses `netJail` with `kind: 'sandbox'`; use the sandbox's own egress policy.
 
+### Runtime attachments
+
+The create input's `runtimeAttachments` travel in the Bridge's `runtime_attachments` field on every one-shot request and on the retained session.
+A turn names its own attachments in `providerOptions.backend.runtimeAttachments`, as Agent Runtime does when it dispatches into an environment it reloaded by id.
+The provider sends those in the same `runtime_attachments` field, with the turn's servers replacing the environment's servers of the same alias.
+The rest of the turn's `providerOptions` goes into `metadata` on a one-shot request and into `provider_options` on a retained turn.
+The Bridge validates a secret-ref header such as `Authorization` only in `runtime_attachments`, and refuses metadata or provider options that contain a credential-bearing key.
+A retained turn's attachments apply to the native process that turn starts.
+
 ### Native workspace cwd
 
 CLI Bridge accepts `workspace.cwd` only when its `base` is `"host"`.
