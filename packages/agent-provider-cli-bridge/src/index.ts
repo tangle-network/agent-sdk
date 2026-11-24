@@ -169,15 +169,15 @@ export function createCliBridgeProvider(
     );
     assertRequestedEnvironmentId(environmentId);
     const { signal: _signal, ...recordedInput } = environmentInput;
+    // Create asks the Bridge about a Pi route, whose native transport depends on the answer,
+    // and about a route the caller verified through `capabilities()`. Any other create sends
+    // no discovery request, so without `options.capabilities` it publishes no retained control.
+    const discoverRoute = selectedBackend === "pi" ||
+      (model !== undefined && remotelyVerifiedRoutes.has(model));
+    const capabilities = await resolveCapabilities(selectedBackend, model, true, discoverRoute);
     const record: CreatedCliBridgeEnvironment = {
       environmentInput: recordedInput,
-      capabilities: await resolveCapabilities(
-        selectedBackend,
-        model,
-        true,
-        selectedBackend === "pi" ||
-          (model !== undefined && remotelyVerifiedRoutes.has(model)),
-      ),
+      ...(discoverRoute ? { capabilities } : {}),
       selectedBackend,
       selectedModel: model,
     };
@@ -189,7 +189,7 @@ export function createCliBridgeProvider(
       allowDispatch: true,
       cancelRunsOnDestroy: true,
       creation: "created",
-      capabilities: record.capabilities,
+      capabilities,
       selectedBackend,
       selectedModel: model,
       onDestroyed: forgetCreated(environmentId, record),
@@ -254,18 +254,30 @@ export function createCliBridgeProvider(
       }
       const record = created.get(id);
       if (record !== undefined) {
-        return createCliBridgeEnvironment({
-          options,
-          providerName: name,
-          environmentId: id,
-          ...record,
-          allowDispatch: true,
-          // The same destroy contract as the environment `create` returned: runs this handle
-          // dispatched are cancelled. Runtime keeps a pending execution's environment between
-          // attempts and stops a live turn by exact cancellation before it destroys anything.
-          cancelRunsOnDestroy: true,
-          onDestroyed: forgetCreated(id, record),
-        });
+        // A document create published without asking the Bridge cannot state retained control,
+        // and a caller that reads this environment's document would take that for a refusal.
+        // The route is asked here instead, as it is for an environment rebuilt from its id.
+        const capabilities = record.capabilities ??
+          await resolveCapabilities(record.selectedBackend, record.selectedModel, true, true);
+        // The environment can be destroyed while the Bridge answers. It then has no create
+        // record and is rebuilt from its id below.
+        if (created.get(id) === record) {
+          return createCliBridgeEnvironment({
+            options,
+            providerName: name,
+            environmentId: id,
+            environmentInput: record.environmentInput,
+            capabilities,
+            selectedBackend: record.selectedBackend,
+            selectedModel: record.selectedModel,
+            allowDispatch: true,
+            // The same destroy contract as the environment `create` returned: runs this handle
+            // dispatched are cancelled. Runtime keeps a pending execution's environment between
+            // attempts and stops a live turn by exact cancellation before it destroys anything.
+            cancelRunsOnDestroy: true,
+            onDestroyed: forgetCreated(id, record),
+          });
+        }
       }
       const ownedRoute = optionalCliBridgeEnvironmentRoute(id);
       const transfer = ownedRoute === undefined
@@ -305,7 +317,11 @@ export function createCliBridgeProvider(
 
 interface CreatedCliBridgeEnvironment {
   readonly environmentInput: CreateAgentEnvironmentInput;
-  readonly capabilities: AgentEnvironmentCapabilities;
+  /**
+   * The document create published, kept when create resolved it with route discovery. When
+   * create skipped discovery, `get` resolves the route's document itself.
+   */
+  readonly capabilities?: AgentEnvironmentCapabilities;
   readonly selectedBackend?: string;
   readonly selectedModel?: string;
 }
