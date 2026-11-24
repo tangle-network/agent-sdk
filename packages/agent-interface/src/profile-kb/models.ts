@@ -429,6 +429,24 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     claims: [opencodeFreeClaim("opencode/glm-5.3-flash-free", "200K context, 32K output, image input, efforts low, high and max")],
   }),
   kbEntry({
+    id: "glm-5.4",
+    name: "GLM-5.4",
+    vendor: "Z.ai",
+    surfaces: ["opencode"],
+    aliases: ["zai-coding-plan/glm-5.4"],
+    claims: [
+      claim(
+        "GLM Coding Plan offers glm-5.4 with low, high and max thinking levels.",
+        {
+          url: "https://zcode.z.ai/en/docs/qa",
+          locator: "The new GLM-5.4: thinking levels and which plans include it",
+          checkedAt: "2026-11-24",
+          authority: "primary",
+        },
+      ),
+    ],
+  }),
+  kbEntry({
     id: "glm-5.3",
     name: "GLM-5.3",
     vendor: "Z.ai",
