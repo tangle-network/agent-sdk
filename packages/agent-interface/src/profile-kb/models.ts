@@ -456,6 +456,32 @@ export const profileKbModels: readonly ProfileKbModel[] = [
     ],
   }),
   kbEntry({
+    id: "k3.1-pro",
+    name: "Kimi K3.1 Pro",
+    vendor: "Moonshot AI",
+    surfaces: ["opencode"],
+    aliases: ["kimi-code/k3.1-pro", "kimi-code-plan-cn/k3.1-pro", "kimi-for-coding/k3.1-pro"],
+    nativeEfforts: {
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "high",
+      ultracode: "max",
+    },
+    claims: [
+      claim(
+        "Kimi Code membership serves k3.1-pro with low, high and max thinking effort.",
+        {
+          url: "https://moonshotai.github.io/kimi-code/en/configuration/env-vars.html",
+          locator: "KIMI_MODEL_THINKING_EFFORT and the Kimi Code membership model catalog",
+          checkedAt: "2026-11-24",
+          authority: "primary",
+        },
+      ),
+    ],
+  }),
+  kbEntry({
     id: "kimi-k3",
     name: "Kimi K3",
     vendor: "Moonshot AI",
