@@ -343,19 +343,21 @@ The three code states are intentionally distinct:
 
 ## Versioning
 
-This package follows semantic versioning from 1.0.0.
+This package follows semantic versioning from 1.0.0. Release admission decides the
+bump: `pnpm check:package-artifacts` runs agent-runtime's `scripts/check-version-bump.mjs --archive`
+on every packed archive before the release workflow publishes it, and refuses what these rules exclude.
 
-- A minor release is additive. A new export, a new optional field, and a new member on an exported union are minor.
-- A patch release is a fix. A behaviour correction that keeps every declared type is patch.
-- A major release removes or narrows. A deleted export, a removed member, a narrowed type, and a new required field are major.
+- An additive change is a patch. A new export, a new optional field, and a new member on an exported union are patch, so write a `patch` changeset for them; admission refuses a minor over a published 1.x+ release.
+- A behaviour correction that keeps every declared type is also a patch.
+- A major release removes or narrows. A deleted export, a removed member, a narrowed type, and a new required field are major; admission refuses a major that names no incompatibility.
 
-Declare this package with a caret range, and set the floor to the lowest minor you actually use.
-A package that reads an export added in 1.4.0 declares `^1.4.0`, because `^1.0.0` lets a resolver keep 1.0.0.
-A caret range admits every later additive minor without a consumer release.
-Do not declare a single-generation window such as `>=1.4.0 <1.5.0`; that shape forces a coordinated release across every repository on each minor.
+Declare this package with a caret range, and set the floor to the lowest release you actually use.
+A package that reads an export added in 5.10.32 declares `^5.10.32`, because `^5.10.0` lets a resolver keep 5.10.0.
+A caret range admits every later additive release without a consumer release.
+Do not declare a single-generation window such as `>=5.10.32 <5.11.0`; that shape forces a coordinated release across every repository.
 
 Write a `default` branch in every `switch` over an exported union.
-An exhaustiveness check that assigns the remaining case to `never` fails when a minor adds a member, and this promise does not cover it.
+An exhaustiveness check that assigns the remaining case to `never` fails when a release adds a member, and this promise does not cover it.
 
 ## License
 
