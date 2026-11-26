@@ -58,6 +58,24 @@ materialization receipts. The function does not load resources or estimate token
 Its coverage explicitly leaves tokenization, materialization, and observed use unassessed.
 A capability declaration is not evidence that it was delivered, opened, or applied.
 
+## Skill provenance
+
+`mountSkill(source, content)` mounts one `SKILL.md` as an inline skill and returns the
+provenance record to keep at `extensions[<profile name>].resourceProvenance`.
+`mountSkillDirectory(source, files, { skillsDirectory })` mounts a whole skill directory
+read at one commit: `SKILL.md` as the same inline skill, and every other file as an inline
+`resources.files` mount at `<skillsDirectory>/<name>/<relative path>`, so the relative links
+in `SKILL.md` resolve once the materializer writes the skill to
+`<skillsDirectory>/<name>/SKILL.md`. Pass the skills directory of the harness the profile
+targets; the materializer's `skillDirForHarness(harness)` owns that table. It refuses a
+path that leaves the skill directory, a duplicate path and a directory without `SKILL.md`.
+
+`verifyResourceProvenance(profile, { read })` checks every record. A skill mounted with
+its directory claims the whole directory: each listed file needs a record at the skill's
+commit and beside its `SKILL.md`, its exact bytes mounted at the same relative path, and
+no unlisted file may be mounted in the skill's directory. Inline content is text; mount a
+binary file by GitHub ref.
+
 ## Workspace paths
 
 `WorkspaceRequest.snapshot` restores a portable workspace through closed content-addressed manifest and archive references. It includes the source lease and policy identities, and carries no inline file bytes. The accepted request binds both artifact hashes, because the archive also identifies Git HEAD and staged state. A snapshot cannot be combined with `repoUrl`, `gitRef` or a provider-native `checkpoint`; its `cwd` uses the repository base.
