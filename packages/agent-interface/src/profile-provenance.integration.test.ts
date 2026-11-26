@@ -50,10 +50,9 @@ let ref: string;
 let source: AgentProfileSkillDirectorySource;
 let files: AgentProfileSkillFile[];
 
-const git = (...args: string[]) =>
-  execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", ...args], {
-    encoding: "utf8",
-  });
+// A throwaway fixture repository: its commits carry a fixture identity and run no host hooks.
+const FIXTURE_GIT = ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"];
+const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...FIXTURE_GIT, ...args], { encoding: "utf8" });
 const read = async (record: { ref: string; path: string }) => git("show", `${record.ref}:${record.path}`);
 
 beforeAll(() => {
