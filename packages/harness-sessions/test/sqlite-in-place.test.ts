@@ -87,6 +87,30 @@ async function readHome(home: string): Promise<{ located: Array<[string, string 
 }
 
 describe('OpenCode store read in place', () => {
+  // Four step-finish counters a GLM session wrote on 2026-11-27 (opencode.sqlite). OpenCode records reasoning beside
+  // output, and its own `total` adds them, so the reader's output carries both and reasoning stays a part of it.
+  it('counts reasoning inside output, so a response adds to the total OpenCode wrote', async () => {
+    const steps = [
+      { total: 13985, input: 827, output: 34, reasoning: 68, cache: { write: 0, read: 13056 } },
+      { total: 16043, input: 1934, output: 19, reasoning: 266, cache: { write: 0, read: 13824 } },
+      { total: 16267, input: 553, output: 17, reasoning: 81, cache: { write: 0, read: 15616 } },
+    ]
+    const { home: h, dir } = home()
+    const db = new DatabaseSync(join(dir, 'opencode.db'))
+    const finishes = db.prepare("SELECT id, data FROM part WHERE json_extract(data, '$.type') = 'step-finish' ORDER BY time_created, id").all() as Array<{ id: string; data: string }>
+    expect(finishes).toHaveLength(steps.length)
+    finishes.forEach((row, index) => db.prepare('UPDATE part SET data = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(row.data), tokens: steps[index] }), row.id))
+    db.close()
+    const { session } = await readHome(h)
+    expect(session.modelCalls.map((call) => call.usage)).toEqual(steps.map((step) => ({ input: step.input, output: step.output + step.reasoning, reasoning: step.reasoning, cacheRead: step.cache.read, cacheWrite: step.cache.write })))
+    for (const [index, call] of session.modelCalls.entries()) {
+      const usage = call.usage!
+      expect(usage.input! + usage.output! + usage.cacheRead! + usage.cacheWrite!).toBe(steps[index]!.total)
+      expect(usage.reasoning!).toBeLessThanOrEqual(usage.output!)
+    }
+    expect(session.usage).toEqual({ input: 3314, output: 485, reasoning: 415, cacheRead: 42496, cacheWrite: 0 })
+  })
+
   it('preserves measured counters in a live-fork prefix before its parts are copied', async () => {
     const { home: h, dir } = home()
     const db = new DatabaseSync(join(dir, 'opencode.db'))
