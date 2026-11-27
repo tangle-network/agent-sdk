@@ -1,5 +1,11 @@
 # @tangle-network/harness-sessions
 
+## 1.0.18
+
+### Patch Changes
+
+- OpenCode `output` counts reasoning, as OpenCode's own `total` does, so `reasoning` is a part of `output` for every reader. `TokenUsage` states the convention. A consumer that added OpenCode's `reasoning` to `output` now counts it once.
+
 ## 1.0.17
 
 ### Patch Changes
