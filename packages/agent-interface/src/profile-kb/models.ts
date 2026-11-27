@@ -34,6 +34,18 @@ const glmModel = source(
   "https://docs.z.ai/guides/llm/glm-5.3#feature-changes",
   "Feature changes",
 );
+const glm54Model: ProfileKbSource = {
+  url: "https://docs.z.ai/guides/llm/glm-5.4",
+  locator: "TIP (Coding Plan availability and quota; Model API pending its security assessment); Input Modality; Context Length; Maximum Output Tokens; Capability Support",
+  checkedAt: "2026-11-26",
+  authority: "primary",
+};
+const glm54Thinking: ProfileKbSource = {
+  url: "https://docs.z.ai/guides/capabilities/thinking-mode",
+  locator: "Preserved Thinking: enabled by default from GLM-5.4 on all endpoints",
+  checkedAt: "2026-11-26",
+  authority: "primary",
+};
 const kimiModel = source(
   "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart",
   "Reasoning effort; vision input; important limits",
@@ -496,6 +508,28 @@ export const profileKbModels: readonly ProfileKbModel[] = [
           checkedAt: "2026-11-24",
           authority: "primary",
         },
+      ),
+    ],
+  }),
+  kbEntry({
+    id: "glm-5.4",
+    name: "GLM-5.4",
+    vendor: "Z.ai",
+    surfaces: ["api"],
+    aliases: ["zai-coding-plan/glm-5.4"],
+    defaultEffort: "medium",
+    claims: [
+      claim(
+        "Z.ai: GLM-5.4 is available to all GLM Coding Plan users through their coding tools; on weekly quota plans its quota is 1.5x that of GLM-5.3. The Model API is not yet available (it follows a security assessment), so no direct API or Router surface is claimed here.",
+        glm54Model,
+      ),
+      claim(
+        "Context Length 1M; Maximum Output Tokens 128K; input video, image, text and file; output text.",
+        glm54Model,
+      ),
+      claim(
+        "Supports thinking mode; from GLM-5.4 on, Preserved Thinking is enabled by default on all endpoints.",
+        glm54Thinking,
       ),
     ],
   }),
