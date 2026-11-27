@@ -12,13 +12,16 @@ const FORMAT = 'opencode.sqlite' as const
 const STORE = STORES[FORMAT]
 const HARNESS = 'opencode'
 
+// OpenCode records reasoning beside its output (its own `total` adds the two), so `output` here is their sum:
+// every completion token, as TokenUsage counts it.
 function usageOf(tokens: unknown): TokenUsage | null {
   if (!isRecord(tokens)) return null
   const cache = isRecord(tokens.cache) ? tokens.cache : {}
+  const output = count(tokens.output), reasoning = count(tokens.reasoning)
   return usageOrNull({
     input: count(tokens.input),
-    output: count(tokens.output),
-    reasoning: count(tokens.reasoning),
+    output: output === null && reasoning === null ? null : (output ?? 0) + (reasoning ?? 0),
+    reasoning,
     cacheRead: count(cache.read),
     cacheWrite: count(cache.write),
   })

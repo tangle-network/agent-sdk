@@ -15,6 +15,10 @@ export interface SessionEvidenceSources {
   endingError: 'session-record' | 'none'
 }
 
+/**
+ * One response's tokens, or a sum of them. `output` is every completion token, reasoning included; `reasoning` is the
+ * part of `output` spent reasoning and is never added to it. A reader whose harness records the two apart adds them.
+ */
 export interface TokenUsage {
   input: number | null
   output: number | null
